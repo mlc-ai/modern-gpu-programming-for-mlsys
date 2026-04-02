@@ -1,6 +1,7 @@
 dependencies:
   - python=3.12
   - pip
+  - setuptools<82
   - pip:
     - ..  # tirx-tutorial repo
     - sphinx==5.3.0
