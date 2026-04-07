@@ -17,11 +17,10 @@ This chapter gets your environment ready and verifies it works by running a real
 ### Install Packages
 
 ```bash
+pip install --pre -U "https://github.com/mlc-ai/package/releases/download/v0.9.dev0/mlc_ai_tirx_nightly_cu130-0.24.dev0-py3-none-manylinux_2_28_x86_64.whl"
+pip install apache-tvm-ffi==0.1.9rc2
 pip install torch==2.9.1+cu130 --index-url https://download.pytorch.org/whl/cu130
 pip install numpy
-
-# TIRX wheel coming soon — check https://mlc.ai/wheels for the latest release.
-# You can use any environment where the newest TIRX can run.
 ```
 
 
