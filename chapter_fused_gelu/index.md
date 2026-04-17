@@ -40,7 +40,7 @@ GPU threads are launched as a flat 1D grid, but the output data is a 2D matrix `
 
 Each thread handles exactly one element. The flat `gid` fills the matrix row by row: the first `out_dim` threads cover row 0, the next `out_dim` threads cover row 1, and so on.
 
-**APIs you'll see in this kernel:**
+### Kernel APIs
 
 - **`Tx.handle` + `Tx.match_buffer`** — The function takes opaque pointer parameters. Inside the kernel, `match_buffer` binds them to typed 2D arrays with known shapes.
 
@@ -101,7 +101,7 @@ def fused_gelu_kernel(input_cat, out_dim, batch_size):
     return fused_gelu_tanh_multiply
 ```
 
-Compile, verify, and benchmark:
+### Compile, Verify, and Benchmark
 
 ```{.python .input}
 out_dim = 4096
@@ -130,6 +130,8 @@ print(f"Max error vs numpy reference: {max_err:.6f}")
 assert max_err < 0.05, f"FAIL: max_err={max_err}"
 print("PASS")
 ```
+
+### Expected Output & Troubleshooting
 
 **Expected output**:
 
