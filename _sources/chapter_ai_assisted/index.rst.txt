@@ -79,7 +79,9 @@ Here is a prompt template that works well for TIRX debugging:
 
    - MBarrier.init() checks threadIdx.x < 1 -- only works from warp 0
 
-   - fence.after_thread_sync() references the MOST RECENT thread sync
+   - mbarrier arrives from async engines (TMA completion, tcgen05.commit) carry release→acquire ordering; after try_wait returns, the waiter sees the producer's memory effects. Extra fences on the TMA→MMA edge are unnecessary.
+
+   - The one exception: in the epilogue, after `mma2ld.wait(phase)` and before reading TMEM (`tcgen05.ld`), insert `fence.after_thread_sync()` to order the prior MMA writes against the thread-proxy TMEM reads.
 
    Here is my kernel:
    [paste code]
@@ -117,7 +119,9 @@ yourself. This table maps common symptoms to likely root causes:
 +===================+========================+=============================+
 | Output is all     | TMEM read before MMA   | ``tcgen05.commit`` outside  |
 | zeros             | completes              | ``elect_sync``; missing     |
+|                   |                        | epilogue                    |
 |                   |                        | ``fence.after_thread_sync`` |
+|                   |                        | before ``tcgen05.ld``       |
 +-------------------+------------------------+-----------------------------+
 | Output is random  | SMEM overwritten       | Barrier count too high      |
 | garbage           | before MMA reads it    | (premature arrive); wrong   |
@@ -167,7 +171,6 @@ There is one deliberate bug:
    # Broken MMA loop -- one bug
    for k in range(K_TILES):
        tma2mma.wait(mma_ps.stage, mma_ps.phase)
-       Tx.ptx.tcgen05.fence.after_thread_sync()
        with Tx.thread(parent="warp")[Tx.ptx.elect_sync()]:
            Tx.gemm_async(
                tmem[:, :BLK_N],
@@ -220,7 +223,6 @@ commit-group issue with this level of context.
    # Fixed MMA loop
    for k in range(K_TILES):
        tma2mma.wait(mma_ps.stage, mma_ps.phase)
-       Tx.ptx.tcgen05.fence.after_thread_sync()
        with Tx.thread(parent="warp")[Tx.ptx.elect_sync()]:
            Tx.gemm_async(
                tmem[:, :BLK_N],
@@ -303,9 +305,14 @@ model is guessing rather than reasoning from correct knowledge:
 4. **Wrong barrier arrival counts** — e.g., suggesting ``init(128)`` for
    a barrier that only one elected thread arrives on, or ``init(1)`` for
    a barrier where all 128 warpgroup threads arrive.
-5. **Missing ``fence.after_thread_sync()``** — the model correctly
-   places barrier waits but forgets the fence before TMEM reads. This is
-   the most common silent correctness bug in LLM-generated kernels.
+5. **Missing epilogue ``fence.after_thread_sync()``** — the model writes
+   the writeback path but forgets the fence between ``mma2ld.wait`` and
+   the first ``tcgen05.ld``. This is the only place the fence is
+   actually required (the mbarrier itself orders the TMA→MMA edge), and
+   it’s a common silent correctness bug in LLM-generated kernels. If you
+   see the model adding this fence everywhere (e.g., between TMA wait
+   and MMA issue), that’s a sign it learned from stale examples rather
+   than current best practice.
 
 Generating Test Harnesses
 -------------------------
@@ -507,10 +514,14 @@ Here is a minimal starter template (``tirx_bugs.md``):
    Cause: init() uses threadIdx.x < 1 internally. If called from wg_id==1, thread 0 is in WG0.
    Fix: call init at CTA level (before any wg_id branch), or ensure warp_id==0 in WG0.
 
-   ### Missing fence.after_thread_sync before TMEM read
+   ### Missing fence.after_thread_sync in the epilogue
    Symptom: stale/partial data in writeback output.
-   Cause: MMA writes to TMEM are not yet visible without the fence.
-   Fix: add Tx.ptx.tcgen05.fence.after_thread_sync() after barrier wait, before TMEM read.
+   Cause: In the writeback path the thread proxy reads TMEM (tcgen05.ld) after waiting on
+          the MMA-completion mbarrier. Without fence.after_thread_sync, prior MMA writes
+          to TMEM may not be ordered against the upcoming thread-proxy reads.
+   Fix: add Tx.ptx.tcgen05.fence.after_thread_sync() after mma2ld.wait, before tcgen05.ld.
+          Do NOT add this fence on the TMA->MMA edge; the TMA-completion mbarrier
+          already orders SMEM writes against the subsequent MMA.
 
 Format tips: - One bug per entry, under 5 lines each - Include
 **symptom**, **root cause**, and **fix** - Include hardware-specific

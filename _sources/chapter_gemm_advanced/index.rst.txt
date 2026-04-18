@@ -15,8 +15,8 @@ warp specialization (Step 9).
    the pattern established in :numref:`chap_gemm_basics` and
    :numref:`chap_gemm_async`. Step 8 additionally uses cluster-scope
    buffers; for the ``cbx`` / ``cby`` axes and how a single layout can
-   span two CTAs, refer to :numref:`chap_layouts`, section *Cluster
-   and Remote Layouts*.
+   span two CTAs, see the *Where Replicas Show Up* paragraph in
+   :numref:`chap_layouts`.
 
 .. _chap_warp_specialization:
 
@@ -296,7 +296,6 @@ below for the SMEM trade-offs involved).
     
                                 for k in range(K_TILES):
                                     tma2mma.wait(mma_ps.stage, mma_ps.phase)
-                                    Tx.ptx.tcgen05.fence.after_thread_sync()
                                     Tx.gemm_async(
                                         tmem[:, :BLK_N],
                                         Asmem[mma_ps.stage, :, :],
@@ -554,7 +553,6 @@ fastest way to find bugs:
              mbarrier_wait(ld2mma, ld_phase);         // wait for TMEM free
              for (int k = 0; k < 16; ++k) {           // K_TILES iterations
                mbarrier_wait(tma2mma[stage], phase);   // wait for data
-               tcgen05_fence_after_thread_sync();
                tcgen05_mma(...);                       // MMA
                tcgen05_commit(mma2tma[stage]);          // signal TMA
                stage = (stage + 1) % 2;
@@ -691,8 +689,13 @@ error.
 
 **Common causes:**
 
-1. **Missing fence.after_thread_sync() after mbarrier.wait**: Threads
-   read TMEM before MMA hardware finishes writing it.
+1. **Missing fence.after_thread_sync() in the epilogue**: In the
+   writeback path, after ``mma2ld.wait(phase)`` and immediately before
+   the first ``tcgen05.ld`` into registers, call
+   ``fence.after_thread_sync()``. Without it, threads may read stale
+   TMEM data from a previous MMA epoch. This is the only place the fence
+   is needed; on the TMA→MMA edge the mbarrier already orders things
+   correctly.
 
 2. **Missing fence.proxy_async(“shared::cta”) before TMA store**: TMA
    engine doesn’t see the SMEM writes from threads.
@@ -991,7 +994,6 @@ Implementation
     
                                     for k in range(K_TILES):
                                         tma2mma.wait(mma_ps.stage, mma_ps.phase)
-                                        Tx.ptx.tcgen05.fence.after_thread_sync()
                                         Tx.gemm_async(
                                             tmem[:, :MMA_N],
                                             Asmem[mma_ps.stage, :, :],
@@ -1341,7 +1343,6 @@ Implementation
     
                                     for k in range(K_TILES):
                                         tma2mma.wait(mma_ps.stage, mma_ps.phase)
-                                        Tx.ptx.tcgen05.fence.after_thread_sync()
                                         Tx.gemm_async(
                                             tmem[:, warp_id * MMA_N:warp_id * MMA_N + MMA_N],
                                             Asmem[mma_ps.stage, warp_id, :, :],

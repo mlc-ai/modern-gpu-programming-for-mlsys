@@ -193,10 +193,11 @@ GPU (B200/B100) to run the code.</p>
 <section id="tutorial-structure">
 <h2>Tutorial Structure<a class="headerlink" href="#tutorial-structure" title="Permalink to this heading">¶</a></h2>
 <ul class="simple">
-<li><p><strong>Part I: Fundamentals</strong> (Ch 1–4) — Blackwell GPU architecture, TIRX
-programming model, environment setup, and TIRX Layout — the
-hardware-aware tensor-layout abstraction that every later kernel
-relies on.</p></li>
+<li><p><strong>Part I: Fundamentals</strong> (Ch 1–4) — Blackwell GPU architecture,
+environment setup, and the TIRX programming model — the three explicit
+interfaces (tensor layout, execution scope, tile primitive dispatch)
+that every later kernel is built on, with a dedicated chapter drilling
+into the layout interface.</p></li>
 <li><p><strong>Part II: Entry-Level Kernels</strong> (Ch 5–6) — Learn TIRX basics through
 two self-contained operators: Fused GELU (elementwise + fusion) and
 RMSNorm (warp reduction + shared memory).</p></li>
@@ -231,27 +232,20 @@ boilerplate, debug kernels, and produce test harnesses.</p></li>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_tirx_primer/index.html">3. TIRX Programming Model</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#import-convention">3.1. Import Convention</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#core-apis-at-a-glance">3.2. Core APIs at a Glance</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#kernel-structure">3.3. Kernel Structure</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#thread-hierarchy-scopes">3.4. Thread Hierarchy Scopes</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#memory-management">3.5. Memory Management</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#tirx-vs-raw-ptx">3.6. TIRX vs Raw PTX</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#meta-variables">3.7. Meta Variables</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#tirx-layout-preview">3.8. TIRX Layout (Preview)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#inline-functions">3.9. Inline Functions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#overview-three-pillars">3.2. Overview: Three Pillars</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#pillar-1-tensor-layout">3.3. Pillar 1: Tensor Layout</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#pillar-2-execution-scope">3.4. Pillar 2: Execution Scope</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#pillar-3-tile-primitive-dispatch">3.5. Pillar 3: Tile Primitive Dispatch</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#memory-spaces-at-a-glance">3.6. Memory Spaces at a Glance</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#a-minimal-kernel-template">3.7. A Minimal Kernel Template</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_tirx_primer/index.html#where-to-find-more">3.8. Where to Find More</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_layouts/index.html">4. TIRX Layout: Mapping Tensors to Hardware</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#why-layouts-matter">4.1. Why Layouts Matter</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#the-core-idea-named-hardware-axes">4.2. The Core Idea: Named Hardware Axes</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#tirx-layout-syntax">4.3. TIRX Layout Syntax</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#smem-layouts-and-swizzling">4.4. SMEM Layouts and Swizzling</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#tmem-layouts">4.5. TMEM Layouts</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#rf-layouts-and-tmemrf-matching">4.6. RF Layouts and TMEM–RF Matching</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#cluster-and-remote-layouts">4.7. Cluster and Remote Layouts</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#debugging-layouts">4.8. Debugging Layouts</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#summary">4.9. Summary</a></li>
-<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#exercises">4.10. Exercises</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#what-a-layout-is">4.2. What a Layout Is</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#layouts-in-practice">4.3. Layouts in Practice</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_layouts/index.html#summary">4.4. Summary</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_fused_gelu/index.html">5. Fused GELU-Tanh &amp; Multiply</a><ul>
@@ -327,6 +321,7 @@ boilerplate, debug kernels, and produce test harnesses.</p></li>
 <li class="toctree-l2"><a class="reference internal" href="chapter_api_reference/index.html#synchronization">12.6. Synchronization</a></li>
 <li class="toctree-l2"><a class="reference internal" href="chapter_api_reference/index.html#high-level-abstractions">12.7. High-Level Abstractions</a></li>
 <li class="toctree-l2"><a class="reference internal" href="chapter_api_reference/index.html#common-pitfalls">12.8. Common Pitfalls</a></li>
+<li class="toctree-l2"><a class="reference internal" href="chapter_api_reference/index.html#syntactic-sugar">12.9. Syntactic Sugar</a></li>
 </ul>
 </li>
 </ul>

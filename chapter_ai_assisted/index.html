@@ -230,22 +230,24 @@ context quality</strong>. A vague prompt (“my kernel is broken, help”) gets 
 vague answer. A structured prompt with hardware constraints, code, and
 symptoms gets a precise diagnosis.</p>
 <p>Here is a prompt template that works well for TIRX debugging:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">I</span><span class="s1">&#39;m writing a TIRX kernel for [operation]. Target: Blackwell B200 (SM100a).</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>I&#39;m writing a TIRX kernel for [operation]. Target: Blackwell B200 (SM100a).
 
-<span class="n">Hardware</span> <span class="n">constraints</span><span class="p">:</span>
-<span class="o">-</span> <span class="n">TMEM</span><span class="p">:</span> <span class="mi">128</span> <span class="n">rows</span> <span class="n">x</span> <span class="mi">512</span> <span class="n">cols</span><span class="p">,</span> <span class="n">layout</span> <span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span><span class="mi">512</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)])</span>
+Hardware constraints:
+- TMEM: 128 rows x 512 cols, layout TileLayout(S[(128,512) : (1@TLane, 1@TCol)])
 
-<span class="o">-</span> <span class="n">tcgen05</span><span class="o">.</span><span class="n">commit</span> <span class="ow">is</span> <span class="n">per</span><span class="o">-</span><span class="n">thread</span><span class="p">;</span> <span class="n">must</span> <span class="n">be</span> <span class="n">inside</span> <span class="n">elect_sync</span><span class="p">()</span> <span class="n">guard</span>
+- tcgen05.commit is per-thread; must be inside elect_sync() guard
 
-<span class="o">-</span> <span class="n">MBarrier</span><span class="o">.</span><span class="n">init</span><span class="p">()</span> <span class="n">checks</span> <span class="n">threadIdx</span><span class="o">.</span><span class="n">x</span> <span class="o">&lt;</span> <span class="mi">1</span> <span class="o">--</span> <span class="n">only</span> <span class="n">works</span> <span class="kn">from</span><span class="w"> </span><span class="nn">warp</span> <span class="mi">0</span>
+- MBarrier.init() checks threadIdx.x &lt; 1 -- only works from warp 0
 
-<span class="o">-</span> <span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span> <span class="n">references</span> <span class="n">the</span> <span class="n">MOST</span> <span class="n">RECENT</span> <span class="n">thread</span> <span class="n">sync</span>
+- mbarrier arrives from async engines (TMA completion, tcgen05.commit) carry release→acquire ordering; after try_wait returns, the waiter sees the producer&#39;s memory effects. Extra fences on the TMA→MMA edge are unnecessary.
 
-<span class="n">Here</span> <span class="ow">is</span> <span class="n">my</span> <span class="n">kernel</span><span class="p">:</span>
-<span class="p">[</span><span class="n">paste</span> <span class="n">code</span><span class="p">]</span>
+- The one exception: in the epilogue, after `mma2ld.wait(phase)` and before reading TMEM (`tcgen05.ld`), insert `fence.after_thread_sync()` to order the prior MMA writes against the thread-proxy TMEM reads.
 
-<span class="n">Symptom</span><span class="p">:</span> <span class="p">[</span><span class="n">zeros</span> <span class="o">/</span> <span class="n">NaN</span> <span class="o">/</span> <span class="n">deadlock</span> <span class="o">/</span> <span class="n">wrong</span> <span class="n">values</span> <span class="n">at</span> <span class="n">specific</span> <span class="n">indices</span><span class="p">]</span>
-<span class="n">Question</span><span class="p">:</span> <span class="p">[</span><span class="n">specific</span> <span class="n">question</span><span class="p">]</span>
+Here is my kernel:
+[paste code]
+
+Symptom: [zeros / NaN / deadlock / wrong values at specific indices]
+Question: [specific question]
 </pre></div>
 </div>
 <p>Why each piece matters:</p>
@@ -283,7 +285,9 @@ zeros</p></td>
 completes</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> outside
 <code class="docutils literal notranslate"><span class="pre">elect_sync</span></code>; missing
-<code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync</span></code></p></td>
+epilogue
+<code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync</span></code>
+before <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p>Output is random
 garbage</p></td>
@@ -349,7 +353,6 @@ There is one deliberate bug:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Broken MMA loop -- one bug</span>
 <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>
     <span class="n">tma2mma</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">mma_ps</span><span class="o">.</span><span class="n">phase</span><span class="p">)</span>
-    <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
     <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warp&quot;</span><span class="p">)[</span><span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">()]:</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span>
             <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">],</span>
@@ -390,7 +393,6 @@ commit-group issue with this level of context.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Fixed MMA loop</span>
 <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>
     <span class="n">tma2mma</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">mma_ps</span><span class="o">.</span><span class="n">phase</span><span class="p">)</span>
-    <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
     <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warp&quot;</span><span class="p">)[</span><span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">()]:</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span>
             <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">],</span>
@@ -464,9 +466,14 @@ Always verify function names against the API Reference.</p></li>
 <li><p><strong>Wrong barrier arrival counts</strong> — e.g., suggesting <code class="docutils literal notranslate"><span class="pre">init(128)</span></code> for
 a barrier that only one elected thread arrives on, or <code class="docutils literal notranslate"><span class="pre">init(1)</span></code> for
 a barrier where all 128 warpgroup threads arrive.</p></li>
-<li><p><strong>Missing ``fence.after_thread_sync()``</strong> — the model correctly
-places barrier waits but forgets the fence before TMEM reads. This is
-the most common silent correctness bug in LLM-generated kernels.</p></li>
+<li><p><strong>Missing epilogue ``fence.after_thread_sync()``</strong> — the model writes
+the writeback path but forgets the fence between <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code> and
+the first <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. This is the only place the fence is
+actually required (the mbarrier itself orders the TMA→MMA edge), and
+it’s a common silent correctness bug in LLM-generated kernels. If you
+see the model adding this fence everywhere (e.g., between TMA wait
+and MMA issue), that’s a sign it learned from stale examples rather
+than current best practice.</p></li>
 </ol>
 </section>
 </section>
@@ -624,10 +631,14 @@ Symptom: kernel hangs (deadlock).
 Cause: init() uses threadIdx.x &lt; 1 internally. If called from wg_id==1, thread 0 is in WG0.
 Fix: call init at CTA level (before any wg_id branch), or ensure warp_id==0 in WG0.
 
-<span class="gu">### Missing fence.after_thread_sync before TMEM read</span>
+<span class="gu">### Missing fence.after_thread_sync in the epilogue</span>
 Symptom: stale/partial data in writeback output.
-Cause: MMA writes to TMEM are not yet visible without the fence.
-Fix: add Tx.ptx.tcgen05.fence.after_thread_sync() after barrier wait, before TMEM read.
+Cause: In the writeback path the thread proxy reads TMEM (tcgen05.ld) after waiting on
+       the MMA-completion mbarrier. Without fence.after_thread_sync, prior MMA writes
+       to TMEM may not be ordered against the upcoming thread-proxy reads.
+Fix: add Tx.ptx.tcgen05.fence.after_thread_sync() after mma2ld.wait, before tcgen05.ld.
+       Do NOT add this fence on the TMA-&gt;MMA edge; the TMA-completion mbarrier
+       already orders SMEM writes against the subsequent MMA.
 </pre></div>
 </div>
 <p>Format tips: - One bug per entry, under 5 lines each - Include

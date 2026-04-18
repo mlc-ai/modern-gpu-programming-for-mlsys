@@ -342,16 +342,11 @@ buffer slicing</p></td>
 <td><p>Sequential loop (not unrolled), <code class="docutils literal notranslate"><span class="pre">i</span></code> is a TIR
 variable</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.meta_var(expr)</span></code></p></td>
-<td><p>Compile-time alias for an expression (required
-for buffer slice offsets)</p></td>
-</tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&#64;Tx.inline</span></code></p></td>
-<td><p>Decorator for inline helper functions within the
-kernel</p></td>
-</tr>
 </tbody>
 </table>
+<p>For <code class="docutils literal notranslate"><span class="pre">Tx.meta_var</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;Tx.inline</span></code>, see the <em>Syntactic Sugar</em>
+section at the end of this chapter — they are not part of the
+programming model.</p>
 </section>
 <section id="synchronization">
 <h2><span class="section-number">12.6. </span>Synchronization<a class="headerlink" href="#synchronization" title="Permalink to this heading">¶</a></h2>
@@ -375,7 +370,8 @@ kernel</p></td>
 <td><p>tcgen05 commit (auto-arrive on completion)</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.ptx.tcgen05.fence.after_thread_sync()</span></code></p></td>
-<td><p>Fence before accessing TMEM after sync</p></td>
+<td><p>Epilogue-only fence: order prior MMA writes to
+TMEM against subsequent <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> reads</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.ptx.fence.proxy_async(&quot;shared::cta&quot;)</span></code></p></td>
 <td><p>Shared memory fence</p></td>
@@ -484,8 +480,13 @@ memory like TMEM.</p></li>
 <li><p><strong>TMA store must be followed by ``commit_group()`` +
 ``wait_group(0)``</strong>: Without waiting, the next iteration may overwrite
 Dsmem.</p></li>
-<li><p><strong>``fence.after_thread_sync()`` required before reading TMEM</strong>: After
-any mbarrier wait, call this before reading TMEM.</p></li>
+<li><p><strong>``fence.after_thread_sync()`` is only needed in the epilogue</strong>: In
+the writeback path, after <code class="docutils literal notranslate"><span class="pre">mma2ld.wait(phase)</span></code> and immediately
+before the first <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>, call <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> to
+order prior MMA writes to TMEM against the upcoming thread-proxy
+reads. Do <em>not</em> add it on the TMA→MMA edge; the TMA-completion
+mbarrier already orders SMEM writes against the subsequent MMA, and
+the same applies to <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> after a synchronous SMEM copy.</p></li>
 <li><p><strong>Constants must be defined outside ``&#64;Tx.prim_func``</strong>: Variables
 like <code class="docutils literal notranslate"><span class="pre">EPI_N</span></code>, <code class="docutils literal notranslate"><span class="pre">TMEM_LD_N</span></code>, <code class="docutils literal notranslate"><span class="pre">MMA_N</span></code> must be Python constants.</p></li>
 <li><p><strong>``pool.move_base_to(1024)``</strong>: Reserves the first 1024 bytes for
@@ -494,6 +495,44 @@ Dsmem) are allocated sequentially after this offset.</p></li>
 <li><p><strong>GPU flakiness</strong>: If tests fail intermittently, check <code class="docutils literal notranslate"><span class="pre">nvidia-smi</span></code>
 and switch to an idle GPU.</p></li>
 </ul>
+</section>
+<section id="syntactic-sugar">
+<h2><span class="section-number">12.9. </span>Syntactic Sugar<a class="headerlink" href="#syntactic-sugar" title="Permalink to this heading">¶</a></h2>
+<p><em>The constructs in this section are</em> <strong>not</strong> <em>part of the TIRX
+programming model</em> (see <a class="reference internal" href="../chapter_tirx_primer/index.html#chap-tirx-primer"><span class="std std-numref">Section 3</span></a> for the three
+pillars). They are convenience — removing them changes how the code
+looks, not what it means. They show up in Part III because real kernels
+use them to stay readable.</p>
+<section id="tx-meta-var-compile-time-alias">
+<h3><span class="section-number">12.9.1. </span><code class="docutils literal notranslate"><span class="pre">Tx.meta_var</span></code>: compile-time alias<a class="headerlink" href="#tx-meta-var-compile-time-alias" title="Permalink to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">Tx.meta_var(expr)</span></code> names a compile-time expression so it can be
+reused in buffer slicing without becoming a TIR dynamic variable:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">m_st</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">bx</span> <span class="o">*</span> <span class="n">BLK_M</span><span class="p">)</span>
+<span class="n">n_st</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">by</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>
+<span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">A</span><span class="p">[</span><span class="n">m_st</span> <span class="p">:</span> <span class="n">m_st</span> <span class="o">+</span> <span class="n">BLK_M</span><span class="p">,</span> <span class="n">k_st</span> <span class="p">:</span> <span class="n">k_st</span> <span class="o">+</span> <span class="n">BLK_K</span><span class="p">])</span>
+</pre></div>
+</div>
+<p>Any variable <em>assigned</em> inside <code class="docutils literal notranslate"><span class="pre">&#64;Tx.prim_func</span></code> that is not wrapped
+with <code class="docutils literal notranslate"><span class="pre">meta_var</span></code> becomes a TIR dynamic variable. Constants such as
+<code class="docutils literal notranslate"><span class="pre">BLK_M</span></code>, <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH</span></code>, and <code class="docutils literal notranslate"><span class="pre">EPI_N</span></code> must stay Python constants
+defined outside the function.</p>
+</section>
+<section id="tx-inline-compile-time-helper">
+<h3><span class="section-number">12.9.2. </span><code class="docutils literal notranslate"><span class="pre">&#64;Tx.inline</span></code>: compile-time helper<a class="headerlink" href="#tx-inline-compile-time-helper" title="Permalink to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">&#64;Tx.inline</span></code> marks a helper as inlined at compile time. It can close
+over outer kernel variables, which is useful for packaging repeated load
+/ MMA / writeback boilerplate:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@Tx</span><span class="o">.</span><span class="n">inline</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">tma_load</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+    <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warp&quot;</span><span class="p">)[</span><span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">()]:</span>
+        <span class="n">tma_bar</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="nb">bytes</span><span class="o">=</span><span class="n">total_bytes</span><span class="p">)</span>
+        <span class="n">Tx</span><span class="o">.</span><span class="n">copy_async</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[</span><span class="n">stage</span><span class="p">],</span> <span class="n">A</span><span class="p">[</span><span class="n">m_st</span> <span class="p">:</span> <span class="n">m_st</span> <span class="o">+</span> <span class="n">BLK_M</span><span class="p">,</span> <span class="n">k</span> <span class="p">:</span> <span class="n">k</span> <span class="o">+</span> <span class="n">BLK_K</span><span class="p">],</span>
+                      <span class="n">dispatch</span><span class="o">=</span><span class="s2">&quot;tma&quot;</span><span class="p">,</span> <span class="n">mbar</span><span class="o">=</span><span class="n">tma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="n">stage</span><span class="p">]))</span>
+</pre></div>
+</div>
+<p>There is no runtime function-call overhead and no new semantics — just a
+reusable code region.</p>
+</section>
 </section>
 </section>
 
@@ -515,6 +554,11 @@ and switch to an idle GPU.</p></li>
 <li><a class="reference internal" href="#synchronization">12.6. Synchronization</a></li>
 <li><a class="reference internal" href="#high-level-abstractions">12.7. High-Level Abstractions</a></li>
 <li><a class="reference internal" href="#common-pitfalls">12.8. Common Pitfalls</a></li>
+<li><a class="reference internal" href="#syntactic-sugar">12.9. Syntactic Sugar</a><ul>
+<li><a class="reference internal" href="#tx-meta-var-compile-time-alias">12.9.1. <code class="docutils literal notranslate"><span class="pre">Tx.meta_var</span></code>: compile-time alias</a></li>
+<li><a class="reference internal" href="#tx-inline-compile-time-helper">12.9.2. <code class="docutils literal notranslate"><span class="pre">&#64;Tx.inline</span></code>: compile-time helper</a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>

@@ -175,13 +175,13 @@ reuse them without re-explaining each time.</p>
 <section id="what-is-gemm">
 <h2><span class="section-number">7.1. </span>What is GEMM<a class="headerlink" href="#what-is-gemm" title="Permalink to this heading">¶</a></h2>
 <p>GEMM (General Matrix Multiplication) is the fundamental operation:
-<span class="math notranslate nohighlight">\(D = A \times B^T\)</span> where:</p>
+<span class="math notranslate nohighlight">\(D = A B^{\top}\)</span> where:</p>
 <ul class="simple">
 <li><p><span class="math notranslate nohighlight">\(A\)</span> is <span class="math notranslate nohighlight">\(M \times K\)</span> (M rows of K-dimensional vectors)</p></li>
 <li><p><span class="math notranslate nohighlight">\(B\)</span> is <span class="math notranslate nohighlight">\(N \times K\)</span> (N rows of K-dimensional vectors)</p></li>
 <li><p><span class="math notranslate nohighlight">\(D\)</span> is <span class="math notranslate nohighlight">\(M \times N\)</span> (output)</p></li>
-<li><p>Operation: <span class="math notranslate nohighlight">\(D[m,n] = \sum_k A[m,k] \times B[n,k]\)</span> (i.e.,
-<span class="math notranslate nohighlight">\(D = A \times B^T\)</span> since B is stored as N rows of K columns)</p></li>
+<li><p>Operation: <span class="math notranslate nohighlight">\(D[m,n] = \sum_k A[m,k] \cdot B[n,k]\)</span> (i.e.,
+<span class="math notranslate nohighlight">\(D = A B^{\top}\)</span> since B is stored as N rows of K columns)</p></li>
 </ul>
 <p>GEMM is the workhorse of deep learning — every linear layer, attention
 computation, and convolution reduces to GEMM. Optimizing GEMM is
@@ -251,16 +251,17 @@ fp32→fp16 and writes to GMEM</p></li>
 <p>The <code class="docutils literal notranslate"><span class="pre">pool.move_base_to(1024)</span></code> ensures Asmem/Bsmem start at offset
 1024, leaving room for metadata. The <code class="docutils literal notranslate"><span class="pre">layout=A_layout</span></code> uses
 <code class="docutils literal notranslate"><span class="pre">tma_shared_layout</span></code> for a swizzled, bank-conflict-free SMEM placement;
-see <a class="reference internal" href="../chapter_layouts/index.html#chap-layouts"><span class="std std-numref">Section 4</span></a> (SMEM Layouts and Swizzling) for why
-swizzle matters.</p>
+see the SMEM subsection of <a class="reference internal" href="../chapter_layouts/index.html#chap-layouts"><span class="std std-numref">Section 4</span></a> for why swizzle
+matters.</p>
 </section>
 <section id="synchronous-load">
 <h4><span class="section-number">7.3.3.2. </span>Synchronous Load<a class="headerlink" href="#synchronous-load" title="Permalink to this heading">¶</a></h4>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="p">():</span>  <span class="c1"># All 128 threads cooperate</span>
     <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">A</span><span class="p">[:,</span> <span class="p">:])</span>
     <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">B</span><span class="p">[:,</span> <span class="p">:])</span>
-<span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>                           <span class="c1"># Wait for all threads</span>
-<span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>     <span class="c1"># Make SMEM visible to MMA HW</span>
+<span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>                           <span class="c1"># Wait for all threads; bar.sync</span>
+                                             <span class="c1"># also releases the SMEM writes</span>
+                                             <span class="c1"># to the subsequent MMA.</span>
 </pre></div>
 </div>
 <p>Step 1 only has one tile (M=N=128, K=64), so we copy the entire A and B.
@@ -392,7 +393,6 @@ like data loading and writeback (each thread handles a different row:
             <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">A</span><span class="p">[:,</span> <span class="p">:])</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">B</span><span class="p">[:,</span> <span class="p">:])</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-        <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
 
         <span class="c1"># --- Compute: single elected thread issues MMA ---</span>
         <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
@@ -580,7 +580,6 @@ CTA) since this step only handles M=N=128:</p>
                     <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">B</span><span class="p">[:,</span> <span class="n">i</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">:(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">])</span>
 
                 <span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-                <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
 
                 <span class="c1"># MMA: accum=False for first tile, True for rest</span>
                 <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
@@ -602,7 +601,6 @@ CTA) since this step only handles M=N=128:</p>
             <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">warpgroup</span><span class="p">():</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">reg_wg</span><span class="p">[:],</span> <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">128</span><span class="p">])</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-                <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
 
             <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">():</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">reg_f16</span><span class="p">[:],</span> <span class="n">reg</span><span class="p">[:])</span>
@@ -776,7 +774,6 @@ instead of <code class="docutils literal notranslate"><span class="pre">[1,</spa
                     <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">B</span><span class="p">[</span><span class="n">n_st</span><span class="p">:</span><span class="n">n_st</span><span class="o">+</span><span class="n">BLK_N</span><span class="p">,</span> <span class="n">i</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">:(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">])</span>
 
                 <span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-                <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
 
                 <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
                     <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warp&quot;</span><span class="p">)[</span><span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">()]:</span>
@@ -796,7 +793,6 @@ instead of <code class="docutils literal notranslate"><span class="pre">[1,</spa
             <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">warpgroup</span><span class="p">():</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">reg_wg</span><span class="p">[:],</span> <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="mi">128</span><span class="p">])</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-                <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
 
             <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">():</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">reg_f16</span><span class="p">[:],</span> <span class="n">reg</span><span class="p">[:])</span>
@@ -877,8 +873,8 @@ offset calculations change.</p>
 <section id="exercises">
 <h2><span class="section-number">7.6. </span>Exercises<a class="headerlink" href="#exercises" title="Permalink to this heading">¶</a></h2>
 <ol class="arabic simple">
-<li><p>Why is <code class="docutils literal notranslate"><span class="pre">cta_sync()</span> <span class="pre">+</span> <span class="pre">fence.after_thread_sync()</span></code> needed between the
-sync copy and the MMA? What could go wrong without it?</p></li>
+<li><p>Why is <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> needed between the synchronous SMEM copy and
+the MMA? What could go wrong without it?</p></li>
 <li><p>What happens if you remove <code class="docutils literal notranslate"><span class="pre">phase_mma</span> <span class="pre">^=</span> <span class="pre">1</span></code> in Step 2’s K-loop?
 Will the kernel deadlock, produce wrong results, or both?</p></li>
 <li><p>For M=N=4096 with BLK_M=BLK_N=128, how many CTAs are launched in Step

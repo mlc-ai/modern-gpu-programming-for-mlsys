@@ -275,31 +275,32 @@ completion</p></td>
 how many bytes to expect</p></li>
 <li><p>TMA hardware automatically arrives on the mbarrier when transfer
 completes</p></li>
-<li><p>All threads call <code class="docutils literal notranslate"><span class="pre">try_wait(phase)</span></code> to block until data is ready</p></li>
-<li><p>After wait, <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> makes SMEM data visible to
-MMA hardware</p></li>
+<li><p>All threads call <code class="docutils literal notranslate"><span class="pre">try_wait(phase)</span></code> to block until data is ready.
+Once the wait returns, the SMEM data is visible to every thread in
+the CTA, and the subsequent MMA issued from within the same CTA can
+safely read it — the mbarrier completion itself carries the necessary
+release→acquire edge between the TMA engine and downstream consumers.</p></li>
 </ol>
 </section>
-<section id="understanding-the-three-synchronization-primitives">
-<h3><span class="section-number">8.1.5. </span>Understanding the Three Synchronization Primitives<a class="headerlink" href="#understanding-the-three-synchronization-primitives" title="Permalink to this heading">¶</a></h3>
-<p>Step 4 introduces <code class="docutils literal notranslate"><span class="pre">mbarrier.try_wait</span></code> alongside the existing
-<code class="docutils literal notranslate"><span class="pre">cta_sync</span></code> and <code class="docutils literal notranslate"><span class="pre">fence</span></code>. These serve different purposes:</p>
+<section id="understanding-the-two-synchronization-primitives">
+<h3><span class="section-number">8.1.5. </span>Understanding the Two Synchronization Primitives<a class="headerlink" href="#understanding-the-two-synchronization-primitives" title="Permalink to this heading">¶</a></h3>
+<p>Step 4 introduces <code class="docutils literal notranslate"><span class="pre">mbarrier.try_wait</span></code> alongside <code class="docutils literal notranslate"><span class="pre">cta_sync</span></code>. They
+serve different purposes:</p>
 <p><strong>``cta_sync()``</strong> = thread synchronization. All 128 CTA threads must
 reach this point before any can proceed. This is <code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code> in
-CUDA. It says nothing about whether <em>data</em> is ready — only that all
-threads have arrived.</p>
+CUDA. <code class="docutils literal notranslate"><span class="pre">bar.sync</span></code> also carries an implicit release/acquire fence, so
+prior SMEM writes become visible to any thread (and to async engines
+reading SMEM within the CTA) that crosses the barrier. It says nothing
+about whether <em>async hardware</em> has finished work it was handed earlier —
+only that threads have arrived.</p>
 <p><strong>``mbarrier.try_wait(phase)``</strong> = event synchronization. Waits for a
 specific event to complete (e.g., “TMA finished loading” or “MMA
 finished computing”). Phase-based: each wait/signal cycle flips the
 phase (0 → 1 → 0). Does not require all threads to participate — any
-thread can wait on any barrier.</p>
-<p><strong>``fence.after_thread_sync()``</strong> = memory visibility. This is NOT a
-thread barrier. TMEM and the tensor core have their own memory
-subsystem, separate from registers and SMEM. Even after <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code>
-confirms all threads have arrived, tensor core writes to TMEM may still
-be in flight. The fence ensures those writes are visible to subsequent
-TMEM reads. Think of it as: <code class="docutils literal notranslate"><span class="pre">cta_sync</span></code> = “all passengers arrived at
-the gate”, <code class="docutils literal notranslate"><span class="pre">fence</span></code> = “all luggage also arrived on the belt”.</p>
+thread can wait on any barrier. Crucially, an mbarrier arrival from the
+async engine (TMA completion, or <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> from an MMA)
+establishes a release→acquire edge: after <code class="docutils literal notranslate"><span class="pre">try_wait</span></code> returns, the
+waiter sees all of the producer’s memory effects.</p>
 </section>
 <section id="tma-store-writeback">
 <h3><span class="section-number">8.1.6. </span>TMA Store Writeback<a class="headerlink" href="#tma-store-writeback" title="Permalink to this heading">¶</a></h3>
@@ -307,8 +308,8 @@ the gate”, <code class="docutils literal notranslate"><span class="pre">fence<
 Step 4 also introduces TMA store:</p>
 <ol class="arabic simple">
 <li><p>Read TMEM -&gt; registers (warpgroup read)</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> + <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> — ensure TMEM read
-completes and data is visible in registers</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> — ensure all warpgroup threads have completed the TMEM
+read before reuse</p></li>
 <li><p>Cast fp32 -&gt; fp16 in registers</p></li>
 <li><p>Write registers -&gt; Dsmem (shared memory, with swizzled layout)</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">fence.proxy_async(&quot;shared::cta&quot;)</span></code> + <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(10)</span></code> — flush
@@ -435,9 +436,9 @@ replaces direct GMEM writes:</p>
             <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warpgroup&quot;</span><span class="p">)[</span><span class="n">tid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]:</span>
                 <span class="n">tma_load</span><span class="p">(</span><span class="n">k_st</span><span class="p">)</span>
 
-            <span class="c1"># Wait for TMA to finish</span>
+            <span class="c1"># Wait for TMA to finish; the mbarrier release carries SMEM</span>
+            <span class="c1"># visibility to the subsequent MMA, so no extra fence is needed.</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">tma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">phase_tma</span><span class="p">)</span>
-            <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
 
             <span class="c1"># Single thread issues MMA</span>
             <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warpgroup&quot;</span><span class="p">)[</span><span class="n">tid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]:</span>
@@ -458,7 +459,6 @@ replaces direct GMEM writes:</p>
         <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">warpgroup</span><span class="p">():</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Dreg_wg</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">])</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-            <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
         <span class="c1"># Cast fp32 -&gt; fp16</span>
         <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">():</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">Dreg_f16</span><span class="p">[:],</span> <span class="n">Dreg</span><span class="p">[:])</span>
@@ -540,12 +540,13 @@ which checks element-wise relative tolerance.</p>
 arrival from <code class="docutils literal notranslate"><span class="pre">expect_tx</span></code>.</p></li>
 <li><p><strong>``&#64;Tx.inline``</strong>: Helper functions are inlined at compile time and
 can capture outer variables.</p></li>
-<li><p><strong>TMA store writeback sync</strong>: After TMEM read, <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> +
-<code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> ensures data is visible. After Dsmem
-write, <code class="docutils literal notranslate"><span class="pre">fence.proxy_async</span></code> + <code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> flushes writes. TMA
-store is issued via <code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code> and must be followed by
-<code class="docutils literal notranslate"><span class="pre">commit_group()</span></code> + <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code> + <code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> before
-proceeding.</p></li>
+<li><p><strong>TMA store writeback sync</strong>: After TMEM read, <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> ensures
+all warpgroup threads have copied TMEM into their registers before
+downstream reuse. After Dsmem write, <code class="docutils literal notranslate"><span class="pre">fence.proxy_async</span></code> +
+<code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> flushes the thread-proxy SMEM writes so the TMA
+engine sees them. TMA store is issued via <code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code> and must be
+followed by <code class="docutils literal notranslate"><span class="pre">commit_group()</span></code> + <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code> +
+<code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> before proceeding.</p></li>
 </ul>
 </section>
 <section id="understanding-tmem">
@@ -570,15 +571,13 @@ registers:</p>
 </div>
 <p>The layout <code class="docutils literal notranslate"><span class="pre">1&#64;tid_in_wg</span></code> maps 128 warpgroup threads to 128 TMEM rows;
 axis matching with the TMEM <code class="docutils literal notranslate"><span class="pre">(1&#64;TLane,</span> <span class="pre">1&#64;TCol)</span></code> layout is what lets
-<code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> lower to a <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> instruction (see
-<a class="reference internal" href="../chapter_layouts/index.html#chap-layouts"><span class="std std-numref">Section 4</span></a>, section <em>RF Layouts and TMEM–RF Matching</em>).
-TMEM reads <strong>must</strong> use warpgroup scope because TMEM is a
-warpgroup-level resource.</p>
+<code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> lower to a <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> instruction (see the RF subsection
+of <a class="reference internal" href="../chapter_layouts/index.html#chap-layouts"><span class="std std-numref">Section 4</span></a> for the full axis-pairing table). TMEM reads
+<strong>must</strong> use warpgroup scope because TMEM is a warpgroup-level resource.</p>
 <p>Note: If the K-loop runs inside an <code class="docutils literal notranslate"><span class="pre">elect_sync</span></code> or <code class="docutils literal notranslate"><span class="pre">tid</span> <span class="pre">==</span> <span class="pre">0</span></code> scope,
 other threads skip ahead to the writeback. Always ensure <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code>
-is called <strong>outside</strong> any thread-guarded scope before reading TMEM —
-otherwise <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> won’t cover MMA writes for all
-threads.</p>
+is called <strong>outside</strong> any thread-guarded scope before reading TMEM, so
+the whole warpgroup is aligned on the same MMA epoch.</p>
 <hr class="docutils" />
 <p>Now that we have TMA async loads handling data movement efficiently, the
 next bottleneck is that the MMA unit still sits idle while waiting for
@@ -730,7 +729,6 @@ the number of pipeline stages (double buffering):</p>
 
                 <span class="c1"># Wait for TMA to finish loading this stage</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">tma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="n">stage</span><span class="p">]),</span> <span class="n">phase_tma</span><span class="p">)</span>
-                <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
 
                 <span class="c1"># MMA on this stage&#39;s data</span>
                 <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warpgroup&quot;</span><span class="p">)[</span><span class="n">tid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]:</span>
@@ -757,7 +755,6 @@ the number of pipeline stages (double buffering):</p>
             <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">warpgroup</span><span class="p">():</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Dreg_wg</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">])</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-                <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
             <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">():</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">Dreg_f16</span><span class="p">[:],</span> <span class="n">Dreg</span><span class="p">[:])</span>
             <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">():</span>
@@ -1020,7 +1017,6 @@ to assign tiles to CTAs:</p>
                 <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>
                     <span class="n">stage</span> <span class="o">=</span> <span class="n">k</span> <span class="o">%</span> <span class="n">PIPE_DEPTH</span>
                     <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">tma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="n">stage</span><span class="p">]),</span> <span class="n">phase_tma</span><span class="p">)</span>
-                    <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
                     <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warpgroup&quot;</span><span class="p">)[</span><span class="n">tid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]:</span>
                         <span class="n">mma</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="n">accum</span><span class="o">=</span><span class="p">(</span><span class="n">k</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">))</span>
                     <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">phase_mma</span><span class="p">)</span>
@@ -1040,7 +1036,6 @@ to assign tiles to CTAs:</p>
                 <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">warpgroup</span><span class="p">():</span>
                     <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Dreg_wg</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">])</span>
                     <span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-                    <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
                 <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">():</span>
                     <span class="n">Tx</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">Dreg_f16</span><span class="p">[:],</span> <span class="n">Dreg</span><span class="p">[:])</span>
                 <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">():</span>
@@ -1188,7 +1183,7 @@ average?</p></li>
 <li><a class="reference internal" href="#the-key-change">8.1.2. The Key Change</a></li>
 <li><a class="reference internal" href="#tx-copy-vs-tx-copy-async">8.1.3. <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> vs <code class="docutils literal notranslate"><span class="pre">Tx.copy_async</span></code></a></li>
 <li><a class="reference internal" href="#tma-synchronization-flow">8.1.4. TMA Synchronization Flow</a></li>
-<li><a class="reference internal" href="#understanding-the-three-synchronization-primitives">8.1.5. Understanding the Three Synchronization Primitives</a></li>
+<li><a class="reference internal" href="#understanding-the-two-synchronization-primitives">8.1.5. Understanding the Two Synchronization Primitives</a></li>
 <li><a class="reference internal" href="#tma-store-writeback">8.1.6. TMA Store Writeback</a></li>
 <li><a class="reference internal" href="#implementation">8.1.7. Implementation</a></li>
 <li><a class="reference internal" href="#key-points">8.1.8. Key Points</a></li>

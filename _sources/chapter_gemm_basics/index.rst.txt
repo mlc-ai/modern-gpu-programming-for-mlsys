@@ -22,7 +22,7 @@ What is GEMM
 ------------
 
 GEMM (General Matrix Multiplication) is the fundamental operation:
-:math:`D = A \times B^T` where:
+:math:`D = A B^{\top}` where:
 
 - :math:`A` is :math:`M \times K` (M rows of K-dimensional vectors)
 
@@ -30,8 +30,8 @@ GEMM (General Matrix Multiplication) is the fundamental operation:
 
 - :math:`D` is :math:`M \times N` (output)
 
-- Operation: :math:`D[m,n] = \sum_k A[m,k] \times B[n,k]` (i.e.,
-  :math:`D = A \times B^T` since B is stored as N rows of K columns)
+- Operation: :math:`D[m,n] = \sum_k A[m,k] \cdot B[n,k]` (i.e.,
+  :math:`D = A B^{\top}` since B is stored as N rows of K columns)
 
 GEMM is the workhorse of deep learning — every linear layer, attention
 computation, and convolution reduces to GEMM. Optimizing GEMM is
@@ -119,8 +119,8 @@ Memory Allocation
 The ``pool.move_base_to(1024)`` ensures Asmem/Bsmem start at offset
 1024, leaving room for metadata. The ``layout=A_layout`` uses
 ``tma_shared_layout`` for a swizzled, bank-conflict-free SMEM placement;
-see :numref:`chap_layouts` (SMEM Layouts and Swizzling) for why
-swizzle matters.
+see the SMEM subsection of :numref:`chap_layouts` for why swizzle
+matters.
 
 Synchronous Load
 ^^^^^^^^^^^^^^^^
@@ -134,8 +134,9 @@ Synchronous Load
    with Tx.cta():  # All 128 threads cooperate
        Tx.copy(Asmem[:, :], A[:, :])
        Tx.copy(Bsmem[:, :], B[:, :])
-   Tx.cuda.cta_sync()                           # Wait for all threads
-   Tx.ptx.tcgen05.fence.after_thread_sync()     # Make SMEM visible to MMA HW
+   Tx.cuda.cta_sync()                           # Wait for all threads; bar.sync
+                                                # also releases the SMEM writes
+                                                # to the subsequent MMA.
 
 Step 1 only has one tile (M=N=128, K=64), so we copy the entire A and B.
 ``with Tx.cta()`` is a **scope marker** that means all 128 threads in
@@ -298,7 +299,6 @@ The kernel itself:
                 Tx.copy(Asmem[:, :], A[:, :])
                 Tx.copy(Bsmem[:, :], B[:, :])
             Tx.cuda.cta_sync()
-            Tx.ptx.tcgen05.fence.after_thread_sync()
     
             # --- Compute: single elected thread issues MMA ---
             if warp_id == 0:
@@ -516,7 +516,6 @@ CTA) since this step only handles M=N=128:
                         Tx.copy(Bsmem[:, :], B[:, i*BLK_K:(i+1)*BLK_K])
     
                     Tx.cuda.cta_sync()
-                    Tx.ptx.tcgen05.fence.after_thread_sync()
     
                     # MMA: accum=False for first tile, True for rest
                     if warp_id == 0:
@@ -538,7 +537,6 @@ CTA) since this step only handles M=N=128:
                 with Tx.warpgroup():
                     Tx.copy(reg_wg[:], tmem[:, :128])
                     Tx.cuda.cta_sync()
-                    Tx.ptx.tcgen05.fence.after_thread_sync()
     
                 with Tx.thread():
                     Tx.cast(reg_f16[:], reg[:])
@@ -721,7 +719,6 @@ instead of ``[1, 1]``, and loads/stores use per-CTA offsets ``m_st`` and
                         Tx.copy(Bsmem[:, :], B[n_st:n_st+BLK_N, i*BLK_K:(i+1)*BLK_K])
     
                     Tx.cuda.cta_sync()
-                    Tx.ptx.tcgen05.fence.after_thread_sync()
     
                     if warp_id == 0:
                         with Tx.thread(parent="warp")[Tx.ptx.elect_sync()]:
@@ -741,7 +738,6 @@ instead of ``[1, 1]``, and loads/stores use per-CTA offsets ``m_st`` and
                 with Tx.warpgroup():
                     Tx.copy(reg_wg[:], tmem[:, :128])
                     Tx.cuda.cta_sync()
-                    Tx.ptx.tcgen05.fence.after_thread_sync()
     
                 with Tx.thread():
                     Tx.cast(reg_f16[:], reg[:])
@@ -812,8 +808,8 @@ offset calculations change.
 Exercises
 ---------
 
-1. Why is ``cta_sync() + fence.after_thread_sync()`` needed between the
-   sync copy and the MMA? What could go wrong without it?
+1. Why is ``cta_sync()`` needed between the synchronous SMEM copy and
+   the MMA? What could go wrong without it?
 2. What happens if you remove ``phase_mma ^= 1`` in Step 2’s K-loop?
    Will the kernel deadlock, produce wrong results, or both?
 3. For M=N=4096 with BLK_M=BLK_N=128, how many CTAs are launched in Step

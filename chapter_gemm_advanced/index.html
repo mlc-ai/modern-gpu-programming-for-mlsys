@@ -168,8 +168,8 @@ warp specialization (Step 9).</p>
 the pattern established in <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-numref">Section 7</span></a> and
 <a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-numref">Section 8</span></a>. Step 8 additionally uses cluster-scope
 buffers; for the <code class="docutils literal notranslate"><span class="pre">cbx</span></code> / <code class="docutils literal notranslate"><span class="pre">cby</span></code> axes and how a single layout can
-span two CTAs, refer to <a class="reference internal" href="../chapter_layouts/index.html#chap-layouts"><span class="std std-numref">Section 4</span></a>, section <em>Cluster
-and Remote Layouts</em>.</p>
+span two CTAs, see the <em>Where Replicas Show Up</em> paragraph in
+<a class="reference internal" href="../chapter_layouts/index.html#chap-layouts"><span class="std std-numref">Section 4</span></a>.</p>
 </div></blockquote>
 <section id="step-7-warp-specialization-pipeline">
 <span id="chap-warp-specialization"></span><h2><span class="section-number">9.1. </span>Step 7: Warp Specialization + Pipeline<a class="headerlink" href="#step-7-warp-specialization-pipeline" title="Permalink to this heading">¶</a></h2>
@@ -454,7 +454,6 @@ below for the SMEM trade-offs involved).</p>
 
                             <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>
                                 <span class="n">tma2mma</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">mma_ps</span><span class="o">.</span><span class="n">phase</span><span class="p">)</span>
-                                <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
                                 <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span>
                                     <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">],</span>
                                     <span class="n">Asmem</span><span class="p">[</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:],</span>
@@ -703,7 +702,6 @@ fastest way to find bugs:</p>
 <span class="w">          </span><span class="n">mbarrier_wait</span><span class="p">(</span><span class="n">ld2mma</span><span class="p">,</span><span class="w"> </span><span class="n">ld_phase</span><span class="p">);</span><span class="w">         </span><span class="c1">// wait for TMEM free</span>
 <span class="w">          </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">k</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">16</span><span class="p">;</span><span class="w"> </span><span class="o">++</span><span class="n">k</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w">           </span><span class="c1">// K_TILES iterations</span>
 <span class="w">            </span><span class="n">mbarrier_wait</span><span class="p">(</span><span class="n">tma2mma</span><span class="p">[</span><span class="n">stage</span><span class="p">],</span><span class="w"> </span><span class="n">phase</span><span class="p">);</span><span class="w">   </span><span class="c1">// wait for data</span>
-<span class="w">            </span><span class="n">tcgen05_fence_after_thread_sync</span><span class="p">();</span>
 <span class="w">            </span><span class="n">tcgen05_mma</span><span class="p">(...);</span><span class="w">                       </span><span class="c1">// MMA</span>
 <span class="w">            </span><span class="n">tcgen05_commit</span><span class="p">(</span><span class="n">mma2tma</span><span class="p">[</span><span class="n">stage</span><span class="p">]);</span><span class="w">          </span><span class="c1">// signal TMA</span>
 <span class="w">            </span><span class="n">stage</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">stage</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span>
@@ -847,8 +845,13 @@ writeback still reading.</p></li>
 error.</p>
 <p><strong>Common causes:</strong></p>
 <ol class="arabic simple">
-<li><p><strong>Missing fence.after_thread_sync() after mbarrier.wait</strong>: Threads
-read TMEM before MMA hardware finishes writing it.</p></li>
+<li><p><strong>Missing fence.after_thread_sync() in the epilogue</strong>: In the
+writeback path, after <code class="docutils literal notranslate"><span class="pre">mma2ld.wait(phase)</span></code> and immediately before
+the first <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> into registers, call
+<code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code>. Without it, threads may read stale
+TMEM data from a previous MMA epoch. This is the only place the fence
+is needed; on the TMA→MMA edge the mbarrier already orders things
+correctly.</p></li>
 <li><p><strong>Missing fence.proxy_async(“shared::cta”) before TMA store</strong>: TMA
 engine doesn’t see the SMEM writes from threads.</p></li>
 <li><p><strong>Missing cp_async.bulk.commit_group() / wait_group(0) after TMA
@@ -1113,7 +1116,6 @@ writeback warpgroups (128 threads each) arrive.</p></li>
 
                                 <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>
                                     <span class="n">tma2mma</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">mma_ps</span><span class="o">.</span><span class="n">phase</span><span class="p">)</span>
-                                    <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
                                     <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span>
                                         <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">MMA_N</span><span class="p">],</span>
                                         <span class="n">Asmem</span><span class="p">[</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:],</span>
@@ -1449,7 +1451,6 @@ once exceeds register capacity</p></li>
 
                                 <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>
                                     <span class="n">tma2mma</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">mma_ps</span><span class="o">.</span><span class="n">phase</span><span class="p">)</span>
-                                    <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
                                     <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span>
                                         <span class="n">tmem</span><span class="p">[:,</span> <span class="n">warp_id</span> <span class="o">*</span> <span class="n">MMA_N</span><span class="p">:</span><span class="n">warp_id</span> <span class="o">*</span> <span class="n">MMA_N</span> <span class="o">+</span> <span class="n">MMA_N</span><span class="p">],</span>
                                         <span class="n">Asmem</span><span class="p">[</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">warp_id</span><span class="p">,</span> <span class="p">:,</span> <span class="p">:],</span>
