@@ -349,8 +349,8 @@ contiguous range:</p>
 <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">warp</span><span class="p">()[</span><span class="mi">0</span><span class="p">:</span><span class="mi">1</span><span class="p">]:</span>                                   <span class="c1"># first warp only</span>
     <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>                          <span class="c1"># TMEM alloc instruction</span>
 
-<span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warpgroup&quot;</span><span class="p">)[</span><span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">lane_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]:</span>  <span class="c1"># single thread in a warpgroup</span>
-    <span class="n">mma_bar</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">arrive_count</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warpgroup&quot;</span><span class="p">)[</span><span class="mi">0</span><span class="p">:</span><span class="mi">1</span><span class="p">]:</span>               <span class="c1"># first thread of this warpgroup</span>
+    <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="mi">1</span><span class="p">)</span>            <span class="c1"># raw mbarrier.init(ptr, count)</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code> is the most common filter — paired with
@@ -499,8 +499,9 @@ CTA’s SMEM via cross-CTA access; the <code class="docutils literal notranslate
 <span class="math notranslate nohighlight">\(256\)</span>.</p></li>
 <li><p>Tile shape inferred from the layouts → select a valid <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>
 M-N-K shape (<span class="math notranslate nohighlight">\(M \in \{64, 128\}\)</span> for single-CTA or
-<span class="math notranslate nohighlight">\(\{128, 256\}\)</span> with <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code>, <span class="math notranslate nohighlight">\(N\)</span> any multiple of 8
-up to 256, <span class="math notranslate nohighlight">\(K\)</span> set by element type).</p></li>
+<span class="math notranslate nohighlight">\(\{128, 256\}\)</span> with <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code>; <span class="math notranslate nohighlight">\(N \le 256\)</span> with a
+step that depends on <span class="math notranslate nohighlight">\(M\)</span> and CTA group — see
+<a class="reference internal" href="../chapter_background/index.html#chap-background"><span class="std std-numref">Section 1</span></a>; <span class="math notranslate nohighlight">\(K\)</span> set by element type).</p></li>
 </ul>
 <p>A single primitive call emits one — or, for large tiles, a short loop of
 — <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> instructions with the right bit-packed instruction and

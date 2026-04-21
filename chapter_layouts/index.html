@@ -179,13 +179,21 @@ A tensor in a GPU is indexed by <em>physical</em> coordinates that depend on
 where it lives:</p>
 <ul class="simple">
 <li><p>In <strong>global memory (GMEM)</strong> a tensor is a flat byte array; <code class="docutils literal notranslate"><span class="pre">A[m,</span> <span class="pre">k]</span></code>
-becomes a byte offset.</p></li>
-<li><p>In <strong>shared memory (SMEM)</strong> a tensor lives in a 32-bank scratchpad
-with 4-byte banks; <code class="docutils literal notranslate"><span class="pre">A[m,</span> <span class="pre">k]</span></code> becomes a (bank, bank-offset) pair.</p></li>
-<li><p>In <strong>tensor memory (TMEM)</strong> a tensor is a 2D array addressed by
-<code class="docutils literal notranslate"><span class="pre">(TLane,</span> <span class="pre">TCol)</span></code>; <code class="docutils literal notranslate"><span class="pre">A[m,</span> <span class="pre">k]</span></code> becomes a <code class="docutils literal notranslate"><span class="pre">(TLane,</span> <span class="pre">TCol)</span></code> pair.</p></li>
-<li><p>In <strong>registers (RF)</strong> a tensor is sharded across 128 threads of a
-warpgroup; <code class="docutils literal notranslate"><span class="pre">A[m,</span> <span class="pre">k]</span></code> becomes a (thread-id, register-index) pair.</p></li>
+becomes a single byte offset.</p></li>
+<li><p>In <strong>shared memory (SMEM)</strong> a tensor is <em>also</em> a flat per-CTA byte
+array, but the bytes are physically interleaved across 32 memory banks
+of 4 B each. <code class="docutils literal notranslate"><span class="pre">A[m,</span> <span class="pre">k]</span></code> is still a byte offset; the bank number is
+just the low bits of that offset, and bad layouts show up as <em>bank
+conflicts</em> (a warp’s 32 lanes colliding on the same bank).</p></li>
+<li><p>In <strong>tensor memory (TMEM)</strong> a tensor is a genuinely 2D scratchpad of
+32-bit cells addressed by <code class="docutils literal notranslate"><span class="pre">(TLane,</span> <span class="pre">TCol)</span></code>; <code class="docutils literal notranslate"><span class="pre">A[m,</span> <span class="pre">k]</span></code> becomes a
+<code class="docutils literal notranslate"><span class="pre">(TLane,</span> <span class="pre">TCol)</span></code> pair.</p></li>
+<li><p>In <strong>registers (RF)</strong> the register file is per-thread, so there is no
+“the” address for <code class="docutils literal notranslate"><span class="pre">A[m,</span> <span class="pre">k]</span></code> at all. A logical tile has to be
+<em>distributed</em> across the threads of a cooperating team (a single
+thread, a warp, a warpgroup, or the whole CTA), and the layout
+declares which thread holds which element and at which register
+offset.</p></li>
 </ul>
 <p>A <strong>layout</strong> is the function that performs this translation. The same
 logical tile has four very different layouts across these spaces, and
@@ -386,11 +394,14 @@ extra outer dimension:</p>
 to <code class="docutils literal notranslate"><span class="pre">TCol</span></code> with stride 1. This is the only layout <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> can
 write directly. Two rules:</p>
 <ul class="simple">
-<li><p><strong>The row extent is always 128.</strong> <code class="docutils literal notranslate"><span class="pre">TLane</span></code> has 128 physical lanes.
-Even a 64-row MMA instruction writes into 128 TMEM rows via a 64×N
-logical view over a 128-row physical backing. You <em>slice</em> the column
+<li><p><strong>The row extent is always 128.</strong> <code class="docutils literal notranslate"><span class="pre">TLane</span></code> has 128 physical lanes,
+and TMEM allocations are always declared against this full 128-row
+backing. An <code class="docutils literal notranslate"><span class="pre">.m128n*</span></code> MMA instruction fills all 128 rows of its
+tile; an <code class="docutils literal notranslate"><span class="pre">.m64n*</span></code> MMA instruction only uses the first 64 <code class="docutils literal notranslate"><span class="pre">TLane</span></code>
+rows, leaving rows 64–127 untouched (available for an independent
+64-row MMA to share the same allocation). You <em>slice</em> the column
 dimension to match an MMA instruction (<code class="docutils literal notranslate"><span class="pre">N</span> <span class="pre">=</span> <span class="pre">128,</span> <span class="pre">256,</span> <span class="pre">…</span></code>), but the
-row dimension is always 128.</p></li>
+row dimension of the declared TMEM buffer is always 128.</p></li>
 <li><p><strong>Axis order matters.</strong> Swapping to <code class="docutils literal notranslate"><span class="pre">(1&#64;TCol,</span> <span class="pre">1&#64;TLane)</span></code> transposes
 the tile in TMEM — correct-looking code, transposed output.</p></li>
 </ul>
@@ -494,9 +505,9 @@ layout pattern does not appear in its code.</p></li>
 </ul>
 <p>The explicit replica you will actually see is therefore the
 Flash-Attention scale vector. For the clustered GEMM,
-<code class="docutils literal notranslate"><span class="pre">Tx.copy_async(...,</span> <span class="pre">cta_group=2)</span></code> and
-<code class="docutils literal notranslate"><span class="pre">smem_pipe.full.remote_view(...)</span></code> compose any cluster-aware layouts
-for you.</p>
+<code class="docutils literal notranslate"><span class="pre">Tx.copy_async(...,</span> <span class="pre">cta_group=2)</span></code> and the barrier helpers
+(<code class="docutils literal notranslate"><span class="pre">TMABar.remote_view(0)</span></code> etc.) compose any cluster-aware layouts for
+you.</p>
 </section>
 </section>
 <section id="summary">

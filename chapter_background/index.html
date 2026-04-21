@@ -233,8 +233,13 @@ Memory
 <td><p>Very low</p></td>
 <td><p>Private
 high-bandwidth
-accumulator memory
-for Tensor Cores</p></td>
+Tensor-Core
+scratchpad; holds
+MMA accumulators
+and, for some
+<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>
+variants, the A
+operand</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Register
 File (RF)</strong></p></td>
@@ -420,9 +425,11 @@ written around the Tensor Core.</p>
 <li><p><span class="math notranslate nohighlight">\(M \in \{64, 128\}\)</span> (row tile; the <span class="math notranslate nohighlight">\(M\)</span> dimension of
 <span class="math notranslate nohighlight">\(A\)</span> and <span class="math notranslate nohighlight">\(D\)</span>). With 2-CTA cooperation <span class="math notranslate nohighlight">\(M\)</span> doubles to
 128 or 256.</p></li>
-<li><p><span class="math notranslate nohighlight">\(N\)</span> is any multiple of 8 up to 256,
-i.e. <span class="math notranslate nohighlight">\(N \in \{8, 16, 24, \dots, 256\}\)</span> (column tile; the most
-flexible dimension).</p></li>
+<li><p><span class="math notranslate nohighlight">\(N \le 256\)</span> (column tile; the most flexible dimension). The
+exact step depends on <span class="math notranslate nohighlight">\(M\)</span> and the CTA group: <span class="math notranslate nohighlight">\(M=64\)</span>
+single-CTA allows multiples of <span class="math notranslate nohighlight">\(8\)</span>; <span class="math notranslate nohighlight">\(M=128\)</span> single-CTA
+requires multiples of <span class="math notranslate nohighlight">\(16\)</span>; 2-CTA cooperative mode requires
+multiples of <span class="math notranslate nohighlight">\(32\)</span>.</p></li>
 <li><p><span class="math notranslate nohighlight">\(K = 16\)</span> (inner-product dimension, fixed for fp16/bf16
 operands).</p></li>
 </ul>
@@ -596,8 +603,12 @@ started loading operands or intermediate results. In practice Hopper
 kernels spend substantial effort managing this pressure (multiple
 smaller MMAs, register reuse tricks).</p>
 <p>Blackwell solves the problem structurally by adding <strong>TMEM</strong> — a 128 ×
-512 32-bit scratchpad per SM dedicated to accumulators. <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>
-writes its output to TMEM, not to registers. The warpgroup only pulls
+512 32-bit scratchpad per SM, primarily used as the MMA accumulator
+(and, for <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> variants with operand A in TMEM, as an
+A-operand staging area; Flash Attention in
+<a class="reference internal" href="../chapter_flash_attention/index.html#chap-flash-attention"><span class="std std-numref">Section 10</span></a> exploits this to keep the P matrix
+between the two MMAs inside TMEM). <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> writes its
+accumulator output to TMEM, not to registers. The warpgroup only pulls
 data into registers (<code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>) during the writeback epilogue, when
 it actually needs to apply activation or cast to the output dtype.
 Registers are now free for operand pipelining.</p>
@@ -694,10 +705,10 @@ into the SM array is several times HBM’s. A sensibly scheduled GEMM
 reuses heavily at L2: along a row of the output grid every tile shares
 the same A-rows; along a column every tile shares the same B-columns.
 Persistent tile schedulers (introduced in
-<a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-numref">Section 9</span></a>) visit tiles in an order that keeps these
-hot operands resident. Measured L2 hit rates for well-scheduled GEMMs on
-B200 are typically 70–90%, so the <em>effective</em> bandwidth an SM sees sits
-much closer to L2 bandwidth than to HBM bandwidth.</p>
+<a class="reference internal" href="../chapter_gemm_async/index.html#chap-persistent-kernel"><span class="std std-numref">Section 8.3</span></a>) visit tiles in an order that keeps
+these hot operands resident. Measured L2 hit rates for well-scheduled
+GEMMs on B200 are typically 70–90%, so the <em>effective</em> bandwidth an SM
+sees sits much closer to L2 bandwidth than to HBM bandwidth.</p>
 <p>The practical consequence is that the <span class="math notranslate nohighlight">\(MN/(M+N) \geq 281\)</span>
 inequality is the wrong condition to design around. It is the
 HBM-cold-miss worst case. The condition that actually matters is: can
@@ -865,9 +876,14 @@ multiple CTAs simultaneously, reducing global memory bandwidth.</p></li>
 across CTAs in the same cluster, enabling producer-consumer
 synchronization beyond a single CTA.</p></li>
 </ul>
-<p>Clustering enables hardware units such as tcgen05 MMA to read data from
-both CTAs’ shared memory, effectively doubling the working set without
-additional global memory bandwidth.</p>
+<p>Clustering gives hardware units such as tcgen05 MMA access to every
+CTA’s shared memory in the cluster, so a single MMA instance can read an
+operand tile that spans multiple SMs’ SMEM and grows the effective MMA
+working set beyond one SM’s 228 KB budget. The global-memory bandwidth
+used is still the sum of each CTA’s own loads — cooperative MMA itself
+does not reduce GMEM traffic. TMA <em>multicast</em> is the complementary
+feature that actually does save GMEM bandwidth, by delivering one GMEM
+tile to every CTA in the cluster from a single load.</p>
 </section>
 <section id="numbers-to-remember">
 <h2><span class="section-number">1.10. </span>Numbers to Remember<a class="headerlink" href="#numbers-to-remember" title="Permalink to this heading">¶</a></h2>

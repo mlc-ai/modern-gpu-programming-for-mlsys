@@ -558,28 +558,31 @@ below for the SMEM trade-offs involved).</p>
 </section>
 <section id="epilogue-writeback-details">
 <h3><span class="section-number">9.1.8. </span>Epilogue (Writeback) Details<a class="headerlink" href="#epilogue-writeback-details" title="Permalink to this heading">¶</a></h3>
-<p>The writeback warpgroup processes the output in <code class="docutils literal notranslate"><span class="pre">EPI_N</span></code>-column chunks
-rather than writing the full <code class="docutils literal notranslate"><span class="pre">BLK_N=128</span></code> columns at once. This is
-because reading all 128 columns of TMEM into registers at once would
-require too many registers per thread (128 x fp32 = 512 bytes), causing
-register spills to local memory and killing performance. By processing
-in smaller chunks (e.g., <code class="docutils literal notranslate"><span class="pre">EPI_N=64</span></code>), each iteration only needs a
-fraction of the registers, and the Dsmem buffer is also smaller:</p>
+<p>Step 7 keeps the epilogue simple: the writeback warpgroup reads the full
+<code class="docutils literal notranslate"><span class="pre">BLK_N=128</span></code> columns of TMEM into registers in one pass, then issues a
+single TMA store per tile. The sequence is:</p>
 <ol class="arabic simple">
-<li><p>Wait for MMA: <code class="docutils literal notranslate"><span class="pre">mma2ld.wait(phase)</span></code> + <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code>
-— ensure TMEM writes are visible</p></li>
-<li><p>Loop over <code class="docutils literal notranslate"><span class="pre">BLK_N</span> <span class="pre">//</span> <span class="pre">EPI_N</span></code> chunks:</p>
-<ul class="simple">
-<li><p>Read <code class="docutils literal notranslate"><span class="pre">EPI_N</span></code> columns of TMEM -&gt; registers</p></li>
-<li><p>Cast fp32 -&gt; fp16</p></li>
-<li><p>Write to Dsmem (<code class="docutils literal notranslate"><span class="pre">EPI_N</span></code> columns, not the full <code class="docutils literal notranslate"><span class="pre">BLK_N</span></code>)</p></li>
-<li><p>TMA store:
-<code class="docutils literal notranslate"><span class="pre">Tx.copy_async(D[...,</span> <span class="pre">col_st:col_st+EPI_N],</span> <span class="pre">Dsmem,</span> <span class="pre">dispatch=&quot;tma&quot;)</span></code></p></li>
-</ul>
-</li>
+<li><p>Wait for MMA: <code class="docutils literal notranslate"><span class="pre">mma2ld.wait(phase)</span></code>. The <code class="docutils literal notranslate"><span class="pre">tirx-kernels</span></code> reference
+inserts <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> here as a conservative extra —
+the MMA-completion mbarrier already covers the ordering, and most
+kernels (including CUTLASS) omit it.</p></li>
+<li><p>Read TMEM -&gt; registers (128 fp32 per thread, warpgroup scope via
+<code class="docutils literal notranslate"><span class="pre">Tx.copy(reg_wg,</span> <span class="pre">tmem[:,</span> <span class="pre">:BLK_N])</span></code>).</p></li>
 <li><p>Signal MMA: <code class="docutils literal notranslate"><span class="pre">ld2mma.arrive()</span></code> (all 128 threads arrive) — TMEM is
-now free for the next tile</p></li>
+now free for the next tile.</p></li>
+<li><p>Cast fp32 -&gt; fp16 in registers.</p></li>
+<li><p>Write registers -&gt; Dsmem, then
+<code class="docutils literal notranslate"><span class="pre">fence.proxy_async(&quot;shared::cta&quot;)</span> <span class="pre">+</span> <span class="pre">warpgroup_sync(10)</span></code> to flush.</p></li>
+<li><p>TMA store Dsmem -&gt; GMEM via
+<code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span> <span class="pre">+</span> <span class="pre">wait_group(0)</span></code>.</p></li>
 </ol>
+<p>Step 8 (with <code class="docutils literal notranslate"><span class="pre">BLK_N=256</span></code>) and Step 9 (with <code class="docutils literal notranslate"><span class="pre">MMA_N=256</span></code> per consumer)
+revisit this epilogue and split the writeback into <code class="docutils literal notranslate"><span class="pre">EPI_N</span></code>-column
+chunks (<code class="docutils literal notranslate"><span class="pre">EPI_N=64</span></code>). The reason is register pressure: reading 256 fp32
+per thread (256 * 4 = 1024 bytes, distributed across 128 threads and
+their registers) risks spills to local memory, and it also forces a
+larger Dsmem buffer. By chunking into 64-column groups, each iteration
+keeps only <code class="docutils literal notranslate"><span class="pre">EPI_N</span></code> fp32 registers live and issues a smaller TMA store.</p>
 </section>
 <section id="key-points">
 <h3><span class="section-number">9.1.9. </span>Key Points<a class="headerlink" href="#key-points" title="Permalink to this heading">¶</a></h3>
@@ -845,13 +848,20 @@ writeback still reading.</p></li>
 error.</p>
 <p><strong>Common causes:</strong></p>
 <ol class="arabic simple">
-<li><p><strong>Missing fence.after_thread_sync() in the epilogue</strong>: In the
-writeback path, after <code class="docutils literal notranslate"><span class="pre">mma2ld.wait(phase)</span></code> and immediately before
-the first <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> into registers, call
-<code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code>. Without it, threads may read stale
-TMEM data from a previous MMA epoch. This is the only place the fence
-is needed; on the TMA→MMA edge the mbarrier already orders things
-correctly.</p></li>
+<li><p><strong>Writeback-path ordering (``fence.after_thread_sync()`` — optional,
+conservative)</strong>: The <code class="docutils literal notranslate"><span class="pre">tirx-kernels</span></code> reference kernels insert
+<code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> in the writeback path, after
+<code class="docutils literal notranslate"><span class="pre">mma2ld.wait(phase)</span></code> and immediately before the first
+<code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> into registers. Strictly speaking the MMA-completion
+mbarrier already carries release→acquire semantics against the
+downstream thread-proxy reads, so most production kernels (including
+CUTLASS) omit this fence entirely and still produce correct results.
+If you are mirroring the <code class="docutils literal notranslate"><span class="pre">tirx-kernels</span></code> style, keep the fence
+exactly there; do <strong>not</strong> add it on the TMA→MMA edge, where the
+mbarrier alone is sufficient. Stale TMEM data almost always has a
+different root cause — a missing <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code>, <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>
+issued outside <code class="docutils literal notranslate"><span class="pre">elect_sync</span></code>, or the consumer running ahead of the
+MMA epoch.</p></li>
 <li><p><strong>Missing fence.proxy_async(“shared::cta”) before TMA store</strong>: TMA
 engine doesn’t see the SMEM writes from threads.</p></li>
 <li><p><strong>Missing cp_async.bulk.commit_group() / wait_group(0) after TMA
@@ -1217,8 +1227,9 @@ writeback warpgroups (128 threads each) arrive.</p></li>
 <li><p>TMA arrive byte count includes both CTAs:
 <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">(BLK_M</span> <span class="pre">*</span> <span class="pre">BLK_K</span> <span class="pre">+</span> <span class="pre">BLK_N</span> <span class="pre">*</span> <span class="pre">BLK_K)</span> <span class="pre">*</span> <span class="pre">F16_SIZE</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> and <code class="docutils literal notranslate"><span class="pre">tcgen05.dealloc</span></code> must use <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code></p></li>
-<li><p>Writeback uses <code class="docutils literal notranslate"><span class="pre">EPI_N=64</span></code> — reading all 256 TMEM columns at once
-exceeds register capacity</p></li>
+<li><p>Writeback splits the 256 output columns into two 128-column chunks —
+reading all 256 TMEM columns at once exceeds register capacity. Step 9
+shrinks the chunk further to <code class="docutils literal notranslate"><span class="pre">EPI_N=64</span></code></p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">cluster_sync()</span></code> replaces <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> at the end (ensures all
 CTAs are done before TMEM dealloc)</p></li>
 </ul>
@@ -1228,8 +1239,8 @@ ms</strong> — within 10% of cuBLAS.</p>
 be <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">(BLK_M*BLK_K</span> <span class="pre">+</span> <span class="pre">BLK_N*BLK_K)</span> <span class="pre">*</span> <span class="pre">F16_SIZE</span></code>, (2) tile
 scheduler dimensions should be
 <code class="docutils literal notranslate"><span class="pre">num_m_tiles=M//256,</span> <span class="pre">num_n_tiles=N//256</span></code> for the 256x256 cluster tile,
-(3) writeback has 4 TMA stores (256 cols / EPI_N=64) — make sure each
-one completes before reusing Dsmem.</p>
+(3) writeback issues 2 TMA stores (one per 128-column chunk) — make sure
+each one completes before reusing Dsmem.</p>
 <hr class="docutils" />
 <p>The cluster optimization maximizes arithmetic intensity per memory
 access. The final step pushes compute density further by adding a second

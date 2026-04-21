@@ -27,13 +27,21 @@ A tensor in a GPU is indexed by *physical* coordinates that depend on
 where it lives:
 
 - In **global memory (GMEM)** a tensor is a flat byte array; ``A[m, k]``
-  becomes a byte offset.
-- In **shared memory (SMEM)** a tensor lives in a 32-bank scratchpad
-  with 4-byte banks; ``A[m, k]`` becomes a (bank, bank-offset) pair.
-- In **tensor memory (TMEM)** a tensor is a 2D array addressed by
-  ``(TLane, TCol)``; ``A[m, k]`` becomes a ``(TLane, TCol)`` pair.
-- In **registers (RF)** a tensor is sharded across 128 threads of a
-  warpgroup; ``A[m, k]`` becomes a (thread-id, register-index) pair.
+  becomes a single byte offset.
+- In **shared memory (SMEM)** a tensor is *also* a flat per-CTA byte
+  array, but the bytes are physically interleaved across 32 memory banks
+  of 4 B each. ``A[m, k]`` is still a byte offset; the bank number is
+  just the low bits of that offset, and bad layouts show up as *bank
+  conflicts* (a warp’s 32 lanes colliding on the same bank).
+- In **tensor memory (TMEM)** a tensor is a genuinely 2D scratchpad of
+  32-bit cells addressed by ``(TLane, TCol)``; ``A[m, k]`` becomes a
+  ``(TLane, TCol)`` pair.
+- In **registers (RF)** the register file is per-thread, so there is no
+  “the” address for ``A[m, k]`` at all. A logical tile has to be
+  *distributed* across the threads of a cooperating team (a single
+  thread, a warp, a warpgroup, or the whole CTA), and the layout
+  declares which thread holds which element and at which register
+  offset.
 
 A **layout** is the function that performs this translation. The same
 logical tile has four very different layouts across these spaces, and
@@ -259,11 +267,14 @@ Row dimension pinned to ``TLane`` with stride 1; column dimension pinned
 to ``TCol`` with stride 1. This is the only layout ``tcgen05.mma`` can
 write directly. Two rules:
 
-- **The row extent is always 128.** ``TLane`` has 128 physical lanes.
-  Even a 64-row MMA instruction writes into 128 TMEM rows via a 64×N
-  logical view over a 128-row physical backing. You *slice* the column
+- **The row extent is always 128.** ``TLane`` has 128 physical lanes,
+  and TMEM allocations are always declared against this full 128-row
+  backing. An ``.m128n*`` MMA instruction fills all 128 rows of its
+  tile; an ``.m64n*`` MMA instruction only uses the first 64 ``TLane``
+  rows, leaving rows 64–127 untouched (available for an independent
+  64-row MMA to share the same allocation). You *slice* the column
   dimension to match an MMA instruction (``N = 128, 256, …``), but the
-  row dimension is always 128.
+  row dimension of the declared TMEM buffer is always 128.
 - **Axis order matters.** Swapping to ``(1@TCol, 1@TLane)`` transposes
   the tile in TMEM — correct-looking code, transposed output.
 
@@ -356,9 +367,9 @@ place, and in one more place it is conceptually implicit:
 
 The explicit replica you will actually see is therefore the
 Flash-Attention scale vector. For the clustered GEMM,
-``Tx.copy_async(..., cta_group=2)`` and
-``smem_pipe.full.remote_view(...)`` compose any cluster-aware layouts
-for you.
+``Tx.copy_async(..., cta_group=2)`` and the barrier helpers
+(``TMABar.remote_view(0)`` etc.) compose any cluster-aware layouts for
+you.
 
 Summary
 -------

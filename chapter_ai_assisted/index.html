@@ -362,7 +362,7 @@ There is one deliberate bug:</p>
             <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
         <span class="p">)</span>
     <span class="c1"># BUG: arrive is outside the elected-thread scope</span>
-    <span class="n">mma2tma</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">)</span>
+    <span class="n">mma2tma</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">cta_mask</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
     <span class="n">mma_ps</span><span class="o">.</span><span class="n">move_to_next_stage</span><span class="p">()</span>
 </pre></div>
 </div>
@@ -402,7 +402,7 @@ commit-group issue with this level of context.</p>
             <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
         <span class="p">)</span>
         <span class="c1"># Now only the elected thread (with a non-empty commit group) arrives</span>
-        <span class="n">mma2tma</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">)</span>
+        <span class="n">mma2tma</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">cta_mask</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
     <span class="n">mma_ps</span><span class="o">.</span><span class="n">move_to_next_stage</span><span class="p">()</span>
 </pre></div>
 </div>

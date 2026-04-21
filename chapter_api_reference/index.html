@@ -464,15 +464,6 @@ engine will deposit into SMEM for this stage.</p></td>
 <section id="common-pitfalls">
 <h2><span class="section-number">12.8. </span>Common Pitfalls<a class="headerlink" href="#common-pitfalls" title="Permalink to this heading">¶</a></h2>
 <ul class="simple">
-<li><p><strong>Do NOT use Python ``and``/``or`` in ``if`` statements on TIR
-variables</strong>: <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">wg_id</span> <span class="pre">==</span> <span class="pre">1</span> <span class="pre">and</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0:</span></code> does NOT work. Python
-<code class="docutils literal notranslate"><span class="pre">and</span></code> on TIR expression objects uses truthiness (always True), so
-<code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">and</span> <span class="pre">B</span> <span class="pre">and</span> <span class="pre">C</span></code> silently returns <code class="docutils literal notranslate"><span class="pre">C</span></code>. For example,
-<code class="docutils literal notranslate"><span class="pre">wg_id</span> <span class="pre">==</span> <span class="pre">1</span> <span class="pre">and</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0</span> <span class="pre">and</span> <span class="pre">lane_id</span> <span class="pre">==</span> <span class="pre">0</span></code> effectively becomes
-<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">lane_id</span> <span class="pre">==</span> <span class="pre">0:</span></code> — all WGs and warps enter. <strong>Fix</strong>: Use nested
-<code class="docutils literal notranslate"><span class="pre">if</span></code> statements: <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">wg_id</span> <span class="pre">==</span> <span class="pre">1:</span></code> then <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0:</span></code>. Note:
-<code class="docutils literal notranslate"><span class="pre">and</span></code> works inside <code class="docutils literal notranslate"><span class="pre">Tx.thread(parent=...)[cond]</span></code> scope selectors
-because they handle TIR expressions differently.</p></li>
 <li><p><strong>``accum`` must be boolean-compatible</strong>: Use <code class="docutils literal notranslate"><span class="pre">False</span></code> (not <code class="docutils literal notranslate"><span class="pre">0</span></code>)
 for the first MMA iteration.</p></li>
 <li><p><strong>Fence API</strong>: Use <code class="docutils literal notranslate"><span class="pre">Tx.ptx.fence.proxy_async(&quot;shared::cta&quot;)</span></code> —

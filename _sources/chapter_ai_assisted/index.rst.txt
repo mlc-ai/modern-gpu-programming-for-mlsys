@@ -180,7 +180,7 @@ There is one deliberate bug:
                cta_group=1,
            )
        # BUG: arrive is outside the elected-thread scope
-       mma2tma.arrive(mma_ps.stage)
+       mma2tma.arrive(mma_ps.stage, cta_group=1, cta_mask=0)
        mma_ps.move_to_next_stage()
 
 **Symptom:** Output is all zeros or random garbage,
@@ -232,7 +232,7 @@ commit-group issue with this level of context.
                cta_group=1,
            )
            # Now only the elected thread (with a non-empty commit group) arrives
-           mma2tma.arrive(mma_ps.stage)
+           mma2tma.arrive(mma_ps.stage, cta_group=1, cta_mask=0)
        mma_ps.move_to_next_stage()
 
 This is a very common bug pattern in Blackwell kernel development. It is

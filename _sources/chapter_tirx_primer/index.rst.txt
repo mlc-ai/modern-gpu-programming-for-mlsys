@@ -201,8 +201,8 @@ contiguous range:
    with Tx.warp()[0:1]:                                   # first warp only
        Tx.ptx.tcgen05.alloc(...)                          # TMEM alloc instruction
 
-   with Tx.thread(parent="warpgroup")[warp_id == 0 and lane_id == 0]:  # single thread in a warpgroup
-       mma_bar.init(arrive_count=1)
+   with Tx.thread(parent="warpgroup")[0:1]:               # first thread of this warpgroup
+       Tx.ptx.mbarrier.init(bar.ptr_to([0]), 1)            # raw mbarrier.init(ptr, count)
 
 ``elect_sync()`` is the most common filter — paired with
 ``Tx.thread(parent="warp")`` it gives exactly one thread per warp, which
@@ -334,8 +334,9 @@ consults:
   :math:`256`.
 - Tile shape inferred from the layouts → select a valid ``tcgen05.mma``
   M-N-K shape (:math:`M \in \{64, 128\}` for single-CTA or
-  :math:`\{128, 256\}` with ``cta_group=2``, :math:`N` any multiple of 8
-  up to 256, :math:`K` set by element type).
+  :math:`\{128, 256\}` with ``cta_group=2``; :math:`N \le 256` with a
+  step that depends on :math:`M` and CTA group — see
+  :numref:`chap_background`; :math:`K` set by element type).
 
 A single primitive call emits one — or, for large tiles, a short loop of
 — ``tcgen05.mma`` instructions with the right bit-packed instruction and

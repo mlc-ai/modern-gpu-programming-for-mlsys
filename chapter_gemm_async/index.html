@@ -179,7 +179,8 @@ We demonstrate with M=N=K=4096.</p>
 <ul class="simple">
 <li><p>Replacing synchronous <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> with asynchronous TMA:
 <code class="docutils literal notranslate"><span class="pre">Tx.copy_async(...,</span> <span class="pre">dispatch=&quot;tma&quot;)</span></code></p></li>
-<li><p>Single-thread TMA dispatch via <code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code></p></li>
+<li><p>Single-thread TMA load dispatch via a <code class="docutils literal notranslate"><span class="pre">tid</span> <span class="pre">==</span> <span class="pre">0</span></code> predicate (and why
+<code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code> alone is subtly wrong here)</p></li>
 <li><p>mbarrier-based byte-counting synchronization: <code class="docutils literal notranslate"><span class="pre">arrive.expect_tx</span></code> /
 <code class="docutils literal notranslate"><span class="pre">try_wait</span></code></p></li>
 <li><p>TMA store writeback: TMEM -&gt; register file -&gt; cast -&gt; Dsmem -&gt; TMA
@@ -196,14 +197,23 @@ store -&gt; GMEM, with proper sync at each stage</p></li>
 <span class="n">Tx</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
 </pre></div>
 </div>
-<p><strong>After (Step 4)</strong> — single thread issues TMA, mbarrier synchronizes:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">()[</span><span class="n">elect_sync</span><span class="p">()]:</span>      <span class="c1"># hardware selects 1 thread</span>
+<p><strong>After (Step 4)</strong> — a single thread issues TMA, mbarrier synchronizes:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tid</span> <span class="o">=</span> <span class="n">warp_id</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">+</span> <span class="n">lane_id</span>                 <span class="c1"># 0..127 within the warpgroup</span>
+<span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="s2">&quot;warpgroup&quot;</span><span class="p">)[</span><span class="n">tid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]:</span>   <span class="c1"># exactly 1 thread</span>
     <span class="n">Tx</span><span class="o">.</span><span class="n">copy_async</span><span class="p">(</span><span class="n">Asmem</span><span class="p">,</span> <span class="n">A</span><span class="p">[</span><span class="o">...</span><span class="p">],</span> <span class="n">dispatch</span><span class="o">=</span><span class="s2">&quot;tma&quot;</span><span class="p">)</span>
     <span class="n">Tx</span><span class="o">.</span><span class="n">copy_async</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">,</span> <span class="n">B</span><span class="p">[</span><span class="o">...</span><span class="p">],</span> <span class="n">dispatch</span><span class="o">=</span><span class="s2">&quot;tma&quot;</span><span class="p">)</span>
-    <span class="n">mbarrier</span><span class="o">.</span><span class="n">arrive</span><span class="o">.</span><span class="n">expect_tx</span><span class="p">(</span><span class="n">byte_count</span><span class="p">)</span>    <span class="c1"># tell barrier how many bytes</span>
-<span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">phase</span><span class="p">)</span>            <span class="c1"># all threads wait until TMA completes</span>
+    <span class="n">mbarrier</span><span class="o">.</span><span class="n">arrive</span><span class="o">.</span><span class="n">expect_tx</span><span class="p">(</span><span class="n">byte_count</span><span class="p">)</span>       <span class="c1"># tell barrier how many bytes</span>
+<span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">phase</span><span class="p">)</span>                         <span class="c1"># all threads wait until TMA completes</span>
 </pre></div>
 </div>
+<p>A common pitfall is to reach for <code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code> here. <code class="docutils literal notranslate"><span class="pre">elect.sync</span></code>
+is a <em>per-warp</em> PTX instruction, so
+<code class="docutils literal notranslate"><span class="pre">with</span> <span class="pre">Tx.thread(parent=&quot;warpgroup&quot;)[Tx.ptx.elect_sync()]</span></code> gives you
+<strong>one elected thread per warp = 4 threads in a 4-warp warpgroup</strong>, not
+1. That is fine for TMA <em>stores</em> (the four identical stores are
+idempotent) but would cause an <code class="docutils literal notranslate"><span class="pre">expect_tx</span></code> byte-count mismatch on the
+load side, so on the load side the kernels in this tutorial pick a
+single thread directly with <code class="docutils literal notranslate"><span class="pre">tid</span> <span class="pre">==</span> <span class="pre">0</span></code>.</p>
 <p><strong>Why faster</strong>: The speedup is not from load/compute overlap (there is
 none yet — threads still wait after TMA). It comes from <em>how</em> data is
 moved:</p>
@@ -237,8 +247,8 @@ copies.</p></li>
 scope (<code class="docutils literal notranslate"><span class="pre">Tx.cta()</span></code>,
 <code class="docutils literal notranslate"><span class="pre">Tx.warpgroup()</span></code>,
 or <code class="docutils literal notranslate"><span class="pre">Tx.thread()</span></code>)</p></td>
-<td><p>TMA hardware engine — one thread
-issues, hardware does the rest</p></td>
+<td><p>TMA hardware engine — one thread issues, hardware
+does the rest</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Dispatch</strong></p></td>
 <td><p>Default (software)</p></td>
@@ -248,14 +258,13 @@ issues, hardware does the rest</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> — wait
 for all threads to
 finish</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">mbarrier.try_wait(phase)</span></code> — wait
-for TMA hardware to signal
-completion</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mbarrier.try_wait(phase)</span></code> — wait for TMA
+hardware to signal completion</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>Thread scope</strong></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">with</span> <span class="pre">Tx.cta():</span></code>
 (128 threads)</p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">with</span> <span class="pre">Tx.thread()[elect_sync()]:</span></code>
+<td><p><code class="docutils literal notranslate"><span class="pre">with</span> <span class="pre">Tx.thread(parent=&quot;warpgroup&quot;)[tid</span> <span class="pre">==</span> <span class="pre">0]:</span></code>
 (1 thread)</p></td>
 </tr>
 </tbody>
@@ -551,8 +560,14 @@ followed by <code class="docutils literal notranslate"><span class="pre">commit_
 </section>
 <section id="understanding-tmem">
 <h3><span class="section-number">8.1.9. </span>Understanding TMEM<a class="headerlink" href="#understanding-tmem" title="Permalink to this heading">¶</a></h3>
-<p>TMEM (Tensor Memory) is a special memory owned by each warpgroup, with
-128 rows x 512 columns. Two key properties:</p>
+<p>TMEM (Tensor Memory) is a Tensor-Core-private scratchpad that is
+<strong>per-SM</strong> (not per-warpgroup): one SM has exactly one 128-row ×
+512-column TMEM region, shared by whichever warpgroups of the resident
+CTA(s) need it. The 128-row extent is a hardware constant tied to the
+<code class="docutils literal notranslate"><span class="pre">TLane</span></code> axis, and it happens to match one warpgroup’s 128 threads —
+which is what makes the <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> TMEM→RF read a
+warpgroup-cooperative operation. Two further properties of the
+allocation call itself:</p>
 <ul class="simple">
 <li><p><strong>``.shape``</strong> determines how many bits per element. For fp32
 accumulators, each cell is 32 bits.</p></li>
@@ -573,7 +588,10 @@ registers:</p>
 axis matching with the TMEM <code class="docutils literal notranslate"><span class="pre">(1&#64;TLane,</span> <span class="pre">1&#64;TCol)</span></code> layout is what lets
 <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> lower to a <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> instruction (see the RF subsection
 of <a class="reference internal" href="../chapter_layouts/index.html#chap-layouts"><span class="std std-numref">Section 4</span></a> for the full axis-pairing table). TMEM reads
-<strong>must</strong> use warpgroup scope because TMEM is a warpgroup-level resource.</p>
+<strong>must</strong> use warpgroup scope because <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> is a
+warpgroup-cooperative instruction that consumes all 128 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> rows
+in one shot — not because TMEM itself is “owned” by a warpgroup (it is
+not; TMEM is SM-level).</p>
 <p>Note: If the K-loop runs inside an <code class="docutils literal notranslate"><span class="pre">elect_sync</span></code> or <code class="docutils literal notranslate"><span class="pre">tid</span> <span class="pre">==</span> <span class="pre">0</span></code> scope,
 other threads skip ahead to the writeback. Always ensure <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code>
 is called <strong>outside</strong> any thread-guarded scope before reading TMEM, so
