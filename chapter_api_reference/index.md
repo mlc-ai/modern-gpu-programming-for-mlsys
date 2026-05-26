@@ -1,7 +1,7 @@
-# TIRX API Reference
+# TIRX API Quick Reference
 :label:`chap_api_reference`
 
-This chapter provides a comprehensive reference for the TIRX APIs used in this tutorial.
+Reference for the TIRX APIs used across the examples.
 
 
 ## Thread Hierarchy
@@ -26,7 +26,7 @@ This chapter provides a comprehensive reference for the TIRX APIs used in this t
 | `Tx.thread_id_in_wg([128])` | Thread index within the warpgroup (warpgroup → thread; always 128) |
 | `Tx.lane_id([32])` | Thread index within a warp (warp → thread; always 32) |
 | `Tx.cuda.thread_rank()` | Linear thread index within the CTA (i.e., `threadIdx.x + threadIdx.y * blockDim.x + ...`). Used as the default `leader` predicate for one-thread-per-CTA work such as `MBarrier.init`. |
-| `Tx.ptx.elect_sync()` | Elect one thread *per warp* (so 4 threads in a 4-warp warpgroup). Good for `tcgen05.commit` and TMA stores; for TMA *loads* prefer `tid_in_wg == 0` so `expect_tx` is incremented exactly once. |
+| `Tx.ptx.elect_sync()` | Elect one thread *per warp* (so 4 threads in a 4-warp warpgroup). Use it only at sites that intentionally want per-warp elected issue. For one whole-tile TMA copy, use a single issuer such as `tid == 0` so the copy and byte-count update happen once. |
 
 
 ## Function Parameters
@@ -50,7 +50,7 @@ This chapter provides a comprehensive reference for the TIRX APIs used in this t
 | `Tx.TMEMPool(smem_pool, total_cols, cta_group, tmem_addr)` | TMEM pool. Wraps one `tcgen05.alloc` of `total_cols` columns whose returned base address is written to `tmem_addr[0]`; subsequent `alloc(shape, dtype, layout=...)` calls hand out `Tx.decl_buffer(scope="tmem", allocated_addr=...)` slices into that region. |
 | `Tx.alloc_local(shape, dtype)` | Allocate per-thread register buffer |
 | `buf.view(shape, layout=...)` | Create a view of a register buffer with a different layout |
-| `Tx.decl_buffer(shape, dtype, scope="tmem", ...)` | Declare a TMEM buffer |
+| `Tx.decl_buffer(shape, dtype, scope=..., data=..., allocated_addr=..., ...)` | Declare a buffer view or allocation. In these GEMM kernels it is used for TMEM views and aliases over existing storage. |
 | `Tx.address_of(buf)` | Get address of a buffer (used for TMEM alloc) |
 | `buf.ptr_to([idx])` | Get pointer to the idx-th element (used for mbarrier access) |
 | `tma_shared_layout(dtype, SwizzleMode, shape)` | Create TMA-compatible swizzled layout for SMEM |
@@ -67,7 +67,7 @@ This chapter provides a comprehensive reference for the TIRX APIs used in this t
 | `Tx.copy_async(dst, src, dispatch="tma", ...)` | TMA async copy (load or store) |
 | `Tx.copy_async(reg, tmem)` / `Tx.copy_async(tmem, reg)` | `tcgen05.ld` / `tcgen05.st` (warpgroup scope); follow with `Tx.ptx.tcgen05.wait.ld()` / `wait.st()` |
 | `Tx.cast(dst, src)` | Element-wise type cast |
-| `Tx.gemm_async(C, A, B, *, transA=False, transB=False, accum=False, dispatch="tcgen05", **kwargs)` | tcgen05 MMA. `accum` is keyword-only (default `False`); backend-specific options such as `cta_group=` flow through `**kwargs` into the op config. |
+| `Tx.gemm_async(C, A, B, *, transA=False, transB=False, accum=False, dispatch="tcgen05", **kwargs)` | tcgen05 MMA. `accum` is keyword-only (default `False`); tcgen05-specific options such as `cta_group=` flow through `**kwargs` into the op config. |
 
 
 ## Math
@@ -86,7 +86,7 @@ This chapter provides a comprehensive reference for the TIRX APIs used in this t
 | `for i in Tx.unroll(N):` | Explicit unrolled loop with `i` usable for buffer slicing |
 | `for i in Tx.serial(N):` | Sequential loop (not unrolled), `i` is a TIR variable |
 
-For `Tx.meta_var` and `@Tx.inline`, see the *Syntactic Sugar* section at the end of this chapter — they are not part of the programming model.
+`Tx.meta_var` and `@Tx.inline` are covered under *Syntactic Sugar*; they are parser-time conveniences, not tile-primitive semantics.
 
 
 ## Synchronization
@@ -97,7 +97,7 @@ For `Tx.meta_var` and `@Tx.inline`, see the *Syntactic Sugar* section at the end
 | `Tx.ptx.mbarrier.try_wait(ptr, phase)` | Wait for mbarrier phase |
 | `Tx.ptx.mbarrier.arrive.expect_tx(ptr, bytes)` | Set expected TMA byte count |
 | `Tx.ptx.tcgen05.commit(ptr, cta_group, cta_mask)` | tcgen05 commit (auto-arrive on completion) |
-| `Tx.ptx.tcgen05.fence.after_thread_sync()` | Epilogue-only fence: order prior MMA writes to TMEM against subsequent `tcgen05.ld` reads |
+| `Tx.ptx.tcgen05.fence.after_thread_sync()` | Conservative fence sometimes used before TMEM readback to order prior `tcgen05` writes against subsequent `tcgen05.ld` reads |
 | `Tx.ptx.fence.proxy_async("shared::cta")` | Shared memory fence |
 | `Tx.ptx.fence.mbarrier_init()` | Fence after mbarrier initialization |
 | `Tx.ptx.cp_async.bulk.commit_group()` | Commit pending TMA store operations |
@@ -120,7 +120,7 @@ These abstractions are introduced in Step 7 (Warp Specialization) and used throu
 | `bar.init(count)` | Initialize barrier with expected arrival count |
 | `bar.wait(stage, phase)` | Wait for barrier at given stage and phase |
 | `TMABar.arrive(stage, tx_count=, cta_id=, pred=)` | Arrive with expected transaction-byte count. `tx_count` is the total bytes TMA will deposit for this stage. |
-| `TCGen05Bar.arrive(stage, cta_group=, cta_mask=)` | Arrive via `tcgen05.commit`. Must run under `elect_sync` (commit is per-thread). |
+| `TCGen05Bar.arrive(stage, cta_group=, cta_mask=)` | Arrive via `tcgen05.commit`. Guard it so only the intended issuer calls it; the examples use `elect_sync` because the MMA issue site does. |
 | `MBarrier.arrive(stage, cta_id=, pred=)` | Thread-level arrive |
 | `bar.ptr_to([stage])` | Get pointer to barrier at given stage |
 | `MBarrier.remote_view(rank)` / `TMABar.remote_view(rank)` | View a barrier mapped to another CTA's SMEM (cluster kernels) |
@@ -148,7 +148,7 @@ These abstractions are introduced in Step 7 (Warp Specialization) and used throu
 
 ## Layout
 
-The layout namespace is `tvm.tirx.layout` (also re-exported on `Tx` for the common helpers used in this tutorial).
+The layout namespace is `tvm.tirx.layout` (also re-exported on `Tx` for the common helpers used here).
 
 | API | Description |
 |-----|-------------|
@@ -170,13 +170,15 @@ The layout namespace is `tvm.tirx.layout` (also re-exported on `Tx` for the comm
 
 - **Fence API**: Use `Tx.ptx.fence.proxy_async("shared::cta")` — positional argument, not keyword `scope=`.
 
-- **Do NOT call `cta_sync()` inside an elected-thread scope** — only one thread is executing, `cta_sync()` requires all threads.
+- **Do not call `cta_sync()` inside an elected-thread scope** — only one thread is executing, but `cta_sync()` requires all CTA threads.
 
-- **`alloc_local` vs `decl_buffer`**: Use `Tx.alloc_local` for register buffers. `Tx.decl_buffer` is only for hardware-managed memory like TMEM.
+- **`alloc_local` vs `decl_buffer`**: Use `Tx.alloc_local` when you need a fresh per-thread register allocation. Use `Tx.decl_buffer` when declaring a buffer view/alias over existing storage, or when declaring hardware-managed storage such as TMEM. In the implementation, a `decl_buffer` without `data` can lower to an allocation, so treat this as a style rule for the tutorial code rather than a hard IR limitation.
 
 - **TMA store must be followed by `commit_group()` + `wait_group(0)`**: Without waiting, the next iteration may overwrite Dsmem.
 
-- **`fence.after_thread_sync()` is rarely needed**: The MMA-completion mbarrier already carries release→acquire semantics, so most kernels — including the early Steps in this tutorial and most of CUTLASS — omit it entirely. The `tirx-kernels` reference kernels take a more conservative stance and insert it in the writeback path, after `mma2ld.wait(phase)` and immediately before the first `tcgen05.ld`, to make the ordering between prior tcgen05 writes to TMEM and the upcoming thread-proxy reads explicit. It is **never** needed on the TMA→MMA edge — the TMA-completion mbarrier and `cta_sync()` after a synchronous SMEM copy already cover that case.
+- **TMA issue count should match the intended copy count**: A plain `elect_sync()` under a full warpgroup gives one issuer per warp. Use a single predicate such as `tid == 0` for one whole-tile TMA copy unless the code intentionally issues several independent TMA operations.
+
+- **`fence.after_thread_sync()` is rarely needed in these examples**: The MMA-completion mbarrier already carries release→acquire semantics, so the early GEMM steps omit it. The `tirx-kernels` reference kernels take a more conservative stance and insert it in the writeback path, after `mma2ld.wait(phase)` and immediately before the first `tcgen05.ld`, to make the ordering between prior `tcgen05` writes to TMEM and the upcoming thread-proxy reads explicit. Do not add it routinely on the TMA→MMA edge in this tutorial; the TMA-completion mbarrier and `cta_sync()` after a synchronous SMEM copy already cover those paths.
 
 - **Constants must be defined outside `@Tx.prim_func`**: Variables like `EPI_N`, `TMEM_LD_N`, `MMA_N` must be Python constants.
 
@@ -187,11 +189,11 @@ The layout namespace is `tvm.tirx.layout` (also re-exported on `Tx` for the comm
 
 ## Syntactic Sugar
 
-*The constructs in this section are **not** part of the TIRX tile primitive layer* (see :numref:`chap_layouts` for execution scope, tensor layout, and tile primitive dispatch). They are parser-time convenience — removing them changes how the code looks, not what it means. They show up in Part III because real kernels use them to stay readable. A brief introduction to the metaprogramming trio lives in :numref:`chap_tirx_primer`; this section is the full reference.
+*These constructs are **not** part of the TIRX tile primitive layer* (see :numref:`chap_layouts` for execution scope, tensor layout, and tile primitive dispatch). They are parser-time convenience — removing them changes how the code looks, not what it means. They show up in Part III because real kernels use them to stay readable.
 
-### `Tx.meta_var`: compile-time alias
+### `Tx.meta_var`: parser-time alias
 
-`Tx.meta_var(expr)` names a compile-time expression so it can be reused in buffer slicing without becoming a TIR dynamic variable:
+`Tx.meta_var(expr)` tells the parser to reuse `expr` as an inline symbolic expression instead of materializing a separate TIR variable. The expression may contain runtime symbolic coordinates such as CTA ids:
 
 ```python
 m_st = Tx.meta_var(bx * BLK_M)
@@ -199,7 +201,7 @@ n_st = Tx.meta_var(by * BLK_N)
 Tx.copy(Asmem[:, :], A[m_st : m_st + BLK_M, k_st : k_st + BLK_K])
 ```
 
-Any variable *assigned* inside `@Tx.prim_func` that is not wrapped with `meta_var` becomes a TIR dynamic variable. Constants such as `BLK_M`, `PIPE_DEPTH`, and `EPI_N` must stay Python constants defined outside the function.
+Any variable *assigned* inside `@Tx.prim_func` that is not wrapped with `meta_var` becomes a TIR dynamic variable. Constants such as `BLK_M`, `PIPE_DEPTH`, and `EPI_N` must still stay Python constants defined outside the function.
 
 ### `@Tx.inline`: compile-time helper
 
@@ -208,7 +210,8 @@ Any variable *assigned* inside `@Tx.prim_func` that is not wrapped with `meta_va
 ```python
 @Tx.inline
 def tma_load(stage, k):
-    with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync())):
+    tid = Tx.meta_var(warp_id * 32 + lane_id)
+    with Tx.thread(tid == 0):
         Tx.copy_async(Asmem[stage], A[m_st : m_st + BLK_M, k : k + BLK_K],
                       dispatch="tma", mbar=tma_bar.ptr_to([stage]))
         Tx.copy_async(Bsmem[stage], B[n_st : n_st + BLK_N, k : k + BLK_K],

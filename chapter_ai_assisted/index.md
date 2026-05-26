@@ -1,16 +1,16 @@
-# AI-Assisted Kernel Development
+# LLM-Assisted Kernel Debugging
 :label:`chap_ai_assisted`
 
-*Prerequisites: You should have completed at least through Step 7 (Warp Specialization). The examples in this chapter reference barrier patterns, tcgen05 MMA, and TMA pipelining from earlier chapters.*
+*Assumed context: Step 7 warp specialization, including barrier patterns, `tcgen05` MMA, and TMA pipelining.*
 
 ---
 
-Writing GPU kernels is slow, detail-heavy work. A single misplaced barrier arrive or a wrong descriptor field can produce silent corruption that takes hours to debug. Large language models (LLMs) like Claude can accelerate parts of this workflow --- generating boilerplate, spotting known bug patterns, and producing test harnesses --- but they also have limitations that you should understand before relying on them.
+Writing GPU kernels is slow, detail-heavy work. A misplaced barrier arrive or a wrong descriptor field can produce silent corruption that takes hours to debug. Large language models (LLMs) can help with boilerplate, known bug patterns, and test harnesses, but they need precise hardware context.
 
-This chapter is practical, not theoretical. We walk through specific workflows where LLMs help, show a concrete debugging example, and catalog common failure modes so you know when to be cautious with LLM suggestions and when to consult the hardware manual directly.
+Use LLMs for boilerplate, test scaffolding, and known-bug detection. Verify anything that touches barriers, descriptors, layouts, or performance against the generated code and the hardware rules.
 
 
-## What LLMs Tend to Do Well — and Where They Need More Care
+## LLM Strengths and Failure Modes
 
 | Works Well | Needs Careful Verification |
 |-----------|-----------|
@@ -20,14 +20,14 @@ This chapter is practical, not theoretical. We walk through specific workflows w
 | Generating NumPy/Torch reference implementations for verification | Getting TMEM layout details exactly right (TileLayout, TLane/TCol, allocated_addr) |
 | Translating between kernel styles (e.g., CUTLASS-style pseudocode to TIRX) | Handling TIRX-specific API quirks without explicit context |
 
-The general pattern is that LLMs are strong at **matching familiar code patterns**, but less dependable for **multi-step reasoning over concurrent state**. Barrier protocols, phase tracking, and TMEM layout arithmetic are exactly the kinds of stateful details that usually require manual checking.
+LLMs are good at **matching familiar code patterns**, but less reliable at **multi-step reasoning over concurrent state**. Barrier protocols, phase tracking, and TMEM layout arithmetic require manual checking.
 
 
 ## Effective Prompting for TIRX Kernels
 
-A key practical insight is that **output quality depends heavily on context quality**. A vague prompt ("my kernel is broken, help") gets a vague answer. A structured prompt with hardware constraints, code, and symptoms gets a precise diagnosis.
+Prompt quality mostly comes from context quality. A vague prompt ("my kernel is broken, help") gets a vague answer. A prompt with hardware constraints, code, and symptoms can point to a specific failure mode.
 
-Here is a prompt template that works well for TIRX debugging:
+Prompt template for TIRX debugging:
 
 ```
 I'm writing a TIRX kernel for [operation]. Target: Blackwell B200 (SM100a).
@@ -35,13 +35,13 @@ I'm writing a TIRX kernel for [operation]. Target: Blackwell B200 (SM100a).
 Hardware constraints:
 - TMEM: 128 rows x 512 cols, layout TileLayout(S[(128,512) : (1@TLane, 1@TCol)])
 
-- tcgen05.commit is per-thread; must be inside elect_sync() guard
+- tcgen05.commit is per-thread; guard it so only the intended issuer calls it. These examples usually use elect_sync() because the MMA issue site does.
 
 - MBarrier.init() guards on its leader predicate (default: Tx.cuda.thread_rank() == 0) — only thread 0 of the CTA runs the init unless leader is overridden
 
-- mbarrier arrives from async engines (TMA completion, tcgen05.commit) carry release→acquire ordering; after try_wait returns, the waiter sees the producer's memory effects. Extra fences on the TMA→MMA edge are unnecessary.
+- mbarrier arrives from async engines (TMA completion, tcgen05.commit) carry release→acquire ordering; after try_wait returns, the waiter sees the producer's memory effects. The examples here do not add extra fences on the TMA→MMA edge.
 
-- `fence.after_thread_sync()` is rarely needed. The MMA-completion mbarrier already orders MMA writes against downstream reads, so most kernels (including CUTLASS) omit it. The `tirx-kernels` reference kernels take a conservative stance and insert it in the writeback path after `mma2ld.wait(phase)` and before the first `tcgen05.ld`; if you are mirroring that style, add it there.
+- `fence.after_thread_sync()` is rarely needed in these examples. The MMA-completion mbarrier already orders MMA writes against downstream reads. Some reference kernels take a conservative stance and insert it in the writeback path after `mma2ld.wait(phase)` and before the first `tcgen05.ld`; if you are mirroring that style, add it there.
 
 Here is my kernel:
 [paste code]
@@ -61,9 +61,9 @@ Why each piece matters:
 - **Specific question** forces a focused answer instead of a broad code review that buries the real issue.
 
 
-## Symptom-to-Cause Quick Reference
+## Symptom-to-Cause Map
 
-Before prompting an LLM, it helps to narrow down the category of bug yourself. This table maps common symptoms to likely root causes:
+Narrowing down the bug category first makes the prompt much more effective. The table maps common symptoms to likely root causes:
 
 | Symptom | Likely Cause | What to Check |
 |---------|-------------|---------------|
@@ -80,7 +80,7 @@ Include this table (or a simplified version) in your prompt when debugging. It h
 
 ## Demo: Debugging a Broken Kernel
 
-Consider this MMA loop from a warp-specialized GEMM (Step 7 style). This code runs inside the MMA consumer warp (`wg_id == 1, warp_id == 0`). There is one deliberate bug:
+The following MMA loop comes from a warp-specialized GEMM (Step 7 style). The code runs inside the MMA consumer warp (`wg_id == 1, warp_id == 0`). There is one deliberate bug:
 
 ```python
 # Broken MMA loop -- one bug
@@ -106,14 +106,14 @@ for k in range(K_TILES):
 
 The result: 31 empty commit groups fire the mbarrier almost instantly, well before the MMA completes. The TMA producer sees the barrier as arrived and starts overwriting SMEM with the next tile. The MMA is still reading the old tile from SMEM --- data corruption.
 
-**How to prompt the LLM:** Paste the snippet above and add:
+**How to prompt the LLM:** Paste the snippet and add:
 
 ```
 Output is zeros. The MMA uses elect_sync but the arrive() call does not.
 Is this correct?
 ```
 
-This gives the model the symptom (zeros), the structural observation (mismatch between elect_sync scope and arrive scope), and a yes/no question. A good model should be much more likely to identify the commit-group issue with this level of context.
+The prompt gives the model the symptom (zeros), the structural observation (mismatch between elect_sync scope and arrive scope), and a yes/no question. A good model should be much more likely to identify the commit-group issue with this level of context.
 
 **Fix:** Move the arrive inside the `elect_sync` guard:
 
@@ -135,7 +135,7 @@ for k in range(K_TILES):
     mma_ps.advance()
 ```
 
-This is a very common bug pattern in Blackwell kernel development. It is also one of the easier cases for an LLM to catch, because the task is closer to recognizing a familiar structural mismatch than to reasoning through full phase-state behavior.
+The bug pattern is common in Blackwell kernel development. It is also one of the easier cases for an LLM to catch, because the task is closer to recognizing a familiar structural mismatch than to reasoning through full phase-state behavior.
 
 
 ### Weak prompt vs strong prompt
@@ -158,7 +158,7 @@ The common failure mode is the model guessing at high-frequency knobs it has see
 I'm writing a TIRX kernel for GEMM. Target: Blackwell B200 (SM100a).
 
 Hardware constraint:
-- tcgen05.commit is per-thread; must be inside an elect_sync() guard.
+- tcgen05.commit is per-thread; it must be guarded so only the intended issuer calls it.
 
 Symptom: Output is all zeros or random garbage, non-deterministically.
 Question: Is mma2tma.arrive() in the correct scope? It uses tcgen05.commit internally.
@@ -166,7 +166,7 @@ Question: Is mma2tma.arrive() in the correct scope? It uses tcgen05.commit inter
 
 Because the constraint is stated explicitly, a competent model can reason directly to the answer: the `arrive` sits outside the elected-thread block, so the 31 non-elected threads each create an empty commit group that signals the barrier instantly. The fix is to move `arrive` inside `with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync())):`.
 
-**Takeaway:** The model is not the bottleneck here — context is. If the prompt does not state that `tcgen05.commit` is per-thread, no amount of "be more careful" gets the model to that fact from scratch. The pitfall tables earlier in this chapter exist precisely so you can paste them as context.
+**Result:** Context is the bottleneck. If the prompt does not state that `tcgen05.commit` is per-thread, no amount of "be more careful" gets the model to that fact from scratch. The pitfall tables are written so you can paste them as context.
 
 
 ### LLM output red flags
@@ -177,12 +177,12 @@ When reviewing LLM-generated TIRX code, watch for these signals that the model i
 2. **Treating `elect_sync()` as warpgroup-level** — `elect_sync()` elects one thread per *warp* (32 threads), not per warpgroup (128 threads). With 4 warps you get 4 elected threads.
 3. **Inventing TIRX APIs** — names like `Tx.barrier()`, `Tx.async_copy()`, or `Tx.shared_memory()` that don't exist. Always verify function names against the API Reference.
 4. **Wrong barrier arrival counts** — e.g., suggesting `init(128)` for a barrier that only one elected thread arrives on, or `init(1)` for a barrier where all 128 warpgroup threads arrive.
-5. **Sprinkling `fence.after_thread_sync()` everywhere** — models trained on older examples often insert this fence on every MMA boundary (e.g. between TMA wait and MMA issue). That is wrong: the TMA-completion and MMA-completion mbarriers already carry release→acquire ordering, and the fence is not required for correctness on those edges. The fence *only* appears in the writeback path of some conservative reference kernels (between `mma2ld.wait` and the first `tcgen05.ld`); if the model adds it elsewhere, strip it.
+5. **Sprinkling `fence.after_thread_sync()` everywhere** — models trained on older examples often insert this fence on every MMA boundary (e.g. between TMA wait and MMA issue). In the kernels shown here, the TMA-completion and MMA-completion mbarriers already carry release→acquire ordering, so the fence is not part of those handoffs. Some conservative reference kernels use it on the writeback path (between `mma2ld.wait` and the first `tcgen05.ld`); do not copy it to unrelated edges.
 
 
 ## Generating Test Harnesses
 
-One of the most reliable uses of LLMs in kernel work is generating reference implementations. The model does not need full hardware understanding to be useful here --- it just needs to implement math correctly.
+Reference implementations are a good fit for LLMs. The model does not need full hardware understanding here; it only needs to implement the math correctly.
 
 **Prompt example:**
 
@@ -212,7 +212,7 @@ def rmsnorm_ref(x_f16, weight_f16, eps=1e-6):
     return out.astype(np.float16)
 ```
 
-This is straightforward for most LLMs to produce correctly. The float64 intermediate trick avoids false mismatches from fp16 rounding in the reference.
+Most LLMs can produce this correctly. The float64 intermediate trick avoids false mismatches from fp16 rounding in the reference.
 
 For GEMM verification, a torch reference on CUDA is even simpler:
 
@@ -228,7 +228,7 @@ D_ref = A @ B.T  # cuBLAS reference, float16 accumulation
 
 The torch path calls cuBLAS under the hood, giving you a hardware-verified reference.
 
-For FP8 kernels with block scaling, the reference is more involved. This is where LLM assistance pays off --- ask it to handle the dtype conversion boilerplate:
+For FP8 kernels with block scaling, the reference is more involved. LLM assistance pays off when the task is mostly dtype conversion boilerplate:
 
 ```python
 import ml_dtypes
@@ -261,7 +261,7 @@ Use these references with three-way comparison: your TIRX kernel output vs numpy
 
 ## When to Be Cautious with LLM Suggestions
 
-These are specific failure modes we have observed in practice. Treat them as a checklist.
+The checklist covers failure modes seen in kernel debugging.
 
 **1. Phase tracking.**
 Current LLMs often struggle with barrier phase initialization. The `is_producer` flag, the initial phase value, and the skip-first-wait pattern interact subtly. If the model suggests a phase init, always verify with this test: "If both producer and consumer start with the same phase, do they deadlock on the first iteration?" If yes, one of them needs to skip the first wait or use a different initial phase.
@@ -271,7 +271,7 @@ LLMs may suggest wrong TileLayout parameters, forget `allocated_addr`, or confus
 
 **3. TIRX API quirks.**
 LLMs have limited TIRX training data and may confuse TIRX APIs with CUTLASS or Triton equivalents. Examples of details that may not be represented reliably in the model's prior knowledge:
-- `MBarrier.init()` guards on its `leader` predicate, which defaults to `Tx.cuda.thread_rank() == 0` — thread 0 of the enclosing CTA. If you call it from a region that does not include thread 0 (e.g., a `with Tx.warpgroup(): if wg_id == 1:` block where only warpgroup 1 is active), no thread will execute the init and the barrier silently stays uninitialized. Always initialize barriers from a region that includes thread 0 of the CTA, or override `leader` explicitly when constructing the barrier.
+- `MBarrier.init()` guards on its `leader` predicate, which defaults to `Tx.cuda.thread_rank() == 0` — thread 0 of the enclosing CTA. If you call it from a region that does not include thread 0 (e.g., a `with Tx.warpgroup(): if wg_id == 1:` block where only warpgroup 1 is active), no thread will execute the init and the barrier can remain uninitialized. Initialize barriers from a region that includes thread 0 of the CTA, or override `leader` explicitly when constructing the barrier.
 
 - `Tx.copy_async` from TMEM to local dispatches `tcgen05.ld` but does NOT emit `tcgen05.wait.ld()`. If you read the register immediately, you get stale data.
 
@@ -285,28 +285,29 @@ If an API call in the model's suggestion looks unfamiliar, grep the TIRX codebas
 
 ## Building a Persistent Context File
 
-One of the most effective techniques for working with LLMs on kernel code is maintaining a **persistent context file** --- a plain text file that accumulates hard-won debugging lessons. Every time you discover a non-obvious bug, add a short entry:
+A **persistent context file** is a plain text bug log for LLM prompts. Every time a non-obvious bug turns up, add a short entry:
 
 ```
-### tcgen05.commit Must Use elect_sync
+### tcgen05.commit Must Be Guarded
 tcgen05.commit is per-thread, not warp-cooperative. If all 32 threads call it,
 only the elected thread has a non-empty commit group. The other 31 create empty
 commit groups that signal the mbarrier immediately.
-Fix: Always wrap TCGen05Bar.arrive() calls inside an elected-thread scope:
+Fix: guard TCGen05Bar.arrive() so only the intended issuer calls it. In these
+examples that means wrapping it inside the same elected-thread scope as MMA:
 with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync())):
 ```
 
-Then include this file (or relevant excerpts) in your prompt context. This has two benefits:
+Include this file (or relevant excerpts) in your prompt context. It serves two roles:
 
 1. **The LLM learns from your past bugs.** It will not suggest patterns you have already proven incorrect.
-2. **You build institutional knowledge.** Six months later, when you hit a similar bug in a different kernel, the context file reminds both you and the LLM of the solution.
+2. **The team keeps a bug log.** Six months later, when a similar bug appears in a different kernel, the context file records the fix.
 
-Here is a minimal starter template (`tirx_bugs.md`):
+A minimal starter template (`tirx_bugs.md`):
 
 ```markdown
 # TIRX Bug Log (Blackwell SM100a)
 
-### tcgen05.commit outside elect_sync
+### tcgen05.commit outside issuer guard
 Symptom: zeros or garbage, non-deterministic.
 Cause: tcgen05.commit is per-thread. 31 empty commit groups signal mbarrier early.
 Fix: wrap TCGen05Bar.arrive() inside `with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync())):`.
@@ -320,10 +321,10 @@ Fix: call init at CTA level (before any wg_id branch), or ensure warp_id==0 in W
 Symptom: model-generated code sprinkles fence.after_thread_sync() around every
          MMA, or you see it on the TMA->MMA edge.
 Cause: mbarrier arrives from async engines already carry release->acquire ordering,
-       so fences on the TMA->MMA edge and after cta_sync-guarded SMEM copies are
-       unnecessary. Most production kernels (including CUTLASS) omit the fence
-       entirely; only tirx-kernels' conservative writeback path inserts it.
-Fix: strip stray fence.after_thread_sync() calls. If you are mirroring tirx-kernels,
+       so these examples do not need fences on the TMA->MMA edge or after
+       cta_sync-guarded SMEM copies. Some conservative writeback paths still
+       insert the fence before tcgen05.ld.
+Fix: strip stray fence.after_thread_sync() calls. If you are mirroring that style,
      keep exactly one - after mma2ld.wait() and before the first tcgen05.ld.
 ```
 
@@ -334,7 +335,7 @@ Format tips:
 - Paste relevant entries into your prompt when debugging similar issues
 
 
-## Practical Workflow Summary
+## Workflow
 
 ![AI-Assisted Kernel Development Workflow](../img/ai_assisted_workflow.png)
 
@@ -344,20 +345,20 @@ A workflow that combines human expertise with LLM assistance:
 2. **Generate boilerplate** with the LLM: SMEM allocation, TMA descriptor setup, barrier initialization. These are tedious and mechanical.
 3. **Write the core logic** yourself: MMA dispatch, softmax, reductions. You need to understand what every line does.
 4. **Generate test harnesses** with the LLM: numpy/torch references, input generation, comparison logic.
-5. **Debug** with the LLM: paste the failing code + symptom. LLMs tend to be good at pattern-matching known bugs (missing `elect_sync`, wrong barrier count, fence ordering), but less reliable for novel bugs.
+5. **Debug** with the LLM: paste the failing code + symptom. LLMs can match known bugs (missing `elect_sync`, wrong barrier count, fence ordering), but novel bugs still need manual analysis.
 6. **Profile** yourself: LLMs generally cannot tell you whether your kernel is fast. Use timing tools.
 
-The goal is not to have the LLM write your kernel. The goal is to spend your time on the hard parts (design, core logic, performance) and let the LLM handle the tedious parts (boilerplate, references, known-bug detection).
+Do not make the LLM responsible for the kernel. Spend your time on the hard parts (design, core logic, performance) and let the LLM handle the tedious parts (boilerplate, references, known-bug detection).
 
 
 ## Exercises
 
-1. Take your Step 7 kernel and introduce the `elect_sync` bug from this chapter: move `mma2tma.arrive()` outside the `with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync())):` block. Run the test to confirm it produces wrong output. Then paste the buggy code to an LLM with the symptom description. Does the model identify the root cause?
+1. Take your Step 7 kernel and introduce the `elect_sync` bug from the demo: move `mma2tma.arrive()` outside the `with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync())):` block. Run the test to confirm it produces wrong output. Then paste the buggy code to an LLM with the symptom description. Does the model identify the root cause?
 
-2. Ask an LLM to generate a numpy reference for the RMSNorm kernel from the RMSNorm chapter. Compare its output with your kernel's output on the same input. Do the results match to within fp16 tolerance?
+2. Ask an LLM to generate a numpy reference for the RMSNorm kernel from :numref:`chap_rmsnorm`. Compare its output with your kernel's output on the same input. Do the results match to within fp16 tolerance?
 
 3. Ask an LLM to explain the barrier flow in Step 8 (2-CTA cluster): "Each CTA's TMA warp loads both its own A tile and B tile into local SMEM, then CTA-0's MMA warp issues the cooperative MMA that reads B from both CTAs' SMEM. Trace which barriers fire in what order." Verify the explanation against the actual code.
 
-4. Try asking an LLM to write a complete Step 7 kernel from scratch. Give it only the API reference from the API Reference chapter and the warp role table from Step 7 (Warp Specialization). What does it get right? What does it get wrong? This exercise illustrates the boundary between what LLMs tend to do well and where they need more care.
+4. Try asking an LLM to write a complete Step 7 kernel from scratch. Give it only the API reference from :numref:`chap_api_reference` and the warp role table from Step 7 (Warp Specialization). What does it get right? What does it get wrong? The answer marks the boundary between pattern matching and hardware reasoning.
 
-> **Try with your agent**: Paste your most confusing kernel bug (the one that took you the longest to find) and describe only the symptom. See if the model can identify the root cause. Then try again with the hardware constraints template from this chapter. Compare the quality of the two responses.
+> **Try with your agent**: Paste your most confusing kernel bug (the one that took you the longest to find) and describe only the symptom. See if the model can identify the root cause. Then try again with the hardware constraints template. Compare the quality of the two responses.

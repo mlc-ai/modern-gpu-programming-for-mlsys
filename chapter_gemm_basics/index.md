@@ -1,13 +1,13 @@
-# GEMM Steps 1--3: From Single Tile to Spatial Tiling
+# GEMM with Tile Primitives
 :label:`chap_gemm_basics`
 
-*This is the start of Part III: GEMM Deep Dive. Unlike Part II's standalone operators, the next 3 chapters (9 steps) tell a single continuous story --- one GEMM kernel, progressively optimized from 70 ms down to ~0.12 ms, within 10% of cuBLAS (0.11 ms). Each step builds on the previous one.*
+The GEMM path starts from a single-tile baseline, then adds the pieces needed for larger tiled matrices. This chapter covers single-tile GEMM, K-loop accumulation, and spatial tiling across CTAs.
 
-> **Layout recap.** Every step in Part III uses three recurring layout patterns: a swizzled `tma_shared_layout` for SMEM, `S[(128, N) : (1@TLane, 1@TCol)]` for TMEM, and `S[(128, N) : (1@tid_in_wg, 1)]` for the warpgroup register view. The full semantics of these layouts — named axes, swizzle modes, TMEM–RF matching — are covered in :numref:`chap_layouts`; here we reuse them without re-explaining each time.
+GEMM kernels use three recurring layout patterns: a swizzled `tma_shared_layout` for SMEM, `S[(128, N) : (1@TLane, 1@TCol)]` for TMEM, and `S[(128, N) : (1@tid_in_wg, 1)]` for the warpgroup register view. :numref:`chap_layouts` covers named axes, swizzle modes, and TMEM-RF matching.
 
-## What is GEMM
+## GEMM
 
-GEMM (General Matrix Multiplication) is the fundamental operation: $D = A B^{\top}$ where:
+GEMM (General Matrix Multiplication) is the dense matrix multiply used throughout this tutorial. The examples use $D = A B^{\top}$ where:
 
 - $A$ is $M \times K$ (M rows of K-dimensional vectors)
 
@@ -17,30 +17,30 @@ GEMM (General Matrix Multiplication) is the fundamental operation: $D = A B^{\to
 
 - Operation: $D[m,n] = \sum_k A[m,k] \cdot B[n,k]$ (i.e., $D = A B^{\top}$ since B is stored as N rows of K columns)
 
-GEMM is the workhorse of deep learning --- every linear layer, attention computation, and convolution reduces to GEMM. Optimizing GEMM is critical for both training and inference performance.
+GEMM is central to deep learning workloads: linear layers, attention, and many convolutions reduce to matrix multiplication. GEMM throughput matters for both training and inference.
 
 GEMM performance is measured in TFLOPS (Tera Floating-Point Operations Per Second):
 
 $$\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 10^{12}}$$
 
-## The Optimization Journey
+## Optimization Path
 
-Over the next 3 chapters (9 steps), we will progressively optimize a GEMM kernel on Blackwell GPUs to within ~10% of cuBLAS. The 4 key techniques are:
-- **Async Data Movement** --- let hardware (TMA) do the copying, freeing 127 threads
+The optimization path adds hardware features one at a time:
+- **Async Data Movement** --- use TMA so a thread issues a tile copy and the hardware transfer engine performs the movement
 - **Software Pipelining** --- overlap load and compute with multi-buffering
-- **Warp Specialization** --- dedicated warp roles for maximum parallelism
+- **Warp Specialization** --- split producer, consumer, and writeback work across warp roles
 - **CTA Clusters** --- 2SM cooperative MMA for higher arithmetic intensity
 
-If you're short on time, Steps 1, 4, 7, and 8 are the most important — they introduce the four key optimizations (TMA, pipelining, warp specialization, CTA clusters).
+Later chapters add persistent scheduling and multi-consumer execution on top of these pieces.
 
 ---
 
 ## Step 1: Synchronous GEMM
 :label:`chap_single_tile`
 
-In this section, we build the simplest possible working GEMM kernel for a single tile (M=N=128, K=64). All operations are synchronous.
+The first working GEMM kernel computes a single tile (M=N=128, K=64). All operations are synchronous.
 
-### What You Will Learn
+**Topics.**
 
 - Synchronous data loading: all 128 threads copy from GMEM → SMEM
 
@@ -48,9 +48,13 @@ In this section, we build the simplest possible working GEMM kernel for a single
 
 - TMEM allocation/deallocation and writeback (TMEM → RF → GMEM)
 
-### Overview
+### Dataflow
 
-The kernel follows the standard Blackwell data flow (see :numref:`chap_background`). Each step happens **sequentially** --- the next step waits for the previous to complete.
+The single-tile kernel follows the core Blackwell GEMM data path:
+
+![*Memory Data Flow*](../img/memory_dataflow.png)
+
+Each step happens **sequentially** --- the next step waits for the previous to complete.
 
 1. **Allocate**: SMEM (pool allocator), TMEM (`tcgen05.alloc`), mbarrier
 2. **Load**: All 128 threads cooperatively copy A and B tiles from GMEM to SMEM (sync `Tx.copy`)
@@ -58,9 +62,9 @@ The kernel follows the standard Blackwell data flow (see :numref:`chap_backgroun
 4. **Writeback**: Warpgroup reads TMEM → registers; each thread casts fp32→fp16 and writes to GMEM
 5. **Deallocate**: TMEM deallocation
 
-### Key Concepts
+### Kernel Pieces
 
-Before looking at the full kernel, let's understand each part.
+The kernel has four pieces.
 
 #### Memory Allocation
 
@@ -74,7 +78,7 @@ Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout)  # 128×64 fp16
 pool.commit()
 ```
 
-The `pool.move_base_to(1024)` ensures Asmem/Bsmem start at offset 1024, leaving room for metadata. The `layout=A_layout` uses `tma_shared_layout` for a swizzled, bank-conflict-free SMEM placement; see the SMEM subsection of :numref:`chap_layouts` for why swizzle matters.
+The `pool.move_base_to(1024)` ensures Asmem/Bsmem start at offset 1024, leaving room for metadata. The `layout=A_layout` uses `tma_shared_layout` for a swizzled SMEM placement compatible with TMA and `tcgen05.mma`; :numref:`chap_layouts` explains why SMEM layout is part of the tile primitive contract.
 
 #### Synchronous Load
 
@@ -87,7 +91,7 @@ Tx.cuda.cta_sync()                           # Wait for all threads; bar.sync
                                              # to the subsequent MMA.
 ```
 
-Step 1 only has one tile (M=N=128, K=64), so we copy the entire A and B. `with Tx.cta()` is a **scope marker** that means all 128 threads in the CTA participate — every thread executes the `Tx.copy` inside, each handling a portion of the data. This is the simplest but least efficient approach: 128 threads each compute addresses and issue load/store instructions. In Step 4, we'll replace this with TMA where a single thread issues the copy and dedicated hardware does the rest.
+Step 1 only has one tile (M=N=128, K=64), so we copy the entire A and B. `with Tx.cta()` is a **scope marker** that means all 128 threads in the CTA participate — every thread executes the `Tx.copy` inside, each handling a portion of the data. This is the simplest data-movement path: 128 threads compute addresses and issue load/store instructions. Step 4 replaces this with TMA, where one selected thread issues the tile copy and dedicated hardware performs the transfer.
 
 #### MMA Dispatch
 
@@ -99,7 +103,7 @@ if warp_id == 0:
         Tx.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
 ```
 
-`elect_sync()` selects one thread per warp to issue the MMA — this is the hardware-correct pattern. `accum=False` means overwrite TMEM (not accumulate).
+`elect_sync()` selects one thread per active warp. Because this block is also guarded by `if warp_id == 0`, exactly one thread issues the MMA and commit. `accum=False` means overwrite TMEM (not accumulate).
 
 #### Writeback
 
@@ -116,9 +120,9 @@ with Tx.thread():             # Each thread writes its row
 
 Thread row mapping: warp 0 handles rows 0-31, warp 1 handles rows 32-63, etc. Each thread's row is `m_st + warp_id * 32 + lane_id`.
 
-### Implementation
+**Implementation.**
 
-With the above walkthrough in mind, here is the complete runnable kernel (M=N=128, K=64):
+With the walkthrough in mind, here is the complete runnable kernel (M=N=128, K=64):
 
 ```{.python .input}
 
@@ -148,13 +152,13 @@ B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_
 
 GEMM kernels use the full thread hierarchy from :numref:`chap_background` (CTA → Warpgroup → Warp → Thread). Unlike the earlier elementwise kernels that only needed `cta_id` + `thread_id`, GEMM touches every level: a single elected thread *issues* each `tcgen05.mma`, but the resulting TMEM tile spans 128 rows — a full warpgroup cooperates to read it back via `tcgen05.ld`, and per-warp / per-lane IDs partition the writeback rows across threads:
 
-- **`Tx.warpgroup_id([1])`** — Number of warpgroups per CTA. Step 1 only uses a single warpgroup so this is `1`; the result is bound to `_` because the kernel never references the warpgroup index inside its body. We still have to declare it so the compiler knows the full thread hierarchy (cta → warpgroup → warp → thread).
+- **`Tx.warpgroup_id([1])`** — Number of warpgroups per CTA. Step 1 only uses a single warpgroup so this is `1`; the result is bound to `_` because the kernel never references the warpgroup index inside its body. The declaration still matters because the compiler needs the full thread hierarchy (cta -> warpgroup -> warp -> thread).
 - **`warp_id = Tx.warp_id_in_wg([4])`** — Which warp within the warpgroup (0-3).
 - **`lane_id = Tx.lane_id([32])`** — Which thread within the warp (0-31).
 
-Later steps that need warp specialisation (:numref:`chap_gemm_advanced` Step 7 onward) bind `Tx.warpgroup_id([2])` to a name and dispatch on it.
+Later steps that need warp specialization (:numref:`chap_gemm_advanced` Step 7 onward) bind `Tx.warpgroup_id([2])` to a name and dispatch on it.
 
-The parent level is encoded in the function name itself (`*_in_wg` for warpgroup-scoped, `lane_id` for warp-scoped, `cta_id_in_cluster` for cluster-scoped). For example, `Tx.warp_id_in_wg([4])` enumerates the 4 warps inside each warpgroup, while `Tx.warp_id([8])` would enumerate all 8 warps of a 2-warpgroup CTA. See :numref:`chap_layouts` for the full coordinate table.
+The parent level is encoded in the function name itself (`*_in_wg` for warpgroup-scoped, `lane_id` for warp-scoped, `cta_id_in_cluster` for cluster-scoped). For example, `Tx.warp_id_in_wg([4])` enumerates the 4 warps inside each warpgroup, while `Tx.warp_id([8])` would enumerate all 8 warps of a 2-warpgroup CTA. :numref:`chap_layouts` introduces these symbolic coordinates as part of execution scope.
 
 The `warp_id` and `lane_id` are used for thread-level operations like data loading and writeback (each thread handles a different row: `row = warp_id * 32 + lane_id`).
 
@@ -271,36 +275,36 @@ print("PASS")
 
 ```
 
-### What to Optimize Next
+### Next Bottlenecks
 
-This kernel is correct but has two major bottlenecks:
+The kernel is correct but has two major bottlenecks:
 
 1. **Synchronous loads**: All 128 threads are occupied with data copying. The TMA hardware engine sits idle.
 2. **No pipelining**: Load → Compute → Load → Compute --- the MMA unit is idle during loads, and the memory system is idle during compute.
 
-The next steps address these one by one.
+The following steps address these bottlenecks one by one.
 
 
 
 ---
 
-With a single-tile kernel working, the next step is to handle matrices where K is larger than one tile.
+With a single-tile kernel working, K can grow beyond one tile.
 
 ## Step 2: K-Loop Accumulation
 :label:`chap_k_loop`
 
-Step 1 only handles K=64 (one tile). Real matrices have K >> 64. In this section, we extend the kernel to loop over the K dimension with accumulation (M=N=128, K=256).
+Step 1 only handles K=64 (one tile). Many useful GEMMs have a larger K dimension. The Step 2 kernel loops over K with accumulation (M=N=128, K=256).
 
 **Changes from Step 1** (everything else stays the same):
 
 | What | Step 1 | Step 2 |
 |---|---|---|
-| K dimension | K = 64 (one tile) | K = any multiple of 64 |
+| K dimension | K = 64 (one tile) | K = multiple of 64 in this example |
 | K-loop | none | `for i in range(K_TILES):` |
 | Accumulation | `accum=False` always | `accum=(i != 0)` (False on first tile, True after) |
 | Phase tracking | single `try_wait` | `phase_mma ^= 1` after each wait |
 
-### What You Will Learn
+**Topics.**
 
 - Iterating over the K dimension with multiple MMA invocations
 
@@ -308,11 +312,11 @@ Step 1 only handles K=64 (one tile). Real matrices have K >> 64. In this section
 
 - mbarrier phase flipping for repeated synchronization
 
-### Background
+### K-Loop Mechanics
 
 To handle matrices where K > 64, we loop over K in chunks of `BLK_K=64`. Each iteration loads a new (128x64) A tile and (128x64) B tile, then runs an MMA. The `accum` parameter tells the Tensor Core whether to overwrite TMEM (`False`) or add to it (`True`).
 
-The mbarrier is reused across iterations, but we need to prevent a subtle race: after `try_wait` returns, the barrier is in the "arrived" state. If we call `try_wait` again without changing anything, it would return immediately — before the next MMA has even started.
+The mbarrier is reused across iterations, but phase tracking prevents a race: after `try_wait` returns, the barrier is in the "arrived" state. If we call `try_wait` again without changing anything, it would return immediately — before the next MMA has even started.
 
 The solution is **phase tracking**. Each mbarrier has a 1-bit phase (0 or 1) that flips automatically after all expected arrivals. `try_wait(bar, phase)` blocks until the barrier's internal phase **differs** from the `phase` argument:
 
@@ -330,7 +334,7 @@ Iteration 1: phase=1, call try_wait(bar, 1) → blocks until barrier flips to ph
 
 Without `phase_mma ^= 1`, the second `try_wait(bar, 0)` would see the barrier already at phase 1 (from iteration 0's arrival) and return immediately — before the second MMA finishes.
 
-### Implementation
+**Implementation.**
 
 ```{.python .input}
 
@@ -466,18 +470,18 @@ print("PASS")
 
 ```
 
-**Why phase flipping matters**: The mbarrier auto-toggles its phase after all arrivals. If we don't track the phase, the second `try_wait` would see the old (already-passed) phase and return immediately — before the second MMA finishes. The diff table at the top of this section spells out exactly what changed from Step 1.
+**Why phase flipping matters**: The mbarrier auto-toggles its phase after all arrivals. If we don't track the phase, the second `try_wait` would see the old (already-passed) phase and return immediately — before the second MMA finishes. The diff table spells out exactly what changed from Step 1.
 
 
 
 ---
 
-Now that we can handle arbitrary K, the final piece is tiling over M and N to support full-sized matrices.
+K-loop accumulation still leaves one missing piece: tiling over M and N to support larger matrices.
 
 ## Step 3: Spatial Tiling (Multi-CTA)
 :label:`chap_spatial_tiling`
 
-Steps 1-2 only handle a single output tile (M=N=128). In this section, we launch a 2D grid of CTAs to cover arbitrary matrix dimensions (M=N=K=256).
+Steps 1-2 only handle a single output tile (M=N=128). A 2D grid of CTAs covers larger M and N dimensions. The example uses M=N=K=256.
 
 **Changes from Step 2** (the K-loop body is unchanged):
 
@@ -488,19 +492,19 @@ Steps 1-2 only handle a single output tile (M=N=128). In this section, we launch
 | Load slice | `A[:, k:k+64]` | `A[m_st:m_st+BLK_M, k:k+64]` |
 | Writeback | `D[m_thr, :]` | `D[m_thr, n_st:n_st+BLK_N]` |
 
-### What You Will Learn
+**Topics.**
 
-- Launching a 2D grid of CTAs to cover arbitrary M and N dimensions
+- Launching a 2D grid of CTAs to cover multiple M and N tiles
 
 - Per-CTA tile offset calculation with `Tx.meta_var`
 
-### Background
+### Grid Mapping
 
 To support larger matrices, we launch a 2D grid of CTAs: `[M // BLK_M, N // BLK_N]`. Each CTA computes one 128x128 output tile.
 
 CTA `(bx, by)` computes `D[bx*128 : (bx+1)*128, by*128 : (by+1)*128]` by loading `A[bx*128 : (bx+1)*128, :]` and `B[by*128 : (by+1)*128, :]`.
 
-### Implementation
+**Implementation.**
 
 ```{.python .input}
 
@@ -510,7 +514,7 @@ from tvm.tirx.operator.tile_primitive.cuda.tma_utils import tma_shared_layout, S
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg as axis_tid_in_wg
 ```
 
-The key change from Step 2: the grid is now `[M // BLK_M, N // BLK_N]` instead of `[1, 1]`, and loads/stores use per-CTA offsets `m_st` and `n_st`:
+Step 3 changes the grid to `[M // BLK_M, N // BLK_N]` instead of `[1, 1]`, and loads/stores use per-CTA offsets `m_st` and `n_st`:
 
 ```{.python .input}
 def hgemm_v3(M, N, K):
@@ -636,11 +640,10 @@ print("PASS")
 
 ```
 
-As the diff table at the top of this section shows, the K-loop body is identical to Step 2 — only the grid dimensions and offset calculations change.
+As the diff table shows, the K-loop body is identical to Step 2 — only the grid dimensions and offset calculations change.
 
 ## Exercises
 
 1. Why is `cta_sync()` needed between the synchronous SMEM copy and the MMA? What could go wrong without it?
 2. What happens if you remove `phase_mma ^= 1` in Step 2's K-loop? Will the kernel deadlock, produce wrong results, or both?
 3. For M=N=4096 with BLK_M=BLK_N=128, how many CTAs are launched in Step 3? Do adjacent CTAs share any data from GMEM?
-

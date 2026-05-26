@@ -1,25 +1,48 @@
-# TIRX Language Basics
+# TIRX Language Reference
 :label:`chap_tirx_primer`
 
-TIRX has two layers that build on one another. This chapter introduces the **language layer** — the plain-IR machinery every kernel is made of: buffers, scopes, control flow, raw PTX intrinsics, the compile pipeline, and a handful of metaprogramming helpers. Crucially, everything in this chapter is something you could write with no TIRX-specific abstractions in sight. :numref:`chap_layouts` then puts the **tile primitive layer** on top — execution scopes, tensor layouts, and the `Tx.copy` / `Tx.gemm_async` family of high-level operators that turn a 130-line raw-PTX kernel into a roughly half-sized version with none of the bitfield plumbing.
+TIRX programs are GPU kernel IR written through a Python DSL. A `@Tx.prim_func` describes one kernel-level function: its buffers, symbolic launch coordinates, execution scopes, memory allocations, control flow, and calls to hardware operations. `tvm.compile(..., tir_pipeline="tirx")` lowers that function to ordinary TIR, then to CUDA host/device code.
 
-By the end of this chapter you will be able to read every non-tile-primitive construct in the no-sugar GEMM of :numref:`sec_no_sugar_gemm`, and write your own raw-PTX kernels from scratch.
+The **language layer** is the part every TIRX kernel uses before tile primitives enter the picture. :numref:`chap_layouts` adds the tile-primitive layer: scope-aware, layout-aware operations such as `Tx.copy`, `Tx.copy_async`, and `Tx.gemm_async`.
+
+Read a TIRX kernel by asking four questions:
+
+1. What are the input and output buffers?
+2. Which thread group is active at each point?
+3. Which statements are ordinary TIR control flow, and which are hardware calls?
+4. Where does the TIRX-specific syntax disappear in the compile pipeline?
+
+
+## TIRX in One Picture
+
+The basic flow is:
+
+```text
+Python function with @Tx.prim_func
+  -> TIRX parser builds a PrimFunc
+  -> IRModule({"main": prim_func})
+  -> tvm.compile(..., tir_pipeline="tirx")
+  -> generated host stub + CUDA device kernel
+  -> lib["main"](...) launches the kernel
+```
+
+TIRX is lower level than a model compiler. There is no Relax graph, no PyTorch module, and no automatic schedule search in these examples. The kernel structure is explicit, and the TIRX pipeline lowers the language constructs and tile primitives into concrete CUDA/PTX mechanisms.
 
 
 ## Import Convention
 
-The whole tutorial uses one import:
+TIRX code usually starts with one import:
 
 ```python
 from tvm.script import tirx as Tx
 ```
 
-`Tx` is the TIRX namespace. It provides the TIRX DSL: kernel constructs (`Tx.kernel`, `Tx.cta`, `Tx.warpgroup`, `Tx.warp`, `Tx.thread`), buffer helpers (`Tx.Buffer`, `Tx.alloc_buffer`, `Tx.decl_buffer`, `Tx.shared_scalar`), control-flow primitives (`Tx.serial`, `Tx.unroll`, `Tx.vectorized`), raw PTX intrinsics under `Tx.ptx.*`, raw CUDA runtime helpers under `Tx.cuda.*`, tile primitives such as `Tx.copy` and `Tx.gemm_async`, and metaprogramming glue (`Tx.meta_var`, `Tx.inline`, `Tx.meta_class`). This chapter covers the non-tile-primitive subset; :numref:`chap_layouts` covers the rest.
+`Tx` is the TIRX namespace. It provides the TIRX DSL: kernel constructs (`Tx.kernel`, `Tx.cta`, `Tx.warpgroup`, `Tx.warp`, `Tx.thread`), buffer helpers (`Tx.Buffer`, `Tx.alloc_buffer`, `Tx.decl_buffer`, `Tx.shared_scalar`), control-flow primitives (`Tx.serial`, `Tx.unroll`, `Tx.vectorized`), raw PTX intrinsics under `Tx.ptx.*`, raw CUDA runtime helpers under `Tx.cuda.*`, tile primitives such as `Tx.copy` and `Tx.gemm_async`, and metaprogramming glue (`Tx.meta_var`, `Tx.inline`, `Tx.meta_class`). The non-tile-primitive subset comes first; :numref:`chap_layouts` covers tile primitives.
 
 
-## Hello TIRX
+## Minimal Kernel Example
 
-:numref:`chap_setup` already showed a minimal runnable kernel — `double_it` — that multiplies every element of an input array by 2. We repeat it here so every piece has a name, and because every subsequent section will refer back to it.
+The small `double_it` kernel below is a compact reference for the basic language constructs: handles, dynamic shapes, match buffers, launch coordinates, thread scope, and ordinary TIR control flow.
 
 ```python
 BLOCK = 256
@@ -38,9 +61,9 @@ def double_it(A_ptr: Tx.handle, B_ptr: Tx.handle):
                 B[i] = A[i] * 2.0
 ```
 
-Six distinct TIRX features are hiding in those twelve lines:
+The example contains the core language features used throughout the tutorial:
 
-| Feature | Where it appears | Section below |
+| Feature | Where it appears | Where to look |
 |:--|:--|:--|
 | `@Tx.prim_func` | top-level decorator | *Compile Pipeline* |
 | `Tx.handle`, `Tx.int32()`, `Tx.match_buffer` | argument types and dynamic shape | *Types and Expressions* |
@@ -49,14 +72,14 @@ Six distinct TIRX features are hiding in those twelve lines:
 | `if i < n:`, `B[i] = A[i] * 2.0` | TIR control flow and expressions | *Types and Expressions* |
 | compile to CUDA and run | compilation pipeline | *Compile Pipeline* |
 
-Throughout this chapter we unfold each of these. We use simple elementwise kernels (double-it, a three-operand AXPBY) as running examples rather than a GEMM, so that each new concept is the only new thing in its snippet.
+The examples in this reference stay small on purpose; GEMM-specific tile primitives are covered in the main chapters.
 
 
 ## Types and Expressions
 
 ### Scalar types
 
-TIRX expressions are built from TIR primitive types. The ones you will meet most often:
+TIRX expressions are built from TIR primitive types. The most common ones are:
 
 | Type | Size | Used for |
 |:--|:--|:--|
@@ -69,7 +92,7 @@ TIRX expressions are built from TIR primitive types. The ones you will meet most
 Two ways to materialise an `int32`:
 
 - `n = Tx.int32()` — declares a fresh symbolic `Var` of dtype `int32`. Used in `match_buffer` shape parameters (`n` in `double_it`) and anywhere else a "dimension is dynamic but typed" name is needed.
-- `Tx.int32(7)` / `Tx.float32(2.0)` — produces a typed literal (`IntImm` / `FloatImm`), useful when the parser would otherwise infer the wrong Python type.
+- `Tx.int32(7)` / `Tx.float32(2.0)` — produces a typed literal (`IntImm` / `FloatImm`) when the parser would otherwise infer the wrong Python type.
 
 A function-local *mutable* scalar uses a TVMScript type annotation:
 
@@ -78,9 +101,9 @@ stage: Tx.int32            # declare a fresh int32 variable
 phase: Tx.int32 = 0        # declare + initialise to 0
 ```
 
-You will see both forms in `hgemm_1consumer.py` (sliding `stage` / `phase` counters in the warp-specialised producer / consumer loop) and the per-stage variants in `no_sugar_gemm.py`.
+Both forms appear in `hgemm_1consumer.py` (sliding `stage` / `phase` counters in the warp-specialized producer / consumer loop) and the per-stage variants in `no_sugar_gemm.py`.
 
-### What the IR is made of
+### IR Vocabulary
 
 Every line in `double_it` becomes one TIR node. There are two families:
 
@@ -107,13 +130,13 @@ Every line in `double_it` becomes one TIR node. There are two families:
 | Buffers | `BufferStore` (`B[i] = ...`), `AllocBuffer`, `DeclBuffer`, `AttrStmt` |
 | TIRX-specific | `ExecScopeStmt` (`with Tx.cta():` etc.), `TilePrimitiveCall` (e.g. `Tx.copy`) |
 
-This is the entire vocabulary — there is no class system, no closures, no exceptions. Every Python construct in a `@Tx.prim_func` either maps directly to one of these nodes, or fails to parse.
+The vocabulary is intentionally small: no class system, no closures, no exceptions. Every Python construct in a `@Tx.prim_func` either maps directly to one of these nodes, or fails to parse.
 
 ### Expressions and operators
 
 Arithmetic, comparison, and logical expressions use ordinary Python operators (`+`, `-`, `*`, `//`, `<`, `<=`, `&`, `|`, `~`). The parser records the corresponding TIR node — `+` → `Add`, `//` → `FloorDiv`, `<` → `LT`, `&` → `And`, and so on. Python `and` / `or` are accepted; TIRX's parser lowers them correctly to short-circuiting `And` / `Or` nodes.
 
-Type coercion is explicit. `i < n` where both sides are `int32` works without a cast; mixing `int32` and `float32` requires `Tx.cast(x, "float32")` (which emits an explicit `Cast` node). Two patterns you will see again and again:
+Type coercion is explicit. `i < n` where both sides are `int32` works without a cast; mixing `int32` and `float32` requires `Tx.cast(x, "float32")` (which emits an explicit `Cast` node). Two patterns appear repeatedly:
 
 ```python
 tx   = Tx.thread_id([128])                   # int32 symbolic IterVar (cta→thread)
@@ -137,13 +160,13 @@ TIRX control flow follows Python syntax but produces TIR statement nodes.
 
 `Tx.ptx.mbarrier.init(bar, 1)`, `Tx.cuda.cta_sync()`, and every other `Tx.ptx.*` / `Tx.cuda.*` invocation produces a `Call` PrimExpr. When such a call appears at statement position (its return value is discarded), the parser wraps it in an `Evaluate` statement.
 
-A `with` block binds a region to a TIRX-specific `ExecScopeStmt` (`Tx.kernel`, `Tx.cta`, `Tx.warpgroup`, …). These constructs and their semantics are introduced in *Scopes in a Nutshell* below and fully developed in :numref:`chap_layouts`.
+A `with` block binds a region to a TIRX-specific `ExecScopeStmt` (`Tx.kernel`, `Tx.cta`, `Tx.warpgroup`, …). *Scopes in a Nutshell* gives the minimum version; :numref:`chap_layouts` develops the full programming model.
 
 `return` is only legal inside `@Tx.inline` functions (see *Metaprogramming*). A top-level `@Tx.prim_func` always has a `void` signature.
 
 ### Reading `double_it` as TIR
 
-The body of `double_it` translates to a `SeqStmt` of two `Bind` statements (`n = Tx.int32()` and the two `Tx.match_buffer` calls), an `ExecScopeStmt` for `Tx.kernel()`, and inside that an `ExecScopeStmt` for `Tx.thread()` whose body is `IfThenElse(LT(i, n), BufferStore(B, ...))`. The TIR script printer shows this directly — see *Inspecting the generated IR* below.
+The body of `double_it` translates to a `SeqStmt` of two `Bind` statements (`n = Tx.int32()` and the two `Tx.match_buffer` calls), an `ExecScopeStmt` for `Tx.kernel()`, and inside that an `ExecScopeStmt` for `Tx.thread()` whose body is `IfThenElse(LT(i, n), BufferStore(B, ...))`. The TIR script printer shows this directly in *Inspecting the generated IR*.
 
 
 ## Buffers and Scopes
@@ -176,23 +199,23 @@ tmem  = Tx.decl_buffer((128, N), "float32", scope="tmem",
                        layout=Tx.TileLayout(Tx.S[(128, N) : (1@Tx.TLane, 1@Tx.TCol)]))
 ```
 
-For the GEMM family of kernels the important distinctions are:
+For the GEMM family of kernels the distinctions are:
 
 - **Shape.** Known at compile time (`(M, K)`) or bound dynamically (`match_buffer` with `Tx.int32()` shape variables).
-- **Scope.** `"global"` (default, GMEM), `"shared"` (SMEM), `"local"` (per-thread registers), `"tmem"` (Blackwell tensor memory). Other scopes exist for earlier architectures but are not used in this tutorial.
+- **Scope.** `"global"` (default, GMEM), `"shared"` (SMEM), `"local"` (per-thread registers), `"tmem"` (Blackwell tensor memory). Other scopes exist for earlier architectures but are not used here.
 - **Layout.** Optional `layout=` argument (see :numref:`chap_layouts`). Required for swizzled SMEM and 2D TMEM; defaults to row-major when omitted.
 
 ### Small scalar helpers
 
 Two helpers come up often enough to deserve a name:
 
-- `Tx.shared_scalar(dtype)` — allocate a single SMEM cell, used for mbarrier handles, `tcgen05` allocation addresses, phase bits. Distinct calls return distinct addresses, which matters for :numref:`sec_no_sugar_gemm` where `bar_tma` and `bar_mma` must be two separate `uint64` cells.
+- `Tx.shared_scalar(dtype)` — allocate a single SMEM cell, used for mbarrier handles, `tcgen05` allocation addresses, phase bits. Distinct calls return distinct addresses, which matters when raw PTX code keeps separate TMA and MMA barriers.
 - `Tx.address_of(buf[...])` — produce the runtime pointer to a buffer element, for use in raw PTX calls that expect a pointer rather than a value (e.g. `Tx.ptx.mbarrier.init(Tx.address_of(bar_tma), 1)`).
 - `buf.access_ptr("r"|"w"|"rw", offset=...)` — like `address_of` but with explicit read/write intent and an offset expression. Used in `tcgen05.mma`'s matrix descriptor encoding to pass the base address of an SMEM tile.
 
 ### Scopes in a nutshell
 
-A scope statement is what gives TIRX its characteristic `with` blocks. The full programming-model story lives in :numref:`chap_layouts`; the minimum you need for the language chapter is:
+A scope statement is what gives TIRX its characteristic `with` blocks. :numref:`chap_layouts` gives the full programming-model story; the minimum language-level form is:
 
 ```python
 with Tx.kernel():              # grid-level setup (no team kind yet)
@@ -203,7 +226,7 @@ with Tx.kernel():              # grid-level setup (no team kind yet)
                     ...
 ```
 
-The exact number of threads in a CTA is set at launch via `Tx.thread_id([N])`; the kernels in this tutorial use `N = 128` (one warpgroup) or `N = 256` (two warpgroups).
+The exact number of threads in a CTA is set at launch via `Tx.thread_id([N])`; these kernels use `N = 128` (one warpgroup) or `N = 256` (two warpgroups).
 
 A predicate passed inside `()` narrows the active thread set, e.g. `with Tx.warp(Tx.filter(warp_id, 0, 1)):` selects warp 0 of the enclosing CTA. The full grammar for the symbolic coordinates is:
 
@@ -219,11 +242,11 @@ A predicate passed inside `()` narrows the active thread set, e.g. `with Tx.warp
 | `Tx.thread_id_in_wg([128])` | warpgroup → thread | 128 |
 | `Tx.lane_id([32])` | warp → thread (laneid) | 32 |
 
-There is no `parent=...` keyword — the parent level is encoded in the function name (`*_in_cluster`, `*_in_wg`, `lane_id`). In the no-sugar GEMM we use `tx = Tx.thread_id([128])` to obtain a single-int CTA-wide thread index, then guard per-thread work with `if tx == 0:`.
+There is no `parent=...` keyword — the parent level is encoded in the function name (`*_in_cluster`, `*_in_wg`, `lane_id`). Raw PTX code can also use `tx = Tx.thread_id([128])` to obtain a single-int CTA-wide thread index, then guard per-thread work with `if tx == 0:`.
 
 ### Adding `SMEMPool` and `TMEMPool` on top
 
-Everything so far — `Tx.alloc_buffer(scope="shared")`, `Tx.shared_scalar`, `Tx.decl_buffer(scope="tmem")` — is part of the language layer. The next layer up is two small Python helpers that *generate* the same statements but lay out memory more compactly.
+`Tx.alloc_buffer(scope="shared")`, `Tx.shared_scalar`, and `Tx.decl_buffer(scope="tmem")` are part of the language layer. Two small Python helpers generate the same statements while laying out memory more compactly.
 
 `Tx.SMEMPool` packs multiple SMEM tiles into a single arena. Inside `with Tx.cta():` you allocate sequentially, then call `commit()`:
 
@@ -238,7 +261,7 @@ with Tx.cta():
     pool.commit()
 ```
 
-Compare with :numref:`sec_no_sugar_gemm`, which uses three separate `Tx.shared_scalar` calls and two `Tx.alloc_buffer(scope="shared", ...)` calls — five independent SMEM allocations that each get rounded up to a cache line. `pool.alloc(...)` returns the same `Tx.Buffer` object, only with the offsets chosen by a live-range analysis so non-overlapping tiles can share memory.
+A hand-written version would use separate `Tx.shared_scalar` calls and separate `Tx.alloc_buffer(scope="shared", ...)` calls, with each allocation rounded up independently. `pool.alloc(...)` returns the same `Tx.Buffer` object, only with the offsets chosen by a live-range analysis so non-overlapping tiles can share memory.
 
 `Tx.TMEMPool` does the analogous job for tensor memory. It wraps a single `tcgen05.alloc` call and hands out `Tx.decl_buffer(scope="tmem", allocated_addr=...)` slices on demand:
 
@@ -251,17 +274,17 @@ with Tx.cta():
     pool.commit()
 ```
 
-Both are pure syntactic sugar — *they expand at parse time to the same `Tx.alloc_buffer` / `Tx.decl_buffer` / `Tx.shared_scalar` calls you would write by hand*. They are not part of the IR; if you print `kernel.script()`, you will see the desugared form. The full API lives in :numref:`chap_api_reference`, section *Syntactic Sugar*.
+Both are pure syntactic sugar — *they expand at parse time to the same `Tx.alloc_buffer` / `Tx.decl_buffer` / `Tx.shared_scalar` calls you would write by hand*. They are not part of the IR; if you print `kernel.script()`, you will see the desugared form. :numref:`chap_api_reference` covers the full API under *Syntactic Sugar*.
 
 
 ## Calling PTX and the CUDA Runtime
 :label:`sec_calling_ptx`
 
-Anything the hardware can do, TIRX lets you call directly. Three namespaces cover the common cases.
+TIRX can call raw PTX and CUDA runtime functions directly. These calls are the escape hatch below tile primitives: when a hardware operation has no higher-level primitive yet, a kernel can call it explicitly. Three namespaces cover the common cases.
 
 ### `Tx.ptx.*` — PTX instructions
 
-The `Tx.ptx` tree mirrors the PTX ISA hierarchy. A sampling of what you saw in :numref:`sec_no_sugar_gemm`:
+The `Tx.ptx` tree mirrors the PTX ISA hierarchy. Representative calls include:
 
 | PTX feature | TIRX call | Rough signature |
 |:--|:--|:--|
@@ -275,7 +298,7 @@ The `Tx.ptx` tree mirrors the PTX ISA hierarchy. A sampling of what you saw in :
 | Fences | `Tx.ptx.fence.{proxy_async, mbarrier_init}` | `(space="")` / `()` |
 | Predicate: elect one thread per warp | `Tx.ptx.elect_sync()` | `()` |
 
-Two patterns to be aware of. First, many PTX intrinsics take keyword-only arguments — this is how the TIRX binding distinguishes *semantic* arguments (dtype, shape, CTA group) from *operand* arguments (buffers, registers). The `tcgen05.mma` call in :numref:`sec_no_sugar_gemm` is a good example. Second, PTX intrinsics that take a pointer argument want the *address* of an SMEM cell, not the cell itself — hence the `Tx.address_of(...)` wrappers around `bar_tma`, `bar_mma`, and the host-side TMA tensor maps `A_map` / `B_map`.
+Two patterns to be aware of. First, many PTX intrinsics take keyword-only arguments — this is how the TIRX binding distinguishes *semantic* arguments (dtype, shape, CTA group) from *operand* arguments (buffers, registers). `tcgen05.mma` is a good example. Second, PTX intrinsics that take a pointer argument want the *address* of an SMEM cell, not the cell itself — hence the `Tx.address_of(...)` wrappers around mbarrier handles and host-side TMA tensor maps.
 
 ### `Tx.cuda.*` — CUDA runtime primitives
 
@@ -308,7 +331,7 @@ Tx.call_packed(
 )
 ```
 
-The runtime function `runtime.cuTensorMapEncodeTiled` is built in. You can register your own packed functions through the TVM FFI if you need to extend the host-side prologue further; none of the kernels in this tutorial do.
+The runtime function `runtime.cuTensorMapEncodeTiled` is built in. You can register your own packed functions through the TVM FFI if you need to extend the host-side prologue further; none of these kernels do.
 
 
 ## The Compile Pipeline
@@ -325,28 +348,43 @@ with target:
 
 ### Passes
 
-`tir_pipeline="tirx"` runs the following passes in order on the IR module (full source: `python/tvm/tirx/compilation_pipeline.py:tirx_pipeline`):
+`tir_pipeline="tirx"` runs a fixed pass sequence on the IR module (full source: `python/tvm/tirx/compilation_pipeline.py:tirx_pipeline`). The main stages are:
 
-| # | Pass | What it does |
-|:--|:--|:--|
-| 1 | `LowerTIRx` | Lowers TIRX-specific constructs (`ExecScopeStmt`, `TilePrimitiveCall`, named axes) into core TIR. Tile primitives like `Tx.copy` and `Tx.gemm_async` are replaced by concrete PTX intrinsic calls here — a no-op for raw-PTX kernels like the one in :numref:`sec_no_sugar_gemm`. |
-| 2 | `UnifyThreadBinding` | Collapses redundant `threadIdx` / `blockIdx` bindings; assigns each symbolic thread coordinate to a CUDA thread axis. |
-| 3 | `Simplify` | Arithmetic simplification (`x + 0 → x`, constant folding, branch elimination). |
-| 4 | `LowerTIRxOpaque` | Lowers remaining TIRX-opaque constructs (mostly storage-scope markers). |
-| 5 | `FlattenBuffer` | Multi-dimensional buffers → 1-D flat memory + linearised index expressions. |
-| 6 | `BF16ComputeLegalize` | Replace unsupported `bf16` compute with widened-then-narrowed sequences. |
-| 7 | `NarrowDataType(32)` | Narrows `int64` index math to `int32` where it provably fits. |
-| 8 | `VectorizeLoop` | `Tx.vectorized(N)` loops → vector loads/stores. |
-| 9 | `UnrollLoop` | `Tx.unroll(N)` loops → straight-line code. |
-| 10 | `Simplify` | Second simplification pass over the post-unroll IR. |
-| 11 | `CommonSubexprElim` *(skippable via `tir.disable_cse_tir`)* | CSE on the lowered TIR. |
-| 12 | `FP8ComputeLegalize` | Legalise unsupported fp8 compute (paired with the storage pass below). |
-| 13 | `VerifyMemory` | Static check that no thread accesses memory outside its allowed scope. |
-| 14 | `AnnotateEntryFunc`, `AnnotateDeviceRegions` | Mark the kernel entry point and which IR regions run on device. |
-| 15 | `SplitHostDevice` | Split the module into a host stub (parameter marshalling, kernel launch) and a device function. |
-| 16 | `MakePackedAPI` | Generate the TVM packed-function ABI for the host stub. |
-| 17 | `FP8StorageLegalize`, `BF16StorageLegalize` | Pack sub-byte / non-native types into the available storage classes. |
-| 18 | `LowerDeviceKernelLaunch` | Emit the launch sequence for the device function. |
+1. `LowerTIRx`: lowers TIRX-specific constructs (`ExecScopeStmt`, `TilePrimitiveCall`, named axes) into core TIR. Tile primitives like `Tx.copy` and `Tx.gemm_async` are replaced by concrete PTX intrinsic calls here. For kernels that already call raw PTX directly, this pass mostly has nothing to replace.
+
+2. `UnifyThreadBinding`: collapses redundant `threadIdx` / `blockIdx` bindings and assigns each symbolic thread coordinate to a CUDA thread axis.
+
+3. `Simplify`: performs arithmetic simplification such as `x + 0 -> x`, constant folding, and branch elimination.
+
+4. `LowerTIRxOpaque`: lowers remaining TIRX-opaque constructs, mostly storage-scope markers.
+
+5. `FlattenBuffer`: lowers multi-dimensional buffers to flat memory plus linearized index expressions.
+
+6. `BF16ComputeLegalize`: replaces unsupported `bf16` compute with widened-then-narrowed sequences.
+
+7. `NarrowDataType(32)`: narrows `int64` index math to `int32` where it provably fits.
+
+8. `VectorizeLoop`: lowers `Tx.vectorized(N)` loops to vector loads and stores.
+
+9. `UnrollLoop`: lowers `Tx.unroll(N)` loops to straight-line code.
+
+10. A second `Simplify`: cleans up the post-unroll IR.
+
+11. `CommonSubexprElim`: performs common subexpression elimination on the lowered TIR. This can be skipped with `tir.disable_cse_tir`.
+
+12. `FP8ComputeLegalize`: legalizes unsupported fp8 compute, paired with storage legalization later.
+
+13. `VerifyMemory`: statically checks that no thread accesses memory outside its allowed scope.
+
+14. `AnnotateEntryFunc` and `AnnotateDeviceRegions`: mark the kernel entry point and which IR regions run on device.
+
+15. `SplitHostDevice`: splits the module into a host stub for parameter marshalling and kernel launch, plus a device function for the GPU body.
+
+16. `MakePackedAPI`: generates the TVM packed-function ABI for the host stub.
+
+17. `FP8StorageLegalize` and `BF16StorageLegalize`: pack sub-byte or non-native types into available storage classes.
+
+18. `LowerDeviceKernelLaunch`: emits the launch sequence for the device function.
 
 After `SplitHostDevice`, the host and device modules go through separate finalisation pipelines. The **host** finalisation runs `LowerTVMBuiltin` → `LowerCustomDatatypes` → `LowerIntrin`. The **device** finalisation runs `LowerWarpMemory` → `Simplify` → `LowerCustomDatatypes` → `LowerIntrin`; the last step is what maps the remaining `Call` nodes (`tcgen05.alloc`, `cp.async.bulk.tensor.g2c`, …) to CUDA inline-asm snippets. CUDA codegen then serialises the device IR to a `.cu` source string and `nvcc` produces the cubin.
 
@@ -354,7 +392,7 @@ After `SplitHostDevice`, the host and device modules go through separate finalis
 
 ### Inspecting the generated IR
 
-`prim_func.script()` and `IRModule.script()` print the TIR back as TVMScript. For our `double_it` example:
+`prim_func.script()` and `IRModule.script()` print the TIR back as TVMScript. For `double_it`:
 
 ```python
 print(double_it.script())
@@ -375,7 +413,7 @@ def double_it(A_ptr: Tx.handle, B_ptr: Tx.handle):
                 B[i] = A[i] * Tx.float32(2.0)
 ```
 
-Use this output to verify that what the parser captured matches what you wrote — meta-programming surprises (a `Tx.meta_var` you forgot, an `@Tx.inline` that did not inline) are most visible here.
+The output verifies that what the parser captured matches what you wrote. Meta-programming surprises (a `Tx.meta_var` you forgot, an `@Tx.inline` that did not inline) are most visible here.
 
 ### Inspecting the generated CUDA
 
@@ -403,16 +441,16 @@ A clean line-by-line correspondence with the TIR: `bx = Tx.cta_id([(n + 255) // 
 - Scalar locals are wrapped in a single-element `alignas(64) int i_ptr[1]` array (a TIRX storage convention introduced by `LowerWarpMemory`); the generated `nvcc` pass coalesces these to a register.
 - Float literals appear in hexadecimal form (`0x1p+1f`) for bit-exact reproducibility, with the decimal value in a trailing comment.
 
-The TIR-to-CUDA mapping is what makes the inspection tool useful: when a kernel "should work but doesn't", you can usually trace the bug to a single instruction in this output. The no-sugar GEMM in :numref:`sec_no_sugar_gemm` expands to ~430 lines along the same structural rules; search for `tcgen05.mma`, `cp.async.bulk.tensor`, or `mbarrier.init.shared` to verify each intrinsic was lowered the way you expected.
+The TIR-to-CUDA mapping gives you an inspection path: when a kernel "should work but doesn't", the bug often maps to a single instruction in this output. A raw PTX GEMM such as `tirx_tutorial/no_sugar_gemm.py` expands along the same structural rules; search for `tcgen05.mma`, `cp.async.bulk.tensor`, or `mbarrier.init.shared` to verify each intrinsic was lowered the way you expected.
 
 
 ## Metaprogramming
 
 TIR is not a particularly expressive language on its own — no first-class functions, no closures, no compile-time values other than literals. TIRX adds three small metaprogramming constructs that run *in the parser* rather than at run time. They do not extend what a kernel can express; they extend how concisely you can *write* it.
 
-### `Tx.meta_var` — parser-time constants
+### `Tx.meta_var` — parser-time aliases
 
-A `Tx.meta_var(value)` wraps a Python value so the parser carries it along without emitting a TIR node. Typical use: tile-scheduler coordinates that the kernel needs to compute tile addresses at parse time, not at run time:
+`Tx.meta_var(expr)` tells the parser to reuse `expr` as an inline symbolic expression instead of materializing a separate TIR variable. The expression can include runtime symbolic coordinates such as CTA ids or scheduler indices:
 
 ```python
 m_start = Tx.meta_var((m_idx * CTA_GROUP + cbx) * BLK_M)
@@ -420,7 +458,7 @@ n_start = Tx.meta_var((n_idx * CTA_GROUP + cbx) * BLK_N)
 Tx.copy_async(Asmem[:, :], A[m_start : m_start + BLK_M, :], dispatch="tma")
 ```
 
-Without `Tx.meta_var`, the parser would need to emit TIR nodes for `m_start` and `n_start`, even though their values are fully determined by the meta-class's scheduling decision. With `Tx.meta_var`, they vanish from the IR and reappear only baked into the addressing of the `Tx.copy_async` call.
+Without `Tx.meta_var`, the parser would emit TIR local variables for `m_start` and `n_start`. With `Tx.meta_var`, those names disappear from the IR and the expression is reused directly in the addressing of the `Tx.copy_async` call.
 
 ### `@Tx.inline` — parameterised helpers
 
@@ -460,14 +498,14 @@ class PersistentScheduler:
 
 An instance can be constructed inside the kernel, its attributes can be read by `Tx.meta_var`, and its methods can be called inside the parser loop — all without emitting extra TIR nodes. See the `ClusterPersistentScheduler2D` class in `tirx-kernels-wt/tirx_kernels/gemm/hgemm_1consumer.py` for a real example that drives the Step 8 and Step 9 kernels of :numref:`chap_gemm_advanced`.
 
-### Where meta lives in the pipeline
+### Meta in the Pipeline
 
 All three constructs are *parser-time*: they affect the TIR that enters `tvm.compile`, nothing else. The compile pipeline in :numref:`sec_compile_pipeline` sees a fully-lowered TIR module with no `meta_var` / `inline` / `meta_class` constructs left. If the generated IR or CUDA looks wrong, print the expanded TIR before compilation with `tvm.IRModule({"main": kernel}).script()` — you will see exactly what the meta layer produced.
 
 
-## Where to Find More
+## Related References
 
 - Full op catalog, barrier helpers, and PTX intrinsic reference: :numref:`chap_api_reference`.
 - Tile primitives (`Tx.copy`, `Tx.gemm_async`) and layouts: :numref:`chap_layouts`.
-- A fully worked raw-PTX kernel, ready to modify: `tirx_tutorial/no_sugar_gemm.py`; discussion in :numref:`sec_no_sugar_gemm`.
+- A fully worked raw-PTX kernel, ready to modify: `tirx_tutorial/no_sugar_gemm.py`; motivation for avoiding this plumbing: :numref:`sec_no_sugar_gemm`.
 - Memory-hierarchy numbers (SMEM / TMEM / RF capacities, bandwidths): :numref:`chap_background`.

@@ -1,16 +1,14 @@
-# Flash Attention 4
+# Flash Attention on Blackwell
 :label:`chap_flash_attention`
 
-*Prerequisites: You should be comfortable with Step 7 (Warp Specialization) — specifically warp specialization, the 4-barrier producer-consumer pattern, RingState, and TMA/tcgen05 pipelining. If Step 7 still feels unclear, go back and re-read it before continuing.*
-
-*This chapter explains how the same TIRX patterns from GEMM generalize to attention kernels. The focus is on architecture and algorithm design rather than line-by-line code.*
+Attention kernels reuse the same TIRX patterns as GEMM: tiled data movement, warp specialization, asynchronous barriers, and `tcgen05` MMA.
 
 ---
 
-Flash Attention 4 is the Blackwell-native implementation of Flash Attention, designed specifically for SM100a GPUs. It fuses the entire attention computation $O = \text{softmax}(QK^{\top})\,V$ into a single kernel, avoiding materializing the full $N \times N$ attention matrix. This chapter explores how Flash Attention 4 maps to Blackwell hardware using TIRX.
+Flash Attention 4 is a Blackwell-oriented Flash Attention implementation for SM100a GPUs. It fuses the attention computation $O = \text{softmax}(QK^{\top})\,V$ into a single kernel, avoiding materializing the full $N \times N$ attention matrix. TIRX expresses that fused algorithm through Blackwell tile movement, `tcgen05` MMA, barriers, and warp-specialized roles.
 
 
-## What You Will Learn
+**Topics.**
 
 - How online softmax works, step by step with a numeric example
 
@@ -31,9 +29,9 @@ Standard softmax requires two passes over the data: one to find the maximum (for
 
 $$\text{softmax}(x_i) = \frac{e^{x_i - \max(x)}}{\ \sum_j e^{x_j - \max(x)}}$$
 
-This is problematic for attention because the score vector has length $N$ (the sequence length), and materializing it requires $O(N^2)$ memory across all query positions. Online softmax eliminates this by processing the scores in chunks, maintaining a running maximum and sum that get updated as each new chunk arrives.
+Attention makes this expensive: the score vector has length $N$ (the sequence length), and materializing it requires $O(N^2)$ memory across all query positions. Online softmax eliminates this by processing the scores in chunks, maintaining a running maximum and sum that get updated as each new chunk arrives.
 
-### The core idea
+### Online Recurrence
 
 For each row, we maintain two running values: a maximum $m$ and an exponential sum $\ell$. When a new chunk of scores arrives, we update both:
 
@@ -41,7 +39,7 @@ For each row, we maintain two running values: a maximum $m$ and an exponential s
 2. Rescale the old sum: $\ell = \ell \cdot e^{m_{\text{old}} - m_{\text{new}}}$
 3. Add the new terms: $\ell = \ell + \sum_j e^{\text{chunk}_j - m_{\text{new}}}$
 
-The rescaling in step 2 is the key insight. Since $m_{\text{old}} \le m_{\text{new}}$ (the maximum can only increase), the exponent $m_{\text{old}} - m_{\text{new}} \le 0$, so the rescaling factor $e^{m_{\text{old}} - m_{\text{new}}} \le 1$. This means we only ever multiply by values in $[0, 1]$, which is numerically stable.
+The rescaling in step 2 keeps the recurrence stable. Since $m_{\text{old}} \le m_{\text{new}}$ (the maximum can only increase), the exponent $m_{\text{old}} - m_{\text{new}} \le 0$, so the rescaling factor $e^{m_{\text{old}} - m_{\text{new}}} \le 1$. This means we only ever multiply by values in $[0, 1]$.
 
 ### Numeric example
 
@@ -63,11 +61,11 @@ The final softmax values are $e^{x_i - 8} / 1.053$ for each element, which match
 
 In Flash Attention 4, we track not just $(m, \ell)$ but also an output accumulator $O$. When the maximum changes, $O$ must be rescaled by the same factor:
 
-$$O = O \cdot e^{m_{\text{old}} - m_{\text{new}}} + P_{\text{new}} V_{\text{block}}$$
+$$O_{\text{new}} = O_{\text{old}} \cdot e^{m_{\text{old}} - m_{\text{new}}} + P_{\text{new}} V_{\text{block}}$$
 
-where $P_{\text{new}} = e^{S_{\text{block}} - m_{\text{new}}}$ are the softmax weights for the current block. After processing all KV blocks, the final output is $O / \ell$ (dividing each row by its accumulated sum).
+where $P_{\text{new}} = e^{S_{\text{block}} - m_{\text{new}}}$ is the unnormalized softmax numerator for the current block. After processing all KV blocks, the final output is $O / \ell$ (dividing each row by its accumulated sum).
 
-This is the complete Flash Attention 4 loop:
+Flash Attention 4 loop:
 
 ```
 For each Q block (BLK_M rows):
@@ -98,7 +96,7 @@ The Blackwell Flash Attention 4 kernel uses 4 warpgroups (512 threads) with full
 | **WG1 (full warpgroup)** | Softmax | Same as WG0 but handles Q stage 1 (double-buffered Q) |
 | **WG2 (full warpgroup)** | Correction + Epilogue | Rescales O accumulator in TMEM, normalizes, writes to SMEM |
 
-**All MMA instructions are issued from WG3's warp 0** — strictly one elected thread in that warp (via `elect.sync`) issues each `tcgen05.mma`, as required by Blackwell's single-thread issue rule. This is different from the warp role table description in some papers. WG0 and WG1 are purely softmax warpgroups: they read scores from TMEM, compute softmax (row_max, row_sum, exp), and write the probability matrix P back to TMEM. They do **not** issue any MMA instructions.
+**All MMA instructions are issued from WG3's warp 0** — strictly one elected thread in that warp (via `elect.sync`) issues each `tcgen05.mma`, as required by Blackwell's single-thread issue rule. Some papers describe the warp roles differently. WG0 and WG1 are purely softmax warpgroups: they read scores from TMEM, compute softmax (row_max, row_sum, exp), and write the probability matrix P back to TMEM. They do **not** issue any MMA instructions.
 
 WG0 and WG1 each handle one of two Q pipeline stages. While WG0 processes Q stage 0 through softmax, WG1 processes Q stage 1. This is a form of **Q double-buffering** at the warpgroup level.
 
@@ -117,15 +115,15 @@ N_COLS_TMEM = 512                       # Total TMEM columns allocated
 
 ## The Two MMA Phases
 
-Flash Attention 4 requires two distinct MMA operations per KV block, creating a pipeline that is fundamentally different from GEMM's single-MMA pattern.
+Flash Attention uses two MMA phases per KV block, unlike the GEMM loop's single MMA phase.
 
-### Phase 1: Score MMA (Q @ K^T -> S)
+### Score MMA
 
 The first MMA computes attention scores:
 
 $$S = Q_{\text{block}} K_{\text{block}}^{\top} \quad [\text{BLK}_M \times \text{BLK}_N]$$
 
-This writes the score matrix $S$ into TMEM. WG3's MMA warp (warp 0) issues the Score MMA for both Q stages sequentially, then the `bar_s_full` barrier signals that scores are ready for WG0/WG1 to run softmax.
+The Score MMA writes the score matrix $S$ into TMEM. WG3's MMA warp (warp 0) issues the Score MMA for both Q stages sequentially, then the `bar_s_full` barrier signals that scores are ready for WG0/WG1 to run softmax.
 
 Simplified excerpt (the real implementation wraps `arrive` in an `elect_sync` guard and handles both Q stages in an unrolled loop — see `flash_attention4.py` for full details):
 
@@ -143,7 +141,7 @@ def gemm_qk(q_stage, kv_stage, tmem_col_s, bar_s_full):
     bar_s_full.arrive(q_stage)  # Signal: scores ready in TMEM
 ```
 
-### Between phases: Softmax in registers
+### Softmax in Registers
 
 WG0/WG1 wait on `bar_s_full`, then read $S$ from TMEM into registers and run online softmax:
 
@@ -155,15 +153,15 @@ WG0/WG1 wait on `bar_s_full`, then read $S$ from TMEM into registers and run onl
 6. **Write P to TMEM** (as float16) via `Tx.copy_async` (registers -> TMEM)
 7. **Signal `bar_p_full_o_rescaled`** so that the Value MMA can begin
 
-The exp2 emulation is a custom polynomial approximation (degree 3 Horner evaluation) implemented with packed f32x2 PTX instructions for maximum throughput. The kernel computes $2^{x}$ rather than $e^x$ and adjusts the scale factor accordingly ($\text{scale\_log2} = \log_2(e) / \sqrt{d}$).
+The exp2 emulation is a custom polynomial approximation (degree 3 Horner evaluation) implemented with packed f32x2 PTX instructions. The kernel computes $2^{x}$ rather than $e^x$ and adjusts the scale factor accordingly ($\text{scale\_log2} = \log_2(e) / \sqrt{d}$).
 
-### Phase 2: Value MMA (P @ V -> O)
+### Value MMA
 
 The second MMA accumulates the weighted values:
 
 $$O = O + P_{\text{block}} V_{\text{block}} \quad [\text{BLK}_M \times \text{HEAD}_{\text{DIM}}]$$
 
-This is issued by WG3's MMA warp (warp 0). P lives in TMEM as float16 (written there by WG0/WG1), while V lives in SMEM. The result accumulates into O in TMEM as float32.
+WG3's MMA warp (warp 0) issues this operation. P lives in TMEM as float16 (written there by WG0/WG1), while V lives in SMEM. The result accumulates into O in TMEM as float32.
 
 Simplified excerpt (barrier waits and elect_sync guards omitted — see `flash_attention4.py:gemm_pv` for the full version):
 
@@ -191,7 +189,7 @@ Tx.gemm_async(
 )
 ```
 
-Notice the split: P@V is broken into two parts (first 96 columns, then last 32 columns). This allows the Value MMA to start before the softmax warpgroup finishes writing the last quarter of P to TMEM, overlapping computation with the TMEM store.
+P@V is split into two parts (first 96 columns, then last 32 columns). The split lets the Value MMA start before the softmax warpgroup finishes writing the last quarter of P to TMEM, overlapping computation with the TMEM store.
 
 ### TMEM Layout
 
@@ -199,12 +197,12 @@ The kernel uses a single TMEM allocation of 128 rows x 512 columns, partitioned 
 
 ![TMEM Layout](../img/tmem_layout.png)
 
-Each Q stage uses `tmem_offset=128` columns of f32 (or 256 columns of f16 for P). The S and P regions partially overlap in TMEM column space, which is safe because S is fully consumed before P is written.
+Each Q stage uses `tmem_offset=128` columns of f32 (or 256 columns of f16 for P). The S and P regions partially overlap in TMEM column space; the schedule reads S before reusing that region for P.
 
 
 ## Barrier Topology
 
-Flash Attention 4's barrier system is more complex than GEMM's because of the two MMA phases and the softmax computation between them. Below is every barrier in the kernel.
+Flash Attention 4's barrier system is more complex than GEMM's because of the two MMA phases and the softmax computation between them.
 
 ### Barrier Table
 
@@ -231,7 +229,7 @@ Flash Attention 4's barrier system is more complex than GEMM's because of the tw
 
 ### Comparison with GEMM barriers
 
-In GEMM, the barrier system is simple: `full` and `empty` barriers between TMA producer and MMA consumer, with the epilogue being a straightforward TMEM->SMEM->TMA store. Flash Attention 4 adds:
+In GEMM, the barrier system has `full` and `empty` barriers between TMA producer and MMA consumer, with the epilogue as a TMEM->SMEM->TMA store. Flash Attention 4 adds:
 
 - **bar_s_full / bar_p_full_o_rescaled**: An intermediate producer-consumer pair *within the MMA pipeline itself* (Score MMA produces S, softmax consumes it and produces P, Value MMA consumes P)
 - **bar_softmax_corr_full / bar_softmax_corr_empty**: Coordination between softmax warpgroups and the correction warpgroup for O rescaling
@@ -242,7 +240,7 @@ In GEMM, the barrier system is simple: `full` and `empty` barriers between TMA p
 
 After all KV blocks have been processed, the O accumulator in TMEM contains unnormalized values. The writeback process involves three steps:
 
-### 1. Final normalization
+### Final Normalization
 
 WG0/WG1 write the final `row_sum` to SMEM. WG2 reads it and computes `norm_scale = 1.0 / row_sum` (with a guard for zero/NaN rows):
 
@@ -252,7 +250,7 @@ acc_O_is_zero_or_nan = (row_sum == 0.0) or (row_sum != row_sum)
 norm_scale = rcp(1.0 if acc_O_is_zero_or_nan else row_sum)
 ```
 
-### 2. TMEM -> SMEM transfer
+### TMEM to SMEM Transfer
 
 WG2 reads O from TMEM in chunks of 16 columns, multiplies each element by `norm_scale`, casts from float32 to float16, and writes to O_smem:
 
@@ -265,13 +263,13 @@ for d_tile in range(HEAD_DIM // TMEM_EPI_LD_SIZE):
     O_smem[i_q, tid_in_wg, d_tile*16 : d_tile*16+16] = o_row_f16
 ```
 
-### 3. TMA store
+### TMA Store
 
-WG3's TMA store warp (warp 2) waits on `bar_corr_epi_full`, then issues a TMA store from O_smem to global memory. This follows the same pattern as GEMM's epilogue.
+WG3's TMA store warp (warp 2) waits on `bar_corr_epi_full`, then issues a TMA store from O_smem to global memory. The pattern matches GEMM's epilogue.
 
 ### O rescaling during iteration
 
-Between KV blocks, the O accumulator must be rescaled when the running maximum changes. This is done by **WG2** (the correction warpgroup), not by the softmax warpgroups. Here is why: WG0/WG1 are busy computing softmax and writing P to TMEM, while O is also in TMEM. Having a separate warpgroup read O, multiply by acc_scale, and write it back allows the rescaling to overlap with softmax computation.
+Between KV blocks, the O accumulator must be rescaled when the running maximum changes. **WG2** (the correction warpgroup) handles rescaling, not the softmax warpgroups. WG0/WG1 are busy computing softmax and writing P to TMEM, while O is also in TMEM. Having a separate warpgroup read O, multiply by acc_scale, and write it back allows the rescaling to overlap with softmax computation.
 
 ```python
 # WG2: Rescale O accumulator in TMEM (only when acc_scale < 1.0)
@@ -284,11 +282,11 @@ if any_thread_needs_rescale:
 
 The kernel optimizes this by checking `any_needs_rescale` via `Tx.ptx.any_sync` — if no thread in the warp needs rescaling (because the maximum did not change), the entire TMEM read-modify-write is skipped.
 
-**Adaptive rescaling threshold**: Unlike earlier Flash Attention versions that rescale O every time a new maximum appears, Flash Attention 4 only applies the rescaling when the maximum changes by more than `rescale_threshold` (set to 8.0 in the implementation). In practice, the running maximum stabilizes quickly after the first few KV blocks, so most iterations skip rescaling entirely. This reduces the number of expensive TMEM read-modify-write correction operations.
+**Adaptive rescaling threshold**: This implementation uses a thresholded max update. Small max changes are absorbed by keeping the old row max, which avoids a TMEM read-modify-write of O. This is a performance/accuracy trade-off controlled by `rescale_threshold` (set to 8.0 in the implementation).
 
 ### LSE for backward pass
 
-In a full training pipeline, the log-sum-exp $\text{LSE} = \log(\ell) + m$ would be stored as an auxiliary output for the backward pass. After the last KV block, $\text{LSE}_i = \log(\text{row\_sum}_i) + \text{row\_max}_i$ for each row $i$. **The current tutorial kernel does not output LSE** — it only computes the forward attention output O. A backward kernel would need an additional output buffer for LSE.
+In a full training pipeline, the log-sum-exp $\text{LSE} = \log(\ell) + m$ would be stored as an auxiliary output for the backward pass. After the last KV block, $\text{LSE}_i = \log(\text{row\_sum}_i) + \text{row\_max}_i$ for each row $i$. **The current kernel does not output LSE** — it only computes the forward attention output O. A backward kernel would need an additional output buffer for LSE.
 
 
 ## Pipelining Structure
@@ -324,7 +322,7 @@ def get_n_block_max(m_block_idx, causal):
     return min(num_kv_blocks, ceildiv(n_idx, BLK_N))
 ```
 
-This provides up to 2x speedup for causal attention — the first Q block processes only 1 KV block, the last processes all of them, averaging half.
+Block-level skipping reduces work for causal attention. In the ideal square case, early Q blocks process far fewer KV blocks than later ones, so the average number of visited blocks is roughly half of the non-causal case. The realized speedup still depends on overheads and tile shape.
 
 ### Three-phase iteration
 
@@ -374,9 +372,9 @@ Tx.copy_async(
 The kernel supports two scheduling modes with different CTA launch strategies:
 
 - **Non-causal (persistent)**: Launches `min(148, num_tasks)` CTAs that cycle through `(batch, kv_head, m_block)` tasks round-robin using a `LinearScheduler`. Each CTA picks up the next available task.
-- **Causal (non-persistent)**: Launches one CTA per task (`cta_count = num_tasks`). Because causal attention gives later Q blocks fewer KV blocks to process, the workload is naturally unbalanced. An `LPTScheduler` (Longest Processing Time first) assigns heavier tasks first to balance load. An L2 swizzle factor optimizes cache reuse.
+- **Causal (non-persistent)**: Launches one CTA per task (`cta_count = num_tasks`). Because causal attention gives early Q blocks fewer KV blocks and later Q blocks more work, the workload is naturally unbalanced. An `LPTScheduler` (Longest Processing Time first) assigns heavier tasks first to balance load. An L2 swizzle factor optimizes cache reuse.
 
-This distinction matters: causal mode does **not** use a persistent kernel, since the varying workload per tile makes persistent scheduling less effective.
+The distinction matters: this implementation uses a non-persistent schedule for causal mode because the work per tile varies strongly, and the LPT ordering handles that imbalance directly.
 
 ```python
 scheduler = (
@@ -392,7 +390,7 @@ while scheduler.valid():
 ```
 
 
-## Key Differences from GEMM
+## Differences from GEMM
 
 | Aspect | GEMM | Flash Attention 4 |
 |--------|------|----------------|
@@ -421,9 +419,9 @@ while scheduler.valid():
 
 ## Running the Kernel
 
-The complete Flash Attention 4 kernel (~1000 lines) is in `tirx_tutorial/flash_attention4.py`. Below we compile it, verify correctness against PyTorch's scaled dot-product attention, and benchmark.
+The Flash Attention 4 kernel (~1000 lines) lives in `tirx_tutorial/flash_attention4.py`. The run cell compiles it, verifies correctness against PyTorch's scaled dot-product attention, and benchmarks it.
 
-Note: The kernel signature has 5 arguments `(Q, K, V, O, profiler_buffer)` — the extra `profiler_buffer` is used for optional profiling instrumentation and must always be provided.
+Note: The kernel signature has 5 arguments `(Q, K, V, O, profiler_buffer)` — the run helper passes `profiler_buffer` even when profiling data is not the main output.
 
 ```{.python .input}
 import torch

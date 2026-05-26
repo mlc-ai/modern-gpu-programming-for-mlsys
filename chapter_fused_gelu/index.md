@@ -1,7 +1,7 @@
-# Fused GELU-Tanh & Multiply
+# Practice Kernel: Fused GELU Gate
 :label:`chap_fused_gelu`
 
-Our first TIRX kernel is a simple but practical operator: the fused GELU-Tanh activation with multiply, commonly used in MLP gate layers of Transformer models. We start here because elementwise kernels are the simplest GPU kernel pattern.
+Fused GELU-Tanh with multiply is used in MLP gate layers of Transformer models. Elementwise kernels are the smallest TIRX programs that still exercise launch geometry, indexing, and vectorized memory access.
 
 **Operation**: The input tensor has shape `[batch, 2*d]`, split into two halves along the last dimension. The first half passes through GELU-tanh activation, then multiplies with the second half:
 
@@ -11,10 +11,10 @@ where GELU-tanh is the **tanh approximation** of GELU (not the exact erf version
 
 $$\operatorname{GELU\_tanh}(x) = 0.5 \cdot x \cdot \left(1 + \tanh\!\left(\sqrt{2/\pi} \cdot (x + 0.044715 \cdot x^3)\right)\right)$$
 
-This is an example of **operator fusion**: combining two operations (GELU activation + gate multiply) into one kernel. The **gate** here refers to the second half of the input tensor (`input[:, d:]`) — in Transformer MLP layers, the architecture splits the linear projection output into two halves, applies an activation (GELU) to one half, and multiplies it element-wise with the other half. This gating mechanism controls how much of the activated signal passes through, similar to gates in LSTM/GRU networks. Without fusion, you'd compute GELU into a temporary buffer, then launch a second kernel to multiply with the gate — two kernel launches and an extra round-trip to global memory. With fusion, everything happens in one pass.
+The operator fuses GELU activation and gate multiply into one kernel. The **gate** is the second half of the input tensor (`input[:, d:]`). In Transformer MLP layers, the architecture splits the linear projection output into two halves, applies GELU to one half, and multiplies it element-wise with the other half. Without fusion, GELU would write a temporary buffer and a second kernel would multiply with the gate, costing an extra launch and an extra global-memory round trip. With fusion, both operations happen in one pass.
 
 
-## What You Will Learn
+**Topics.**
 
 - Basic TIRX kernel structure: `@Tx.prim_func`, `Tx.kernel()`, `Tx.cta_id()`, `Tx.thread_id()`
 

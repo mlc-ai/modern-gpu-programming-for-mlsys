@@ -1,16 +1,16 @@
-# GEMM Steps 4–6: TMA, Pipelining, and Persistent Kernels
+# Asynchronous GEMM Pipeline
 :label:`chap_gemm_async`
 
-This chapter covers three major optimizations that transform a naive GEMM into a high-performance kernel: asynchronous TMA loads, software pipelining, and persistent kernel scheduling. Each builds directly on the previous step.
+The synchronous tiled GEMM becomes an asynchronous pipeline through TMA async loads, software pipelining, and persistent tile scheduling.
 
-> **Layout recap.** The SMEM/TMEM/register layouts used below follow the same patterns as Step 1 in :numref:`chap_gemm_basics`; for the semantics of `tma_shared_layout`, the TMEM `(1@TLane, 1@TCol)` axes, and the warpgroup view `(1@tid_in_wg, 1)`, see :numref:`chap_layouts`.
+The SMEM/TMEM/register layouts follow the same patterns as Step 1 in :numref:`chap_gemm_basics`. :numref:`chap_layouts` defines `tma_shared_layout`, the TMEM `(1@TLane, 1@TCol)` axes, and the warpgroup view `(1@tid_in_wg, 1)`.
 
 ## Step 4: TMA Async Load
 :label:`chap_tma_async`
 
-The single biggest optimization: replacing synchronous `Tx.copy` with TMA hardware. One thread issues the command, the hardware does the rest. We demonstrate with M=N=K=4096.
+The first asynchronous step replaces synchronous `Tx.copy` with TMA hardware. One thread issues the command, and the hardware performs the tile movement. Benchmarks use M=N=K=4096.
 
-### What You Will Learn
+**Topics.**
 
 - Replacing synchronous `Tx.copy` with asynchronous TMA: `Tx.copy_async(..., dispatch="tma")`
 
@@ -20,9 +20,9 @@ The single biggest optimization: replacing synchronous `Tx.copy` with TMA hardwa
 
 - TMA store writeback: TMEM -> register file -> cast -> Dsmem -> TMA store -> GMEM, with proper sync at each stage
 
-### The Key Change
+### TMA Issue Pattern
 
-The diff from Step 3 is small but transformative:
+The code change from Step 3 is small, but it changes who moves the data:
 
 **Before (Step 3)** — all 128 threads copy, then `cta_sync`:
 ```python
@@ -42,17 +42,17 @@ with Tx.thread(tid == 0):   # exactly 1 thread
 mbarrier.try_wait(phase)                         # all threads wait until TMA completes
 ```
 
-A common pitfall is to reach for `elect_sync()` here. `elect.sync` is a *per-warp* PTX instruction, so `with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync()))` gives you **one elected thread per warp = 4 threads in a 4-warp warpgroup**, not 1. That is fine for TMA *stores* (the four identical stores are idempotent) but would cause an `expect_tx` byte-count mismatch on the load side, so on the load side the kernels in this tutorial pick a single thread directly with `tid == 0`. (Note: `Tx.filter` takes a *variable* — `lane_id`, `warp_id`, etc. — not an axis token. The axis-name imports like `from tvm.tirx.layout import tid_in_wg` are for `1@tid_in_wg`-style layout expressions only.)
+A common pitfall is to reach for `elect_sync()` here. `elect.sync` is a *per-warp* PTX instruction, so `with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync()))` gives you **one elected thread per warp = 4 threads in a 4-warp warpgroup**, not 1. On the TMA load side, that would increment the expected byte count multiple times, so these kernels pick a single issuer with `tid == 0`. (Note: `Tx.filter` takes a *variable* — `lane_id`, `warp_id`, etc. — not an axis token. The axis-name imports like `from tvm.tirx.layout import tid_in_wg` are for `1@tid_in_wg`-style layout expressions only.)
 
-**Why faster**: The speedup is not from load/compute overlap (there is none yet — threads still wait after TMA). It comes from *how* data is moved:
+**Why faster**: Step 4 still waits after each TMA load, so the speedup is not from load/compute overlap yet. It comes from *how* data is moved:
 
 - **`Tx.copy` occupies SM instruction pipelines** — 128 threads each compute addresses and issue global load / shared store instructions, consuming warp scheduler bandwidth on memory operations.
 - **TMA is a dedicated DMA engine** — one `cp.async.bulk` instruction triggers the hardware to transfer the entire tile. Address generation, coalescing, and swizzle are handled in hardware via the TMA descriptor, not by thread ALU.
-- The net effect: the SM's instruction issue bandwidth is freed, and the hardware engine moves data more efficiently than software-managed copies.
+- The net effect: the SM spends fewer thread instructions on tile movement, and the hardware copy path handles the bulk transfer.
 
-### What Step 4 Adds
+### What Changes
 
-Three new ideas, all needed to talk to TMA:
+Three things change when the load moves from synchronous thread copies to TMA:
 
 | | `Tx.copy` (Steps 1–3) | `Tx.copy_async` (Step 4+) |
 |---|---|---|
@@ -65,11 +65,11 @@ The two sync primitives are not interchangeable. `cta_sync()` is `__syncthreads(
 
 ![TMA Async Load: Synchronization Flow](../img/tma_sync_flow.png)
 
-**TMA load** (top of the kernel): one elected thread issues both `copy_async` calls, then calls `arrive.expect_tx(total_bytes)` to tell the mbarrier how many bytes to expect. The TMA hardware arrives on the mbarrier as bytes land. All threads then `try_wait(phase)` until ready.
+**TMA load** (top of the kernel): one selected thread issues both `copy_async` calls, then calls `arrive.expect_tx(total_bytes)` to tell the mbarrier how many bytes to expect. The TMA hardware arrives on the mbarrier as bytes land. All threads then `try_wait(phase)` until ready.
 
-**TMA store** (writeback): the protocol is intentionally different. TMA loads use mbarriers (byte counting); TMA stores use **commit-group / wait-group**. After casting registers to fp16, writing them into `Dsmem`, fencing, and `warpgroup_sync(10)`, the elected thread issues `Tx.copy_async(D[...], Dsmem, dispatch="tma")`, then `cp_async.bulk.commit_group()` + `cp_async.bulk.wait_group(0)` ensure the store has drained before SMEM is reused.
+**TMA store** (writeback): the protocol is intentionally different. TMA loads use mbarriers (byte counting); TMA stores use **commit-group / wait-group**. After casting registers to fp16, writing them into `Dsmem`, fencing, and `warpgroup_sync(10)`, one selected thread issues `Tx.copy_async(D[...], Dsmem, dispatch="tma")`, then `cp_async.bulk.commit_group()` + `cp_async.bulk.wait_group(0)` ensure the store has drained before SMEM is reused.
 
-### Implementation
+**Implementation.**
 
 ```{.python .input}
 
@@ -211,8 +211,9 @@ def hgemm_v4(
             Tx.copy(Dsmem[warp_id * 32 + lane_id, 0:BLK_N], Dreg_f16[:])
             Tx.ptx.fence.proxy_async("shared::cta")
             Tx.cuda.warpgroup_sync(10)
-        # TMA store: Dsmem -> GMEM. One thread per warp = 4 idempotent TMA stores.
-        with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync())):
+        # TMA store: Dsmem -> GMEM. This path uses one selected issuer and drains the
+        # store group before Dsmem is reused.
+        with Tx.thread(tid == 0):
             Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
                           Dsmem[:, :], dispatch="tma")
             Tx.ptx.cp_async.bulk.commit_group()
@@ -272,9 +273,9 @@ tflops = 2 * M * N * K / ms / 1e9
 print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 ```
 
-Note: The `max_err < 0.5` check is a **smoke test**, not a strict numerical verification. fp16 GEMM at 4096x4096 accumulates rounding errors across 64 K-tiles, giving a typical max absolute error of ~0.25. For production validation, use `np.testing.assert_allclose(result, reference, rtol=1e-2, atol=1e-2)` which checks element-wise relative tolerance.
+Note: The `max_err < 0.5` check is a **smoke test**, not a strict numerical verification. fp16 GEMM at 4096x4096 accumulates rounding error across 64 K-tiles, so the max absolute error can be much larger than in the 128x128 examples. For stricter validation, compare against the reference elementwise with both relative and absolute tolerances.
 
-### Key Points
+**Checks.**
 
 - **TMA config**: `{"dispatch": "tma", "cta_group": 1, "mbar": tma_bar.ptr_to([0])}`
 
@@ -284,16 +285,16 @@ Note: The `max_err < 0.5` check is a **smoke test**, not a strict numerical veri
 
 - **`@Tx.inline`**: Helper functions are inlined at compile time and can capture outer variables.
 
-- **TMA store writeback sync**: After TMEM read, `cta_sync()` ensures all warpgroup threads have copied TMEM into their registers before downstream reuse. After Dsmem write, `fence.proxy_async` + `warpgroup_sync` flushes the thread-proxy SMEM writes so the TMA engine sees them. TMA store is issued via `elect_sync()` and must be followed by `commit_group()` + `wait_group(0)` + `warpgroup_sync` before proceeding.
+- **TMA store writeback sync**: After TMEM readback, the kernel uses synchronization to keep all threads aligned before staging results through Dsmem. After Dsmem writes, `fence.proxy_async` + `warpgroup_sync` hand the thread-written SMEM data to the TMA store path. The TMA store is then followed by `commit_group()` + `wait_group(0)` before Dsmem is reused.
 
 ### Understanding TMEM
 
-TMEM (Tensor Memory) is a **per-SM** scratchpad used by the `tcgen05` MMA path (not per-warpgroup): one SM has exactly one 128-row × 512-column TMEM region, shared by whichever warpgroups of the resident CTA(s) need it. The 128-row extent is a hardware constant tied to the `TLane` axis, and it happens to match one warpgroup's 128 threads — which is what makes the `tcgen05.ld` TMEM→RF read a warpgroup-cooperative operation. Two further properties of the allocation call itself:
+TMEM (Tensor Memory) is a **per-SM** scratchpad used by the `tcgen05` MMA path (not per-warpgroup). The TMEM address space used in these kernels is 128 rows by 512 columns, shared by whichever warpgroups of the resident CTA(s) need it. The 128-row extent is tied to the `TLane` axis and matches one warpgroup's 128 threads, which is what makes the `tcgen05.ld` TMEM→RF read a warpgroup-cooperative operation. Two further properties of the allocation call itself:
 
 - **`.shape`** determines how many bits per element. For fp32 accumulators, each cell is 32 bits.
 - **`.num`** determines how many `.shape`-sized entries fit. The TIRX compiler maps these to TMEM columns.
 
-When you declare `tmem = Tx.decl_buffer((128, 512), "float32", scope="tmem", ...)`, this allocates a 128-row x 512-column TMEM region. To read TMEM into registers:
+When you declare `tmem = Tx.decl_buffer((128, 512), "float32", scope="tmem", allocated_addr=...)`, this creates a buffer view over a TMEM allocation whose base address came from `tcgen05.alloc`. To read TMEM into registers:
 
 ```python
 Dreg_wg = Dreg.view(128, BLK_N,
@@ -303,20 +304,20 @@ with Tx.warpgroup():
     Tx.ptx.tcgen05.wait.ld()
 ```
 
-The layout `1@tid_in_wg` maps 128 warpgroup threads to 128 TMEM rows; axis matching with the TMEM `(1@TLane, 1@TCol)` layout is what lets `Tx.copy_async` lower to a `tcgen05.ld` instruction (see the RF subsection of :numref:`chap_layouts` for the full axis-pairing table). TMEM reads **must** use warpgroup scope because `tcgen05.ld` is a warpgroup-cooperative instruction that consumes all 128 `TLane` rows in one shot — not because TMEM itself is "owned" by a warpgroup (it is not; TMEM is SM-level). `tcgen05.ld` is **asynchronous** (the load is launched but the destination registers fill later), so the caller must follow `Tx.copy_async` with `Tx.ptx.tcgen05.wait.ld()` before reading the destination.
+The layout `1@tid_in_wg` maps the 128 warpgroup threads to the 128-row TMEM view; axis matching with the TMEM `(1@TLane, 1@TCol)` layout is what lets `Tx.copy_async` lower to a `tcgen05.ld` readback. TMEM reads use warpgroup scope because this dispatcher is written for warpgroup-cooperative TMEM-to-local movement — not because TMEM itself is "owned" by a warpgroup (it is not; TMEM is SM-level). `tcgen05.ld` is **asynchronous** (the load is launched but the destination registers fill later), so the caller must follow `Tx.copy_async` with `Tx.ptx.tcgen05.wait.ld()` before reading the destination.
 
 Note: If the K-loop runs inside an `elect_sync` or `tid == 0` scope, other threads skip ahead to the writeback. Always ensure `cta_sync()` is called **outside** any thread-guarded scope before reading TMEM, so the whole warpgroup is aligned on the same MMA epoch.
 
 ---
 
-Now that we have TMA async loads handling data movement efficiently, the next bottleneck is that the MMA unit still sits idle while waiting for each TMA transfer to complete. The solution is to overlap loading and computing using software pipelining.
+TMA async loads move data through the hardware copy engine, but the MMA unit still sits idle while waiting for each TMA transfer to complete. Software pipelining overlaps loading and computing.
 
 ## Step 5: Software Pipeline (PIPE_DEPTH=2)
 :label:`chap_software_pipeline`
 
-Without pipelining, the kernel alternates between loading and computing — the MMA sits idle while TMA loads data, and vice versa. Software pipelining overlaps these operations using double-buffered shared memory. We benchmark with M=N=K=4096.
+Without pipelining, the kernel alternates between loading and computing: MMA sits idle while TMA loads data, and vice versa. Software pipelining overlaps these operations using double-buffered shared memory. Benchmarks use M=N=K=4096.
 
-### What You Will Learn
+**Topics.**
 
 - Overlapping TMA loads with MMA computation using double buffering
 
@@ -326,15 +327,15 @@ Without pipelining, the kernel alternates between loading and computing — the 
 
 - Prefetch pattern: load first stages before entering main loop
 
-### Background
+### Pipeline Walkthrough
 
 Without pipelining (Step 4), TMA and MMA execute serially — the MMA sits idle during every load, and TMA sits idle during every compute. With double buffering (`PIPE_DEPTH=2`), we allocate two SMEM stages so TMA can load the next tile into one stage while MMA computes from the other:
 
 ![*Pipeline PIPE_DEPTH=2*](../img/pipe_depth2.png)
 
-### Implementation
+**Implementation.**
 
-The key structural changes from Step 4:
+Structural changes from Step 4:
 
 ```{.python .input}
 
@@ -481,7 +482,7 @@ def hgemm_v5(M, N, K):
                 Tx.copy(Dsmem[warp_id * 32 + lane_id, 0:BLK_N], Dreg_f16[:])
                 Tx.ptx.fence.proxy_async("shared::cta")
                 Tx.cuda.warpgroup_sync(10)
-            with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync())):
+            with Tx.thread(tid == 0):
                 Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
                               Dsmem[:, :], dispatch="tma")
                 Tx.ptx.cp_async.bulk.commit_group()
@@ -576,14 +577,14 @@ if stage == PIPE_DEPTH - 1:
 
 ---
 
-With pipelining, TMA and MMA now overlap within a single tile. But for large matrices, we still launch one CTA per output tile, leading to excessive launch overhead and poor L2 cache utilization. Persistent kernels address this by having a fixed number of long-running CTAs that each process multiple tiles in a cache-friendly order.
+With pipelining, TMA and MMA now overlap within a single tile. But for large matrices, one CTA per output tile still creates many short-lived CTAs and gives the program little control over tile order. Persistent kernels address this by launching a fixed pool of long-running CTAs that each process multiple tiles in a cache-friendly order.
 
 ## Step 6: Persistent Kernel + Tile Scheduler
 :label:`chap_persistent_kernel`
 
-In Steps 3-5, each CTA computes one output tile. For large matrices (M=N=4096 → 1024 CTAs), the GPU must launch and schedule many CTAs, and adjacent CTAs don't share L2 cache lines. Persistent kernels solve both problems. We benchmark with M=N=K=4096.
+With one CTA per output tile, large matrices (M=N=4096 -> 1024 CTAs) force the GPU to schedule many short-lived CTAs, and the kernel has little control over which nearby tiles run together. Persistent kernels address both issues. Benchmarks use M=N=K=4096.
 
-### What You Will Learn
+**Topics.**
 
 - Persistent kernel pattern: `SM_COUNT` CTAs that each loop over multiple tiles
 
@@ -591,9 +592,9 @@ In Steps 3-5, each CTA computes one output tile. For large matrices (M=N=4096 �
 
 - Why persistent kernels improve performance for large matrices
 
-### Background
+### Persistent Scheduling
 
-A persistent kernel launches exactly `SM_COUNT=148` CTAs (one per SM on B200). Each CTA loops over multiple tiles using a tile scheduler that orders them for L2 cache locality --- processing nearby tiles together so they share cached data.
+A persistent kernel launches a fixed pool of CTAs. In the B200 configuration used here that pool is `SM_COUNT=148`, one CTA per SM. Each CTA loops over multiple tiles using a tile scheduler that orders them for L2 cache locality --- processing nearby tiles together so they can reuse cached data.
 
 ```python
 bx = Tx.cta_id([SM_COUNT])  # 1D grid, one CTA per SM
@@ -608,7 +609,7 @@ tile_scheduler = ClusterPersistentScheduler2D(
 tile_scheduler.init(bx)
 ```
 
-### Implementation
+**Implementation.**
 
 The structure combines Step 5's pipeline with a tile-level outer loop:
 
@@ -762,7 +763,7 @@ def hgemm_v6(M, N, K):
                     Tx.copy(Dsmem[warp_id * 32 + lane_id, 0:BLK_N], Dreg_f16[:])
                     Tx.ptx.fence.proxy_async("shared::cta")
                     Tx.cuda.warpgroup_sync(10)
-                with Tx.thread(Tx.filter(lane_id, Tx.ptx.elect_sync())):
+                with Tx.thread(tid == 0):
                     Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
                                   Dsmem[:, :], dispatch="tma")
                     Tx.ptx.cp_async.bulk.commit_group()
@@ -835,21 +836,21 @@ print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 | Aspect | Grid-based (Step 5) | Persistent (Step 6) |
 |--------|---------------------|---------------------|
 | CTAs launched | `(M/128) x (N/128)` (e.g., 1024) | `SM_COUNT` (148) |
-| Launch overhead | One launch per tile | One launch total |
-| L2 cache | Random tile ordering, cold cache | Grouped tiles share L2 |
-| SM utilization | May over-subscribe SMs | Exactly 1 CTA per SM |
+| Kernel launches | One launch total | One launch total |
+| CTA scheduling | One CTA per output tile | Fixed CTA pool; each CTA processes multiple tiles |
+| L2 cache | Tile order mostly follows CTA scheduling | Scheduler groups nearby tiles |
+| SM residency | Many short-lived CTAs | One long-running CTA per SM in this B200 setup |
 
-The `l2_group_size=8` parameter means the scheduler processes 8 adjacent tiles together before moving on, maximizing L2 cache reuse of A and B tiles.
+The `l2_group_size=8` parameter means the scheduler processes 8 adjacent tiles together before moving on, which improves the chance of reusing A and B tiles from L2.
 
 ### Phase Reset Between Tiles
 
-A subtle but critical difference from Step 5: in a persistent kernel, each CTA processes **multiple tiles** in the `while tile_scheduler.valid()` loop. The barrier phases (`phase_tma`, `phase_mma`) must be **reset to 0 at the start of each tile**. In Step 5, phases are initialized once because each CTA only processes one tile. In Step 6, if you forget to reset phases inside the tile loop, the second tile's barrier waits will use the wrong phase — causing deadlocks or reading stale data from the previous tile.
+Phase handling changes from Step 5: in a persistent kernel, each CTA processes **multiple tiles** in the `while tile_scheduler.valid()` loop. Reset the barrier phases (`phase_tma`, `phase_mma`) to 0 at the start of each tile. In Step 5, phases are initialized once because each CTA only processes one tile. In Step 6, if the phases are not reset inside the tile loop, the second tile's waits can use the wrong phase and either deadlock or read stale data from the previous tile.
 
-This is why the `phase_tma: Tx.int32 = 0` and `phase_mma: Tx.int32 = 0` initialisers appear **inside** the `while` loop, not before it.
+For that reason, the `phase_tma: Tx.int32 = 0` and `phase_mma: Tx.int32 = 0` initialisers appear **inside** the `while` loop, not before it.
 
 ## Exercises
 
 1. The byte count for `arrive.expect_tx` is `(BLK_M * BLK_K + BLK_N * BLK_K) * 2`. What happens if you compute this wrong (e.g., forget the `* 2` for fp16)?
 2. Why do we need per-stage barriers (`tma_bar[0]` and `tma_bar[1]`) in Step 5 instead of a single shared barrier?
 3. For a 4096x4096 matrix with BLK_M=BLK_N=128, how many tiles exist in Step 6? How many iterations does each persistent CTA perform on average?
-

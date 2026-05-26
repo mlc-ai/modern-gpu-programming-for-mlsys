@@ -1,7 +1,7 @@
-# RMSNorm
+# Practice Kernel: RMSNorm Reduction
 :label:`chap_rmsnorm`
 
-RMSNorm (Root Mean Square Layer Normalization) is used in most modern LLMs (Llama, Qwen, etc.). It introduces two important GPU programming patterns: **warp-level reduction** and **shared memory communication**.
+RMSNorm (Root Mean Square Layer Normalization) is used in LLMs such as Llama and Qwen. It introduces two GPU programming patterns: **warp-level reduction** and **shared memory communication**.
 
 **Operation**: Given input `x[batch, hidden]` and weight `w[hidden]`, for each row $b$:
 
@@ -9,7 +9,7 @@ $$\text{out}[b, h] = \frac{x[b, h]}{\text{RMS}(x[b,:])} \cdot w[h], \quad \text{
 
 Each row is normalized independently by its own RMS value. Here $b$ indexes the batch dimension and $h$ indexes the hidden dimension.
 
-## What You Will Learn
+**Topics.**
 
 - Vectorized memory access with `Tx.copy()` and `Tx.cast()`
 
@@ -48,7 +48,7 @@ Computing RMS requires summing $x^2$ across the entire hidden dimension — a gl
 
 **Pass 2**: Read cached x from shared memory, multiply by $1/\text{RMS} \cdot \text{weight}$, write output.
 
-### How threads are organized in this kernel
+### Thread Organization
 
 Each CTA has `bdx * bdy` threads, arranged in a 2D layout via `Tx.thread_id([bdx, bdy])`:
 
@@ -63,13 +63,13 @@ Passing a **2D list `[bdx, bdy]`** means the CTA's threads are logically arrange
 - `bdx = 32` — one warp (32 threads). `tx` is the lane ID within the warp.
 - `bdy = ceildiv(block_size, 32)` — how many warps per CTA. `ty` is the warp index.
 
-**Why 2D instead of 1D?** RMSNorm reduction has two stages: first reduce *within* each warp using shuffle (indexed by `tx`), then reduce *across* warps via shared memory (indexed by `ty`). The 2D layout gives both indices directly, making each stage's logic natural. With a flat 1D `tid`, you'd have to manually compute `tx = tid % 32` and `ty = tid // 32` everywhere.
+**Why 2D instead of 1D?** RMSNorm reduction has two stages: first reduce *within* each warp using shuffle (indexed by `tx`), then reduce *across* warps via shared memory (indexed by `ty`). The 2D layout gives both indices directly. With a flat 1D `tid`, you'd have to manually compute `tx = tid % 32` and `ty = tid // 32` everywhere.
 
 For `hidden_size=4096` and `vec_size=8`: `block_size = min(256, 4096/8) = 256`, so `bdy = 256/32 = 8` warps per CTA = 256 threads total.
 
 ![CTA Layout and Warp Organization](../img/cta_warp_layout.png)
 
-Each row is one warp. The two reduction stages map directly to the two dimensions: `tx` indexes within a warp (for shuffle), `ty` indexes across warps (for shared memory).
+Each horizontal band in the diagram is one warp. All warps in the CTA cooperate on one tensor row: `tx` indexes within a warp for shuffle reduction, and `ty` indexes across warps for the shared-memory reduction.
 
 **What each thread does**: All threads do the same work — load a chunk of the row, compute partial $x^2$ sum. But each thread processes a *different* chunk, determined by its `thread_id`:
 
@@ -82,11 +82,11 @@ So thread 0 processes elements 0-7, thread 1 processes 8-15, ..., and they colle
 
 **Why multiple warps?** A single warp (32 threads × 8 elements = 256 elements per iteration) would need 16 loop iterations to cover 4096 elements. With 8 warps (256 threads × 8 = 2048 per iteration), it only takes 2 iterations — more parallelism, less looping.
 
-We use `Tx.handle` because `batch_size` is only known at runtime. Each CTA loops over rows with `idx += SM_COUNT` (persistent kernel pattern).
+`Tx.handle` is used because `batch_size` is only known at runtime. Each CTA loops over rows with `idx += SM_COUNT` (persistent kernel pattern).
 
 ### Warp Shuffle Reduction
 
-Within a warp (32 threads), shuffle operations let threads exchange values directly through registers -- no shared memory needed. The XOR shuffle pattern pairs threads at decreasing distances to combine partial values in parallel. The diagram below uses 8 threads for clarity (a real warp has 32 threads and 5 steps, same pattern):
+Within a warp (32 threads), shuffle operations let threads exchange values directly through registers -- no shared memory needed. The XOR shuffle pattern pairs threads at decreasing distances to combine partial values in parallel. The diagram uses 8 threads for clarity (a real warp has 32 threads and 5 steps, same pattern):
 
 ![XOR Shuffle Reduction](../img/shuffle_reduce.png)
 
@@ -108,7 +108,7 @@ Shuffle only works within a single warp (32 threads). If the CTA has 8 warps, ea
 
 ![Cross-Warp Reduction](../img/cross_warp_reduce.png)
 
-The key idea: Steps 1-2 **gather** all warp results into SMEM, Steps 3-4 **reduce** them using the same shuffle pattern we already know, and Steps 5-6 **broadcast** the result back. Two barriers are needed: the first ensures all warps have written before warp 0 reads, the second ensures warp 0 has written the final result before other warps read it.
+The cross-warp reduction has three phases: Steps 1-2 **gather** all warp results into SMEM, Steps 3-4 **reduce** them using the same shuffle pattern we already know, and Steps 5-6 **broadcast** the result back. Two barriers are needed: the first ensures all warps have written before warp 0 reads, the second ensures warp 0 has written the final result before other warps read it.
 
 In code:
 ```python
@@ -122,13 +122,13 @@ Tx.ptx.bar.sync(1, bdx * bdy)     # step 6: barrier (grand total ready)
 # Now all threads read sum_sq_smem[0]
 ```
 
-**Why not just use shared memory for everything?** Because shuffle is much faster — it's a single-cycle hardware instruction that moves data through registers, while shared memory requires load/store instructions and has higher latency. We only use SMEM for the cross-warp step because shuffle can't reach across warps.
+**Why not just use shared memory for everything?** Warp shuffle is a low-latency register-to-register communication path within a warp, while shared memory requires load/store instructions and has higher latency. SMEM is only needed for the cross-warp step because shuffle cannot reach across warps.
 
 ### Two-Pass Structure
 1. **Pass 1**: Load $x$, compute $x^2$, reduce to get sum-of-squares, store $x$ to SMEM
 2. **Pass 2**: Reload $x$ from SMEM, multiply by $1/\text{RMS} \cdot \text{weight}$, write output
 
-This avoids reading global memory twice.
+Caching avoids reading global memory twice.
 
 ### bar.sync vs cta_sync
 
@@ -137,11 +137,11 @@ Both are synchronization barriers, but they differ:
 
 - `Tx.ptx.bar.sync(barrier_id, thread_count)` — synchronizes exactly `thread_count` threads on barrier `barrier_id`. This is more flexible when the CTA is not fully utilized (e.g., only `bdx * bdy` threads participate, not the full 128/256-thread CTA).
 
-In this kernel, `Tx.ptx.bar.sync(1, bdx * bdy)` is used because the actual thread count (`bdx * bdy`) may be less than the CTA size. The `Tx.ptx.fence.proxy_async("shared::cta")` after the barrier ensures that shared memory writes are visible to all threads.
+In this kernel, `Tx.ptx.bar.sync(1, bdx * bdy)` is used because the actual thread count (`bdx * bdy`) may be less than the CTA size. The following shared-memory reads rely on this barrier for thread synchronization and shared-memory ordering.
 
-With these concepts in mind, here is the kernel implementation.
+The kernel implementation follows.
 
-**TIRX loop constructs** (you'll see these throughout the tutorial):
+**TIRX loop constructs** (used repeatedly in the kernels):
 
 - `Tx.serial(N)` — A regular runtime loop. Use when the iteration count is large or variable.
 
@@ -309,7 +309,7 @@ print("PASS")
 
 ## Extension: Operator Fusion
 
-In Transformer models, RMSNorm is almost always preceded by a residual addition: `residual = x + residual; output = RMSNorm(residual) * weight`. Without fusion, this requires two kernel launches and an extra round-trip to global memory for the intermediate `residual`. With fusion, you can compute the addition, sum-of-squares, and weight pre-multiplication all in Pass 1 — eliminating the intermediate write entirely. The fused kernel is nearly identical to the one above, just with a few extra lines in the inner loop. This "fuse adjacent ops to save memory bandwidth" pattern is one of the most important optimization techniques in GPU kernel programming.
+In Transformer models, RMSNorm is almost always preceded by a residual addition: `residual = x + residual; output = RMSNorm(residual) * weight`. Without fusion, this requires two kernel launches and an extra round-trip to global memory for the intermediate `residual`. With fusion, the addition, sum-of-squares, and weight pre-multiplication happen in Pass 1, so the intermediate write disappears. The fused kernel is nearly identical to the RMSNorm kernel, with a few extra lines in the inner loop. This is the standard GPU pattern of fusing adjacent ops to save memory bandwidth.
 
 
 ## Exercises

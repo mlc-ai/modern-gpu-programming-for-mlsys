@@ -1,47 +1,35 @@
-# TIRX: High-Performance GPU Kernel Programming
+# TIRX: Blackwell Tile-Primitive Programming
 
-TIRX (Tensor IR neXt) is a Python DSL for writing high-performance GPU kernels on modern NVIDIA GPUs. It extends TensorIR with first-class support for hardware features such as TMA, tcgen05 MMA, mbarrier synchronization, and CTA clusters, making it easier to write kernels that map directly to hardware.
+TIRX (Tensor IR neXt) is a Python DSL for writing high-performance GPU kernels at the IR level. This tutorial targets Blackwell because it exposes the newest TIRX tile primitives: TMA tile copies, `tcgen05` MMA, TMEM layouts, mbarriers, and CTA clusters.
 
+TIRX sits between high-level kernel DSLs and raw CUDA/PTX. High-level DSLs are easier to write and often the right tool, but they can hide the exact hardware contract behind scheduling or library choices. Raw CUDA/PTX gives maximum control, but the program becomes descriptor setup, barrier state, layout bookkeeping, and instruction-level plumbing. TIRX is for the middle ground: the kernel still names Blackwell concepts directly, while the compiler can see scope, layout, and dispatch as structured IR instead of scattered intrinsic arguments.
 
-## Get Started
+A tile primitive is a structured operation on tile values. Its lowering is controlled by three things:
 
-New here? Follow this path:
+- **Scope** — which group of threads issues or cooperates on the operation.
+- **Layout** — how the operand tiles map to GMEM, SMEM, TMEM, or registers.
+- **Dispatch** — which hardware path is intended when there is a choice, such as TMA or `tcgen05`.
 
-1. **Ch 2 (Setup)** — Install TIRX and run your first GPU kernel in under 5 minutes
+For asynchronous primitives, barriers and waits describe the handoff between tile operations.
 
-2. **Ch 3 (Language Basics)** — Buffers, scopes, raw PTX, the compile pipeline, and metaprogramming
+## Reading Path
 
-3. **Ch 4 (Tile Primitives)** — Start from a 130-line no-sugar Blackwell GEMM, then learn the three interfaces (scope / layout / dispatch) that cut it down to 40
+- **Part I: TIRX and Blackwell**
+  1. **Blackwell Background** — Thread groups, memory spaces, TMEM, TMA, `tcgen05`, async barriers, and CTA clusters.
 
-4. **Ch 5 (Fused GELU)** — Write your first real operator kernel
+- **Part II: Tile Primitive Programming**
+  2. **Tile Primitive Mental Model** — Why tile primitives matter, then execution scope, tensor layout, and dispatch.
 
-5. **Ch 7 (GEMM Steps 1–3)** — Start the GEMM optimization journey: 70 ms → 0.12 ms, within 10% of cuBLAS (0.11 ms)
+- **Part III: GEMM Deep Dive**
+  3. **GEMM with Tile Primitives** — Single-tile GEMM, K-loop accumulation, and spatial tiling across CTAs.
+  4. **Asynchronous GEMM Pipeline** — TMA async loads, software pipelining, and persistent tile scheduling.
+  5. **Warp-Specialized and Clustered GEMM** — Warp specialization, 2-CTA cooperative MMA, and multi-consumer execution.
 
+- **Part IV: Advanced Kernel**
+  6. **Flash Attention on Blackwell**
 
-## Who Is This For
-
-- **Systems engineers** who want to write high-performance GPU kernels for LLM training and inference.
-
-- **ML engineers** who want to understand what happens under the hood in frameworks like PyTorch and libraries like cuBLAS.
-
-- **Students** taking a GPU programming or ML systems course.
-
-**Prerequisites**: Familiarity with CUDA concepts (threads, warps, shared memory). No TVM experience needed. Requires an NVIDIA Blackwell GPU (B200/B100) to run the code.
-
-
-## Tutorial Structure
-
-- **Part I: Fundamentals** (Ch 1–4) — Blackwell GPU architecture, environment setup, the TIRX language layer (buffers, scopes, raw PTX, compile pipeline, metaprogramming), and the TIRX tile primitive layer (execution scope, tensor layout, tile primitive dispatch) motivated by a no-sugar Blackwell GEMM.
-
-- **Part II: Entry-Level Kernels** (Ch 5–6) — Learn TIRX basics through two self-contained operators: Fused GELU (elementwise + fusion) and RMSNorm (warp reduction + shared memory).
-
-- **Part III: GEMM Deep Dive** (Ch 7–9) — A single GEMM kernel, optimized step by step across 9 steps in 3 chapters, from 70 ms down to ~0.12 ms (within ~10% of cuBLAS at 0.11 ms).
-
-- **Part IV: Advanced Kernels** (Ch 10) — Flash Attention on Blackwell.
-
-- **Part V: AI-Assisted Development** (Ch 11) — Using LLMs to generate boilerplate, debug kernels, and produce test harnesses.
-
-- **Appendix** (Ch 12) — Full API reference and common pitfalls.
+- **Appendix**
+  - Setup, practice kernels, debugging notes, and references.
 
 
 ```toc
@@ -49,15 +37,10 @@ New here? Follow this path:
 :numbered:
 
 chapter_background/index
-chapter_setup/index
-chapter_tirx_primer/index
 chapter_layouts/index
-chapter_fused_gelu/index
-chapter_rmsnorm/index
 chapter_gemm_basics/index
 chapter_gemm_async/index
 chapter_gemm_advanced/index
 chapter_flash_attention/index
-chapter_ai_assisted/index
-chapter_api_reference/index
+appendix/index
 ```

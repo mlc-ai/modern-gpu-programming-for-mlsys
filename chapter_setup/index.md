@@ -1,12 +1,12 @@
-# Setup
+# Environment Setup
 :label:`chap_setup`
 
-This chapter gets your environment ready and verifies it works by running a real GPU kernel.
+Set up the environment first, then verify it by running a real GPU kernel.
 
 
 ## Install
 
-### Prerequisites
+### Expected Background
 
 - **OS**: Linux (Ubuntu 20.04+ recommended)
 
@@ -24,11 +24,11 @@ pip install numpy
 ```
 
 
-## Your First Kernel
+## Minimal Kernel
 
-The best way to verify your setup is to compile and run a real TIRX kernel. This minimal kernel doubles every element of an array on the GPU.
+Verify the setup by compiling and running a real TIRX kernel. The minimal kernel doubles every element of an array on the GPU.
 
-Before reading the code, three TIRX primitives that will appear in every kernel in the rest of the tutorial:
+Three TIRX primitives appear in every kernel:
 
 - **`with Tx.kernel():`** opens the kernel-launch scope. Everything inside it runs on the GPU. Outside this block you are still on the host.
 - **`Tx.cta_id([num_blocks])`** declares the CTA (CUDA block) grid extent and returns a symbolic block index, exactly like `blockIdx.x` in raw CUDA. `[num_blocks]` becomes the grid size.
@@ -84,9 +84,9 @@ A few observations:
 - `Tx.int32()` (no argument) declares a *symbolic* runtime parameter, similar to a `tl::Tensor` shape parameter in TVM TensorIR.
 - `Tx.match_buffer` binds a `Tx.handle` (a raw pointer passed from the host) to a strided tensor view — there is no shape-checking at the C ABI; the host is responsible for passing the right `n`.
 
-If you see `Setup verified!`, you're ready to start the tutorial. If not:
+`Setup verified!` confirms that the environment works. Otherwise:
 
-- **`ModuleNotFoundError: No module named 'tvm'`**: Re-run the pip install command above
+- **`ModuleNotFoundError: No module named 'tvm'`**: Re-run the pip install command.
 
 - **`CUDA error`**: Check that `nvidia-smi` shows a Blackwell GPU and driver >= 570
 
@@ -95,11 +95,11 @@ If you see `Setup verified!`, you're ready to start the tutorial. If not:
 
 ## Inspecting Generated Code
 
-After compiling any TIRX kernel, you can see the generated CUDA source:
+Generated CUDA source is available after compiling any TIRX kernel:
 
 ```python
 cuda_source = lib.mod.imports[0].inspect_source()
 print(cuda_source)
 ```
 
-This is useful for debugging — you can search for specific PTX instructions like `tcgen05.mma`, `mbarrier.init`, or `__syncthreads()` to verify your kernel's structure. We'll use this technique in the GEMM chapters.
+Generated CUDA is the debugging target: search for PTX instructions like `tcgen05.mma`, `mbarrier.init`, or `__syncthreads()` to verify the kernel structure. The GEMM chapters use this technique repeatedly.
