@@ -1,11 +1,11 @@
-# TIRX Language Reference
+# TIRX Language and Compile Pipeline
 :label:`chap_tirx_primer`
 
-This is a reference, not required reading before the GEMM chapters. The main path introduces the small amount of TIRX syntax needed to read each kernel; come back here when you want the full language details.
+This is the deeper language appendix, not required reading before the GEMM chapters. The main path introduces the small amount of TIRX syntax needed to read each kernel; come back here when you want to understand the parser, buffer model, scopes, metaprogramming, and compile pipeline.
 
-TIRX programs are GPU kernel IR written through a Python DSL. A `@Tx.prim_func` describes one kernel-level function: its buffers, symbolic launch coordinates, execution scopes, memory allocations, control flow, and calls to hardware operations. `tvm.compile(..., tir_pipeline="tirx")` lowers that function to ordinary TIR, then to CUDA host/device code.
+TIRX programs are GPU kernel IR written through a Python DSL. A `@Tx.prim_func(tirx=True)` describes one kernel-level function: its buffers, symbolic launch coordinates, execution scopes, memory allocations, control flow, and calls to hardware operations. `tvm.compile(..., tir_pipeline="tirx")` lowers that function to ordinary TIR, then to CUDA host/device code.
 
-The **language layer** is the part every TIRX kernel uses before tile primitives enter the picture. :numref:`chap_layouts` adds the tile-primitive layer: scope-aware, layout-aware operations such as `Tx.copy`, `Tx.copy_async`, and `Tx.gemm_async`.
+The **language layer** is the part every TIRX kernel uses before tile primitives enter the picture. The tile-primitive model adds scope-aware, layout-aware operations such as `Tx.copy`, `Tx.copy_async`, and `Tx.gemm_async`.
 
 Read a TIRX kernel by asking four questions:
 
@@ -20,7 +20,7 @@ Read a TIRX kernel by asking four questions:
 The basic flow is:
 
 ```text
-Python function with @Tx.prim_func
+Python function with @Tx.prim_func(tirx=True)
   -> TIRX parser builds a PrimFunc
   -> IRModule({"main": prim_func})
   -> tvm.compile(..., tir_pipeline="tirx")
@@ -39,7 +39,7 @@ TIRX code usually starts with one import:
 from tvm.script import tirx as Tx
 ```
 
-`Tx` is the TIRX namespace. It provides the TIRX DSL: kernel constructs (`Tx.kernel`, `Tx.cta`, `Tx.warpgroup`, `Tx.warp`, `Tx.thread`), buffer helpers (`Tx.Buffer`, `Tx.alloc_buffer`, `Tx.decl_buffer`, `Tx.shared_scalar`), control-flow primitives (`Tx.serial`, `Tx.unroll`, `Tx.vectorized`), raw PTX intrinsics under `Tx.ptx.*`, raw CUDA runtime helpers under `Tx.cuda.*`, tile primitives such as `Tx.copy` and `Tx.gemm_async`, and metaprogramming glue (`Tx.meta_var`, `Tx.inline`, `Tx.meta_class`). The non-tile-primitive subset comes first; :numref:`chap_layouts` covers tile primitives.
+`Tx` is the TIRX namespace. It provides the TIRX DSL: kernel constructs (`Tx.kernel`, `Tx.cta`, `Tx.warpgroup`, `Tx.warp`, `Tx.thread`), buffer helpers (`Tx.Buffer`, `Tx.alloc_buffer`, `Tx.decl_buffer`, `Tx.shared_scalar`), control-flow primitives (`Tx.serial`, `Tx.unroll`, `Tx.vectorized`), raw PTX intrinsics under `Tx.ptx.*`, raw CUDA runtime helpers under `Tx.cuda.*`, tile primitives such as `Tx.copy` and `Tx.gemm_async`, and metaprogramming glue (`Tx.meta_var`, `Tx.inline`, `Tx.meta_class`). The non-tile-primitive subset comes first; tile primitives are covered in the Tile Primitive Mental Model.
 
 
 ## Minimal Kernel Example
@@ -49,14 +49,14 @@ The small `double_it` kernel below is a compact reference for the basic language
 ```python
 BLOCK = 256
 
-@Tx.prim_func
+@Tx.prim_func(tirx=True)
 def double_it(A_ptr: Tx.handle, B_ptr: Tx.handle):
     n = Tx.int32()                                       # dynamic length
     A = Tx.match_buffer(A_ptr, [n], "float32")
     B = Tx.match_buffer(B_ptr, [n], "float32")
     with Tx.kernel():                                    # grid-level region
-        bx  = Tx.cta_id([(n + BLOCK - 1) // BLOCK])      # kernel→cta : ceildiv(n, BLOCK) blocks
-        tid = Tx.thread_id([BLOCK])                      # cta→thread : BLOCK threads per CTA
+        bx  = Tx.cta_id([(n + BLOCK - 1) // BLOCK], parent="kernel")      # kernel→cta : ceildiv(n, BLOCK) blocks
+        tid = Tx.thread_id([BLOCK], parent="cta")                      # cta→thread : BLOCK threads per CTA
         with Tx.thread():                                # team kind = thread
             i = bx * BLOCK + tid
             if i < n:                                    # tail-guard for non-multiples of BLOCK
@@ -67,10 +67,10 @@ The example contains the core language features used throughout the tutorial:
 
 | Feature | Where it appears | Where to look |
 |:--|:--|:--|
-| `@Tx.prim_func` | top-level decorator | *Compile Pipeline* |
+| `@Tx.prim_func(tirx=True)` | top-level decorator | *Compile Pipeline* |
 | `Tx.handle`, `Tx.int32()`, `Tx.match_buffer` | argument types and dynamic shape | *Types and Expressions* |
 | `with Tx.kernel():`, `with Tx.thread():` | thread-hierarchy scopes | *Scopes in a Nutshell* |
-| `Tx.cta_id(...)`, `Tx.thread_id(...)` | symbolic thread coordinates | *Scopes in a Nutshell* |
+| `Tx.cta_id(..., parent="kernel")`, `Tx.thread_id(..., parent="cta")` | symbolic thread coordinates | *Scopes in a Nutshell* |
 | `if i < n:`, `B[i] = A[i] * 2.0` | TIR control flow and expressions | *Types and Expressions* |
 | compile to CUDA and run | compilation pipeline | *Compile Pipeline* |
 
@@ -132,7 +132,7 @@ Every line in `double_it` becomes one TIR node. There are two families:
 | Buffers | `BufferStore` (`B[i] = ...`), `AllocBuffer`, `DeclBuffer`, `AttrStmt` |
 | TIRX-specific | `ExecScopeStmt` (`with Tx.cta():` etc.), `TilePrimitiveCall` (e.g. `Tx.copy`) |
 
-The vocabulary is intentionally small: no class system, no closures, no exceptions. Every Python construct in a `@Tx.prim_func` either maps directly to one of these nodes, or fails to parse.
+The vocabulary is intentionally small: no class system, no closures, no exceptions. Every Python construct in a `@Tx.prim_func(tirx=True)` either maps directly to one of these nodes, or fails to parse.
 
 ### Expressions and operators
 
@@ -141,7 +141,7 @@ Arithmetic, comparison, and logical expressions use ordinary Python operators (`
 Type coercion is explicit. `i < n` where both sides are `int32` works without a cast; mixing `int32` and `float32` requires `Tx.cast(x, "float32")` (which emits an explicit `Cast` node). Two patterns appear repeatedly:
 
 ```python
-tx   = Tx.thread_id([128])                   # int32 symbolic IterVar (cta→thread)
+tx   = Tx.thread_id([128], parent="cta")                   # int32 symbolic IterVar (cta→thread)
 i    = bx * 128 + tx                         # Add(Mul(bx, 128), tx)
 flag = (i < n) & (tx != 0)                   # And(LT(i, n), NE(tx, 0))
 ```
@@ -162,9 +162,9 @@ TIRX control flow follows Python syntax but produces TIR statement nodes.
 
 `Tx.ptx.mbarrier.init(bar, 1)`, `Tx.cuda.cta_sync()`, and every other `Tx.ptx.*` / `Tx.cuda.*` invocation produces a `Call` PrimExpr. When such a call appears at statement position (its return value is discarded), the parser wraps it in an `Evaluate` statement.
 
-A `with` block binds a region to a TIRX-specific `ExecScopeStmt` (`Tx.kernel`, `Tx.cta`, `Tx.warpgroup`, …). *Scopes in a Nutshell* gives the minimum version; :numref:`chap_layouts` develops the full programming model.
+A `with` block binds a region to a TIRX-specific `ExecScopeStmt` (`Tx.kernel`, `Tx.cta`, `Tx.warpgroup`, ...). *Scopes in a Nutshell* gives the minimum version; the Tile Primitive Mental Model develops the full programming model.
 
-`return` is only legal inside `@Tx.inline` functions (see *Metaprogramming*). A top-level `@Tx.prim_func` always has a `void` signature.
+`return` is only legal inside `@Tx.inline` functions (see *Metaprogramming*). A top-level `@Tx.prim_func(tirx=True)` always has a `void` signature.
 
 ### Reading `double_it` as TIR
 
@@ -205,7 +205,7 @@ For the GEMM family of kernels the distinctions are:
 
 - **Shape.** Known at compile time (`(M, K)`) or bound dynamically (`match_buffer` with `Tx.int32()` shape variables).
 - **Scope.** `"global"` (default, GMEM), `"shared"` (SMEM), `"local"` (per-thread registers), `"tmem"` (Blackwell tensor memory). Other scopes exist for earlier architectures but are not used here.
-- **Layout.** Optional `layout=` argument (see :numref:`chap_layouts`). Required for swizzled SMEM and 2D TMEM; defaults to row-major when omitted.
+- **Layout.** Optional `layout=` argument. Required for swizzled SMEM and 2D TMEM; defaults to row-major when omitted.
 
 ### Small scalar helpers
 
@@ -217,7 +217,7 @@ Two helpers come up often enough to deserve a name:
 
 ### Scopes in a nutshell
 
-A scope statement is what gives TIRX its characteristic `with` blocks. :numref:`chap_layouts` gives the full programming-model story; the minimum language-level form is:
+A scope statement is what gives TIRX its characteristic `with` blocks. The Tile Primitive Mental Model gives the full programming-model story; the minimum language-level form is:
 
 ```python
 with Tx.kernel():              # grid-level setup (no team kind yet)
@@ -228,23 +228,23 @@ with Tx.kernel():              # grid-level setup (no team kind yet)
                     ...
 ```
 
-The exact number of threads in a CTA is set at launch via `Tx.thread_id([N])`; these kernels use `N = 128` (one warpgroup) or `N = 256` (two warpgroups).
+The exact number of threads in a CTA is set at launch via `Tx.thread_id([N], parent="cta")`; these kernels use `N = 128` (one warpgroup) or `N = 256` (two warpgroups).
 
-A predicate passed inside `()` narrows the active thread set, e.g. `with Tx.warp(Tx.filter(warp_id, 0, 1)):` selects warp 0 of the enclosing CTA. The full grammar for the symbolic coordinates is:
+A predicate passed inside `()` narrows the active thread set, e.g. `with Tx.warp(parent="cta")[warp_id == 0]:` selects warp 0 of the enclosing CTA. The full grammar for the symbolic coordinates is:
 
 | Coordinate | Parent → child | Typical extent |
 |:--|:--|:--|
 | `Tx.cluster_id([...])` | kernel → cluster | cluster grid dims |
-| `Tx.cta_id([...])` | kernel → cta | CTA grid dims |
-| `Tx.cta_id_in_cluster([...])` | cluster → cta | CTAs per cluster |
-| `Tx.warpgroup_id([Nw])` | cta → warpgroup | 1 or 2 |
-| `Tx.warp_id([Nw])` | cta → warp | total warps in CTA |
-| `Tx.warp_id_in_wg([4])` | warpgroup → warp | always 4 |
-| `Tx.thread_id([Nt])` | cta → thread | CTA size |
-| `Tx.thread_id_in_wg([128])` | warpgroup → thread | 128 |
-| `Tx.lane_id([32])` | warp → thread (laneid) | 32 |
+| `Tx.cta_id([...], parent="kernel")` | kernel → cta | CTA grid dims |
+| `Tx.cta_id([...], parent="cluster")` | cluster → cta | CTAs per cluster |
+| `Tx.warpgroup_id([Nw], parent="cta")` | cta → warpgroup | 1 or 2 |
+| `Tx.warp_id([Nw], parent="cta")` | cta → warp | total warps in CTA |
+| `Tx.warp_id([4], parent="warpgroup")` | warpgroup → warp | 4 in these kernels |
+| `Tx.thread_id([Nt], parent="cta")` | cta → thread | CTA size |
+| `Tx.thread_id([128], parent="warpgroup")` | warpgroup → thread | 128 |
+| `Tx.thread_id([32], parent="warp")` | warp → thread (laneid) | 32 |
 
-There is no `parent=...` keyword — the parent level is encoded in the function name (`*_in_cluster`, `*_in_wg`, `lane_id`). Raw PTX code can also use `tx = Tx.thread_id([128])` to obtain a single-int CTA-wide thread index, then guard per-thread work with `if tx == 0:`.
+There is no `parent=...` keyword — the parent level is encoded in the function name (`*_in_cluster`, `*_in_wg`, `lane_id`). Raw PTX code can also use `tx = Tx.thread_id([128], parent="cta")` to obtain a single-int CTA-wide thread index, then guard per-thread work with `if tx == 0:`.
 
 ### Adding `SMEMPool` and `TMEMPool` on top
 
@@ -276,7 +276,7 @@ with Tx.cta():
     pool.commit()
 ```
 
-Both are pure syntactic sugar — *they expand at parse time to the same `Tx.alloc_buffer` / `Tx.decl_buffer` / `Tx.shared_scalar` calls you would write by hand*. They are not part of the IR; if you print `kernel.script()`, you will see the desugared form. :numref:`chap_api_reference` covers the full API under *Syntactic Sugar*.
+Both are pure syntactic sugar — *they expand at parse time to the same `Tx.alloc_buffer` / `Tx.decl_buffer` / `Tx.shared_scalar` calls you would write by hand*. They are not part of the IR; if you print `kernel.script()`, you will see the desugared form. The API Reference covers the full API under *Syntactic Sugar*.
 
 
 ## Calling PTX and the CUDA Runtime
@@ -339,10 +339,10 @@ The runtime function `runtime.cuTensorMapEncodeTiled` is built in. You can regis
 ## The Compile Pipeline
 :label:`sec_compile_pipeline`
 
-`@Tx.prim_func` registers a Python-level IR function. To actually produce a runnable GPU binary you pass it to `tvm.compile` with the TIRX pipeline selected:
+`@Tx.prim_func(tirx=True)` registers a Python-level IR function. To actually produce a runnable GPU binary you pass it to `tvm.compile` with the TIRX pipeline selected:
 
 ```python
-target = tvm.target.Target("cuda")           # defaults to sm_100a on Blackwell
+target = tvm.target.Target("cuda")           # selects the CUDA target used by this Blackwell setup
 mod = tvm.IRModule({"main": double_it})
 with target:
     lib = tvm.compile(mod, target=target, tir_pipeline="tirx")
@@ -401,14 +401,14 @@ print(double_it.script())
 ```
 
 ```python
-@Tx.prim_func
+@Tx.prim_func(tirx=True)
 def double_it(A_ptr: Tx.handle, B_ptr: Tx.handle):
     n = Tx.int32()
     A = Tx.match_buffer(A_ptr, (n,))
     B = Tx.match_buffer(B_ptr, (n,))
     with Tx.kernel():
-        bx = Tx.cta_id([(n + 255) // 256])
-        tid = Tx.thread_id([256])
+        bx = Tx.cta_id([(n + 255) // 256], parent="kernel")
+        tid = Tx.thread_id([256], parent="cta")
         with Tx.thread():
             i: Tx.int32 = bx * 256 + tid
             if i < n:
@@ -437,7 +437,7 @@ double_it_kernel(float* __restrict__ A_ptr,
 }
 ```
 
-A clean line-by-line correspondence with the TIR: `bx = Tx.cta_id([(n + 255) // 256])` → `int bx = blockIdx.x` (the `ceildiv(n, 256)` extent is consumed at launch time by the host stub, not in the kernel body), `tid = Tx.thread_id([256])` → `int tid = threadIdx.x`, `if i < n:` → `if (i_ptr[0] < n)`, `B[i] = A[i] * 2.0` → the `BufferStore` at the bottom. Three minor codegen artefacts to be aware of:
+A clean line-by-line correspondence with the TIR: `bx = Tx.cta_id([(n + 255) // 256], parent="kernel")` → `int bx = blockIdx.x` (the `ceildiv(n, 256)` extent is consumed at launch time by the host stub, not in the kernel body), `tid = Tx.thread_id([256], parent="cta")` → `int tid = threadIdx.x`, `if i < n:` → `if (i_ptr[0] < n)`, `B[i] = A[i] * 2.0` → the `BufferStore` at the bottom. Three minor codegen artefacts to be aware of:
 
 - The `warp_id_in_cta` warp-broadcast helper is emitted by `LowerWarpMemory` even when the kernel never reads it; treat it as harmless prologue boilerplate.
 - Scalar locals are wrapped in a single-element `alignas(64) int i_ptr[1]` array (a TIRX storage convention introduced by `LowerWarpMemory`); the generated `nvcc` pass coalesces these to a register.
@@ -464,7 +464,7 @@ Without `Tx.meta_var`, the parser would emit TIR local variables for `m_start` a
 
 ### `@Tx.inline` — parameterised helpers
 
-`@Tx.inline` marks a Python function that should be inlined at each call site inside a `@Tx.prim_func`. The difference from writing a plain Python helper is that `@Tx.inline` understands TIR variables: it can take a `Tx.Buffer` argument, a `Tx.meta_var` argument, or another `@Tx.inline` callback, and still produce valid TIR after substitution.
+`@Tx.inline` marks a Python function that should be inlined at each call site inside a `@Tx.prim_func(tirx=True)`. The difference from writing a plain Python helper is that `@Tx.inline` understands TIR variables: it can take a `Tx.Buffer` argument, a `Tx.meta_var` argument, or another `@Tx.inline` callback, and still produce valid TIR after substitution.
 
 ```python
 @Tx.inline
@@ -472,7 +472,7 @@ def add_bias(out: Tx.Buffer, bias: Tx.Buffer, col: Tx.int32):
     for i in Tx.unroll(128):
         out[i, col] = out[i, col] + bias[col]
 
-@Tx.prim_func
+@Tx.prim_func(tirx=True)
 def kernel(...):
     ...
     with Tx.warpgroup():
@@ -498,16 +498,16 @@ class PersistentScheduler:
     def valid(self) -> Tx.bool: ...
 ```
 
-An instance can be constructed inside the kernel, its attributes can be read by `Tx.meta_var`, and its methods can be called inside the parser loop — all without emitting extra TIR nodes. See the `ClusterPersistentScheduler2D` class in `tirx-kernels-wt/tirx_kernels/gemm/hgemm_1consumer.py` for a real example that drives the Step 8 and Step 9 kernels of :numref:`chap_gemm_advanced`.
+An instance can be constructed inside the kernel, its attributes can be read by `Tx.meta_var`, and its methods can be called inside the parser loop — all without emitting extra TIR nodes. See the `ClusterPersistentScheduler2D` class in `tirx-kernels-wt/tirx_kernels/gemm/hgemm_1consumer.py` for a real example that drives the Step 8 and Step 9 kernels.
 
 ### Meta in the Pipeline
 
-All three constructs are *parser-time*: they affect the TIR that enters `tvm.compile`, nothing else. The compile pipeline in :numref:`sec_compile_pipeline` sees a fully-lowered TIR module with no `meta_var` / `inline` / `meta_class` constructs left. If the generated IR or CUDA looks wrong, print the expanded TIR before compilation with `tvm.IRModule({"main": kernel}).script()` — you will see exactly what the meta layer produced.
+All three constructs are *parser-time*: they affect the TIR that enters `tvm.compile`, nothing else. The compile pipeline sees a fully-lowered TIR module with no `meta_var` / `inline` / `meta_class` constructs left. If the generated IR or CUDA looks wrong, print the expanded TIR before compilation with `tvm.IRModule({"main": kernel}).script()` — you will see exactly what the meta layer produced.
 
 
 ## Related References
 
-- Full op catalog, barrier helpers, and PTX intrinsic reference: :numref:`chap_api_reference`.
-- Tile primitives (`Tx.copy`, `Tx.gemm_async`) and layouts: :numref:`chap_layouts`.
-- A fully worked raw-PTX kernel, ready to modify: `tirx_tutorial/no_sugar_gemm.py`; motivation for avoiding this plumbing: :numref:`sec_no_sugar_gemm`.
-- Memory-hierarchy numbers (SMEM / TMEM / RF capacities, bandwidths): :numref:`chap_background`.
+- Full op catalog, barrier helpers, and PTX intrinsic reference: API Reference.
+- Tile primitives (`Tx.copy`, `Tx.gemm_async`) and layouts: Tile Primitive Mental Model.
+- A fully worked raw-PTX kernel, ready to modify: `tirx_tutorial/no_sugar_gemm.py`; the tile-primitive motivation explains why the tutorial avoids this plumbing.
+- Memory-hierarchy numbers (SMEM / TMEM / RF capacities, bandwidths): Blackwell Background.

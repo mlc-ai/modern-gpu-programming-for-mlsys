@@ -8,8 +8,11 @@ python gen_shuffle_reduce.py          # -> ../shuffle_reduce.png (Appendix B.2 R
 python gen_cross_warp_reduce.py       # -> ../cross_warp_reduce.png (Appendix B.2 RMSNorm)
 python gen_warp_specialization_timeline.py  # -> ../warp_specialization_timeline.png (ch8 Step 7)
 python gen_tma_sync_flow.py           # -> ../tma_sync_flow.png (ch7 Step 4)
-python gen_flash_attention_barrier_flow.py  # -> ../flash_attention_barrier_flow.png (ch9)
-python gen_gemm_perf.py               # -> ../gemm_perf.png (ch8 Complete Journey)
+python gen_flash_attention_barrier_flow.py  # -> ../flash_attention_main_handoff.png and ../flash_attention_softmax_correction.png
+python gen_flash_attention_pipeline.py      # -> ../flash_attention_pipeline_v2.png (Flash Attention pipeline)
+python gen_tmem_layout.py            # -> ../tmem_layout_v3.png (Flash Attention TMEM layout)
+python gen_gemm_perf.py               # -> ../gemm_perf_b200_v2.png (GEMM End-to-End Result)
+python gen_ai_assisted_workflow.py    # -> ../ai_assisted_tirx_workflow.png (AI-assisted TIRX workflow)
 ```
 
 Requires: `matplotlib`, `numpy`

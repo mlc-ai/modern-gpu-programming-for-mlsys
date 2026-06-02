@@ -50,15 +50,15 @@ Computing RMS requires summing $x^2$ across the entire hidden dimension — a gl
 
 ### Thread Organization
 
-Each CTA has `bdx * bdy` threads, arranged in a 2D layout via `Tx.thread_id([bdx, bdy])`:
+Each CTA has `bdx * bdy` threads, arranged in a 2D layout via `Tx.thread_id([bdx, bdy], parent="cta")`:
 
 ```python
-tx, ty = Tx.thread_id([bdx, bdy])
+tx, ty = Tx.thread_id([bdx, bdy], parent="cta")
 # tx: lane ID within the warp (0-31)
 # ty: warp index (0 to bdy-1)
 ```
 
-Passing a **2D list `[bdx, bdy]`** means the CTA's threads are logically arranged as a 2D grid of size `bdx × bdy`, and the call returns **two indices** `(tx, ty)`. Compare this to the `Tx.thread_id([NUM_THREADS])` call in :numref:`chap_fused_gelu`, which is 1D and returns a single `tid`.
+Passing a **2D list `[bdx, bdy]`** means the CTA's threads are logically arranged as a 2D grid of size `bdx × bdy`, and the call returns **two indices** `(tx, ty)`. In contrast, `Tx.thread_id([NUM_THREADS], parent="cta")` is 1D and returns a single `tid`.
 
 - `bdx = 32` — one warp (32 threads). `tx` is the lane ID within the warp.
 - `bdy = ceildiv(block_size, 32)` — how many warps per CTA. `ty` is the warp index.
@@ -82,7 +82,7 @@ So thread 0 processes elements 0-7, thread 1 processes 8-15, ..., and they colle
 
 **Why multiple warps?** A single warp (32 threads × 8 elements = 256 elements per iteration) would need 16 loop iterations to cover 4096 elements. With 8 warps (256 threads × 8 = 2048 per iteration), it only takes 2 iterations — more parallelism, less looping.
 
-`Tx.handle` is used because `batch_size` is only known at runtime. Each CTA loops over rows with `idx += SM_COUNT` (persistent kernel pattern).
+The batch size is only known at runtime, and each CTA loops over rows with `idx += SM_COUNT` (persistent kernel pattern).
 
 ### Warp Shuffle Reduction
 
@@ -139,15 +139,7 @@ Both are synchronization barriers, but they differ:
 
 In this kernel, `Tx.ptx.bar.sync(1, bdx * bdy)` is used because the actual thread count (`bdx * bdy`) may be less than the CTA size. The following shared-memory reads rely on this barrier for thread synchronization and shared-memory ordering.
 
-The kernel implementation follows.
-
-**TIRX loop constructs** (used repeatedly in the kernels):
-
-- `Tx.serial(N)` — A regular runtime loop. Use when the iteration count is large or variable.
-
-- `Tx.unroll(N)` — Fully unrolls at compile time into N separate statements. Good for small fixed-size loops (e.g., processing `vec_size` elements). Trades code size for speed.
-
-- `Tx.vectorized(0, N)` — Generates a single vector load/store instruction (e.g., 128-bit). Only works for contiguous memory access with no computation inside the loop body.
+The kernel implementation follows. It uses three loop forms: `Tx.serial(...)` for the row scan, `Tx.unroll(...)` for small fixed reductions and vector fragments, and `Tx.vectorized(...)` for contiguous vector load/store. Use the API lookup if you need the exact syntax later.
 
 ```{.python .input}
 def get_rmsnorm_kernel(hidden_size):
@@ -156,7 +148,7 @@ def get_rmsnorm_kernel(hidden_size):
     bdx = 32                          # threads per warp (always 32)
     bdy = ceildiv(block_size, 32)     # number of warps per CTA
 
-    @Tx.prim_func
+    @Tx.prim_func(tirx=True)
     def rmsnorm(input_ptr: Tx.handle, weight_ptr: Tx.handle, out_ptr: Tx.handle):
         batch_size = Tx.int32()       # determined at runtime from buffer shape
         input_global = Tx.match_buffer(input_ptr, [batch_size, hidden_size], "float16")
@@ -164,8 +156,8 @@ def get_rmsnorm_kernel(hidden_size):
         out_global = Tx.match_buffer(out_ptr, [batch_size, hidden_size], "float16")
 
         with Tx.kernel():
-            bx = Tx.cta_id([SM_COUNT])
-            tx, ty = Tx.thread_id([bdx, bdy])  # tx=lane, ty=warp
+            bx = Tx.cta_id([SM_COUNT], parent="kernel")
+            tx, ty = Tx.thread_id([bdx, bdy], parent="cta")  # tx=lane, ty=warp
             thread_id = Tx.meta_var(ty * bdx + tx)
 
             with Tx.cta():
@@ -319,4 +311,4 @@ In Transformer models, RMSNorm is almost always preceded by a residual addition:
 3. Why does the cross-warp reduction run only in warp 0 (`ty == 0`)? What would happen if all warps tried to do the final reduction?
 4. How would you modify this kernel to compute LayerNorm instead of RMSNorm? What additional computation is needed?
 
-**Try with your agent**: Paste your RMSNorm kernel and ask: *"Trace the warp shuffle reduction for a warp of 32 threads. After each XOR-shuffle step, which threads hold partial results? Why does every thread end up with the same final sum?"*
+**Try with your agent**: Paste your RMSNorm kernel and ask: *"Trace the warp shuffle reduction for a warp of 32 threads. After each XOR-shuffle step, which threads exchange values, which partial sums are added, and why does every lane end with the same total?"*

@@ -4,17 +4,14 @@
 Set up the environment first, then verify it by running a real GPU kernel.
 
 
-## Install
-
-### Expected Background
+## Requirements
 
 - **OS**: Linux (Ubuntu 20.04+ recommended)
-
 - **GPU**: NVIDIA Blackwell (B200 / B100) with driver >= 570
-
 - **Python**: >= 3.10 with `pip`
 
-### Install Packages
+
+## Install Packages
 
 ```bash
 pip install --pre -U "https://github.com/mlc-ai/package/releases/download/v0.9.dev0/mlc_ai_tirx_nightly_cu130-0.24.dev0-py3-none-manylinux_2_28_x86_64.whl"
@@ -24,16 +21,16 @@ pip install numpy
 ```
 
 
-## Minimal Kernel
+## Verify with a Tiny Kernel
 
 Verify the setup by compiling and running a real TIRX kernel. The minimal kernel doubles every element of an array on the GPU.
 
 Three TIRX primitives appear in every kernel:
 
 - **`with Tx.kernel():`** opens the kernel-launch scope. Everything inside it runs on the GPU. Outside this block you are still on the host.
-- **`Tx.cta_id([num_blocks])`** declares the CTA (CUDA block) grid extent and returns a symbolic block index, exactly like `blockIdx.x` in raw CUDA. `[num_blocks]` becomes the grid size.
-- **`Tx.thread_id([num_threads_per_cta])`** declares the per-CTA thread extent and returns the symbolic thread index (like `threadIdx.x`). The CTA size is `num_threads_per_cta`.
-- **`with Tx.thread():`** opens a thread-level execution scope — every thread runs the body independently. Other scopes (`Tx.warp()`, `Tx.warpgroup()`, `Tx.cta()`) exist for cooperative tile primitives and are introduced in :numref:`chap_layouts`.
+- **`Tx.cta_id([num_blocks], parent="kernel")`** declares the CTA (CUDA block) grid extent and returns a symbolic block index, exactly like `blockIdx.x` in raw CUDA. `[num_blocks]` becomes the grid size.
+- **`Tx.thread_id([num_threads_per_cta], parent="cta")`** declares the per-CTA thread extent and returns the symbolic thread index (like `threadIdx.x`). The CTA size is `num_threads_per_cta`.
+- **`with Tx.thread():`** opens a thread-level execution scope — every thread runs the body independently. Other scopes (`Tx.warp()`, `Tx.warpgroup()`, `Tx.cta()`) exist for cooperative tile primitives and are introduced later in the tutorial.
 
 With those in hand, the kernel maps a length-`n` array to a 1-D grid of CTAs, each with 256 threads, and has every thread double one element:
 
@@ -44,22 +41,22 @@ import torch
 
 BLOCK = 256
 
-@Tx.prim_func
+@Tx.prim_func(tirx=True)
 def double_it(A_ptr: Tx.handle, B_ptr: Tx.handle):
     n = Tx.int32()
     A = Tx.match_buffer(A_ptr, [n], "float32")
     B = Tx.match_buffer(B_ptr, [n], "float32")
     with Tx.kernel():
         # Launch ceildiv(n, BLOCK) CTAs of BLOCK threads each.
-        bx = Tx.cta_id([(n + BLOCK - 1) // BLOCK])
-        tid = Tx.thread_id([BLOCK])
+        bx = Tx.cta_id([(n + BLOCK - 1) // BLOCK], parent="kernel")
+        tid = Tx.thread_id([BLOCK], parent="cta")
         with Tx.thread():
             i = bx * BLOCK + tid
             if i < n:                       # tail-guard for non-multiples of BLOCK
                 B[i] = A[i] * 2.0
 
 # Compile
-target = tvm.target.Target("cuda")  # defaults to sm_100a on Blackwell
+target = tvm.target.Target("cuda")  # selects the CUDA target used by this Blackwell setup
 with target:
     lib = tvm.compile(tvm.IRModule({"main": double_it}), target=target, tir_pipeline="tirx")
 
@@ -92,14 +89,4 @@ A few observations:
 
 - **Compilation error**: Make sure you installed the `cu130` version of both TVM and PyTorch
 
-
-## Inspecting Generated Code
-
-Generated CUDA source is available after compiling any TIRX kernel:
-
-```python
-cuda_source = lib.mod.imports[0].inspect_source()
-print(cuda_source)
-```
-
-Generated CUDA is the debugging target: search for PTX instructions like `tcgen05.mma`, `mbarrier.init`, or `__syncthreads()` to verify the kernel structure. The GEMM chapters use this technique repeatedly.
+For generated CUDA inspection, use the debugging appendix for warp-specialized kernels or the language reference for the lower-level `inspect_source()` workflow.

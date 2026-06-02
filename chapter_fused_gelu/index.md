@@ -16,11 +16,9 @@ The operator fuses GELU activation and gate multiply into one kernel. The **gate
 
 **Topics.**
 
-- Basic TIRX kernel structure: `@Tx.prim_func`, `Tx.kernel()`, `Tx.cta_id()`, `Tx.thread_id()`
-
-- How to launch a 1D grid of threads where each thread computes one output element
-
-- How to verify kernel correctness against a numpy reference
+- Flat 1D thread mapping for a 2D tensor
+- Fused GELU-tanh and gate multiply
+- Correctness checking against a NumPy reference
 
 
 ## Implementation
@@ -32,27 +30,35 @@ The strategy:
 3. Read the corresponding values from both halves of the input
 4. Compute GELU-tanh, multiply with the gate, write the result
 
-### 1D Thread Grid to 2D Matrix Mapping
+### Indexing and Gate Layout
 
 GPU threads are launched as a flat 1D grid, but the output data is a 2D matrix `[batch, out_dim]`. Each thread converts its global ID to a `(row, col)` coordinate:
 
 ![1D Thread Grid to 2D Matrix Mapping](../img/thread_grid_to_matrix.png)
 
-Each thread handles exactly one element. The flat `gid` fills the matrix row by row: the first `out_dim` threads cover row 0, the next `out_dim` threads cover row 1, and so on.
+Each thread handles exactly one output element. The flat `gid` fills the matrix row by row: the first `out_dim` threads cover row 0, the next `out_dim` threads cover row 1, and so on.
 
-### Kernel APIs
+```python
+gid = bx * NUM_THREADS + tid
+row = gid // out_dim
+col = gid % out_dim
+```
 
-- **`Tx.handle` + `Tx.match_buffer`** — The function takes opaque pointer parameters. Inside the kernel, `match_buffer` binds them to typed 2D arrays with known shapes.
+The boundary guard handles the final partially filled CTA:
 
-- **`Tx.cta_id` + `Tx.thread_id`** — Together these give each thread a unique position in the grid. `bx` is the CTA (block) index, `tid` is the thread index within that CTA.
+```python
+if gid < total:
+    ...
+```
 
-- **`gid = bx * NUM_THREADS + tid`** — The global thread ID. Each thread maps this to a `(row, col)` in the output matrix using integer division and modulo. Why the conversion? We launch threads as a flat 1D grid (just a single number per thread), but the data is a 2D matrix `[batch, out_dim]`. We need `row` to index which batch element, and `col` to index which position within that element — so we convert the flat `gid` back to 2D coordinates: `row = gid // out_dim`, `col = gid % out_dim`.
+The input tensor is `[batch, 2 * out_dim]`. For each output element, the kernel reads both halves of the same row:
 
-- **`if gid < total`** — Boundary check. The grid might be slightly larger than the data (due to `ceildiv`), so excess threads skip the computation.
+```python
+input1 = input_buf[row, col]              # activation half
+input2 = input_buf[row, col + out_dim]    # gate half
+```
 
-- **`input_buf[row, col]` and `input_buf[row, col + out_dim]`** — The input is `[batch, 2*d]`. The first half (`col < out_dim`) is the value to apply GELU to; the second half (`col + out_dim`) is the gate to multiply with.
-
-- **The GELU computation** — Implements the tanh approximation formula in fp16 arithmetic. `Tx.float16(...)` casts constants to fp16.
+`input1` goes through the GELU-tanh approximation, then the result is multiplied by `input2`. The constants are cast with `Tx.float16(...)` so the expression stays in fp16 arithmetic.
 
 ```{.python .input}
 import math
@@ -71,14 +77,14 @@ def fused_gelu_kernel(input_cat, out_dim, batch_size):
     NUM_THREADS = 256
     NUM_BLOCKS = ceildiv(total, NUM_THREADS)
 
-    @Tx.prim_func
+    @Tx.prim_func(tirx=True)
     def fused_gelu_tanh_multiply(input_cat_ptr: Tx.handle, output_ptr: Tx.handle):
         input_buf = Tx.match_buffer(input_cat_ptr, [batch_size, out_dim * 2], "float16")
         output_buf = Tx.match_buffer(output_ptr, [batch_size, out_dim], "float16")
 
         with Tx.kernel():
-            bx = Tx.cta_id([NUM_BLOCKS])
-            tid = Tx.thread_id([NUM_THREADS])
+            bx = Tx.cta_id([NUM_BLOCKS], parent="kernel")
+            tid = Tx.thread_id([NUM_THREADS], parent="cta")
 
             with Tx.thread():
                 gid = bx * NUM_THREADS + tid

@@ -50,7 +50,7 @@ ldo, sdo = 1, 64  # matrix-descriptor leading / stride dim (in 128B atoms)
 
 
 # fmt: off
-@Tx.prim_func(check_well_formed=False)
+@Tx.prim_func(tirx=True, check_well_formed=False)
 def gemm_nosugar(A: Tx.Buffer((M, K), a_type, layout=Tx.TileLayout(Tx.S[M, K])),
                  B: Tx.Buffer((N, K), b_type, layout=Tx.TileLayout(Tx.S[N, K])),
                  C: Tx.Buffer((M, N), d_type)):
@@ -74,10 +74,10 @@ def gemm_nosugar(A: Tx.Buffer((M, K), a_type, layout=Tx.TileLayout(Tx.S[M, K])),
 
     # -- device side -------------------------------------------------------
     with Tx.kernel():
-        Tx.cta_id([1])
-        warp_id = Tx.warp_id([4])
-        Tx.lane_id([32])
-        tx = Tx.thread_id([128])
+        Tx.cta_id([1], parent="kernel")
+        warp_id = Tx.warp_id([4], parent="cta")
+        Tx.thread_id([32], parent="warp")
+        tx = Tx.thread_id([128], parent="cta")
         with Tx.cta():
             # Three independent uint32/uint64 SMEM scalars (NOT sub-offsets
             # of a shared buffer) so that mbarrier addresses are unique.
@@ -95,7 +95,7 @@ def gemm_nosugar(A: Tx.Buffer((M, K), a_type, layout=Tx.TileLayout(Tx.S[M, K])),
             mma_phase = Tx.alloc_buffer((1,), "int32", scope="local")
 
             # (1) allocate 512 TMEM columns from a single elected warp.
-            with Tx.warp(Tx.filter(warp_id, 0, 1)):
+            with Tx.warp(parent="cta")[warp_id == 0]:
                 Tx.ptx.tcgen05.alloc(Tx.address_of(tmem_addr),
                                      n_cols=N_COLS, cta_group=cta_group)
 
@@ -176,7 +176,7 @@ def gemm_nosugar(A: Tx.Buffer((M, K), a_type, layout=Tx.TileLayout(Tx.S[M, K])),
                     C[tx, i] = reg[i]
 
             # (6) release TMEM back to the hardware pool.
-            with Tx.warp(Tx.filter(warp_id, 0, 1)):
+            with Tx.warp(parent="cta")[warp_id == 0]:
                 Tx.ptx.tcgen05.relinquish_alloc_permit(cta_group=cta_group)
                 Tx.ptx.tcgen05.dealloc(tmem_addr, n_cols=N_COLS, cta_group=cta_group)
 # fmt: on

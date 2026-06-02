@@ -1,3 +1,9 @@
+# Appendix: Flash Attention 4 TIRX Source
+:label:`chap_fa4_source`
+
+This appendix contains the FA4 TIRX source used by the Flash Attention chapter. It follows the current `tirx-kernels` implementation style for the kernel builder and verification helper; broader benchmark baselines are intentionally left out.
+
+```python
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -972,3 +978,5 @@ def run_test(batch_size, seq_len, num_qo_heads, num_kv_heads, head_dim, is_causa
     attn = torch.softmax(scores, dim=-1)
     ref = torch.matmul(attn, V_t).transpose(1, 2).to(torch.float16)
     np.testing.assert_allclose(O_tvm.numpy(), ref.cpu().numpy(), rtol=1e-2, atol=1e-2)
+
+```

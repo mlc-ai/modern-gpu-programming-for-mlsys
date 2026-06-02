@@ -1,6 +1,6 @@
 # TIRX: Blackwell Tile-Primitive Programming
 
-TIRX (Tensor IR neXt) is a Python DSL for writing high-performance GPU kernels at the IR level. This tutorial targets Blackwell because it exposes the newest TIRX tile primitives: TMA tile copies, `tcgen05` MMA, TMEM layouts, mbarriers, and CTA clusters.
+TIRX (Tensor IR neXt) is a Python DSL for writing high-performance GPU kernels at the IR level. This tutorial targets Blackwell because its TIRX path exposes tile primitives for TMA tile copies, `tcgen05` MMA, TMEM layouts, mbarriers, and CTA clusters.
 
 TIRX sits between high-level kernel DSLs and raw CUDA/PTX. High-level DSLs are easier to write and often the right tool, but they can hide the exact hardware contract behind scheduling or library choices. Raw CUDA/PTX gives maximum control, but the program becomes descriptor setup, barrier state, layout bookkeeping, and instruction-level plumbing. TIRX is for the middle ground: the kernel still names Blackwell concepts directly, while the compiler can see scope, layout, and dispatch as structured IR instead of scattered intrinsic arguments.
 
@@ -21,12 +21,15 @@ For asynchronous primitives, barriers and waits describe the handoff between til
   2. **Tile Primitive Mental Model** — Why tile primitives matter, then execution scope, tensor layout, and dispatch.
 
 - **Part III: GEMM Deep Dive**
-  3. **GEMM with Tile Primitives** — Single-tile GEMM, K-loop accumulation, and spatial tiling across CTAs.
-  4. **Asynchronous GEMM Pipeline** — TMA async loads, software pipelining, and persistent tile scheduling.
-  5. **Warp-Specialized and Clustered GEMM** — Warp specialization, 2-CTA cooperative MMA, and multi-consumer execution.
+  3. **Building a Tiled GEMM** — Single-tile GEMM, K-loop accumulation, and spatial tiling across CTAs.
+  4. **Pipelining GEMM with TMA** — TMA async loads, software pipelining, and persistent tile scheduling.
+  5. **Scaling GEMM with Warp Specialization and Clusters** — Warp specialization, 2-CTA cooperative MMA, and multi-consumer execution.
 
 - **Part IV: Advanced Kernel**
-  6. **Flash Attention on Blackwell**
+  6. **Flash Attention 4**
+
+- **Part V: Kernel Development Workflow**
+  7. **Writing TIRX Kernels with Agents** — Use the tile-primitive contract as prompt structure for explanation, review, debugging, and test generation.
 
 - **Appendix**
   - Setup, practice kernels, debugging notes, and references.
@@ -42,5 +45,6 @@ chapter_gemm_basics/index
 chapter_gemm_async/index
 chapter_gemm_advanced/index
 chapter_flash_attention/index
+chapter_ai_assisted/index
 appendix/index
 ```

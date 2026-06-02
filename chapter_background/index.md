@@ -130,8 +130,8 @@ Keep these orders of magnitude in mind when reading the GEMM chapters. They expl
 | Registers per thread (max) | 255 × 32-bit | why large accumulator tiles are not kept entirely in RF |
 | Tensor Core peak @ FP16/BF16 (dense) | order of 2 PFLOPS | GEMM roof; exact value depends on SKU and clock |
 | Tensor Core peak @ FP8 / FP4 (dense) | several PFLOPS | mixed-precision GEMM; exact value depends on SKU, clock, and sparsity mode |
-| HBM3e bandwidth | ~8 TB/s | bandwidth roof |
-| L2 cache | device-specific; 126 MB on GB200 | where tile operands actually live after warm-up |
-| One fp16 128×64 tile in SMEM | 16 KB | TMA transfer granularity |
+| HBM3e bandwidth | order of 8 TB/s | bandwidth roof |
+| L2 cache | device-specific; 126 MB-class on GB200 systems | where tile operands actually live after warm-up |
+| One fp16 128×64 tile in SMEM | 16 KB | example staged operand-tile size |
 
 NVIDIA often reports multiple peak numbers depending on dtype, sparsity mode, and product SKU. Use the table as scale, not as a full performance model: SMEM can hold only a small number of staged operand tiles, TMEM must be budgeted for accumulator tiles, and Tensor Core throughput is high enough that data movement has to overlap compute.

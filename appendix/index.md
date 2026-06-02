@@ -1,15 +1,20 @@
 # Appendix
 :label:`chap_appendix`
 
-The main tutorial path ends with Flash Attention. The pages below are supporting material: environment setup, optional practice kernels, debugging notes, and reference material for TIRX syntax and APIs.
+The main tutorial path ends with Writing TIRX Kernels with Agents. The appendix is not another reading path; use it when you need setup help, extra practice, debugging checklists, or API details.
 
-Use this section as needed:
+## How to Use This Appendix
 
-- **Environment Setup** if the environment or build fails.
-- **Practice Kernels** if you want more examples outside GEMM and Flash Attention.
-- **LLM-Assisted Debugging** if you want prompting and bug-pattern checks for kernel work.
-- **TIRX API Quick Reference** when you need a compact lookup for functions used in the tutorial.
-- **TIRX Language Reference** when you want to understand parsing, buffers, scopes, metaprogramming, or the compile pipeline.
+| Need | Use |
+|------|-----|
+| Install TVM/TIRX or run a tiny kernel | **Environment Setup** |
+| Practice basic thread indexing, elementwise code, and reductions | **Practice Kernel: Fused GELU Gate** and **Practice Kernel: RMSNorm Reduction** |
+| Inspect generated CUDA for scope guards, barriers, and lowered instructions | **TIRX Language and Compile Pipeline** |
+| Read the complete Flash Attention 4 TIRX source | **Flash Attention 4 TIRX Source** |
+| Look up the exact spelling of a TIRX API used in the tutorial | **TIRX API Lookup** |
+| Understand the parser, buffer model, scopes, metaprogramming, or compile pipeline | **TIRX Language and Compile Pipeline** |
+
+Most readers only need **Environment Setup** and **TIRX API Lookup** at first. The practice kernels are optional.
 
 ```toc
 :maxdepth: 1
@@ -17,7 +22,7 @@ Use this section as needed:
 ../chapter_setup/index
 ../chapter_fused_gelu/index
 ../chapter_rmsnorm/index
-../chapter_ai_assisted/index
+../chapter_fa4_source/index
 ../chapter_api_reference/index
 ../chapter_tirx_primer/index
 ```
