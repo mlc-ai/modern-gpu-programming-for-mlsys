@@ -37,7 +37,7 @@ Here only `tid == 0` starts the TMA load. The code does not use `elect_sync()` b
 Step 4 still waits after each TMA load, so this is not yet load/compute overlap. The speedup comes from using a different data-movement path:
 
 - `Tx.copy` uses CTA threads to compute addresses and issue load/store instructions.
-- TMA uses one issued command to start a hardware tile transfer. Address generation, coalescing, and swizzling are described by the TMA descriptor and handled by the copy path.
+- TMA uses one issued command to start a hardware tile transfer. Address generation, coalescing, and swizzling are described by the TMA descriptor and carried out by the TMA engine.
 
 So Step 4 can be faster even though it still waits for each load to finish: the CTA threads spend less instruction bandwidth on moving tiles, because TMA handles the bulk transfer.
 
@@ -77,7 +77,6 @@ def hgemm_v4(M, N, K):
     acc_type = tvm.DataType("float32")
 
     BLK_M, BLK_N, BLK_K = 128, 128, 64
-    MMA_M, MMA_N, MMA_K = 128, 128, 16
     K_TILES = K // BLK_K
     F16_SIZE = 2
 
@@ -93,7 +92,7 @@ def hgemm_v4(M, N, K):
     ):
         Tx.device_entry()
         bx, by = Tx.cta_id([M // BLK_M, N // BLK_N])
-        wg_id = Tx.warpgroup_id([1])
+        _ = Tx.warpgroup_id([1])
         warp_id = Tx.warp_id_in_wg([4])
         lane_id = Tx.lane_id([32])
     
@@ -243,6 +242,8 @@ With `PIPE_DEPTH=2`, the kernel allocates two SMEM stages. The figure shows the 
 
 The first two TMA loads fill the two stages. After that, the stages alternate. While MMA computes on `k0`, TMA can load `k2` into the stage that will be reused next. While MMA computes on `k1`, TMA can load `k3`, and so on. The two hardware paths are different: TMA moves GMEM -> SMEM tiles, while `tcgen05.mma` consumes an already-loaded SMEM stage and writes the accumulator to TMEM.
 
+This simplified single-warpgroup pipeline only overlaps the *prefetched* stages: the main loop still waits for the current MMA to complete (`try_wait(mma_bar, phase_mma)`) before issuing the next TMA load, so it does not yet realize the fully concurrent schedule the figure suggests. True producer/consumer overlap — where a dedicated load warp keeps issuing TMA while a separate MMA warp computes — requires warp specialization, which the next chapter introduces.
+
 When reading the Step 5 code, look for four changes from Step 4:
 
 1. `Asmem` and `Bsmem` gain a leading `PIPE_DEPTH` dimension, so each stage has its own SMEM storage.
@@ -320,7 +321,7 @@ def hgemm_v5(M, N, K):
     ):
         Tx.device_entry()
         bx, by = Tx.cta_id([M // BLK_M, N // BLK_N])
-        wg_id = Tx.warpgroup_id([1])
+        _ = Tx.warpgroup_id([1])
         warp_id = Tx.warp_id_in_wg([4])
         lane_id = Tx.lane_id([32])
 
@@ -373,7 +374,7 @@ def hgemm_v5(M, N, K):
                           **tma_config)
             Tx.ptx.mbarrier.arrive.expect_tx(
                 tma_bar.ptr_to([stage]),
-                (BLK_M * BLK_K + BLK_N * BLK_K) * 2)
+                (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
 
         @Tx.inline
         def mma(stage, accum):
@@ -518,7 +519,7 @@ def hgemm_v6(M, N, K):
         Tx.device_entry()
         # 1D grid: one CTA per SM (not a 2D grid anymore!)
         bx = Tx.cta_id([SM_COUNT])
-        wg_id = Tx.warpgroup_id([1])
+        _ = Tx.warpgroup_id([1])
         warp_id = Tx.warp_id_in_wg([4])
         lane_id = Tx.lane_id([32])
 
@@ -575,7 +576,7 @@ def hgemm_v6(M, N, K):
                           **tma_config)
             Tx.ptx.mbarrier.arrive.expect_tx(
                 tma_bar.ptr_to([stage]),
-                (BLK_M * BLK_K + BLK_N * BLK_K) * 2)
+                (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
 
         @Tx.inline
         def mma(stage, accum):

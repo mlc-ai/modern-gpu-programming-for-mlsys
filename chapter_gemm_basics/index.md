@@ -154,6 +154,9 @@ def hgemm_v1(M, N, K):
     acc_type = tvm.DataType("float32")
 
     BLK_M, BLK_N, BLK_K = 128, 128, 64
+    # MMA_M/MMA_N/MMA_K document the underlying hardware MMA tile; they are not
+    # passed to gemm_async (which derives the MMA shape from the operand and
+    # accumulator tiles), so the later steps omit them.
     MMA_M, MMA_N, MMA_K = 128, 128, 16
 
     A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
@@ -321,7 +324,7 @@ The same mbarrier is reused for every MMA completion. To reuse it safely, the co
 | 1 | 1 | barrier flips to 0 | `phase_mma = 0` |
 | 2 | 0 | barrier flips to 1 | `phase_mma = 1` |
 
-Without `phase_mma ^= 1`, the second iteration would still call `try_wait(bar, 0)`. The barrier is already at phase 1 from the previous MMA, so the wait would pass immediately after the second MMA is issued, instead of waiting for the second MMA to finish.
+Without `phase_mma ^= 1`, the second iteration would still call `try_wait(bar, 0)`. The barrier is already at phase 1 from the first MMA, so the wait returns immediately — even before the second MMA is issued — instead of waiting for the second MMA to finish.
 
 ### Complete Kernel
 
@@ -412,15 +415,15 @@ def hgemm_v2(M, N, K):
                           layout=TileLayout(S[(128, BLK_N) : (1@axis_tid_in_wg, 1)]))
 
         with Tx.warpgroup():
-            Tx.copy_async(reg_wg[:], tmem[:, :128])
+            Tx.copy_async(reg_wg[:, :], tmem[:, :128])
             Tx.ptx.tcgen05.wait.ld()
-            Tx.cuda.cta_sync()
 
         with Tx.thread():
             Tx.cast(reg_f16[:], reg[:])
             m_thr = Tx.meta_var(m_st + 32 * warp_id + lane_id)
             Tx.copy(D[m_thr, :], reg_f16[:])
 
+        Tx.cuda.cta_sync()
         if warp_id == 0:
             Tx.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
             Tx.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
@@ -548,15 +551,15 @@ def hgemm_v3(M, N, K):
                           layout=TileLayout(S[(128, BLK_N) : (1@axis_tid_in_wg, 1)]))
 
         with Tx.warpgroup():
-            Tx.copy_async(reg_wg[:], tmem[:, :128])
+            Tx.copy_async(reg_wg[:, :], tmem[:, :128])
             Tx.ptx.tcgen05.wait.ld()
-            Tx.cuda.cta_sync()
 
         with Tx.thread():
             Tx.cast(reg_f16[:], reg[:])
             m_thr = Tx.meta_var(m_st + 32 * warp_id + lane_id)
             Tx.copy(D[m_thr, n_st:n_st+BLK_N], reg_f16[:])
 
+        Tx.cuda.cta_sync()
         if warp_id == 0:
             Tx.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
             Tx.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)

@@ -58,7 +58,7 @@ input1 = input_buf[row, col]              # activation half
 input2 = input_buf[row, col + out_dim]    # gate half
 ```
 
-`input1` goes through the GELU-tanh approximation, then the result is multiplied by `input2`. The constants are cast with `Tx.float16(...)` so the expression stays in fp16 arithmetic.
+`input1` goes through the GELU-tanh approximation, then the result is multiplied by `input2`. The constants are cast with `Tx.float16(...)` so the expression stays in fp16 arithmetic. Because the whole GELU path — including the `x^3` term and the `tanh` — runs in fp16 while the numpy reference computes in fp32, a small but bounded rounding error is expected; that is why the verification tolerance is loose (`0.05`) rather than exact.
 
 ```{.python .input}
 import math
@@ -121,7 +121,7 @@ with target:
 # Run
 x_cat = torch.randn(batch_size, out_dim * 2, dtype=torch.float16, device=device)
 out = torch.zeros(batch_size, out_dim, dtype=torch.float16, device=device)
-ex(x_cat, out)
+ex.mod(x_cat, out)
 
 # Verify against numpy reference
 x_np = x_cat.float().cpu().numpy()
@@ -138,11 +138,11 @@ print("PASS")
 
 **Expected output**:
 
-- Max error: < 0.01 (fp16 GELU approximation)
+- `PASS` printed. The kernel runs GELU entirely in fp16 while the reference is fp32, so the typical max error is ~0.005–0.01. The cell asserts a loose guard of `< 0.05`; a `max_err` above ~0.5 indicates a real bug (wrong constant or wrong gate offset), not rounding.
 
 **If something goes wrong**:
 
-- `max_err > 0.5`: Check that `Tx.float16(0.7978845608)` is correct (this is sqrt(2/pi))
+- `max_err` near the `0.05` guard or above ~0.5: Check that `Tx.float16(0.7978845608)` is correct (this is sqrt(2/pi))
 
 - Kernel hangs: Check `if gid < total` boundary guard is present
 

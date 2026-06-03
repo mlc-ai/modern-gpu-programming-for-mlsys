@@ -142,9 +142,11 @@ Read a primitive with its local context: source, destination, scope, layouts, di
 | `TMABar(pool, depth)` | TMA byte-counting barrier wrapper. |
 | `TCGen05Bar(pool, depth)` | MMA completion barrier wrapper, signaled by `tcgen05.commit`. |
 
-Example:
+These five helpers are *not* on the `Tx` namespace (unlike `Tx.SMEMPool`/`Tx.TMEMPool`). Import them explicitly from `tvm.tirx.lang.pipeline`:
 
 ```python
+from tvm.tirx.lang.pipeline import PipelineState, Pipeline, MBarrier, TMABar, TCGen05Bar
+
 kv_state = PipelineState(SMEM_PIPE_DEPTH_KV)
 kv_load = Pipeline(pool, SMEM_PIPE_DEPTH_KV, full="tma", empty="tcgen05", empty_phase_offset=1)
 ```
@@ -158,7 +160,7 @@ target = tvm.target.Target("cuda")
 with target:
     ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
 
-cuda_source = ex.mod.imports_[0].inspect_source("cuda")
+cuda_source = ex.mod.imports[0].inspect_source("cuda")
 print(cuda_source)
 ```
 

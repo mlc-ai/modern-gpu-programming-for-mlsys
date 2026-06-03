@@ -216,6 +216,7 @@ Read these API names literally:
 | `Tx.ptx.tcgen05.alloc(...)` | Ask Blackwell hardware for a TMEM allocation. |
 | `Tx.decl_buffer(..., scope="tmem", allocated_addr=...)` | Create an indexable TIRX view of an existing TMEM allocation. |
 | `Tx.alloc_local(shape, dtype)` | Allocate per-thread register storage. |
+| `Tx.wg_reg_tile(elem_per_thread, dtype=...)` | Allocate a warpgroup-distributed `(128, elem_per_thread)` register tile for TMEM readback. |
 | `Tx.cuda.cta_sync()` | Synchronize all threads in the CTA and order shared-memory writes. |
 | `Tx.ptx.mbarrier.*` | Use raw mbarrier operations for async completion. |
 | `Tx.ptx.tcgen05.*` | Use raw `tcgen05` helpers such as TMEM allocation, MMA commit, and wait. |
@@ -262,14 +263,14 @@ tmem = Tx.decl_buffer(
 
 After that declaration, the code can write `tmem[:, :BLK_N]` instead of manually doing TMEM address arithmetic.
 
-Register storage is local to each thread:
+Register storage comes in two forms. The TMEM readback target must carry the warpgroup-distributed `(128, N) : (1@tid_in_wg, 1)` layout, so it is allocated with `Tx.wg_reg_tile`, not a flat `Tx.alloc_local`:
 
 ```python
-Dreg = Tx.alloc_local((BLK_N,), acc_type)
+Dreg_wg = Tx.wg_reg_tile(BLK_N)          # (128, BLK_N) warpgroup-distributed tile for TMEM readback
 Dreg_f16 = Tx.alloc_local((BLK_N,), d_type)
 ```
 
-In GEMM writeback, `Dreg` holds fp32 values read from TMEM. `Dreg_f16` holds the casted fp16 values that will be stored to output memory.
+In GEMM writeback, `Dreg_wg` is the warpgroup-distributed register tile that receives the fp32 accumulator read from TMEM via `tcgen05.ld`; its `(1@tid_in_wg, 1)` layout is exactly the readback view described above, which is why every GEMM kernel uses `Tx.wg_reg_tile` here rather than a flat `Tx.alloc_local`. `Dreg_f16` is per-thread local storage for the casted fp16 values that will be stored to output memory.
 
 `Tx.meta_var(...)` appears often in address calculations:
 

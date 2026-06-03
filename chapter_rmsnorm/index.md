@@ -115,7 +115,7 @@ In code:
 sum_sq_smem[ty] = sum_sq[0]        # step 1: each warp writes (ty = warp index)
 Tx.ptx.bar.sync(1, bdx * bdy)     # step 2: barrier (all warps done writing)
 if ty == 0:                         # steps 3-5: only warp 0
-    sum_sq[0] = sum_sq_smem[tx]    #   read all partial sums (tx = lane 0-7)
+    sum_sq[0] = sum_sq_smem[tx]    #   read partial sums (only tx < bdy; see full kernel for the guard)
     # shuffle XOR reduction ...     #   reduce to grand total
     sum_sq_smem[0] = sum_sq[0]     #   write grand total
 Tx.ptx.bar.sync(1, bdx * bdy)     # step 6: barrier (grand total ready)
@@ -290,11 +290,11 @@ print("PASS")
 ```
 
 **Expected output**:
-- `PASS` printed; max error < 0.005 vs numpy reference
+- `PASS` printed; the typical max error is well under 0.005 vs the numpy reference, and the cell asserts a loose guard of `< 0.05`
 - Wall-clock on B200, batch=64, hidden=4096: typically 0.004–0.010 ms (the cell prints correctness only; add a `torch.cuda.Event` timed loop if you want to measure)
 
 **If something goes wrong**:
-- `max_err > 0.1`: Check fp16->fp32 cast before accumulation (`Tx.cast(input_vec_f32, input_vec)`)
+- `max_err` near or above the `0.05` guard: Check fp16->fp32 cast before accumulation (`Tx.cast(input_vec_f32[:], input_vec[:])`)
 - Kernel hangs / deadlock: Check `Tx.ptx.bar.sync(1, bdx * bdy)` -- the count must match the actual number of threads
 - Wrong results on some rows: Check `idx[0] += SM_COUNT` -- if missing, all CTAs process the same row
 

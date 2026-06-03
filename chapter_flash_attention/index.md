@@ -122,6 +122,8 @@ P, V -> value MMA -> O
 
 The first MMA produces attention scores. The second MMA consumes the softmax numerator tile and updates the output accumulator. Final normalization by `row_sum` happens in the epilogue.
 
+The kernel does not index raw TMEM columns. It carves the single TMEM allocation into per-stage tile views — `S_region`, `P_region`, and `O_region` — and indexes them by pipeline stage (`S_region[q_stage]`, `O_region[i_q]`, `P_region[i_q, 0:K_SPLIT]`). Those region objects are defined with `Tx.TMEMStages` in the [TMEM Layout and Reuse](#tmem-layout-and-reuse) section below; read the snippets here knowing that each region maps to a slice of the same physical TMEM.
+
 ### Score MMA
 
 The score MMA computes:
@@ -133,7 +135,7 @@ and writes the `128 x 128` score tile to TMEM:
 ```python
 with Tx.warp():
     Tx.gemm_async(
-        tmem[0:128, tmem_col_s : tmem_col_s + MMA_N],
+        S_region[q_stage],
         Q_smem[q_stage, 0:BLK_M, 0:HEAD_DIM],
         K_smem[kv_stage, 0:BLK_N, 0:HEAD_DIM],
         dispatch="tcgen05",
@@ -159,7 +161,7 @@ Softmax is the part that makes FA4 different from GEMM. WG0/WG1 wait for the sco
 ```python
 Tx.copy_async(
     s_chunk[:, chunk_start : chunk_end],
-    tmem[:, tmem_col_s + chunk_start : tmem_col_s + chunk_end],
+    S_region[wg_id, chunk_start : chunk_end],
 )
 ```
 
@@ -173,12 +175,12 @@ The writeback looks like:
 
 ```python
 Tx.copy_async(
-    tmem_as_f16[:, tmem_col_p * 2 + p_start : tmem_col_p * 2 + p_end],
+    P_region[wg_id, p_start : p_end],
     p_chunk[:, p_start : p_end],
 )
 ```
 
-The writeback matters because the value MMA needs `P` as a tile operand. It cannot consume `P` as unrelated per-thread scalar registers. In this kernel, the MMA-readable form of `P` is the fp16 TMEM view `tmem_as_f16`.
+The writeback matters because the value MMA needs `P` as a tile operand. It cannot consume `P` as unrelated per-thread scalar registers. In this kernel, the MMA-readable form of `P` is `P_region`, which is a view over the fp16 TMEM alias `tmem_as_f16`.
 
 ### Value MMA
 
@@ -191,8 +193,8 @@ Here `O` has already been initialized or rescaled for this K/V block. The A oper
 ```python
 with Tx.warp():
     Tx.gemm_async(
-        tmem[0:128, tmem_col_o : tmem_col_o + MMA_N],
-        tmem_as_f16[0:128, tmem_col_p * 2 : tmem_col_p * 2 + K_SPLIT],
+        O_region[i_q],
+        P_region[i_q, 0:K_SPLIT],
         V_smem[kv_stage, 0:K_SPLIT, 0:HEAD_DIM],
         transB=True,
         accum=should_accumulate,
@@ -233,33 +235,27 @@ The figure is easiest to read as a set of tile slots:
 
 These are not independent buffers in global memory. They are regions of the same TMEM allocation. The schedule is valid because each region is reused only after the previous consumer has finished. That is why barriers are part of the layout story: TMEM reuse is safe only when the producer-consumer handoff is complete.
 
-`tmem` is declared as fp32 for score and output accumulator views:
+The kernel allocates TMEM through a `Tx.TMEMPool`. It takes one fp32 view (`tmem`) for the score and output accumulators, then moves the pool base back to 0 and takes a second, fp16 view (`tmem_as_f16`) that aliases the *same* physical TMEM:
 
 ```python
-tmem = Tx.decl_buffer(
-    (128, N_COLS_TMEM),
-    "float32",
-    scope="tmem",
-    allocated_addr=0,
-    layout=TileLayout(S[(128, N_COLS_TMEM) : (1 @ TLane, 1 @ TCol)]),
-)
+tmem_pool = Tx.TMEMPool(pool, total_cols=N_COLS_TMEM, cta_group=CTA_GROUP, tmem_addr=tmem_addr)
+tmem = tmem_pool.alloc((128, N_COLS_TMEM), "float32")
+tmem_pool.move_base_to(0)
+tmem_as_f16 = tmem_pool.alloc((128, N_COLS_TMEM * 2), "float16")
+tmem_pool.commit()
 ```
 
-The same physical allocation also has an fp16 view for `P`:
+The fp16 view has twice as many indexable columns over the same bytes. The `S`, `P`, and `O` tile slots are then carved out as staged regions with `Tx.TMEMStages`, so the compute code can index them by pipeline stage instead of computing raw TMEM columns:
 
 ```python
-tmem_as_f16 = Tx.decl_buffer(
-    (128, N_COLS_TMEM * 2),
-    "float16",
-    scope="tmem",
-    allocated_addr=0,
-    layout=TileLayout(S[(128, N_COLS_TMEM * 2) : (1 @ TLane, 1 @ TCol)]),
-)
+S_region = Tx.TMEMStages(tmem,        col_start=0,                       width=MMA_N, stages=SMEM_PIPE_DEPTH_Q, stride=MMA_N)
+O_region = Tx.TMEMStages(tmem,        col_start=MMA_N * SMEM_PIPE_DEPTH_Q, width=MMA_N, stages=SMEM_PIPE_DEPTH_Q, stride=MMA_N)
+P_region = Tx.TMEMStages(tmem_as_f16, col_start=MMA_N,                   width=BLK_N, stages=SMEM_PIPE_DEPTH_Q, stride=MMA_N * 2)
 ```
 
-The fp16 view has twice as many indexable columns. This is why the code indexes `P` with `tmem_col_p * 2`: `tmem_col_p` is the base slot used in the TMEM layout, while `tmem_as_f16` is indexed through the fp16 view.
+`S_region` and `O_region` live in the fp32 `tmem`; `P_region` lives in the fp16 `tmem_as_f16`, so its `col_start` and `stride` are in fp16-view columns (hence the `* 2` relative to the fp32 stride). The compute code then writes `S_region[q_stage]`, reads `S_region[wg_id, ...]`, writes `P_region[wg_id, ...]`, and accumulates into `O_region[i_q]` — no manual column arithmetic.
 
-**Try with your agent**: Ask it to explain the fp32 and fp16 TMEM views in this FA4 kernel. Which physical TMEM regions hold `S`, `P`, and `O`, why is `P` indexed with `tmem_col_p * 2`, and which consumers must finish before each region can be reused?
+**Try with your agent**: Ask it to explain the fp32 (`tmem`) and fp16 (`tmem_as_f16`) views in this FA4 kernel. Which physical TMEM regions hold `S`, `P`, and `O`, why does `P_region`'s stride use `MMA_N * 2`, and which consumers must finish before each region can be reused?
 
 ## How Barriers Connect the Roles
 
@@ -319,7 +315,7 @@ The barrier type follows the producer:
 - MMA completion uses `TCGen05Bar`, because `tcgen05.commit` signals the completion group.
 - Pure thread-to-thread handoffs use `MBarrier`, where the participating threads arrive explicitly.
 
-Two barriers split the softmax-to-value handoff. `p_o_rescale` lets the value MMA start once the first 96 columns of `P` are written and the `O` tile is safe to accumulate into. On the first K/V block, WG2 pre-arrives this barrier because there is no old `O` to rescale. On later K/V blocks, WG2 arrives after it has either skipped an unnecessary rescale or finished rescaling the old `O`. `p_ready_2` releases the last 32 columns of `P`. This matches the `96 + 32` value-MMA schedule from the previous section.
+Two barriers split the softmax-to-value handoff. `p_o_rescale` lets the value MMA start once the first 96 columns of `P` are written and the `O` tile is safe to accumulate into. On the first K/V block, WG2 pre-arrives this barrier because there is no old `O` to rescale. On later K/V blocks, WG2 arrives after it has either skipped an unnecessary rescale or finished rescaling the old `O`. The rescale is skipped when the per-row scale is effectively 1.0 — softmax clamps `acc_scale` to exactly 1.0 when the row max changes by less than `rescale_threshold`, and WG2 reduces `should_rescale` across the warpgroup with `any_sync`, so it only touches `O` in TMEM when at least one row actually needs it. `p_ready_2` releases the last 32 columns of `P`. This matches the `96 + 32` value-MMA schedule from the previous section.
 
 Compared with GEMM, the new barriers are the ones around softmax: `s_ready`, `p_o_rescale`, `p_ready_2`, and the softmax/correction pair. They exist because the score MMA and value MMA are separated by register math, TMEM rewrites, and output rescaling.
 
@@ -377,10 +373,11 @@ $$O_{\text{old}} \leftarrow O_{\text{old}} \cdot e^{(m_{\text{old}} - m_{\text{n
 Softmax computes the per-row scale and writes it to SMEM. WG2 waits for that scale through `softmax_corr.full`, reads the current `O` accumulator from TMEM, multiplies by the per-row scale, and writes `O` back to TMEM:
 
 ```python
-Tx.copy_async(o_row_wg, tmem[:, tmem_col_o_stage + d_start : tmem_col_o_stage + d_start + 16])
-with Tx.thread():
-    Tx.mul(o_row_buf, o_row_buf, acc_scale)
-Tx.copy_async(tmem[:, tmem_col_o_stage + d_start : tmem_col_o_stage + d_start + 16], o_row_wg[:, 0:16])
+RESCALE_TILE = Tx.meta_var(16)
+o_row = Tx.wg_reg_tile(RESCALE_TILE)
+Tx.copy_async(o_row, O_region[i_q, d_start : d_start + RESCALE_TILE])
+Tx.mul(o_row, o_row, acc_scale)
+Tx.copy_async(O_region[i_q, d_start : d_start + RESCALE_TILE], o_row)
 Tx.ptx.tcgen05.wait.st()
 ```
 
@@ -398,9 +395,9 @@ After WG2 reads the scale value, `softmax_corr.empty` releases that SMEM slot so
 
 At the end of the K/V loop, WG2 switches from correction to epilogue. It waits for the final `row_sum` and `o_ready`, reads the final `O` accumulator from TMEM, multiplies by `1 / row_sum`, casts to fp16, and writes `O_smem`. WG3's TMA store warp then moves `O_smem` back to GMEM.
 
-The current kernel computes the forward output only. A training forward kernel would normally also store log-sum-exp for backward:
+The current kernel computes the forward output only. A training forward kernel would normally also store log-sum-exp for backward. Note that this kernel keeps `row_max` as the maximum of the *raw* (unscaled) `QK^T` scores, while `row_sum` accumulates `exp((S - row_max) / sqrt(d))`, so the `1/\sqrt{d}` factor must be applied to `row_max` when forming the natural-log LSE:
 
-$$\mathrm{LSE}_i = \log(\mathrm{row\_sum}_i) + \mathrm{row\_max}_i$$
+$$\mathrm{LSE}_i = \log(\mathrm{row\_sum}_i) + \mathrm{row\_max}_i / \sqrt{d}$$
 
 This implementation is forward-output only and does not write LSE.
 

@@ -3,7 +3,7 @@
 
 Before asking an agent to work on TIRX, give it the source code it must reason from. It should be able to read the `tvm` codebase for the TIRX DSL, layout objects, tile primitives, and lowering rules, and the `tirx-kernels` codebase for real kernels, scheduler helpers, and barrier patterns. Without those references, the agent will fall back to generic CUDA, Triton, or Hopper assumptions, which are often wrong for Blackwell TIRX.
 
-There are two ways to use an agent. The first is delegation: give it a broad goal, such as "make the FA4 barrier section easier to understand," and let it choose the method. That is useful for mechanical edits after you already know the direction, but it teaches you less because the important choices stay hidden. The second is learning-oriented: turn the broad goal into a specific instruction, such as "explain `bar_softmax_corr_full` and `bar_softmax_corr_empty` as a mailbox-slot lifecycle, keep the value-MMA gate in a separate diagram, then rebuild the tutorial." This is usually more effective for TIRX because the important work is not just changing text or code; it is learning what choices are possible and which hardware contracts those choices imply.
+There are two ways to use an agent. The first is delegation: give it a broad goal, such as "make the FA4 barrier section easier to understand," and let it choose the method. That is useful for mechanical edits after you already know the direction, but it teaches you less because the important choices stay hidden. The second is learning-oriented: turn the broad goal into a specific instruction, such as "explain `softmax_corr.full` and `softmax_corr.empty` as a mailbox-slot lifecycle, keep the value-MMA gate in a separate diagram, then rebuild the tutorial." This is usually more effective for TIRX because the important work is not just changing text or code; it is learning what choices are possible and which hardware contracts those choices imply.
 
 When you do not yet know the right instruction, ask the agent for candidates first. A good prompt is:
 
@@ -53,7 +53,7 @@ Broad goal:
 Make the FA4 barrier section easier to understand.
 
 Candidate prompt:
-Give me three ways to explain bar_softmax_corr_empty:
+Give me three ways to explain softmax_corr.empty:
 1. a full barrier DAG,
 2. a mailbox slot lifecycle,
 3. a wait/arrive table.
@@ -61,9 +61,9 @@ For each option, say which misunderstanding it prevents and which detail it hide
 Do not edit yet.
 
 Final instruction after choosing:
-Use the mailbox slot lifecycle. Explain that bar_softmax_corr_full means
-WG2 may read acc_scale or row_sum, while bar_softmax_corr_empty means
-softmax may reuse that SMEM slot. Keep bar_p_full_o_rescaled separate
+Use the mailbox slot lifecycle. Explain that softmax_corr.full means
+WG2 may read acc_scale or row_sum, while softmax_corr.empty means
+softmax may reuse that SMEM slot. Keep p_o_rescale separate
 because it gates value MMA, not the scale slot.
 ```
 

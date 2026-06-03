@@ -135,9 +135,11 @@ pool.commit()
 
 The pool is a shared-memory allocation plan. It is not an automatic live-range optimizer. Put control objects and tile storage in the order you need, then call `commit()`.
 
-TMEM can be managed manually:
+TMEM can be managed manually. The layout vocabulary (`TileLayout`, `S`, `TLane`, `TCol`) lives in `tvm.tir.layout`, not on `Tx`, so import it explicitly:
 
 ```python
+from tvm.tir.layout import S, TileLayout, TLane, TCol
+
 Tx.ptx.tcgen05.alloc(Tx.address_of(tmem_addr), n_cols=512, cta_group=1)
 tmem = Tx.decl_buffer(
     (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
@@ -160,9 +162,11 @@ tmem_pool.dealloc()
 
 ## Pipeline Objects
 
-Software-pipelined kernels need stage and phase tracking. Current TIRX uses `PipelineState` and `Pipeline`:
+Software-pipelined kernels need stage and phase tracking. Current TIRX uses `PipelineState` and `Pipeline`. These helpers are *not* part of the `Tx` namespace; import them explicitly from `tvm.tirx.lang.pipeline` (the same module also exports `MBarrier`, `TMABar`, and `TCGen05Bar`):
 
 ```python
+from tvm.tirx.lang.pipeline import Pipeline, PipelineState
+
 kv_state = PipelineState(SMEM_PIPE_DEPTH_KV)
 kv_load = Pipeline(pool, SMEM_PIPE_DEPTH_KV, full="tma", empty="tcgen05", empty_phase_offset=1)
 ```
@@ -173,7 +177,7 @@ kv_load = Pipeline(pool, SMEM_PIPE_DEPTH_KV, full="tma", empty="tcgen05", empty_
 
 ## Metaprogramming Helpers
 
-`Tx.meta_var(expr)` keeps simple expressions inline in the generated IR:
+`Tx.meta_var(expr)` is a parser-only value: the wrapped expression is substituted inline wherever the name is used, so it never becomes a separate IR variable in the final TIR:
 
 ```python
 m_st = Tx.meta_var(bx * BLK_M)
@@ -221,7 +225,7 @@ The default TIR pipeline is not a replacement for `tir_pipeline="tirx"` when the
 Generated CUDA is the fastest way to check whether scopes and hardware helpers lowered as intended:
 
 ```python
-cuda_source = ex.mod.imports_[0].inspect_source("cuda")
+cuda_source = ex.mod.imports[0].inspect_source("cuda")
 print(cuda_source)
 ```
 

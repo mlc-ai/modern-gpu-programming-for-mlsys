@@ -7,7 +7,7 @@ Set up TVM/TIRX first, then verify the install with a tiny GPU kernel.
 
 - **OS**: Linux, Ubuntu 20.04 or newer recommended.
 - **GPU**: NVIDIA Blackwell, such as B200 or B100.
-- **Driver**: CUDA 13.0 requires a Linux driver at least 580.65.06.
+- **Driver**: a CUDA 13.0-capable Linux driver (see the [NVIDIA CUDA 13.0 release notes](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/) for the exact minimum version for your platform).
 - **Python**: 3.10 or newer.
 
 ## Install Packages
@@ -66,7 +66,7 @@ with target:
 n = 1024
 a = torch.arange(n, dtype=torch.float32, device="cuda")
 b = torch.empty_like(a)
-ex(a, b)
+ex.mod(a, b)
 
 torch.testing.assert_close(b, a * 2)
 print("PASS")
@@ -77,7 +77,7 @@ print("PASS")
 After compiling, inspect the lowered CUDA source:
 
 ```python
-cuda_source = ex.mod.imports_[0].inspect_source("cuda")
+cuda_source = ex.mod.imports[0].inspect_source("cuda")
 print(cuda_source)
 ```
 

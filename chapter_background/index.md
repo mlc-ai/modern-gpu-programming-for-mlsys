@@ -12,7 +12,7 @@ Blackwell organizes threads into a nested hierarchy:
 
 - **CTA** — short for *Cooperative Thread Array*, the same concept that CUDA programmers know as a thread block. It is the basic scheduling unit: a CTA runs on a single SM and has access to that SM's shared memory.
 
-- **Warpgroup**: 4 consecutive warps (128 threads). On Blackwell, the warpgroup is the cooperation unit for TMEM reads — the 128 `TLane` rows match the 128 threads one-to-one.
+- **Warpgroup**: 4 consecutive warps (128 threads). On Blackwell, the warpgroup is the cooperation unit for TMEM reads — the 128 threads collectively cover the 128 `TLane` rows, with each of the four warps owning one 32-lane slab (warp 0 → lanes 0-31, warp 1 → 32-63, warp 2 → 64-95, warp 3 → 96-127).
 
 - **Warp**: A warp contains 32 threads and is the basic SIMT (*single instruction, multiple threads*) execution unit. The threads in a warp issue the same instruction together, while each thread keeps its own registers, lane ID, and data.
 
@@ -40,7 +40,7 @@ Each memory space has different access rules. GMEM is the large persistent store
 
 - **TMEM reads are explicit and cooperative.** To consume MMA results, the kernel explicitly loads from TMEM into the register file. These reads are performed cooperatively by the full warpgroup (128 threads).
 
-- **TMEM uses its own addressing and allocation model.** It is not accessed like normal memory; instead, it uses a special 2D address space whose rows are indexed by a hardware axis called `TLane` (128 lanes) and whose columns are indexed by `TCol` (up to 512 columns). TMEM must be explicitly allocated and deallocated.
+- **TMEM uses its own addressing and allocation model.** It is not accessed like normal memory; instead, it uses a special 2D address space whose rows are indexed by a hardware axis called `TLane` (128 lanes) and whose columns are indexed by `TCol` (up to 512 columns). TMEM must be explicitly allocated and deallocated; allocation is performed by a single warp in units of 32 columns, with the column count rounded up to a power of two.
 
 
 ## TMA
@@ -131,7 +131,7 @@ Keep these orders of magnitude in mind when reading the GEMM chapters. They expl
 | Tensor Core peak @ FP16/BF16 (dense) | order of 2 PFLOPS | GEMM roof; exact value depends on SKU and clock |
 | Tensor Core peak @ FP8 / FP4 (dense) | several PFLOPS | mixed-precision GEMM; exact value depends on SKU, clock, and sparsity mode |
 | HBM3e bandwidth | order of 8 TB/s | bandwidth roof |
-| L2 cache | device-specific; 126 MB-class on GB200 systems | where tile operands actually live after warm-up |
+| L2 cache | device-specific; 128 MB-class, partitioned per die | where tile operands actually live after warm-up |
 | One fp16 128×64 tile in SMEM | 16 KB | example staged operand-tile size |
 
 NVIDIA often reports multiple peak numbers depending on dtype, sparsity mode, and product SKU. Use the table as scale, not as a full performance model: SMEM can hold only a small number of staged operand tiles, TMEM must be budgeted for accumulator tiles, and Tensor Core throughput is high enough that data movement has to overlap compute.

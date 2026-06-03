@@ -222,12 +222,12 @@ tile_scheduler.init(bx // CTA_GROUP)
 
 ## Writeback
 
-Each writeback warpgroup owns one consumer result. It waits for the corresponding TMEM slot, reads TMEM into registers, casts fp32 to fp16, stages into `Dsmem`, and issues TMA stores:
+Each writeback warpgroup owns one consumer result. It waits for the corresponding TMEM slot, reads TMEM into registers, casts the fp32 accumulator down to the output dtype (fp16 or bf16), stages into `Dsmem`, and issues TMA stores:
 
 ```python
+wb_phase = PipelineState(1, 0)
 tmem_pipe.full.wait(wg_id, wb_phase.phase)
 wb_phase.advance()
-Tx.ptx.tcgen05.fence.after_thread_sync()
 
 Dreg_16b = Tx.wg_reg_tile(MMA_N, dtype=a_type)
 for no in Tx.unroll(MMA_N // TMEM_LD_N):
@@ -270,6 +270,10 @@ Reference numbers on NVIDIA B200, M=N=K=4096, fp16, locked clocks, 1000-iteratio
 These numbers are one B200 reference run under controlled conditions. Treat them as a trend check, not a portable peak-performance claim.
 
 ![GEMM Optimization Journey](../img/gemm_perf.png)
+
+## Beyond fp16/bf16
+
+This chapter follows the fp16/bf16 kernel (`tirx_kernels/gemm/fp16_bf16_gemm.py`). The same warp-specialized, clustered, multi-consumer skeleton extends to block-scaled formats, which `tirx-kernels` implements in separate kernels: `fp8_blockwise_gemm.py` and `nvfp4_gemm.py`. Those add scale-factor TMEM regions, a scale-factor transpose path, `SWAP_AB` epilogues, and primitives such as `alloc_sf`, `Tx.TMEMStages`, and `Tx.alloc_tcgen05_ldst_frag`/`alloc_cast_frag`. They are out of scope here; read them once the fp16/bf16 path is clear.
 
 ## Exercises
 
