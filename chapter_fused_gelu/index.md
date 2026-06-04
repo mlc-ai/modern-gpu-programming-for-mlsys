@@ -158,3 +158,5 @@ print("PASS")
 3. What would happen if we removed the `if gid < total:` guard?
 
 4. This kernel reads each input element exactly once and writes each output element exactly once. Is it compute-bound or memory-bound? Why?
+
+**Try with your agent**: Paste this kernel and ask it to identify the scope, layout, and dispatch of the elementwise store — which threads cooperate, how the flat `gid` maps to `(row, col)`, and which hardware path the `output_buf[row, col] = ...` write lowers to.

@@ -24,9 +24,9 @@ Step 7 is the biggest architectural change: instead of all threads doing load-th
 
 - `PipelineState` for automatic stage/phase management
 
-- Software pipelining with multi-buffered SMEM
+- `warpgroup_sync` barrier IDs for per-warpgroup synchronization
 
-- Persistent kernel with `ClusterPersistentScheduler2D`
+(The multi-stage SMEM pipeline and the persistent `ClusterPersistentScheduler2D` are reused unchanged from Steps 5–6; only the scope split is new here.)
 
 ### From Sequential to Concurrent
 
@@ -61,6 +61,8 @@ The three actors are synchronized by four barriers (of three barrier types). The
 | **ld2mma** | `MBarrier` | Writeback -> MMA | "TMEM is free for next tile" |
 
 Note the different barrier types: **TMA Loads** use `TMABar` (mbarrier with byte counting) — the TMA hardware automatically arrives on the barrier when the transfer completes, notifying consumers. **TMA Stores** use a completely different mechanism: `cp_async.bulk.commit_group()` + `wait_group(0)`. There is no mbarrier involved because stores don't need to notify other actors — the issuing thread just waits for completion. **MMA operations** use `TCGen05Bar` — the `tcgen05.commit()` instruction signals the barrier when MMA finishes.
+
+The `arrive` calls in single-CTA Step 7 pass `cta_mask=0` (there is no other CTA to signal). Step 8 introduces clusters and uses a nonzero `cta_mask` to signal the cooperating CTAs.
 
 ### PipelineState
 
@@ -270,49 +272,7 @@ def hgemm_v7(M, N, K):
     return kernel
 ```
 
-Compile and run:
-
-```{.python .input}
-import torch
-
-M, N, K = 4096, 4096, 4096
-kernel = hgemm_v7(M, N, K)
-target = tvm.target.Target("cuda")
-with target:
-    ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
-
-device = torch.device('cuda')  # gpu(0)
-torch.cuda.empty_cache()
-torch.cuda.synchronize()
-A_tensor = torch.randn(M, K, dtype=torch.float16, device=device)
-B_tensor = torch.randn(N, K, dtype=torch.float16, device=device)
-D_tensor = torch.zeros(M, N, dtype=torch.float16, device=device)
-
-ex.mod(A_tensor, B_tensor, D_tensor)   # ex.mod takes torch tensors directly, like every chapter
-D_ref = (A_tensor.float() @ B_tensor.float().T).half()
-max_err = float((D_tensor - D_ref).abs().max())
-print(f"Step 7 Warp Specialization: M={M}, N={N}, K={K}")
-print(f"Max error vs torch reference: {max_err:.6f}")
-torch.testing.assert_close(D_tensor, D_ref, rtol=2e-2, atol=1e-2)  # relative tol, like every chapter
-print("PASS")
-
-ITERS = 10
-for _ in range(3):
-    ex.mod(A_tensor, B_tensor, D_tensor)
-torch.cuda.synchronize()
-start = torch.cuda.Event(enable_timing=True)
-end = torch.cuda.Event(enable_timing=True)
-start.record()
-for _ in range(ITERS):
-    ex.mod(A_tensor, B_tensor, D_tensor)
-end.record()
-torch.cuda.synchronize()
-ms = start.elapsed_time(end) / ITERS
-tflops = 2 * M * N * K / ms / 1e9
-print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
-```
-
-This compile / run / benchmark cell is the same for Steps 7–9, so it is shown once. To run Step 8 or Step 9, replace `hgemm_v7` above with `hgemm_v8` or `hgemm_v9`. Compile one step per fresh Python session (restart the kernel before switching steps), since the kernels reuse inner names and the compiler keeps per-session state. Per-step timings are summarized in *End-to-End Result* below.
+To run any of these kernels, reuse the compile / run / check harness shown once in Step 1 (Chapter 3): replace `hgemm_v1` with `hgemm_v7`, `hgemm_v8`, or `hgemm_v9` and pick a problem size (e.g. `M=N=K=4096`). The clustered steps need `M`, `N` to be multiples of their cluster tile — `256×256` for Step 8, `512×256` for Step 9 — so a tiny `128×128` size produces no tiles. Compile one step per fresh Python session (restart the kernel before switching steps), since the kernels reuse inner names and the compiler keeps per-session state. Per-step timings are summarized in *End-to-End Result* below.
 
 ### Epilogue (Writeback) Details
 
@@ -640,7 +600,6 @@ The final optimization adds a second MMA consumer, doubling the compute density 
 > - Scope: one MMA consumer becomes two, selected by `warp_id`.
 > - Layout: one staged B tile is reused by both consumers; A gains a consumer axis.
 > - Dispatch: unchanged.
-
 
 **Topics.**
 
@@ -1024,9 +983,13 @@ The 4 optimization techniques that deliver the biggest gains:
 
 In this benchmark, the path moves from 70 ms to 0.12 ms, close to the cuBLAS reference time shown above.
 
+The same machinery — TMA loads, `tcgen05` MMA, TMEM readback, and warp-specialized barriers — carries into a harder kernel next: Flash Attention adds online softmax between two MMA phases.
+
 
 ## Exercises
 
 1. What happens if you set the initial `phase` to `0` for both the TMA and MMA `PipelineState` in Step 7? Draw the deadlock scenario.
 2. With `cta_group=2` in Step 8, the TMA arrive byte count is `CTA_GROUP * (BLK_M*BLK_K + BLK_N*BLK_K) * F16_SIZE`. Why multiply by `CTA_GROUP` when each CTA loads its own data?
 3. In Step 9, each consumer handles different M rows but the same B tile. Why is sharing B (not A) the right choice?
+
+**Try with your agent**: Paste the Step 7 kernel and ask it to trace one K-tile through the four barriers (`tma2mma`, `mma2tma`, `mma2ld`, `ld2mma`). For each, ask who waits, who arrives, what tile becomes safe to read, and which buffer becomes reusable afterward.

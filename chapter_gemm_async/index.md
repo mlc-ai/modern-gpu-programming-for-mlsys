@@ -248,7 +248,7 @@ Step 5 adds double-buffered shared memory so the kernel can load one K tile whil
 
 With `PIPE_DEPTH=2`, the kernel allocates two SMEM stages. The figure shows the intended schedule over K tiles:
 
-![*Pipeline PIPE_DEPTH=2*](../img/pipe_depth2.png)
+![*Pipeline PIPE_DEPTH=2 — the target schedule; this single-warpgroup step only prefetches, full overlap arrives with warp specialization in Step 7*](../img/pipe_depth2.png)
 
 The first two TMA loads fill the two stages. After that, the stages alternate. While MMA computes on `k0`, TMA can load `k2` into the stage that will be reused next. While MMA computes on `k1`, TMA can load `k3`, and so on. The two hardware paths are different: TMA moves GMEM -> SMEM tiles, while `tcgen05.mma` consumes an already-loaded SMEM stage and writes the accumulator to TMEM.
 

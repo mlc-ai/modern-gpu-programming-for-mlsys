@@ -288,3 +288,9 @@ n_st = Tx.meta_var(by * BLK_N)
 Read it as an inline alias for an index expression. It is not storage, and it does not allocate anything.
 
 When reading the GEMM code, use the same order each time: storage first, then scope, then tile primitive, then the wait or barrier that makes the next step safe.
+
+## Exercises
+
+1. For a TMEM-to-register readback, name its scope, its source and destination layouts, and its dispatch path. Why must it run under `Tx.warpgroup()` and not `Tx.thread()`?
+2. The same `Tx.copy_async` call can lower to a TMA load, a TMA store, or a `tcgen05.ld` readback. What in the local context (source, destination, scope, dispatch) decides which?
+3. `TileLayout(S[(128, N) : (1@TLane, 1@TCol)])` and `TileLayout(S[(128, N) : (1@tid_in_wg, 1)])` describe the same logical tile shape. What does each say about where the tile physically lives, and which step of the GEMM path uses each?

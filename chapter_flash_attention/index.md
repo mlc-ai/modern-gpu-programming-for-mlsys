@@ -122,6 +122,7 @@ The snippets below are excerpts from `flash_attention4.py`, so a few names come 
 | `K_SPLIT` | split point of the `96 + 32` value-MMA schedule (`6 * MMA_K = 96`); the first value MMA consumes `P`/`V` columns `0:K_SPLIT` |
 | `should_rescale` | WG2 per-row flag: whether the old `O` needs rescaling before the next value MMA (reduced across the warpgroup with `any_sync`) |
 | `rescale_threshold` | when the scaled row-max change is small enough, `acc_scale` is clamped to exactly 1.0 and the rescale is skipped (8.0) |
+| `scale_log2` | the softmax scale in log2 units, `log2(e)/√d`, so `P = exp2((S - m) · scale_log2)` |
 | `acc_scale` | per-row rescale factor softmax passes to WG2 through the SMEM mailbox |
 | `chunk_start`/`chunk_end`, `p_start`/`p_end` | column range of the 32-wide softmax chunk being read / written |
 
@@ -136,6 +137,8 @@ P, V -> value MMA -> O
 ```
 
 The first MMA produces attention scores. The second MMA consumes the softmax numerator tile and updates the output accumulator. Final normalization by `row_sum` happens in the epilogue.
+
+Each tile op below gets the same **scope / layout / dispatch** card as the GEMM steps, with one extra line — **Handoff** — naming the barrier(s) that pass the tile to the next role.
 
 The kernel does not index raw TMEM columns. It carves the single TMEM allocation into per-stage tile views — `S_region`, `P_region`, and `O_region` — and indexes them by pipeline stage (`S_region[q_stage]`, `O_region[i_q]`, `P_region[i_q, 0:K_SPLIT]`). Those region objects are defined with `Tx.TMEMStages` in the [TMEM Layout and Reuse](#tmem-layout-and-reuse) section below; read the snippets here knowing that each region maps to a slice of the same physical TMEM.
 
