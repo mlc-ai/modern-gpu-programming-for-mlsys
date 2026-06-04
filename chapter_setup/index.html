@@ -177,14 +177,13 @@ for the exact minimum version for your platform).</p></li>
 </section>
 <section id="install-packages">
 <h2><span class="section-number">8.1.2. </span>Install Packages<a class="headerlink" href="#install-packages" title="Permalink to this heading">¶</a></h2>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>--pre<span class="w"> </span>-U<span class="w"> </span><span class="s2">&quot;https://github.com/mlc-ai/package/releases/download/v0.9.dev0/mlc_ai_tirx_nightly_cu130-0.25.dev0-py3-none-manylinux_2_28_x86_64.whl&quot;</span>
-pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>apache-tvm-ffi
-pip<span class="w"> </span>install<span class="w"> </span><span class="nv">torch</span><span class="o">==</span><span class="m">2</span>.9.1+cu130<span class="w"> </span>--index-url<span class="w"> </span>https://download.pytorch.org/whl/cu130
-pip<span class="w"> </span>install<span class="w"> </span>numpy
-</pre></div>
-</div>
-<p>The wheel above is the CUDA 13 TIRX nightly used by this tutorial. If
-you are working from source, use the local <code class="docutils literal notranslate"><span class="pre">tvm</span></code> checkout and keep
+<blockquote>
+<div><p><strong>Installation instructions are being updated.</strong> The TIRX nightly
+wheel URL and pinned package versions move quickly, so the exact
+<code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span></code> commands are pending a refresh and will be added
+here.</p>
+</div></blockquote>
+<p>If you are working from source, use the local <code class="docutils literal notranslate"><span class="pre">tvm</span></code> checkout and keep
 <code class="docutils literal notranslate"><span class="pre">tirx-kernels</span></code> updated to the same development window.</p>
 </section>
 <section id="minimal-kernel">
