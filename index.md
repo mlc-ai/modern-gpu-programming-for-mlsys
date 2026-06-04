@@ -10,7 +10,7 @@ A tile primitive is a structured operation on tile values. Its lowering is contr
 - **Layout** — how the operand tiles map to GMEM, SMEM, TMEM, or registers.
 - **Dispatch** — which hardware path is intended when there is a choice, such as TMA or `tcgen05`.
 
-For asynchronous primitives, barriers and waits describe the handoff between tile operations.
+For asynchronous primitives, a barrier, commit, wait, or fence describes the handoff between tile operations.
 
 ## Reading Path
 

@@ -51,6 +51,7 @@ with Tx.thread(tid == 0):
 | `Tx.Buffer(shape, dtype)` | Typed kernel argument in a concrete signature. |
 | `Tx.match_buffer(ptr, shape, dtype)` | Bind an opaque pointer argument to a typed buffer view. |
 | `Tx.alloc_local(shape, dtype)` | Per-thread register/local storage. |
+| `Tx.wg_reg_tile(elem_per_thread, dtype=...)` | Warpgroup-distributed `(128, elem_per_thread)` register tile for TMEM readback; equivalent to `Tx.alloc_local(...).view(..., S[(128, N) : (1@tid_in_wg, 1)])`. |
 | `Tx.SMEMPool()` | Shared-memory allocation pool. |
 | `pool.alloc(shape, dtype, layout=..., align=...)` | Allocate shared-memory storage from the pool. |
 | `pool.alloc_mma(shape, dtype)` | Allocate shared-memory storage using the MMA-friendly helper used by current kernels. |

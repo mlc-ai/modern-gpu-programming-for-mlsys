@@ -130,7 +130,6 @@ from tirx_kernels.attention.flash_attention4 import (
 Then compile with the same pattern used elsewhere in the tutorial:
 
 ```python
-import numpy as np
 import tvm
 
 kernel = get_flash_attention4_kernel(
@@ -142,13 +141,18 @@ with target:
     ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
 ```
 
-Pass `(Q, K, V, O, profiler_buffer)` to the compiled executable. The profiler buffer is part of the kernel signature even when profiling output is not the focus.
+Build the inputs with `prepare_data`, add the profiler buffer, and pass all five to `ex.mod` — the same `ex.mod(...)` torch-tensor call form used in every chapter. The profiler buffer is part of the kernel signature even when profiling output is not the focus.
 
 ```python
-profiler_buffer = tvm.runtime.tensor(
-    np.zeros(PROFILER_BUFFER_SIZE, dtype=np.uint64), tvm.cuda(0)
+import torch
+
+Q, K, V, O = prepare_data(
+    batch_size, seq_len_q, seq_len_kv, num_qo_heads, num_kv_heads, head_dim
 )
-ex(Q, K, V, O, profiler_buffer)
+Q, K, V, O = (t.cuda() for t in (Q, K, V, O))   # prepare_data returns CPU tensors
+prof = torch.zeros(PROFILER_BUFFER_SIZE, dtype=torch.uint64, device="cuda")
+
+ex.mod(Q, K, V, O, prof)
 ```
 
 ## What Not to Copy Forward

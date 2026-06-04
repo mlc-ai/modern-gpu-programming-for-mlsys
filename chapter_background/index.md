@@ -1,7 +1,7 @@
 # Blackwell Background
 :label:`chap_background`
 
-Blackwell kernels coordinate thread groups, memory spaces, TMA, `tcgen05`, barriers, and CTA clusters.
+Blackwell kernels coordinate thread groups, memory spaces, TMA, `tcgen05`, barriers, and CTA clusters. This chapter introduces each one, because the rest of the tutorial builds on them.
 
 
 ## Thread Hierarchy
@@ -12,7 +12,7 @@ Blackwell organizes threads into a nested hierarchy:
 
 - **CTA** — short for *Cooperative Thread Array*, the same concept that CUDA programmers know as a thread block. It is the basic scheduling unit: a CTA runs on a single SM and has access to that SM's shared memory.
 
-- **Warpgroup**: 4 consecutive warps (128 threads). On Blackwell, the warpgroup is the cooperation unit for TMEM reads — the 128 threads collectively cover the 128 `TLane` rows, with each of the four warps owning one 32-lane slab (warp 0 → lanes 0-31, warp 1 → 32-63, warp 2 → 64-95, warp 3 → 96-127).
+- **Warpgroup**: 4 consecutive warps (128 threads). On Blackwell, the warpgroup is the cooperation unit for TMEM reads — the 128 threads collectively cover the 128 `TLane` rows (`TLane` is TMEM's row axis, defined under Memory Spaces below), with each of the four warps owning one 32-lane slab (warp 0 → lanes 0-31, warp 1 → 32-63, warp 2 → 64-95, warp 3 → 96-127).
 
 - **Warp**: A warp contains 32 threads and is the basic SIMT (*single instruction, multiple threads*) execution unit. The threads in a warp issue the same instruction together, while each thread keeps its own registers, lane ID, and data.
 
@@ -34,7 +34,7 @@ Blackwell kernels use a memory hierarchy spanning GMEM, SMEM, TMEM, and register
 | **Tensor Memory (TMEM)** | Per-SM | MMA accumulator storage | Dedicated Blackwell scratchpad used by `tcgen05`; also used by some MMA variants as an A-operand staging area |
 | **Register File (RF)** | Per-thread | Scalar and per-thread tile fragments | Fast per-thread storage used for epilogues, scalar math, and temporary values |
 
-Each memory space has different access rules. GMEM is the large persistent store, SMEM is the staging area for tiles, TMEM holds MMA accumulators, and registers hold per-thread values used by the epilogue.
+Each memory space has different access rules. GMEM is the large persistent store, SMEM is the staging area for tiles, TMEM holds MMA accumulators, and registers hold the per-thread fragments that the epilogue reads back from TMEM, casts, and stores to GMEM.
 
 **Tensor Memory (TMEM)** is new in Blackwell. It is a per-SM, high-bandwidth scratchpad memory used by the `tcgen05` MMA path. Unlike earlier GPU generations where large MMA accumulators lived in registers, Blackwell writes `tcgen05` accumulator output directly to TMEM first. The kernel then explicitly reads those results from TMEM into registers, or stages them through shared memory for output.
 
@@ -68,11 +68,11 @@ $$D = AB + C, \quad A \in \mathbb{R}^{M \times K},\ B \in \mathbb{R}^{K \times N
 
 Tensor Cores are different from **CUDA cores**, the GPU's general-purpose SIMT ALUs. CUDA cores execute scalar and vector instructions for indexing, elementwise math, reductions, and control flow. Tensor Cores execute dense tile-level MMA instructions for GEMM, convolution, and attention. Both engines live on the same SM, but dense linear algebra relies on Tensor Cores for peak throughput.
 
-On Blackwell, an MMA operation has three hardware contracts that kernel code must coordinate:
+On Blackwell, an MMA is more than the math. It is **asynchronous**: issuing it is not the same as finishing it, so completion is tracked with a barrier. An MMA also spells out three things you will see for every tile operation in this tutorial — its **scope / layout / dispatch**:
 
-1. **Cooperation scope.** An MMA may involve a warpgroup, and some Blackwell modes allow two CTAs to cooperate on one MMA tile.
-2. **Operand location.** MMA operands are described as tiles in SMEM, and some Blackwell variants can also use TMEM.
-3. **Asynchronous completion.** The MMA instruction issues work and returns before the hardware finishes; completion is tracked separately with barriers.
+1. **Scope** — who cooperates. An MMA may involve a warpgroup, and some Blackwell modes allow two CTAs to cooperate on one MMA tile.
+2. **Layout** — where the operands and result live. MMA operands are tiles in SMEM (some Blackwell variants also read TMEM), and the accumulator is written to TMEM.
+3. **Dispatch** — which hardware path runs it. `tcgen05` issues the MMA and returns before the math is done; the barrier mentioned above is what marks it complete.
 
 One Blackwell-specific detail is where the MMA result lives. `tcgen05.mma` does not keep large accumulator tiles in registers during the whole compute phase. It writes them to **TMEM**, a 128 × 512 32-bit scratchpad per SM. Later, the kernel reads the needed TMEM values into registers for the epilogue and writes the final result back to GMEM.
 

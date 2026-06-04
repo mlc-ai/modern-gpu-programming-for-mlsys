@@ -5,6 +5,8 @@ This chapter turns the tile-primitive model into working GEMM kernels. It starts
 
 Chapters 3, 4, and 5 follow one optimization path for GEMM: build a correct tiled kernel, replace thread copies with TMA and pipelining, then add warp specialization and CTA clusters.
 
+Read each step as a change to the tile-primitive contract from Chapter 2 — which **scope** runs the operation, which **layout** the operand tiles use, which **dispatch** path executes it. A small card at the start of each step names the pillar that changes; the others stay fixed. Step 1 sets the baseline.
+
 ## GEMM
 
 GEMM is the dense matrix multiply behind linear layers, attention projections, and many convolution implementations. The examples in this tutorial use $D = A B^{\top}$:
@@ -45,6 +47,11 @@ After the basic GEMM path works, the rest of the tutorial adds Blackwell feature
 :label:`chap_single_tile`
 
 Step 1 computes one 128 x 128 output tile with K = 64.
+
+> **What this step establishes — the baseline**
+> - Scope: one warpgroup (128 threads) walks the whole path in order.
+> - Layout: A/B tiles in SMEM, accumulator in TMEM, result staged through registers.
+> - Dispatch: sync `Tx.copy` for the loads, `tcgen05` for the MMA.
 
 ### Single-Tile Dataflow
 
@@ -127,7 +134,7 @@ Under `with Tx.warpgroup()`, the `Tx.copy_async(Dreg_wg, tmem)` readback lowers 
 After the wait, each thread's private `Dreg[:]` holds the fp32 values for one logical output row. The thread casts those values to fp16 in `Dreg_f16`, computes its global output row,
 
 ```python
-m_thr = m_st + warp_id * 32 + lane_id
+m_thr = Tx.meta_var(m_st + warp_id * 32 + lane_id)
 ```
 
 and writes `D[m_thr, n_st:n_st + BLK_N]`. Warp 0 writes rows 0-31, warp 1 writes rows 32-63, warp 2 writes rows 64-95, and warp 3 writes rows 96-127.
@@ -173,7 +180,7 @@ def hgemm_v1(M, N, K):
         # is 1x1. Starting with a 1x1 grid keeps the per-CTA tile offsets
         # (m_st, n_st) trivially zero; Steps 3+ generalise this to larger M / N.
         bx, by = Tx.cta_id([M // BLK_M, N // BLK_N])
-        _ = Tx.warpgroup_id([1])          # single warpgroup, index never used inside the kernel
+        wg_id = Tx.warpgroup_id([1])      # single warpgroup, so wg_id is always 0 (unused below)
         warp_id = Tx.warp_id_in_wg([4])
         lane_id = Tx.lane_id([32])
     
@@ -246,7 +253,7 @@ def hgemm_v1(M, N, K):
     return kernel
 ```
 
-The compile/run/check pattern is the same for every GEMM step, so the tutorial shows it once. Later sections only show the kernel; to run another step, replace `hgemm_v1` and the problem size below with the kernel and shape you want to test.
+The compile/run/check pattern is the same for every GEMM step, so the tutorial shows it once. Later sections only show the kernel; to run another step, replace `hgemm_v1` and the problem size below with the kernel and shape you want to test. Compile one step per fresh Python session — restart the kernel before testing a different step, since the examples reuse inner names and the compiler keeps per-session state.
 
 ```{.python .input}
 import torch
@@ -257,8 +264,7 @@ device = torch.device('cuda')  # gpu(0)
 M, N, K = 128, 128, 64
 kernel = hgemm_v1(M, N, K)
 with target:
-    mod = tvm.IRModule({"main": kernel})
-    lib = tvm.compile(mod, target=target, tir_pipeline="tirx")
+    ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
 
 torch.cuda.empty_cache()
 torch.cuda.synchronize()
@@ -266,29 +272,27 @@ A_tensor = torch.randn(M, K, dtype=torch.float16, device=device)
 B_tensor = torch.randn(N, K, dtype=torch.float16, device=device)
 D_tensor = torch.zeros(M, N, dtype=torch.float16, device=device)
 
-args = [
-    tvm.runtime.from_dlpack(A_tensor),
-    tvm.runtime.from_dlpack(B_tensor),
-    tvm.runtime.from_dlpack(D_tensor),
-]
-lib["main"](*args)
+# ex.mod(...) takes torch tensors directly — the same call form used in every chapter.
+ex.mod(A_tensor, B_tensor, D_tensor)
 
 D_ref = (A_tensor.float() @ B_tensor.float().T).half()
 max_err = float((D_tensor - D_ref).abs().max())
 print(f"Max error vs torch reference: {max_err:.6f}")
-assert max_err < 0.1, f"FAIL: max_err={max_err}"
+# Relative tolerance, like the Chapter 5 and Flash Attention cells: output
+# magnitude grows with K, so a fixed absolute bound would fail at larger K.
+torch.testing.assert_close(D_tensor, D_ref, rtol=2e-2, atol=1e-2)
 print("PASS")
 
 # Optional timing for larger kernels.
 ITERS = 10
 for _ in range(3):
-    lib["main"](*args)
+    ex.mod(A_tensor, B_tensor, D_tensor)
 torch.cuda.synchronize()
 start = torch.cuda.Event(enable_timing=True)
 end = torch.cuda.Event(enable_timing=True)
 start.record()
 for _ in range(ITERS):
-    lib["main"](*args)
+    ex.mod(A_tensor, B_tensor, D_tensor)
 end.record()
 torch.cuda.synchronize()
 ms = start.elapsed_time(end) / ITERS
@@ -312,6 +316,11 @@ The first kernel computes the right result, but it still has four deliberate lim
 
 Step 1 computes one K tile. Step 2 keeps one output tile but lets K contain multiple 64-wide chunks. The kernel repeats the same load -> MMA -> wait sequence for each K chunk and accumulates the result in TMEM.
 
+> **What this step changes — Layout**
+> - Scope: unchanged — one warpgroup.
+> - Layout: the same SMEM tile pair and TMEM accumulator slot are reused across the K-loop — no new storage, the operand tiles just stream through one fixed pair of buffers.
+> - Dispatch: unchanged.
+
 ### K-Loop Mechanics
 
 To handle matrices where K > 64, we loop over K in chunks of `BLK_K=64`. Each iteration loads the next A and B K-slice into SMEM, then issues `Tx.gemm_async`. On the first K chunk, `accum=False` initializes the TMEM accumulator. On later chunks, `accum=True` adds the new MMA result into the existing TMEM accumulator.
@@ -333,7 +342,7 @@ Without `phase_mma ^= 1`, the second iteration would still call `try_wait(bar, 0
 import tvm
 from tvm.script import tirx as Tx
 from tvm.tirx.operator.tile_primitive.cuda.tma_utils import tma_shared_layout, SwizzleMode
-from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg as axis_tid_in_wg
+from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
 ```
 
 The kernel is wrapped in a function `hgemm_v2(M, N, K)` that returns a TIRX kernel for the given dimensions. The grid is still `[1, 1]` because this step only handles one output tile:
@@ -358,8 +367,8 @@ def hgemm_v2(M, N, K):
         D: Tx.Buffer((M, N), d_type),
     ):
         Tx.device_entry()
-        bx, by = Tx.cta_id([1, 1])  # Single CTA
-        _ = Tx.warpgroup_id([1])
+        bx, by = Tx.cta_id([M // BLK_M, N // BLK_N])  # still one output tile (M=N=128)
+        wg_id = Tx.warpgroup_id([1])
         warp_id = Tx.warp_id_in_wg([4])
         lane_id = Tx.lane_id([32])
 
@@ -389,7 +398,7 @@ def hgemm_v2(M, N, K):
         n_st = Tx.meta_var(by * BLK_N)
 
         # === K-loop: iterate over K in chunks of BLK_K ===
-        for i in range(K_TILES):
+        for i in Tx.serial(K_TILES):   # serial device loop (keeps the full-K A/B parameters correctly shaped)
             # Load the i-th K chunk
             with Tx.cta():
                 Tx.copy(Asmem[:, :], A[:, i*BLK_K:(i+1)*BLK_K])
@@ -400,7 +409,7 @@ def hgemm_v2(M, N, K):
             # MMA: accum=False for first tile, True for rest
             if warp_id == 0:
                 with Tx.thread(Tx.ptx.elect_sync()):
-                    Tx.gemm_async(tmem[:, :128], Asmem[:], Bsmem[:],
+                    Tx.gemm_async(tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
                                   accum=(i != 0), dispatch="tcgen05", cta_group=1)
                     Tx.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
 
@@ -409,19 +418,19 @@ def hgemm_v2(M, N, K):
             phase_mma ^= 1
 
         # === Writeback (same as Step 1) ===
-        reg = Tx.alloc_local((128,), acc_type)
-        reg_f16 = Tx.alloc_local((128,), d_type)
-        reg_wg = reg.view(128, 128,
-                          layout=TileLayout(S[(128, BLK_N) : (1@axis_tid_in_wg, 1)]))
+        Dreg = Tx.alloc_local((BLK_N,), acc_type)
+        Dreg_f16 = Tx.alloc_local((BLK_N,), d_type)
+        Dreg_wg = Dreg.view(128, BLK_N,
+                            layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
 
         with Tx.warpgroup():
-            Tx.copy_async(reg_wg[:, :], tmem[:, :128])
+            Tx.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
             Tx.ptx.tcgen05.wait.ld()
 
         with Tx.thread():
-            Tx.cast(reg_f16[:], reg[:])
-            m_thr = Tx.meta_var(m_st + 32 * warp_id + lane_id)
-            Tx.copy(D[m_thr, :], reg_f16[:])
+            Tx.cast(Dreg_f16[:], Dreg[:])
+            m_thr = Tx.meta_var(m_st + warp_id * 32 + lane_id)
+            Tx.copy(D[m_thr, n_st : n_st + BLK_N], Dreg_f16[:])
 
         Tx.cuda.cta_sync()
         if warp_id == 0:
@@ -439,6 +448,11 @@ K-loop accumulation still leaves one missing piece: tiling over M and N to suppo
 :label:`chap_spatial_tiling`
 
 Steps 1-2 compute one output tile. Step 3 launches a 2D grid of CTAs so larger M and N dimensions are covered by multiple 128 x 128 output tiles. The example uses M=N=K=256.
+
+> **What this step changes — Scope**
+> - Scope: a 2D grid of CTAs, each CTA owns one 128 x 128 output tile.
+> - Layout: unchanged — per CTA, the same SMEM/TMEM/register path as Step 2.
+> - Dispatch: unchanged.
 
 ### Grid Mapping
 
@@ -469,7 +483,7 @@ This matches the tutorial's `D = A @ B.T` convention: `bx` selects rows of A and
 import tvm
 from tvm.script import tirx as Tx
 from tvm.tirx.operator.tile_primitive.cuda.tma_utils import tma_shared_layout, SwizzleMode
-from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg as axis_tid_in_wg
+from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
 ```
 
 Step 3 changes the grid to `[M // BLK_M, N // BLK_N]` instead of `[1, 1]`, and loads/stores use per-CTA offsets `m_st` and `n_st`:
@@ -496,7 +510,7 @@ def hgemm_v3(M, N, K):
         Tx.device_entry()
         # 2D grid: one CTA per 128x128 output tile
         bx, by = Tx.cta_id([M // BLK_M, N // BLK_N])
-        _ = Tx.warpgroup_id([1])
+        wg_id = Tx.warpgroup_id([1])
         warp_id = Tx.warp_id_in_wg([4])
         lane_id = Tx.lane_id([32])
 
@@ -528,7 +542,7 @@ def hgemm_v3(M, N, K):
         n_st = Tx.meta_var(by * BLK_N)
 
         # K-loop with offset A and B slices
-        for i in range(K_TILES):
+        for i in Tx.serial(K_TILES):   # serial device loop (keeps the full-K A/B parameters correctly shaped)
             with Tx.cta():
                 Tx.copy(Asmem[:, :], A[m_st:m_st+BLK_M, i*BLK_K:(i+1)*BLK_K])
                 Tx.copy(Bsmem[:, :], B[n_st:n_st+BLK_N, i*BLK_K:(i+1)*BLK_K])
@@ -537,7 +551,7 @@ def hgemm_v3(M, N, K):
 
             if warp_id == 0:
                 with Tx.thread(Tx.ptx.elect_sync()):
-                    Tx.gemm_async(tmem[:, :128], Asmem[:], Bsmem[:],
+                    Tx.gemm_async(tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
                                   accum=(i != 0), dispatch="tcgen05", cta_group=1)
                     Tx.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
 
@@ -545,19 +559,19 @@ def hgemm_v3(M, N, K):
             phase_mma ^= 1
 
         # Writeback to the correct output tile
-        reg = Tx.alloc_local((128,), acc_type)
-        reg_f16 = Tx.alloc_local((128,), d_type)
-        reg_wg = reg.view(128, 128,
-                          layout=TileLayout(S[(128, BLK_N) : (1@axis_tid_in_wg, 1)]))
+        Dreg = Tx.alloc_local((BLK_N,), acc_type)
+        Dreg_f16 = Tx.alloc_local((BLK_N,), d_type)
+        Dreg_wg = Dreg.view(128, BLK_N,
+                            layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
 
         with Tx.warpgroup():
-            Tx.copy_async(reg_wg[:, :], tmem[:, :128])
+            Tx.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
             Tx.ptx.tcgen05.wait.ld()
 
         with Tx.thread():
-            Tx.cast(reg_f16[:], reg[:])
-            m_thr = Tx.meta_var(m_st + 32 * warp_id + lane_id)
-            Tx.copy(D[m_thr, n_st:n_st+BLK_N], reg_f16[:])
+            Tx.cast(Dreg_f16[:], Dreg[:])
+            m_thr = Tx.meta_var(m_st + warp_id * 32 + lane_id)
+            Tx.copy(D[m_thr, n_st:n_st+BLK_N], Dreg_f16[:])
 
         Tx.cuda.cta_sync()
         if warp_id == 0:

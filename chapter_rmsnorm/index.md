@@ -268,14 +268,13 @@ target = tvm.target.Target("cuda")
 # Compile
 kernel = get_rmsnorm_kernel(hidden_size)
 with target:
-    lib = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+    ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
 
-# Run
+# Run — ex.mod(...) takes torch tensors directly, the same call form used in every chapter.
 x = torch.randn(batch_size, hidden_size, dtype=torch.float16, device=device)
 w = torch.randn(hidden_size, dtype=torch.float16, device=device)
 out = torch.zeros_like(x)
-f = lib["main"]
-f(tvm.runtime.from_dlpack(x), tvm.runtime.from_dlpack(w), tvm.runtime.from_dlpack(out))
+ex.mod(x, w, out)
 
 # Verify against numpy reference
 x_np = x.float().cpu().numpy()

@@ -135,10 +135,10 @@ pool.commit()
 
 The pool is a shared-memory allocation plan. It is not an automatic live-range optimizer. Put control objects and tile storage in the order you need, then call `commit()`.
 
-TMEM can be managed manually. The layout vocabulary (`TileLayout`, `S`, `TLane`, `TCol`) lives in `tvm.tir.layout`, not on `Tx`, so import it explicitly:
+TMEM can be managed manually. The layout vocabulary (`TileLayout`, `S`, `TLane`, `TCol`) lives in `tvm.tirx.layout`, not on `Tx`, so import it explicitly:
 
 ```python
-from tvm.tir.layout import S, TileLayout, TLane, TCol
+from tvm.tirx.layout import S, TileLayout, TLane, TCol
 
 Tx.ptx.tcgen05.alloc(Tx.address_of(tmem_addr), n_cols=512, cta_group=1)
 tmem = Tx.decl_buffer(

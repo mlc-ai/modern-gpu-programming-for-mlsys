@@ -10,6 +10,11 @@ The following steps are incremental. Step 4 moves the large GMEM <-> SMEM transf
 
 Step 4 replaces synchronous `Tx.copy` with TMA hardware. One thread issues the command, and the hardware performs the tile movement. Benchmarks use M=N=K=4096.
 
+> **What this step changes — Dispatch**
+> - Scope: unchanged — one warpgroup.
+> - Layout: unchanged — same SMEM/TMEM/register tiles.
+> - Dispatch: GMEM → SMEM loads move from sync `Tx.copy` to the TMA engine.
+
 ### TMA Issue Pattern
 
 The code change from Step 3 is small, but the execution model changes. A synchronous `Tx.copy` is work done by CTA threads. A TMA copy is issued by one thread and then carried out by the TMA hardware.
@@ -28,8 +33,8 @@ tid = warp_id * 32 + lane_id                 # 0..127 within the warpgroup
 with Tx.thread(tid == 0):                    # exactly one thread starts TMA
     Tx.copy_async(Asmem, A[...], dispatch="tma")
     Tx.copy_async(Bsmem, B[...], dispatch="tma")
-    mbarrier.arrive.expect_tx(byte_count)     # bytes expected from TMA
-mbarrier.try_wait(phase)                      # wait before MMA reads SMEM
+    Tx.ptx.mbarrier.arrive.expect_tx(tma_bar, byte_count)  # bytes expected from TMA
+Tx.ptx.mbarrier.try_wait(tma_bar, phase)                  # wait before MMA reads SMEM
 ```
 
 Here only `tid == 0` starts the TMA load. The code does not use `elect_sync()` because `elect.sync` elects one active lane per warp. In this 4-warp warpgroup, that would make four threads start the load protocol. The TMA load protocol should update the expected byte count once, so the kernel uses a single warpgroup-wide thread id.
@@ -92,7 +97,7 @@ def hgemm_v4(M, N, K):
     ):
         Tx.device_entry()
         bx, by = Tx.cta_id([M // BLK_M, N // BLK_N])
-        _ = Tx.warpgroup_id([1])
+        wg_id = Tx.warpgroup_id([1])
         warp_id = Tx.warp_id_in_wg([4])
         lane_id = Tx.lane_id([32])
     
@@ -234,6 +239,11 @@ Step 4 uses TMA, but it still waits for each load before issuing the matching MM
 
 Step 5 adds double-buffered shared memory so the kernel can load one K tile while computing another. Benchmarks use M=N=K=4096.
 
+> **What this step changes — Layout**
+> - Scope: unchanged — one warpgroup.
+> - Layout: the single SMEM tile pair becomes a `PIPE_DEPTH`-stage ring buffer.
+> - Dispatch: unchanged — TMA load and `tcgen05` MMA, now overlapped across stages.
+
 ### Pipeline Walkthrough
 
 With `PIPE_DEPTH=2`, the kernel allocates two SMEM stages. The figure shows the intended schedule over K tiles:
@@ -242,7 +252,7 @@ With `PIPE_DEPTH=2`, the kernel allocates two SMEM stages. The figure shows the 
 
 The first two TMA loads fill the two stages. After that, the stages alternate. While MMA computes on `k0`, TMA can load `k2` into the stage that will be reused next. While MMA computes on `k1`, TMA can load `k3`, and so on. The two hardware paths are different: TMA moves GMEM -> SMEM tiles, while `tcgen05.mma` consumes an already-loaded SMEM stage and writes the accumulator to TMEM.
 
-This simplified single-warpgroup pipeline only overlaps the *prefetched* stages: the main loop still waits for the current MMA to complete (`try_wait(mma_bar, phase_mma)`) before issuing the next TMA load, so it does not yet realize the fully concurrent schedule the figure suggests. True producer/consumer overlap — where a dedicated load warp keeps issuing TMA while a separate MMA warp computes — requires warp specialization, which the next chapter introduces.
+This simplified single-warpgroup pipeline only overlaps the *prefetched* stages: the main loop still waits for the current MMA to complete (`try_wait(mma_bar, phase_mma)`) before issuing the next TMA load, so it does not yet realize the fully concurrent schedule the figure suggests. True producer/consumer overlap — where a dedicated load warp keeps issuing TMA while a separate MMA warp computes — requires warp specialization, which Chapter 5 introduces as Step 7.
 
 When reading the Step 5 code, look for four changes from Step 4:
 
@@ -321,7 +331,7 @@ def hgemm_v5(M, N, K):
     ):
         Tx.device_entry()
         bx, by = Tx.cta_id([M // BLK_M, N // BLK_N])
-        _ = Tx.warpgroup_id([1])
+        wg_id = Tx.warpgroup_id([1])
         warp_id = Tx.warp_id_in_wg([4])
         lane_id = Tx.lane_id([32])
 
@@ -449,6 +459,11 @@ def hgemm_v5(M, N, K):
 
 Step 5 launches one CTA for every 128 x 128 output tile. For a 4096 x 4096 output, that is 1024 CTAs. Step 6 instead launches a fixed pool of CTAs and lets each CTA process multiple output tiles. This makes tile assignment explicit in the kernel and gives the scheduler control over tile order. Benchmarks use M=N=K=4096.
 
+> **What this step changes — Scope**
+> - Scope: a fixed pool of persistent CTAs, each looping over many output tiles via the scheduler.
+> - Layout: unchanged — the same per-tile SMEM/TMEM/register path.
+> - Dispatch: unchanged.
+
 ### Persistent Scheduling
 
 A persistent kernel launches `SM_COUNT` CTAs instead of one CTA per output tile. In the B200 configuration used here, `SM_COUNT=148`, so the kernel launches one CTA per SM. Each CTA loops over output tiles assigned by `ClusterPersistentScheduler2D`. The scheduler groups nearby tiles with `l2_group_size=8`, improving the chance that recently used A or B tiles are still in L2.
@@ -519,7 +534,7 @@ def hgemm_v6(M, N, K):
         Tx.device_entry()
         # 1D grid: one CTA per SM (not a 2D grid anymore!)
         bx = Tx.cta_id([SM_COUNT])
-        _ = Tx.warpgroup_id([1])
+        wg_id = Tx.warpgroup_id([1])
         warp_id = Tx.warp_id_in_wg([4])
         lane_id = Tx.lane_id([32])
 

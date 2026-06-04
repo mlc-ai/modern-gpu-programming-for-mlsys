@@ -110,6 +110,21 @@ All MMA instructions are issued from WG3 warp 0. WG0 and WG1 do not issue MMA. T
 
 This matters for barriers. `s_ready` connects score MMA to softmax. `p_o_rescale` connects softmax and correction back to the value MMA.
 
+## Names Used in This Chapter
+
+The snippets below are excerpts from `flash_attention4.py`, so a few names come from the surrounding kernel. The standard or self-describing ones — `wg_id`, `warp_id`, `BLK_M`/`BLK_N`, `HEAD_DIM`, `kv_stage`, the `SMEM_PIPE_DEPTH_*` / `TMEM_PIPE_DEPTH` depths, `should_accumulate`, and `CTA_GROUP` (1 here) — are spelled out where they first matter in the sections below. The rest are worth a one-line gloss; you do not need to memorize them, just look one up when a fragment uses it:
+
+| Name | Meaning |
+|------|---------|
+| `q_stage`, `i_q` | Q pipeline stage, 0 or 1 — which Q tile slot (`SMEM_PIPE_DEPTH_Q = 2`). Inside WG0/WG1 softmax the warpgroup's own `wg_id` (0 or 1) *is* this same stage index, so `S_region[q_stage]`, `P_region[wg_id]`, and `O_region[i_q]` all select the same Q stage |
+| `MMA_N` | score/output tile width in TMEM columns (128) |
+| `MMA_K` | MMA inner-K step in `P`/`V` columns (16); `K_SPLIT = 6 * MMA_K = 96` |
+| `K_SPLIT` | split point of the `96 + 32` value-MMA schedule (`6 * MMA_K = 96`); the first value MMA consumes `P`/`V` columns `0:K_SPLIT` |
+| `should_rescale` | WG2 per-row flag: whether the old `O` needs rescaling before the next value MMA (reduced across the warpgroup with `any_sync`) |
+| `rescale_threshold` | when the scaled row-max change is small enough, `acc_scale` is clamped to exactly 1.0 and the rescale is skipped (8.0) |
+| `acc_scale` | per-row rescale factor softmax passes to WG2 through the SMEM mailbox |
+| `chunk_start`/`chunk_end`, `p_start`/`p_end` | column range of the 32-wide softmax chunk being read / written |
+
 ## The Two MMA Phases
 
 For each streamed K/V tile, Flash Attention runs two MMA phases with softmax in between:
@@ -145,16 +160,23 @@ if Tx.ptx.elect_sync():
     s_ready.arrive(q_stage)
 ```
 
-Read this with the same rules as GEMM:
+Read it as a tile-primitive readout, the same four questions the GEMM chapters asked:
 
-- source tiles: Q and K in SMEM,
-- destination tile: `S` in TMEM,
-- dispatch path: `tcgen05`,
-- handoff after compute: `s_ready`.
+> **Tile-primitive readout — Score MMA**
+> - Scope: WG3 warp 0 issues it; one elected lane arrives `s_ready`.
+> - Layout: Q, K in SMEM → `S` in TMEM (`S_region[q_stage]`).
+> - Dispatch: `tcgen05`.
+> - Handoff: `s_ready` (→ softmax).
 
 The elected thread arrival on `s_ready` says this score tile is ready for the softmax warpgroup.
 
 ### Softmax Between MMAs
+
+> **Tile-primitive readout — Softmax**
+> - Scope: WG0 (Q stage 0) / WG1 (Q stage 1), full warpgroup.
+> - Layout: `S` in TMEM → registers → `P` in fp16 TMEM (`P_region[wg_id]`).
+> - Dispatch: `tcgen05.ld` to read, TMEM store to write; row-wise math in registers between them.
+> - Handoff: waits `s_ready`; arrives `p_o_rescale` (first 96 columns) and `p_ready_2` (last 32).
 
 Softmax is the part that makes FA4 different from GEMM. WG0/WG1 wait for the score tile, then read it from TMEM in register chunks:
 
@@ -202,6 +224,12 @@ with Tx.warp():
         cta_group=CTA_GROUP,
     )
 ```
+
+> **Tile-primitive readout — Value MMA**
+> - Scope: WG3 warp 0.
+> - Layout: `P` in TMEM + V in SMEM → `O` in TMEM (`O_region[i_q]`).
+> - Dispatch: `tcgen05` with a TMEM operand.
+> - Handoff: waits `p_o_rescale`, `p_ready_2`, `kv_load.full`; arrives `o_ready` (→ epilogue).
 
 This is the main hardware difference from the score MMA:
 
@@ -315,7 +343,7 @@ The barrier type follows the producer:
 - MMA completion uses `TCGen05Bar`, because `tcgen05.commit` signals the completion group.
 - Pure thread-to-thread handoffs use `MBarrier`, where the participating threads arrive explicitly.
 
-Two barriers split the softmax-to-value handoff. `p_o_rescale` lets the value MMA start once the first 96 columns of `P` are written and the `O` tile is safe to accumulate into. On the first K/V block, WG2 pre-arrives this barrier because there is no old `O` to rescale. On later K/V blocks, WG2 arrives after it has either skipped an unnecessary rescale or finished rescaling the old `O`. The rescale is skipped when the per-row scale is effectively 1.0 — softmax clamps `acc_scale` to exactly 1.0 when the row max changes by less than `rescale_threshold`, and WG2 reduces `should_rescale` across the warpgroup with `any_sync`, so it only touches `O` in TMEM when at least one row actually needs it. `p_ready_2` releases the last 32 columns of `P`. This matches the `96 + 32` value-MMA schedule from the previous section.
+Two barriers split the softmax-to-value handoff. `p_o_rescale` lets the value MMA start once the first 96 columns of `P` are written and the `O` tile is safe to accumulate into. On the first K/V block, WG2 pre-arrives this barrier because there is no old `O` to rescale. On later K/V blocks, WG2 arrives after it has either skipped an unnecessary rescale or finished rescaling the old `O`. The rescale is skipped when the per-row scale is effectively 1.0 — softmax clamps `acc_scale` to exactly 1.0 when the row max barely moves, specifically when the log2-scaled max delta `(m_old - m_new) * scale_log2` stays within `rescale_threshold` so the `exp2` rescale factor rounds to 1.0, and WG2 reduces `should_rescale` across the warpgroup with `any_sync`, so it only touches `O` in TMEM when at least one row actually needs it. `p_ready_2` releases the last 32 columns of `P`. This matches the `96 + 32` value-MMA schedule from the previous section.
 
 Compared with GEMM, the new barriers are the ones around softmax: `s_ready`, `p_o_rescale`, `p_ready_2`, and the softmax/correction pair. They exist because the score MMA and value MMA are separated by register math, TMEM rewrites, and output rescaling.
 
@@ -381,7 +409,13 @@ Tx.copy_async(O_region[i_q, d_start : d_start + RESCALE_TILE], o_row)
 Tx.ptx.tcgen05.wait.st()
 ```
 
-This is not scalar bookkeeping. It is another TMEM -> RF -> TMEM tile operation.
+This is not scalar bookkeeping. It is another TMEM -> RF -> TMEM tile operation:
+
+> **Tile-primitive readout — Correction (rescale)**
+> - Scope: WG2, full warpgroup.
+> - Layout: `O` in TMEM → registers → `O` in TMEM (`O_region[i_q]`).
+> - Dispatch: `tcgen05.ld` to read, TMEM store to write; register multiply between them.
+> - Handoff: waits `softmax_corr.full`; arrives `p_o_rescale` (→ value MMA) and `softmax_corr.empty` (→ softmax).
 
 The synchronization is:
 
@@ -474,6 +508,40 @@ while scheduler.valid():
 ```
 
 In non-causal mode, `scheduler.next_tile()` advances to another task for the same CTA. In causal mode, it ends the loop after the current task. Either way, scheduling only decides which attention tile the CTA owns. The tile primitives inside the loop remain the same local operations: TMA load, score MMA, softmax, value MMA, correction, and TMA store.
+
+## Compile and Verify
+
+The snippets above are excerpts. To run the real kernel, import it from `tirx-kernels`, compile it, and check it against a torch reference. Two things differ from the GEMM verify cell: Flash Attention has a richer entry point (`get_flash_attention4_kernel`), and the kernel takes an extra `profiler_buf` argument used by its built-in profiler. This is the one cell to run for the whole chapter:
+
+```{.python .input}
+import torch
+import torch.nn.functional as F
+import tvm
+from tirx_kernels.attention.flash_attention4 import (
+    get_flash_attention4_kernel, PROFILER_BUFFER_SIZE)
+
+B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
+Q = torch.randn(B, S, Hq, D, dtype=torch.float16, device="cuda")
+K = torch.randn(B, S, Hkv, D, dtype=torch.float16, device="cuda")
+V = torch.randn(B, S, Hkv, D, dtype=torch.float16, device="cuda")
+O = torch.empty(B, S, Hq, D, dtype=torch.float16, device="cuda")
+prof = torch.zeros(PROFILER_BUFFER_SIZE, dtype=torch.uint64, device="cuda")
+
+kernel = get_flash_attention4_kernel(B, S, S, Hq, Hkv, D, is_causal=False)
+target = tvm.target.Target("cuda")
+with target:
+    ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+ex.mod(Q, K, V, O, prof)   # ex.mod takes torch tensors directly, like every other chapter
+torch.cuda.synchronize()
+
+# torch reference; enable_gqa lets the 32 query heads share the 8 KV heads
+qt, kt, vt = (x.transpose(1, 2).float() for x in (Q, K, V))
+ref = F.scaled_dot_product_attention(qt, kt, vt, enable_gqa=True).transpose(1, 2).half()
+torch.testing.assert_close(O, ref, rtol=1e-2, atol=1e-2)
+print(f"FA4: B={B} S={S} Hq={Hq} Hkv={Hkv} D={D}, non-causal -> PASS")
+```
+
+**Expected output**: `... -> PASS`. The kernel accumulates the online softmax in fp32 and casts `O` to fp16 on writeback, so it matches the torch reference within fp16 rounding (the same `rtol`/`atol` bound used by the source kernel's own test). A real failure here — not a near-miss — points to a handoff bug on the softmax path: a missing `s_ready` / `p_o_rescale` / `p_ready_2` wait, or a `row_max` / `row_sum` running-state update that the rescale step did not apply.
 
 ## Differences from GEMM
 

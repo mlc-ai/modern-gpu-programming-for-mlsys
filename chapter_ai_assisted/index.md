@@ -103,20 +103,20 @@ SMEM -> TMEM by tcgen05 MMA.
 TMEM -> RF -> SMEM -> GMEM by epilogue.
 
 Scopes and roles:
-WG1 warp 3: TMA producer.
-WG1 warp 0: MMA consumer.
-WG0: writeback.
+WG2 warp 3: TMA producer.
+WG2 warps 0-1: MMA consumers.
+WG0-WG1: writeback.
 
 Layouts:
 SMEM A/B use tma_shared_layout(...).
 TMEM accumulator uses TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]).
 RF readback uses TileLayout(S[(128, N) : (1@tid_in_wg, 1)]).
 
-Barriers:
-tma2mma: TMA -> MMA.
-mma2tma: MMA -> TMA.
-mma2ld: MMA -> writeback.
-ld2mma: writeback -> MMA.
+Barriers (the Chapter 5 names):
+smem_pipe.full: TMA -> MMA (A/B SMEM stage loaded).
+smem_pipe.empty: MMA -> TMA (SMEM stage free to refill).
+tmem_pipe.full: MMA -> writeback (accumulator ready).
+tmem_pipe.empty: writeback -> MMA (accumulator slot free).
 
 Symptom:
 kernel hangs after the first output tile.
@@ -133,7 +133,7 @@ This case shows why the prompt needs a hardware fact, not just code. The broken 
 
 ```python
 for k in range(K_TILES):
-    tma2mma.wait(mma_ps.stage, mma_ps.phase)
+    smem_pipe.full.wait(mma_ps.stage, mma_ps.phase)
     with Tx.thread(Tx.ptx.elect_sync()):
         Tx.gemm_async(
             tmem[:, :BLK_N],
@@ -145,7 +145,7 @@ for k in range(K_TILES):
         )
 
     # Broken: this commits from every lane in the warp.
-    mma2tma.arrive(mma_ps.stage, cta_group=1, cta_mask=0)
+    smem_pipe.empty.arrive(mma_ps.stage, cta_group=1, cta_mask=0)
     mma_ps.advance()
 ```
 
@@ -160,7 +160,7 @@ Why is my GEMM wrong?
 It is:
 
 ```text
-The MMA issue uses elect_sync, but mma2tma.arrive is outside that elected scope.
+The MMA issue uses elect_sync, but smem_pipe.empty.arrive is outside that elected scope.
 In these TIRX wrappers, TCGen05Bar.arrive lowers to tcgen05.commit.
 Can empty commit groups signal the barrier early?
 ```
@@ -169,7 +169,7 @@ The fix is to keep the arrive in the same elected-thread scope as the MMA issue:
 
 ```python
 for k in range(K_TILES):
-    tma2mma.wait(mma_ps.stage, mma_ps.phase)
+    smem_pipe.full.wait(mma_ps.stage, mma_ps.phase)
     with Tx.thread(Tx.ptx.elect_sync()):
         Tx.gemm_async(
             tmem[:, :BLK_N],
@@ -179,7 +179,7 @@ for k in range(K_TILES):
             dispatch="tcgen05",
             cta_group=1,
         )
-        mma2tma.arrive(mma_ps.stage, cta_group=1, cta_mask=0)
+        smem_pipe.empty.arrive(mma_ps.stage, cta_group=1, cta_mask=0)
     mma_ps.advance()
 ```
 
@@ -242,12 +242,12 @@ The agent is not deciding the design. It is checking whether the code still matc
 
 ## Use Case 3: Debug from Symptoms
 
-When a kernel fails, first classify the symptom. Then ask the agent to map the symptom back to the nearest producer-consumer handoff. The table here is the prompt-level version; use the TIRX Language and Compile Pipeline appendix page when you need generated-CUDA inspection.
+When a kernel fails, first classify the symptom. Then ask the agent to map the symptom back to the nearest producer-consumer handoff. The table here is the prompt-level version; use the :ref:`chap_tirx_primer` appendix page when you need generated-CUDA inspection.
 
 | Symptom | Likely area | First checks |
 |---------|-------------|--------------|
 | Kernel hangs | missing arrive, wrong phase, wrong init count | barrier producer/consumer pair |
-| Output all zeros | TMEM read before MMA completes, early empty commit | MMA commit guard, `mma2ld.wait` |
+| Output all zeros | TMEM read before MMA completes, early empty commit | MMA commit guard, `tmem_pipe.full.wait` |
 | Wrong rows in chunks of 128 | warpgroup handoff bug | TMEM readback, writeback barrier, per-consumer slot |
 | Random garbage | SMEM reused too early | TMA/MMA empty barrier, TMA store drain |
 | NaN everywhere | invalid input to math or wrong descriptor | softmax max subtraction, masks, SMEM layout, MMA descriptor |
@@ -257,7 +257,7 @@ The prompt should include both the symptom and the code around the relevant barr
 
 ```text
 Symptom: output is zeros or random garbage.
-The MMA issue uses elect_sync, but mma2tma.arrive is outside that elected scope.
+The MMA issue uses elect_sync, but smem_pipe.empty.arrive is outside that elected scope.
 Does this allow an empty commit group to signal the barrier early?
 ```
 
@@ -322,7 +322,7 @@ Useful patterns to check:
 
 If the agent's explanation disagrees with the generated code, trust the generated code.
 
-For a broader generated-CUDA workflow, use the TIRX Language and Compile Pipeline appendix page.
+For a broader generated-CUDA workflow, use the :ref:`chap_tirx_primer` appendix page.
 
 ## Agent Review Boundaries
 
@@ -367,6 +367,6 @@ Keep entries short: symptom, cause, fix. These notes are more useful to an agent
 ## Exercises
 
 1. Take the warp-specialized GEMM from Chapter 5 and ask an agent to produce a tile-primitive table: primitive, scope, layout, dispatch, wait-before, signal-after. Which entries did it miss?
-2. Move `mma2tma.arrive()` outside the elected MMA issue scope in a local experiment. Ask the agent to diagnose the failure using only the symptom, then ask again with the `tcgen05.commit` hardware constraint. Compare the answers.
+2. Move `smem_pipe.empty.arrive()` outside the elected MMA issue scope in a local experiment. Ask the agent to diagnose the failure using only the symptom, then ask again with the `tcgen05.commit` hardware constraint. Compare the answers.
 3. Ask for a PyTorch reference for the Flash Attention kernel with GQA. Check whether the agent handles `repeat_interleave` for K/V heads correctly.
 4. Give the agent the generated CUDA for a warp-specialized kernel and ask it to identify the TMA, MMA, and writeback branches. Verify against the source.
