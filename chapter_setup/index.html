@@ -103,7 +103,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -146,7 +146,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -168,7 +168,10 @@ Show Source
 <ul class="simple">
 <li><p><strong>OS</strong>: Linux, Ubuntu 20.04 or newer recommended.</p></li>
 <li><p><strong>GPU</strong>: NVIDIA Blackwell, such as B200 or B100.</p></li>
-<li><p><strong>Driver</strong>: CUDA 13.0 requires a Linux driver at least 580.65.06.</p></li>
+<li><p><strong>Driver</strong>: a CUDA 13.0-capable Linux driver (see the <a class="reference external" href="https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/">NVIDIA CUDA
+13.0 release
+notes</a>
+for the exact minimum version for your platform).</p></li>
 <li><p><strong>Python</strong>: 3.10 or newer.</p></li>
 </ul>
 </section>
@@ -226,7 +229,7 @@ checks the current TIRX entry-point style:</p>
 <span class="n">n</span> <span class="o">=</span> <span class="mi">1024</span>
 <span class="n">a</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
 <span class="n">b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
-<span class="n">ex</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>
+<span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>
 
 <span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">*</span> <span class="mi">2</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;PASS&quot;</span><span class="p">)</span>
@@ -236,7 +239,7 @@ checks the current TIRX entry-point style:</p>
 <section id="inspect-generated-cuda">
 <h2><span class="section-number">8.1.4. </span>Inspect Generated CUDA<a class="headerlink" href="#inspect-generated-cuda" title="Permalink to this heading">¶</a></h2>
 <p>After compiling, inspect the lowered CUDA source:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports_</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">)</span>
 </pre></div>
 </div>

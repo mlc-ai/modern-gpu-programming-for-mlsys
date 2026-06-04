@@ -102,7 +102,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -145,7 +145,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -173,8 +173,16 @@ earlier; the new focus is asynchronous handoff between hardware units.</p>
 <section id="step-4-tma-async-load">
 <span id="chap-tma-async"></span><h2><span class="section-number">4.1. </span>Step 4: TMA Async Load<a class="headerlink" href="#step-4-tma-async-load" title="Permalink to this heading">¶</a></h2>
 <p>Step 4 replaces synchronous <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> with TMA hardware. One thread
-issues the command, and the hardware performs the tile movement.
-Benchmarks use M=N=K=4096.</p>
+issues the command, and the hardware performs the tile movement. These
+steps work at the full M=N=K=4096 size — not the single 128×128 tile of
+Chapters 1–3 — and their end-to-end timings appear in Chapter 5’s
+<em>End-to-End Result</em> table.</p>
+<blockquote>
+<div><p><strong>What this step changes — Dispatch</strong> - Scope: unchanged — one
+warpgroup. - Layout: unchanged — same SMEM/TMEM/register tiles. -
+Dispatch: GMEM → SMEM loads move from sync <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> to the TMA
+engine.</p>
+</div></blockquote>
 <section id="tma-issue-pattern">
 <h3><span class="section-number">4.1.1. </span>TMA Issue Pattern<a class="headerlink" href="#tma-issue-pattern" title="Permalink to this heading">¶</a></h3>
 <p>The code change from Step 3 is small, but the execution model changes. A
@@ -194,8 +202,8 @@ tracks when the hardware transfer is complete:</p>
 <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">(</span><span class="n">tid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">):</span>                    <span class="c1"># exactly one thread starts TMA</span>
     <span class="n">Tx</span><span class="o">.</span><span class="n">copy_async</span><span class="p">(</span><span class="n">Asmem</span><span class="p">,</span> <span class="n">A</span><span class="p">[</span><span class="o">...</span><span class="p">],</span> <span class="n">dispatch</span><span class="o">=</span><span class="s2">&quot;tma&quot;</span><span class="p">)</span>
     <span class="n">Tx</span><span class="o">.</span><span class="n">copy_async</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">,</span> <span class="n">B</span><span class="p">[</span><span class="o">...</span><span class="p">],</span> <span class="n">dispatch</span><span class="o">=</span><span class="s2">&quot;tma&quot;</span><span class="p">)</span>
-    <span class="n">mbarrier</span><span class="o">.</span><span class="n">arrive</span><span class="o">.</span><span class="n">expect_tx</span><span class="p">(</span><span class="n">byte_count</span><span class="p">)</span>     <span class="c1"># bytes expected from TMA</span>
-<span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">phase</span><span class="p">)</span>                      <span class="c1"># wait before MMA reads SMEM</span>
+    <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">arrive</span><span class="o">.</span><span class="n">expect_tx</span><span class="p">(</span><span class="n">tma_bar</span><span class="p">,</span> <span class="n">byte_count</span><span class="p">)</span>  <span class="c1"># bytes expected from TMA</span>
+<span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">tma_bar</span><span class="p">,</span> <span class="n">phase</span><span class="p">)</span>                  <span class="c1"># wait before MMA reads SMEM</span>
 </pre></div>
 </div>
 <p>Here only <code class="docutils literal notranslate"><span class="pre">tid</span> <span class="pre">==</span> <span class="pre">0</span></code> starts the TMA load. The code does not use
@@ -210,7 +218,7 @@ overlap. The speedup comes from using a different data-movement path:</p>
 instructions.</p></li>
 <li><p>TMA uses one issued command to start a hardware tile transfer. Address
 generation, coalescing, and swizzling are described by the TMA
-descriptor and handled by the copy path.</p></li>
+descriptor and carried out by the TMA engine.</p></li>
 </ul>
 <p>So Step 4 can be faster even though it still waits for each load to
 finish: the CTA threads spend less instruction bandwidth on moving
@@ -276,7 +284,6 @@ them:</p>
     <span class="n">acc_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float32&quot;</span><span class="p">)</span>
 
     <span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">,</span> <span class="n">BLK_K</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">64</span>
-    <span class="n">MMA_M</span><span class="p">,</span> <span class="n">MMA_N</span><span class="p">,</span> <span class="n">MMA_K</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">16</span>
     <span class="n">K_TILES</span> <span class="o">=</span> <span class="n">K</span> <span class="o">//</span> <span class="n">BLK_K</span>
     <span class="n">F16_SIZE</span> <span class="o">=</span> <span class="mi">2</span>
 
@@ -447,7 +454,13 @@ another.</p>
 <section id="step-5-software-pipeline-pipe-depth-2">
 <span id="chap-software-pipeline"></span><h2><span class="section-number">4.2. </span>Step 5: Software Pipeline (PIPE_DEPTH=2)<a class="headerlink" href="#step-5-software-pipeline-pipe-depth-2" title="Permalink to this heading">¶</a></h2>
 <p>Step 5 adds double-buffered shared memory so the kernel can load one K
-tile while computing another. Benchmarks use M=N=K=4096.</p>
+tile while computing another. Same full M=N=K=4096 size.</p>
+<blockquote>
+<div><p><strong>What this step changes — Layout</strong> - Scope: unchanged — one
+warpgroup. - Layout: the single SMEM tile pair becomes a
+<code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH</span></code>-stage ring buffer. - Dispatch: unchanged — TMA load
+and <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA, now overlapped across stages.</p>
+</div></blockquote>
 <section id="pipeline-walkthrough">
 <h3><span class="section-number">4.2.1. </span>Pipeline Walkthrough<a class="headerlink" href="#pipeline-walkthrough" title="Permalink to this heading">¶</a></h3>
 <p>With <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=2</span></code>, the kernel allocates two SMEM stages. The figure
@@ -455,7 +468,9 @@ shows the intended schedule over K tiles:</p>
 <figure class="align-default" id="id4">
 <img alt="../_images/pipe_depth2.png" src="../_images/pipe_depth2.png" />
 <figcaption>
-<p><span class="caption-number">Fig. 4.2.1 </span><span class="caption-text"><em>Pipeline PIPE_DEPTH=2</em></span><a class="headerlink" href="#id4" title="Permalink to this image">¶</a></p>
+<p><span class="caption-number">Fig. 4.2.1 </span><span class="caption-text"><em>Pipeline PIPE_DEPTH=2 — the target schedule; this single-warpgroup
+step only prefetches, full overlap arrives with warp specialization
+in Step 7</em></span><a class="headerlink" href="#id4" title="Permalink to this image">¶</a></p>
 </figcaption>
 </figure>
 <p>The first two TMA loads fill the two stages. After that, the stages
@@ -464,6 +479,16 @@ stage that will be reused next. While MMA computes on <code class="docutils lite
 load <code class="docutils literal notranslate"><span class="pre">k3</span></code>, and so on. The two hardware paths are different: TMA moves
 GMEM -&gt; SMEM tiles, while <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> consumes an already-loaded
 SMEM stage and writes the accumulator to TMEM.</p>
+<p>This simplified single-warpgroup pipeline only overlaps the <em>prefetched</em>
+stages: the main loop still waits for the current MMA to complete
+(<code class="docutils literal notranslate"><span class="pre">try_wait(mma_bar,</span> <span class="pre">phase_mma)</span></code>) before issuing the next TMA load, so
+it does not yet realize the fully concurrent schedule the figure
+suggests. True producer/consumer overlap — where a dedicated load warp
+keeps issuing TMA while a separate MMA warp computes — requires warp
+specialization, which Chapter 5 introduces as Step 7. So read Step 5 as
+building the multi-stage SMEM ring buffer and per-stage barriers that
+Step 7 turns into real overlap — plus prefetch that takes the first
+loads off the critical path.</p>
 <p>When reading the Step 5 code, look for four changes from Step 4:</p>
 <ol class="arabic simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">Asmem</span></code> and <code class="docutils literal notranslate"><span class="pre">Bsmem</span></code> gain a leading <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH</span></code> dimension, so
@@ -600,7 +625,7 @@ the number of pipeline stages (double buffering):</p>
                           <span class="o">**</span><span class="n">tma_config</span><span class="p">)</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">arrive</span><span class="o">.</span><span class="n">expect_tx</span><span class="p">(</span>
                 <span class="n">tma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="n">stage</span><span class="p">]),</span>
-                <span class="p">(</span><span class="n">BLK_M</span> <span class="o">*</span> <span class="n">BLK_K</span> <span class="o">+</span> <span class="n">BLK_N</span> <span class="o">*</span> <span class="n">BLK_K</span><span class="p">)</span> <span class="o">*</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="p">(</span><span class="n">BLK_M</span> <span class="o">*</span> <span class="n">BLK_K</span> <span class="o">+</span> <span class="n">BLK_N</span> <span class="o">*</span> <span class="n">BLK_K</span><span class="p">)</span> <span class="o">*</span> <span class="n">F16_SIZE</span><span class="p">)</span>
 
         <span class="nd">@Tx</span><span class="o">.</span><span class="n">inline</span>
         <span class="k">def</span><span class="w"> </span><span class="nf">mma</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="n">accum</span><span class="p">):</span>
@@ -678,15 +703,26 @@ the number of pipeline stages (double buffering):</p>
 4096 output, that is 1024 CTAs. Step 6 instead launches a fixed pool of
 CTAs and lets each CTA process multiple output tiles. This makes tile
 assignment explicit in the kernel and gives the scheduler control over
-tile order. Benchmarks use M=N=K=4096.</p>
+tile order. Same full M=N=K=4096 size.</p>
+<blockquote>
+<div><p><strong>What this step changes — Scope</strong> - Scope: a fixed pool of
+persistent CTAs, each looping over many output tiles via the
+scheduler. - Layout: unchanged — the same per-tile SMEM/TMEM/register
+path. - Dispatch: unchanged.</p>
+</div></blockquote>
 <section id="persistent-scheduling">
 <h3><span class="section-number">4.3.1. </span>Persistent Scheduling<a class="headerlink" href="#persistent-scheduling" title="Permalink to this heading">¶</a></h3>
 <p>A persistent kernel launches <code class="docutils literal notranslate"><span class="pre">SM_COUNT</span></code> CTAs instead of one CTA per
 output tile. In the B200 configuration used here, <code class="docutils literal notranslate"><span class="pre">SM_COUNT=148</span></code>, so
 the kernel launches one CTA per SM. Each CTA loops over output tiles
-assigned by <code class="docutils literal notranslate"><span class="pre">ClusterPersistentScheduler2D</span></code>. The scheduler groups
-nearby tiles with <code class="docutils literal notranslate"><span class="pre">l2_group_size=8</span></code>, improving the chance that
-recently used A or B tiles are still in L2.</p>
+assigned by <code class="docutils literal notranslate"><span class="pre">ClusterPersistentScheduler2D</span></code>. Launching 148 persistent
+CTAs instead of 1024 one-shot CTAs amortizes per-tile setup — TMEM
+allocation, barrier init, and scheduling are paid once per CTA and
+reused across the ~7 tiles it handles. The scheduler also groups nearby
+tiles with <code class="docutils literal notranslate"><span class="pre">l2_group_size=8</span></code>: output tiles in the same row band reuse
+the same A row-tiles (and same column band, the same B tiles), so
+processing them back-to-back keeps those operands hot in L2 instead of
+re-fetching from HBM.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">bx</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="n">SM_COUNT</span><span class="p">])</span>  <span class="c1"># 1D grid, one CTA per SM</span>
 
 <span class="n">tile_scheduler</span> <span class="o">=</span> <span class="n">ClusterPersistentScheduler2D</span><span class="p">(</span>
@@ -811,7 +847,7 @@ to assign tiles to CTAs:</p>
                           <span class="o">**</span><span class="n">tma_config</span><span class="p">)</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">arrive</span><span class="o">.</span><span class="n">expect_tx</span><span class="p">(</span>
                 <span class="n">tma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="n">stage</span><span class="p">]),</span>
-                <span class="p">(</span><span class="n">BLK_M</span> <span class="o">*</span> <span class="n">BLK_K</span> <span class="o">+</span> <span class="n">BLK_N</span> <span class="o">*</span> <span class="n">BLK_K</span><span class="p">)</span> <span class="o">*</span> <span class="mi">2</span><span class="p">)</span>
+                <span class="p">(</span><span class="n">BLK_M</span> <span class="o">*</span> <span class="n">BLK_K</span> <span class="o">+</span> <span class="n">BLK_N</span> <span class="o">*</span> <span class="n">BLK_K</span><span class="p">)</span> <span class="o">*</span> <span class="n">F16_SIZE</span><span class="p">)</span>
 
         <span class="nd">@Tx</span><span class="o">.</span><span class="n">inline</span>
         <span class="k">def</span><span class="w"> </span><span class="nf">mma</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="n">accum</span><span class="p">):</span>

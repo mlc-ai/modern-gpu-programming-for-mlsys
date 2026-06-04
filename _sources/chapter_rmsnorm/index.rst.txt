@@ -124,7 +124,10 @@ of the row, compute partial :math:`x^2` sum. But each thread processes a
    st = (ki * 256 + thread_id) * vec_size   (starting position in the row)
 
 So thread 0 processes elements 0-7, thread 1 processes 8-15, …, and they
-collectively cover the entire ``hidden_size=4096`` row.
+collectively cover the entire ``hidden_size=4096`` row. Each thread
+reads its 8 elements as one 128-bit vector load rather than eight scalar
+loads — fewer instructions issued and each thread moves a full
+cache-line-friendly chunk, which is what ``vec_size`` buys.
 
 **Why multiple warps?** A single warp (32 threads × 8 elements = 256
 elements per iteration) would need 16 loop iterations to cover 4096
@@ -200,7 +203,7 @@ In code:
    sum_sq_smem[ty] = sum_sq[0]        # step 1: each warp writes (ty = warp index)
    Tx.ptx.bar.sync(1, bdx * bdy)     # step 2: barrier (all warps done writing)
    if ty == 0:                         # steps 3-5: only warp 0
-       sum_sq[0] = sum_sq_smem[tx]    #   read all partial sums (tx = lane 0-7)
+       sum_sq[0] = sum_sq_smem[tx]    #   read partial sums (only tx < bdy; see full kernel for the guard)
        # shuffle XOR reduction ...     #   reduce to grand total
        sum_sq_smem[0] = sum_sq[0]     #   write grand total
    Tx.ptx.bar.sync(1, bdx * bdy)     # step 6: barrier (grand total ready)
@@ -379,14 +382,13 @@ Compile and verify:
     # Compile
     kernel = get_rmsnorm_kernel(hidden_size)
     with target:
-        lib = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+        ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
     
-    # Run
+    # Run — ex.mod(...) takes torch tensors directly, the same call form used in every chapter.
     x = torch.randn(batch_size, hidden_size, dtype=torch.float16, device=device)
     w = torch.randn(hidden_size, dtype=torch.float16, device=device)
     out = torch.zeros_like(x)
-    f = lib["main"]
-    f(tvm.runtime.from_dlpack(x), tvm.runtime.from_dlpack(w), tvm.runtime.from_dlpack(out))
+    ex.mod(x, w, out)
     
     # Verify against numpy reference
     x_np = x.float().cpu().numpy()
@@ -399,16 +401,18 @@ Compile and verify:
     assert max_err < 0.05, f"FAIL: max_err={max_err}"
     print("PASS")
 
-**Expected output**: - ``PASS`` printed; max error < 0.005 vs numpy
-reference - Wall-clock on B200, batch=64, hidden=4096: typically
+**Expected output**: - ``PASS`` printed; the typical max error is well
+under 0.005 vs the numpy reference, and the cell asserts a loose guard
+of ``< 0.05`` - Wall-clock on B200, batch=64, hidden=4096: typically
 0.004–0.010 ms (the cell prints correctness only; add a
 ``torch.cuda.Event`` timed loop if you want to measure)
 
-**If something goes wrong**: - ``max_err > 0.1``: Check fp16->fp32 cast
-before accumulation (``Tx.cast(input_vec_f32, input_vec)``) - Kernel
-hangs / deadlock: Check ``Tx.ptx.bar.sync(1, bdx * bdy)`` – the count
-must match the actual number of threads - Wrong results on some rows:
-Check ``idx[0] += SM_COUNT`` – if missing, all CTAs process the same row
+**If something goes wrong**: - ``max_err`` near or above the ``0.05``
+guard: Check fp16->fp32 cast before accumulation
+(``Tx.cast(input_vec_f32[:], input_vec[:])``) - Kernel hangs / deadlock:
+Check ``Tx.ptx.bar.sync(1, bdx * bdy)`` – the count must match the
+actual number of threads - Wrong results on some rows: Check
+``idx[0] += SM_COUNT`` – if missing, all CTAs process the same row
 
 Extension: Operator Fusion
 --------------------------

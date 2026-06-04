@@ -19,12 +19,11 @@ and let it choose the method. That is useful for mechanical edits after
 you already know the direction, but it teaches you less because the
 important choices stay hidden. The second is learning-oriented: turn the
 broad goal into a specific instruction, such as “explain
-``bar_softmax_corr_full`` and ``bar_softmax_corr_empty`` as a
-mailbox-slot lifecycle, keep the value-MMA gate in a separate diagram,
-then rebuild the tutorial.” This is usually more effective for TIRX
-because the important work is not just changing text or code; it is
-learning what choices are possible and which hardware contracts those
-choices imply.
+``softmax_corr.full`` and ``softmax_corr.empty`` as a mailbox-slot
+lifecycle, keep the value-MMA gate in a separate diagram, then rebuild
+the tutorial.” This is usually more effective for TIRX because the
+important work is not just changing text or code; it is learning what
+choices are possible and which hardware contracts those choices imply.
 
 When you do not yet know the right instruction, ask the agent for
 candidates first. A good prompt is:
@@ -104,7 +103,7 @@ For tutorial writing, the difference looks like this:
    Make the FA4 barrier section easier to understand.
 
    Candidate prompt:
-   Give me three ways to explain bar_softmax_corr_empty:
+   Give me three ways to explain softmax_corr.empty:
    1. a full barrier DAG,
    2. a mailbox slot lifecycle,
    3. a wait/arrive table.
@@ -112,9 +111,9 @@ For tutorial writing, the difference looks like this:
    Do not edit yet.
 
    Final instruction after choosing:
-   Use the mailbox slot lifecycle. Explain that bar_softmax_corr_full means
-   WG2 may read acc_scale or row_sum, while bar_softmax_corr_empty means
-   softmax may reuse that SMEM slot. Keep bar_p_full_o_rescaled separate
+   Use the mailbox slot lifecycle. Explain that softmax_corr.full means
+   WG2 may read acc_scale or row_sum, while softmax_corr.empty means
+   softmax may reuse that SMEM slot. Keep p_o_rescale separate
    because it gates value MMA, not the scale slot.
 
 For kernel work, the same pattern applies:
@@ -149,11 +148,13 @@ The TIRX Contract Prompt
 When asking an agent about a TIRX kernel, do not start with only a code
 dump. Start with the kernel contract.
 
-Each field has a job. The tile path gives the data flow. Scopes and
-roles say who executes each tile operation. Layouts and dispatch say
-which lowering is legal. Barriers say which producer-consumer edges make
-the async work safe to consume. The example below is the kind of prompt
-you can derive from the warp-specialized GEMM chapter.
+Each field has a job. The tile path gives the data flow. Then come the
+same three pillars as the per-step cards in Chapters 3–5: **scope**
+(roles) says who executes each tile operation, **layout** says where its
+tiles live, and **dispatch** says which hardware path lowers it.
+**Barriers** say which producer-consumer edges make the async work safe
+to consume. The example below is the kind of prompt you can derive from
+the warp-specialized GEMM chapter.
 
 .. raw:: latex
 
@@ -162,7 +163,7 @@ you can derive from the warp-specialized GEMM chapter.
 .. code:: text
 
    Target: NVIDIA Blackwell SM100a.
-   Kernel: warp-specialized GEMM from Chapter 5.
+   Kernel: multi-consumer warp-specialized GEMM (Chapter 5, Step 9).
 
    Tile path:
    GMEM -> SMEM by TMA.
@@ -170,20 +171,24 @@ you can derive from the warp-specialized GEMM chapter.
    TMEM -> RF -> SMEM -> GMEM by epilogue.
 
    Scopes and roles:
-   WG1 warp 3: TMA producer.
-   WG1 warp 0: MMA consumer.
-   WG0: writeback.
+   WG2 warp 3: TMA producer.
+   WG2 warps 0-1: MMA consumers.
+   WG0-WG1: writeback.
 
    Layouts:
    SMEM A/B use tma_shared_layout(...).
    TMEM accumulator uses TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]).
    RF readback uses TileLayout(S[(128, N) : (1@tid_in_wg, 1)]).
 
-   Barriers:
-   tma2mma: TMA -> MMA.
-   mma2tma: MMA -> TMA.
-   mma2ld: MMA -> writeback.
-   ld2mma: writeback -> MMA.
+   Dispatch:
+   TMA for GMEM<->SMEM loads and stores.
+   tcgen05 for the MMA; tcgen05.ld for the TMEM->RF readback.
+
+   Barriers (the Chapter 5 names):
+   tma2mma: TMA -> MMA (A/B SMEM stage loaded).
+   mma2tma: MMA -> TMA (SMEM stage free to refill).
+   mma2ld: MMA -> writeback (accumulator ready).
+   ld2mma: writeback -> MMA (accumulator slot free).
 
    Symptom:
    kernel hangs after the first output tile.
@@ -384,8 +389,8 @@ Use Case 3: Debug from Symptoms
 
 When a kernel fails, first classify the symptom. Then ask the agent to
 map the symptom back to the nearest producer-consumer handoff. The table
-here is the prompt-level version; use the TIRX Language and Compile
-Pipeline appendix page when you need generated-CUDA inspection.
+here is the prompt-level version; use the *TIRX Language and Compile
+Pipeline* appendix page when you need generated-CUDA inspection.
 
 +-----------------+-------------------------+---------------------------+
 | Symptom         | Likely area             | First checks              |
@@ -517,8 +522,8 @@ elected issue               ``tvm_builtin_elect_one_sync_op()``
 If the agent’s explanation disagrees with the generated code, trust the
 generated code.
 
-For a broader generated-CUDA workflow, use the TIRX Language and Compile
-Pipeline appendix page.
+For a broader generated-CUDA workflow, use the *TIRX Language and
+Compile Pipeline* appendix page.
 
 Agent Review Boundaries
 -----------------------

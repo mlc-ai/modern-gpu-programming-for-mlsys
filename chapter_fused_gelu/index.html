@@ -104,7 +104,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2 current"><a class="current reference internal" href="#">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -147,7 +147,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2 current"><a class="current reference internal" href="#">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -213,7 +213,11 @@ matrix <code class="docutils literal notranslate"><span class="pre">[batch,</spa
 </figure>
 <p>Each thread handles exactly one output element. The flat <code class="docutils literal notranslate"><span class="pre">gid</span></code> fills
 the matrix row by row: the first <code class="docutils literal notranslate"><span class="pre">out_dim</span></code> threads cover row 0, the
-next <code class="docutils literal notranslate"><span class="pre">out_dim</span></code> threads cover row 1, and so on.</p>
+next <code class="docutils literal notranslate"><span class="pre">out_dim</span></code> threads cover row 1, and so on. Because consecutive
+<code class="docutils literal notranslate"><span class="pre">gid</span></code> values map to consecutive <code class="docutils literal notranslate"><span class="pre">col</span></code> values in the same row,
+neighboring threads read neighboring addresses — the access is
+coalesced, which is what lets a warp’s 32 loads collapse into a few
+memory transactions.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">gid</span> <span class="o">=</span> <span class="n">bx</span> <span class="o">*</span> <span class="n">NUM_THREADS</span> <span class="o">+</span> <span class="n">tid</span>
 <span class="n">row</span> <span class="o">=</span> <span class="n">gid</span> <span class="o">//</span> <span class="n">out_dim</span>
 <span class="n">col</span> <span class="o">=</span> <span class="n">gid</span> <span class="o">%</span> <span class="n">out_dim</span>
@@ -232,7 +236,11 @@ the kernel reads both halves of the same row:</p>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">input1</span></code> goes through the GELU-tanh approximation, then the result is
 multiplied by <code class="docutils literal notranslate"><span class="pre">input2</span></code>. The constants are cast with
-<code class="docutils literal notranslate"><span class="pre">Tx.float16(...)</span></code> so the expression stays in fp16 arithmetic.</p>
+<code class="docutils literal notranslate"><span class="pre">Tx.float16(...)</span></code> so the expression stays in fp16 arithmetic. Because
+the whole GELU path — including the <code class="docutils literal notranslate"><span class="pre">x^3</span></code> term and the <code class="docutils literal notranslate"><span class="pre">tanh</span></code> — runs
+in fp16 while the numpy reference computes in fp32, a small but bounded
+rounding error is expected; that is why the verification tolerance is
+loose (<code class="docutils literal notranslate"><span class="pre">0.05</span></code>) rather than exact.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
@@ -293,7 +301,7 @@ multiplied by <code class="docutils literal notranslate"><span class="pre">input
 <span class="c1"># Run</span>
 <span class="n">x_cat</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">out_dim</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
 <span class="n">out</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">batch_size</span><span class="p">,</span> <span class="n">out_dim</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
-<span class="n">ex</span><span class="p">(</span><span class="n">x_cat</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+<span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="p">(</span><span class="n">x_cat</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
 
 <span class="c1"># Verify against numpy reference</span>
 <span class="n">x_np</span> <span class="o">=</span> <span class="n">x_cat</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
@@ -311,12 +319,16 @@ multiplied by <code class="docutils literal notranslate"><span class="pre">input
 <h3><span class="section-number">8.4.1.3. </span>Expected Output &amp; Troubleshooting<a class="headerlink" href="#expected-output-troubleshooting" title="Permalink to this heading">¶</a></h3>
 <p><strong>Expected output</strong>:</p>
 <ul class="simple">
-<li><p>Max error: &lt; 0.01 (fp16 GELU approximation)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PASS</span></code> printed. The kernel runs GELU entirely in fp16 while the
+reference is fp32, so the typical max error is ~0.005–0.01. The cell
+asserts a loose guard of <code class="docutils literal notranslate"><span class="pre">&lt;</span> <span class="pre">0.05</span></code>; a <code class="docutils literal notranslate"><span class="pre">max_err</span></code> above ~0.5
+indicates a real bug (wrong constant or wrong gate offset), not
+rounding.</p></li>
 </ul>
 <p><strong>If something goes wrong</strong>:</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">max_err</span> <span class="pre">&gt;</span> <span class="pre">0.5</span></code>: Check that <code class="docutils literal notranslate"><span class="pre">Tx.float16(0.7978845608)</span></code> is correct
-(this is sqrt(2/pi))</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">max_err</span></code> near the <code class="docutils literal notranslate"><span class="pre">0.05</span></code> guard or above ~0.5: Check that
+<code class="docutils literal notranslate"><span class="pre">Tx.float16(0.7978845608)</span></code> is correct (this is sqrt(2/pi))</p></li>
 <li><p>Kernel hangs: Check <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">gid</span> <span class="pre">&lt;</span> <span class="pre">total</span></code> boundary guard is present</p></li>
 <li><p>All zeros: Check that <code class="docutils literal notranslate"><span class="pre">input_buf[row,</span> <span class="pre">col</span> <span class="pre">+</span> <span class="pre">out_dim]</span></code> reads from the
 second half (gate)</p></li>
@@ -335,6 +347,10 @@ second half (gate)</p></li>
 output element exactly once. Is it compute-bound or memory-bound?
 Why?</p></li>
 </ol>
+<p><strong>Try with your agent</strong>: Paste this kernel and ask it to identify the
+scope, layout, and dispatch of the elementwise store — which threads
+cooperate, how the flat <code class="docutils literal notranslate"><span class="pre">gid</span></code> maps to <code class="docutils literal notranslate"><span class="pre">(row,</span> <span class="pre">col)</span></code>, and which
+hardware path the <code class="docutils literal notranslate"><span class="pre">output_buf[row,</span> <span class="pre">col]</span> <span class="pre">=</span> <span class="pre">...</span></code> write lowers to.</p>
 </section>
 </section>
 

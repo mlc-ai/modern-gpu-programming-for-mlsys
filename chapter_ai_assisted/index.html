@@ -102,7 +102,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -145,7 +145,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -174,12 +174,11 @@ and let it choose the method. That is useful for mechanical edits after
 you already know the direction, but it teaches you less because the
 important choices stay hidden. The second is learning-oriented: turn the
 broad goal into a specific instruction, such as “explain
-<code class="docutils literal notranslate"><span class="pre">bar_softmax_corr_full</span></code> and <code class="docutils literal notranslate"><span class="pre">bar_softmax_corr_empty</span></code> as a
-mailbox-slot lifecycle, keep the value-MMA gate in a separate diagram,
-then rebuild the tutorial.” This is usually more effective for TIRX
-because the important work is not just changing text or code; it is
-learning what choices are possible and which hardware contracts those
-choices imply.</p>
+<code class="docutils literal notranslate"><span class="pre">softmax_corr.full</span></code> and <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code> as a mailbox-slot
+lifecycle, keep the value-MMA gate in a separate diagram, then rebuild
+the tutorial.” This is usually more effective for TIRX because the
+important work is not just changing text or code; it is learning what
+choices are possible and which hardware contracts those choices imply.</p>
 <p>When you do not yet know the right instruction, ask the agent for
 candidates first. A good prompt is:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>I want to make the FA4 barrier section clearer, but I do not know the best form yet.
@@ -242,7 +241,7 @@ contract.</p>
 Make the FA4 barrier section easier to understand.
 
 Candidate prompt:
-Give me three ways to explain bar_softmax_corr_empty:
+Give me three ways to explain softmax_corr.empty:
 1. a full barrier DAG,
 2. a mailbox slot lifecycle,
 3. a wait/arrive table.
@@ -250,9 +249,9 @@ For each option, say which misunderstanding it prevents and which detail it hide
 Do not edit yet.
 
 Final instruction after choosing:
-Use the mailbox slot lifecycle. Explain that bar_softmax_corr_full means
-WG2 may read acc_scale or row_sum, while bar_softmax_corr_empty means
-softmax may reuse that SMEM slot. Keep bar_p_full_o_rescaled separate
+Use the mailbox slot lifecycle. Explain that softmax_corr.full means
+WG2 may read acc_scale or row_sum, while softmax_corr.empty means
+softmax may reuse that SMEM slot. Keep p_o_rescale separate
 because it gates value MMA, not the scale slot.
 </pre></div>
 </div>
@@ -280,13 +279,15 @@ possible patches.</p>
 <h2><span class="section-number">7.3. </span>The TIRX Contract Prompt<a class="headerlink" href="#the-tirx-contract-prompt" title="Permalink to this heading">¶</a></h2>
 <p>When asking an agent about a TIRX kernel, do not start with only a code
 dump. Start with the kernel contract.</p>
-<p>Each field has a job. The tile path gives the data flow. Scopes and
-roles say who executes each tile operation. Layouts and dispatch say
-which lowering is legal. Barriers say which producer-consumer edges make
-the async work safe to consume. The example below is the kind of prompt
-you can derive from the warp-specialized GEMM chapter.</p>
+<p>Each field has a job. The tile path gives the data flow. Then come the
+same three pillars as the per-step cards in Chapters 3–5: <strong>scope</strong>
+(roles) says who executes each tile operation, <strong>layout</strong> says where its
+tiles live, and <strong>dispatch</strong> says which hardware path lowers it.
+<strong>Barriers</strong> say which producer-consumer edges make the async work safe
+to consume. The example below is the kind of prompt you can derive from
+the warp-specialized GEMM chapter.</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Target: NVIDIA Blackwell SM100a.
-Kernel: warp-specialized GEMM from Chapter 5.
+Kernel: multi-consumer warp-specialized GEMM (Chapter 5, Step 9).
 
 Tile path:
 GMEM -&gt; SMEM by TMA.
@@ -294,20 +295,24 @@ SMEM -&gt; TMEM by tcgen05 MMA.
 TMEM -&gt; RF -&gt; SMEM -&gt; GMEM by epilogue.
 
 Scopes and roles:
-WG1 warp 3: TMA producer.
-WG1 warp 0: MMA consumer.
-WG0: writeback.
+WG2 warp 3: TMA producer.
+WG2 warps 0-1: MMA consumers.
+WG0-WG1: writeback.
 
 Layouts:
 SMEM A/B use tma_shared_layout(...).
 TMEM accumulator uses TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]).
 RF readback uses TileLayout(S[(128, N) : (1@tid_in_wg, 1)]).
 
-Barriers:
-tma2mma: TMA -&gt; MMA.
-mma2tma: MMA -&gt; TMA.
-mma2ld: MMA -&gt; writeback.
-ld2mma: writeback -&gt; MMA.
+Dispatch:
+TMA for GMEM&lt;-&gt;SMEM loads and stores.
+tcgen05 for the MMA; tcgen05.ld for the TMEM-&gt;RF readback.
+
+Barriers (the Chapter 5 names):
+tma2mma: TMA -&gt; MMA (A/B SMEM stage loaded).
+mma2tma: MMA -&gt; TMA (SMEM stage free to refill).
+mma2ld: MMA -&gt; writeback (accumulator ready).
+ld2mma: writeback -&gt; MMA (accumulator slot free).
 
 Symptom:
 kernel hangs after the first output tile.
@@ -507,8 +512,8 @@ issue, commit, deallocation, remote barriers, and scheduler tile shape.</p>
 <h2><span class="section-number">7.7. </span>Use Case 3: Debug from Symptoms<a class="headerlink" href="#use-case-3-debug-from-symptoms" title="Permalink to this heading">¶</a></h2>
 <p>When a kernel fails, first classify the symptom. Then ask the agent to
 map the symptom back to the nearest producer-consumer handoff. The table
-here is the prompt-level version; use the TIRX Language and Compile
-Pipeline appendix page when you need generated-CUDA inspection.</p>
+here is the prompt-level version; use the <em>TIRX Language and Compile
+Pipeline</em> appendix page when you need generated-CUDA inspection.</p>
 <table class="docutils align-default">
 <thead>
 <tr class="row-odd"><th class="head"><p>Symptom</p></th>
@@ -643,8 +648,8 @@ Does it require all lanes of one warp, or only lane 0?
 </table>
 <p>If the agent’s explanation disagrees with the generated code, trust the
 generated code.</p>
-<p>For a broader generated-CUDA workflow, use the TIRX Language and Compile
-Pipeline appendix page.</p>
+<p>For a broader generated-CUDA workflow, use the <em>TIRX Language and
+Compile Pipeline</em> appendix page.</p>
 </section>
 <section id="agent-review-boundaries">
 <h2><span class="section-number">7.10. </span>Agent Review Boundaries<a class="headerlink" href="#agent-review-boundaries" title="Permalink to this heading">¶</a></h2>

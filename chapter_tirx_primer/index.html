@@ -103,7 +103,7 @@ Show Source
 <li class="toctree-l2 current"><a class="current reference internal" href="#">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -146,7 +146,7 @@ Show Source
 <li class="toctree-l2 current"><a class="current reference internal" href="#">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -242,9 +242,8 @@ following operation.</p>
 <span class="n">tid_in_wg</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread_id_in_wg</span><span class="p">([</span><span class="mi">128</span><span class="p">])</span>
 </pre></div>
 </div>
-<p>Current coordinate calls do not use <code class="docutils literal notranslate"><span class="pre">parent=...</span></code>. The relationship is
-in the name: <code class="docutils literal notranslate"><span class="pre">warp_id_in_wg</span></code> means warp inside a warpgroup, and
-<code class="docutils literal notranslate"><span class="pre">cta_id_in_cluster</span></code> means CTA inside a cluster.</p>
+<p>The relationship is in the name: <code class="docutils literal notranslate"><span class="pre">warp_id_in_wg</span></code> means warp inside a
+warpgroup, and <code class="docutils literal notranslate"><span class="pre">cta_id_in_cluster</span></code> means CTA inside a cluster.</p>
 <p>Scope examples:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="p">():</span>
     <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">A_tile</span><span class="p">)</span>
@@ -293,8 +292,12 @@ shape:</p>
 <p>The pool is a shared-memory allocation plan. It is not an automatic
 live-range optimizer. Put control objects and tile storage in the order
 you need, then call <code class="docutils literal notranslate"><span class="pre">commit()</span></code>.</p>
-<p>TMEM can be managed manually:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">Tx</span><span class="o">.</span><span class="n">address_of</span><span class="p">(</span><span class="n">tmem_addr</span><span class="p">),</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<p>TMEM can be managed manually. The layout vocabulary (<code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>,
+<code class="docutils literal notranslate"><span class="pre">S</span></code>, <code class="docutils literal notranslate"><span class="pre">TLane</span></code>, <code class="docutils literal notranslate"><span class="pre">TCol</span></code>) lives in <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code>, not on <code class="docutils literal notranslate"><span class="pre">Tx</span></code>,
+so import it explicitly:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">S</span><span class="p">,</span> <span class="n">TileLayout</span><span class="p">,</span> <span class="n">TLane</span><span class="p">,</span> <span class="n">TCol</span>
+
+<span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">Tx</span><span class="o">.</span><span class="n">address_of</span><span class="p">(</span><span class="n">tmem_addr</span><span class="p">),</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 <span class="n">tmem</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
     <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span> <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
     <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)])</span>
@@ -317,8 +320,13 @@ allocated TMEM. It does not allocate TMEM by itself.</p>
 <section id="pipeline-objects">
 <h2><span class="section-number">8.3.6. </span>Pipeline Objects<a class="headerlink" href="#pipeline-objects" title="Permalink to this heading">¶</a></h2>
 <p>Software-pipelined kernels need stage and phase tracking. Current TIRX
-uses <code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> and <code class="docutils literal notranslate"><span class="pre">Pipeline</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">kv_state</span> <span class="o">=</span> <span class="n">PipelineState</span><span class="p">(</span><span class="n">SMEM_PIPE_DEPTH_KV</span><span class="p">)</span>
+uses <code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> and <code class="docutils literal notranslate"><span class="pre">Pipeline</span></code>. These helpers are <em>not</em> part of
+the <code class="docutils literal notranslate"><span class="pre">Tx</span></code> namespace; import them explicitly from
+<code class="docutils literal notranslate"><span class="pre">tvm.tirx.lang.pipeline</span></code> (the same module also exports <code class="docutils literal notranslate"><span class="pre">MBarrier</span></code>,
+<code class="docutils literal notranslate"><span class="pre">TMABar</span></code>, and <code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code>):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.lang.pipeline</span><span class="w"> </span><span class="kn">import</span> <span class="n">Pipeline</span><span class="p">,</span> <span class="n">PipelineState</span>
+
+<span class="n">kv_state</span> <span class="o">=</span> <span class="n">PipelineState</span><span class="p">(</span><span class="n">SMEM_PIPE_DEPTH_KV</span><span class="p">)</span>
 <span class="n">kv_load</span> <span class="o">=</span> <span class="n">Pipeline</span><span class="p">(</span><span class="n">pool</span><span class="p">,</span> <span class="n">SMEM_PIPE_DEPTH_KV</span><span class="p">,</span> <span class="n">full</span><span class="o">=</span><span class="s2">&quot;tma&quot;</span><span class="p">,</span> <span class="n">empty</span><span class="o">=</span><span class="s2">&quot;tcgen05&quot;</span><span class="p">,</span> <span class="n">empty_phase_offset</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </pre></div>
 </div>
@@ -331,8 +339,9 @@ exact names depend on the producer-consumer direction.</p>
 </section>
 <section id="metaprogramming-helpers">
 <h2><span class="section-number">8.3.7. </span>Metaprogramming Helpers<a class="headerlink" href="#metaprogramming-helpers" title="Permalink to this heading">¶</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">Tx.meta_var(expr)</span></code> keeps simple expressions inline in the generated
-IR:</p>
+<p><code class="docutils literal notranslate"><span class="pre">Tx.meta_var(expr)</span></code> is a parser-only value: the wrapped expression is
+substituted inline wherever the name is used, so it never becomes a
+separate IR variable in the final TIR:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">m_st</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">bx</span> <span class="o">*</span> <span class="n">BLK_M</span><span class="p">)</span>
 <span class="n">n_st</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">by</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>
 </pre></div>
@@ -373,7 +382,7 @@ loop bodies.</p>
 <h2><span class="section-number">8.3.9. </span>Generated CUDA Inspection<a class="headerlink" href="#generated-cuda-inspection" title="Permalink to this heading">¶</a></h2>
 <p>Generated CUDA is the fastest way to check whether scopes and hardware
 helpers lowered as intended:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports_</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">)</span>
 </pre></div>
 </div>

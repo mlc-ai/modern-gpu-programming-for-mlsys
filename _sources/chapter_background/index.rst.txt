@@ -6,7 +6,8 @@ Blackwell Background
 
 
 Blackwell kernels coordinate thread groups, memory spaces, TMA,
-``tcgen05``, barriers, and CTA clusters.
+``tcgen05``, barriers, and CTA clusters. This chapter introduces each
+one, because the rest of the tutorial builds on them.
 
 Thread Hierarchy
 ----------------
@@ -23,8 +24,11 @@ Blackwell organizes threads into a nested hierarchy:
   memory.
 
 - **Warpgroup**: 4 consecutive warps (128 threads). On Blackwell, the
-  warpgroup is the cooperation unit for TMEM reads — the 128 ``TLane``
-  rows match the 128 threads one-to-one.
+  warpgroup is the cooperation unit for TMEM reads — the 128 threads
+  collectively cover the 128 ``TLane`` rows (``TLane`` is TMEM’s row
+  axis, defined under Memory Spaces below), with each of the four warps
+  owning one 32-lane slab (warp 0 → lanes 0-31, warp 1 → 32-63, warp 2 →
+  64-95, warp 3 → 96-127).
 
 - **Warp**: A warp contains 32 threads and is the basic SIMT (*single
   instruction, multiple threads*) execution unit. The threads in a warp
@@ -79,7 +83,8 @@ registers:
 
 Each memory space has different access rules. GMEM is the large
 persistent store, SMEM is the staging area for tiles, TMEM holds MMA
-accumulators, and registers hold per-thread values used by the epilogue.
+accumulators, and registers hold the per-thread fragments that the
+epilogue reads back from TMEM, casts, and stores to GMEM.
 
 **Tensor Memory (TMEM)** is new in Blackwell. It is a per-SM,
 high-bandwidth scratchpad memory used by the ``tcgen05`` MMA path.
@@ -96,7 +101,9 @@ into registers, or stages them through shared memory for output.
   accessed like normal memory; instead, it uses a special 2D address
   space whose rows are indexed by a hardware axis called ``TLane`` (128
   lanes) and whose columns are indexed by ``TCol`` (up to 512 columns).
-  TMEM must be explicitly allocated and deallocated.
+  TMEM must be explicitly allocated and deallocated; allocation is
+  performed by a single warp in units of 32 columns, with the column
+  count rounded up to a power of two.
 
 TMA
 ---
@@ -146,16 +153,20 @@ flow. Tensor Cores execute dense tile-level MMA instructions for GEMM,
 convolution, and attention. Both engines live on the same SM, but dense
 linear algebra relies on Tensor Cores for peak throughput.
 
-On Blackwell, an MMA operation has three hardware contracts that kernel
-code must coordinate:
+On Blackwell, an MMA is more than the math. It is **asynchronous**:
+issuing it is not the same as finishing it, so completion is tracked
+with a barrier. An MMA also spells out three things you will see for
+every tile operation in this tutorial — its **scope / layout /
+dispatch**:
 
-1. **Cooperation scope.** An MMA may involve a warpgroup, and some
+1. **Scope** — who cooperates. An MMA may involve a warpgroup, and some
    Blackwell modes allow two CTAs to cooperate on one MMA tile.
-2. **Operand location.** MMA operands are described as tiles in SMEM,
-   and some Blackwell variants can also use TMEM.
-3. **Asynchronous completion.** The MMA instruction issues work and
-   returns before the hardware finishes; completion is tracked
-   separately with barriers.
+2. **Layout** — where the operands and result live. MMA operands are
+   tiles in SMEM (some Blackwell variants also read TMEM), and the
+   accumulator is written to TMEM.
+3. **Dispatch** — which hardware path runs it. ``tcgen05`` issues the
+   MMA and returns before the math is done; the barrier mentioned above
+   is what marks it complete.
 
 One Blackwell-specific detail is where the MMA result lives.
 ``tcgen05.mma`` does not keep large accumulator tiles in registers
@@ -281,9 +292,9 @@ explicitly, and work hard to keep Tensor Cores fed.
 +-----------------------+-----------------------+-----------------------+
 | HBM3e bandwidth       | order of 8 TB/s       | bandwidth roof        |
 +-----------------------+-----------------------+-----------------------+
-| L2 cache              | device-specific; 126  | where tile operands   |
-|                       | MB-class on GB200     | actually live after   |
-|                       | systems               | warm-up               |
+| L2 cache              | device-specific; 128  | where tile operands   |
+|                       | MB-class, partitioned | actually live after   |
+|                       | per die               | warm-up               |
 +-----------------------+-----------------------+-----------------------+
 | One fp16 128×64 tile  | 16 KB                 | example staged        |
 | in SMEM               |                       | operand-tile size     |

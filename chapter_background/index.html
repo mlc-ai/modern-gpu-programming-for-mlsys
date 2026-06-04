@@ -103,7 +103,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -146,7 +146,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -163,7 +163,8 @@ Show Source
   <section id="blackwell-background">
 <span id="chap-background"></span><h1><span class="section-number">1. </span>Blackwell Background<a class="headerlink" href="#blackwell-background" title="Permalink to this heading">¶</a></h1>
 <p>Blackwell kernels coordinate thread groups, memory spaces, TMA,
-<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>, barriers, and CTA clusters.</p>
+<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>, barriers, and CTA clusters. This chapter introduces each
+one, because the rest of the tutorial builds on them.</p>
 <section id="thread-hierarchy">
 <h2><span class="section-number">1.1. </span>Thread Hierarchy<a class="headerlink" href="#thread-hierarchy" title="Permalink to this heading">¶</a></h2>
 <p>Blackwell organizes threads into a nested hierarchy:</p>
@@ -179,8 +180,11 @@ CUDA programmers know as a thread block. It is the basic scheduling
 unit: a CTA runs on a single SM and has access to that SM’s shared
 memory.</p></li>
 <li><p><strong>Warpgroup</strong>: 4 consecutive warps (128 threads). On Blackwell, the
-warpgroup is the cooperation unit for TMEM reads — the 128 <code class="docutils literal notranslate"><span class="pre">TLane</span></code>
-rows match the 128 threads one-to-one.</p></li>
+warpgroup is the cooperation unit for TMEM reads — the 128 threads
+collectively cover the 128 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> rows (<code class="docutils literal notranslate"><span class="pre">TLane</span></code> is TMEM’s row
+axis, defined under Memory Spaces below), with each of the four warps
+owning one 32-lane slab (warp 0 → lanes 0-31, warp 1 → 32-63, warp 2 →
+64-95, warp 3 → 96-127).</p></li>
 <li><p><strong>Warp</strong>: A warp contains 32 threads and is the basic SIMT (<em>single
 instruction, multiple threads</em>) execution unit. The threads in a warp
 issue the same instruction together, while each thread keeps its own
@@ -263,7 +267,8 @@ values</p></td>
 </table>
 <p>Each memory space has different access rules. GMEM is the large
 persistent store, SMEM is the staging area for tiles, TMEM holds MMA
-accumulators, and registers hold per-thread values used by the epilogue.</p>
+accumulators, and registers hold the per-thread fragments that the
+epilogue reads back from TMEM, casts, and stores to GMEM.</p>
 <p><strong>Tensor Memory (TMEM)</strong> is new in Blackwell. It is a per-SM,
 high-bandwidth scratchpad memory used by the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA path.
 Unlike earlier GPU generations where large MMA accumulators lived in
@@ -278,7 +283,9 @@ reads are performed cooperatively by the full warpgroup (128 threads).</p></li>
 accessed like normal memory; instead, it uses a special 2D address
 space whose rows are indexed by a hardware axis called <code class="docutils literal notranslate"><span class="pre">TLane</span></code> (128
 lanes) and whose columns are indexed by <code class="docutils literal notranslate"><span class="pre">TCol</span></code> (up to 512 columns).
-TMEM must be explicitly allocated and deallocated.</p></li>
+TMEM must be explicitly allocated and deallocated; allocation is
+performed by a single warp in units of 32 columns, with the column
+count rounded up to a power of two.</p></li>
 </ul>
 </section>
 <section id="tma">
@@ -321,16 +328,20 @@ instructions for indexing, elementwise math, reductions, and control
 flow. Tensor Cores execute dense tile-level MMA instructions for GEMM,
 convolution, and attention. Both engines live on the same SM, but dense
 linear algebra relies on Tensor Cores for peak throughput.</p>
-<p>On Blackwell, an MMA operation has three hardware contracts that kernel
-code must coordinate:</p>
+<p>On Blackwell, an MMA is more than the math. It is <strong>asynchronous</strong>:
+issuing it is not the same as finishing it, so completion is tracked
+with a barrier. An MMA also spells out three things you will see for
+every tile operation in this tutorial — its <strong>scope / layout /
+dispatch</strong>:</p>
 <ol class="arabic simple">
-<li><p><strong>Cooperation scope.</strong> An MMA may involve a warpgroup, and some
+<li><p><strong>Scope</strong> — who cooperates. An MMA may involve a warpgroup, and some
 Blackwell modes allow two CTAs to cooperate on one MMA tile.</p></li>
-<li><p><strong>Operand location.</strong> MMA operands are described as tiles in SMEM,
-and some Blackwell variants can also use TMEM.</p></li>
-<li><p><strong>Asynchronous completion.</strong> The MMA instruction issues work and
-returns before the hardware finishes; completion is tracked
-separately with barriers.</p></li>
+<li><p><strong>Layout</strong> — where the operands and result live. MMA operands are
+tiles in SMEM (some Blackwell variants also read TMEM), and the
+accumulator is written to TMEM.</p></li>
+<li><p><strong>Dispatch</strong> — which hardware path runs it. <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> issues the
+MMA and returns before the math is done; the barrier mentioned above
+is what marks it complete.</p></li>
 </ol>
 <p>One Blackwell-specific detail is where the MMA result lives.
 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> does not keep large accumulator tiles in registers
@@ -472,9 +483,9 @@ sparsity mode</p></td>
 <td><p>bandwidth roof</p></td>
 </tr>
 <tr class="row-odd"><td><p>L2 cache</p></td>
-<td><p>device-specific; 126
-MB-class on GB200
-systems</p></td>
+<td><p>device-specific; 128
+MB-class, partitioned
+per die</p></td>
 <td><p>where tile operands
 actually live after
 warm-up</p></td>

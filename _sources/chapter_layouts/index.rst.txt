@@ -13,10 +13,11 @@ multiply these tiles, read this accumulator tile, or store this output
 tile. It is smaller than a whole operator like GEMM, but larger than a
 scalar instruction.
 
-The function name is only part of the meaning. For example,
-``Tx.copy_async(...)`` is not one fixed instruction. Depending on the
-source, destination, scope, and dispatch, it can mean a TMA load, a TMA
-store, or a ``tcgen05.ld`` readback.
+In code, you write a tile primitive as a function call such as
+``Tx.copy_async(...)``. But the function name is only part of the
+meaning: ``Tx.copy_async`` is not one fixed instruction. Depending on
+the source, destination, scope, and dispatch, it can mean a TMA load, a
+TMA store, or a ``tcgen05.ld`` readback.
 
 When reading a TIRX primitive, check the local contract around the call:
 
@@ -33,7 +34,7 @@ When reading a TIRX primitive, check the local contract around the call:
 For asynchronous primitives, a barrier, commit, wait, or fence records
 the handoff to the next operation.
 
-.. _sec_no_sugar_gemm:
+.. _sec_why_tile_primitives:
 
 Why Tile Primitives?
 --------------------
@@ -42,39 +43,71 @@ Why Tile Primitives?
 Use one GEMM stage as the running example. A stage moves operand tiles
 into shared memory, runs Tensor Core MMA on those tiles, reads
 accumulator tiles back, and stores the result. Attention and convolution
-kernels use different math, but they still rely on the same kind of
-tile-level structure.
+kernels use different math, but they rely on the same tile-level
+structure — and that is no accident: the **tile is the unit Blackwell
+hardware actually operates on**. TMA moves tiles, ``tcgen05`` multiplies
+tiles, TMEM holds tiles. Writing at tile granularity matches the
+hardware while staying above scalar address-and-loop plumbing.
 
-The math alone is not enough. For each tile operation, a Blackwell
-kernel also has to answer:
+What we want is a kernel that runs near peak **and** stays readable —
+one you can follow, debug, and modify. On Blackwell those two goals pull
+against each other, because the math alone is not enough. For each tile
+operation the kernel must also answer:
 
 - Who cooperates on the operation?
-- Where does the tile live?
-- How is the tile laid out in that memory space?
-- Which hardware path should run it: TMA, ``tcgen05.mma``,
-  ``tcgen05.ld``, or ordinary loads and stores?
+- Where does the tile live, and how is it laid out there?
+- Which hardware path runs it: TMA, ``tcgen05.mma``, ``tcgen05.ld``, or
+  ordinary loads and stores?
 - For an asynchronous operation, what tells the next step that the
   result is ready?
 
-Raw PTX-level code answers those questions with descriptor fields,
-elected-thread guards, mbarrier phases, TMEM addresses, and wait calls.
-Everything is explicit, but the tile operation is hard to see.
+The two existing styles each give up one side of that goal. **Raw
+PTX-level code** answers every question explicitly — and a single tile
+load drowns in the plumbing:
 
-A higher-level DSL may make the kernel shorter, but Blackwell choices
-such as TMEM readback, TMA multicast, or 2-CTA cooperative MMA may be
-hidden behind a scheduler, template, or library call.
+.. raw:: latex
 
-TIRX is meant to keep the tile operation readable without hiding the
-hardware contract. A TMA load is still a tile copy, but the code says
-``dispatch="tma"`` and uses layouts that TMA can lower. A ``tcgen05``
-MMA is still a tile GEMM, but the code exposes the SMEM operand layouts
-and the TMEM accumulator layout. A TMEM readback is still a tile copy,
-but the source is TMEM, the destination is a warpgroup register view,
-and the surrounding scope is ``Tx.warpgroup()``.
+   \diilbookstyleinputcell
 
-That is the reason for tile primitives: keep the kernel written in tile
-operations while still giving the compiler the scope, layout, dispatch,
-and synchronization facts it needs.
+.. code:: text
+
+   # (schematic) one A-tile load, raw:
+   elect one lane  →  cp.async.bulk.tensor [Asmem], [A descriptor]
+                   →  mbarrier.arrive.expect_tx  (bytes)
+                   →  mbarrier.try_wait  (phase)
+
+Everything is controllable, but the *operation* — “copy this A tile into
+SMEM” — is buried. A **higher-level DSL** goes the other way: the kernel
+gets short, but Blackwell-specific choices such as TMEM readback, TMA
+multicast, or 2-CTA cooperative MMA disappear behind a scheduler,
+template, or library call — so when the kernel is slow, you cannot see,
+let alone change, the decision that made it slow.
+
+TIRX keeps the tile operation in view *and* the hardware contract
+explicit. The same load is one line:
+
+.. raw:: latex
+
+   \diilbookstyleinputcell
+
+.. code:: python
+
+   Tx.copy_async(Asmem[:, :], A[m:m+BLK_M, k:k+BLK_K], dispatch="tma")
+
+It still reads as “copy this A tile into SMEM,” yet ``dispatch="tma"``
+names the hardware path and the SMEM layout names how the tile must sit
+for TMA to lower it. A ``tcgen05`` MMA stays a tile GEMM but exposes the
+SMEM operand and TMEM accumulator layouts; a TMEM readback stays a tile
+copy but its source is TMEM, its destination a warpgroup register view,
+and its scope ``Tx.warpgroup()``.
+
+That is the reason for tile primitives: the kernel stays written in tile
+operations — the granularity the hardware works at — while every
+operation still carries the **scope, layout, dispatch**, and
+synchronization facts the compiler needs. The payoff runs through the
+rest of this tutorial: you will read a real production GEMM and a Flash
+Attention kernel, and understand each optimization as a change to one of
+those facts.
 
 .. _sec_exec_scope:
 
@@ -85,7 +118,9 @@ Execution Scope
 Scope answers the first question: who cooperates on this operation?
 
 TIRX uses ``with`` blocks for the execution levels used by Blackwell
-kernels:
+kernels. In the snippets below, focus on the ``with`` line that names
+the scope; the tile names (``Asmem``, ``tmem``, ``Dreg_wg``) are just
+stand-ins, defined for real in the GEMM chapters:
 
 .. raw:: latex
 
@@ -149,7 +184,7 @@ Many GEMM kernels start by naming the CTA, warpgroup, warp, and lane:
 .. code:: python
 
    bx, by = Tx.cta_id([M // BLK_M, N // BLK_N])
-   _ = Tx.warpgroup_id([1])
+   wg_id = Tx.warpgroup_id([1])      # single warpgroup, so wg_id is always 0 (unused below)
    warp_id = Tx.warp_id_in_wg([4])
    lane_id = Tx.lane_id([32])
 
@@ -190,10 +225,13 @@ shared memory, coordinates in TMEM, or values owned by particular
 threads.
 
 A layout is that physical view. It maps logical tile indices to memory
-axes or thread axes. This is why layout is not decoration: it decides
-whether a TMA copy can write the tile, whether ``tcgen05.mma`` can read
-the operands correctly, and whether a TMEM readback gives each thread
-the row it is supposed to store.
+axes or thread axes. This is why layout is not decoration: get it wrong
+and the kernel either won’t compile — a layout the TMA or
+``tcgen05.mma`` path cannot lower is rejected — or, worse, it compiles
+and silently produces wrong output, the way a readback layout with the
+wrong extent hands each thread the wrong row. The right layout is what
+lets a TMA copy write the tile, lets ``tcgen05.mma`` read the operands
+correctly, and gives each thread the row it is meant to store.
 
 The GEMM kernels use layouts in three recurring places: SMEM operand
 tiles, the TMEM accumulator tile, and the register view used during
@@ -211,10 +249,14 @@ First, the A and B operands live in SMEM before MMA:
    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
 
 Read this as: store each SMEM operand tile in a swizzled form that the
-TMA path and ``tcgen05.mma`` can both understand. The A tile has logical
-shape ``(BLK_M, BLK_K)``, and the B tile has logical shape
-``(BLK_N, BLK_K)``. The physical shared-memory placement is chosen for
-hardware access rather than for a simple row-major picture.
+TMA path and ``tcgen05.mma`` can both understand. *Swizzling* just
+reorders the bytes within the shared-memory tile so the engines that
+read it land on different shared-memory banks instead of colliding on
+the same one — it is a hardware-access layout, not a change to the
+tile’s logical shape. The A tile has logical shape ``(BLK_M, BLK_K)``,
+and the B tile has logical shape ``(BLK_N, BLK_K)``. The physical
+shared-memory placement is chosen for hardware access rather than for a
+simple row-major picture.
 
 Second, the MMA accumulator lives in TMEM:
 
@@ -226,10 +268,21 @@ Second, the MMA accumulator lives in TMEM:
 
    TileLayout(S[(128, N) : (1@TLane, 1@TCol)])
 
-Read the left side, ``(128, N)``, as the logical tile shape. Read the
-right side as the physical mapping: the row index maps to ``TLane``, and
-the column index maps to ``TCol``. In other words, logical element
-``(r, c)`` lives at TMEM coordinate ``(TLane=r, TCol=c)``.
+Unlike the swizzled SMEM layout above, which comes from the
+``tma_shared_layout`` helper, TMEM and register layouts are written
+directly with the ``S[...]`` shard spec — but both produce the same kind
+of layout object. ``S[shape : mapping]`` is that *shard spec* (``S``
+comes from ``from tvm.tirx.layout import S``). Despite the slice-like
+syntax, the colon is not slicing here: ``S`` reads the part before the
+colon as the tile ``shape`` and the part after it as the per-axis
+``mapping``. Read it as “a tile of this ``shape``, with each logical
+index mapped the way the right side says.” Here the left side
+``(128, N)`` is the logical tile shape — ``N`` is the tile’s column
+count, for example ``BLK_N``. The mapping tuple lines up position by
+position with the shape tuple: ``128`` ↔ ``1@TLane`` and ``N`` ↔
+``1@TCol``. So the row index maps to ``TLane``, the column index maps to
+``TCol``, and logical element ``(r, c)`` lives at TMEM coordinate
+``(TLane=r, TCol=c)``.
 
 Third, the epilogue reads the same logical accumulator tile into
 registers:
@@ -252,15 +305,22 @@ Named Axes
 
 The names after ``@`` are hardware axes:
 
-- ``TLane`` is the TMEM row axis.
+- ``TLane`` is the TMEM row axis (extent 128).
 - ``TCol`` is the TMEM column axis.
 - ``tid_in_wg`` is the thread index inside a warpgroup, from 0 to 127.
 
-The notation ``1@TLane`` means that increasing the corresponding logical
-index by one advances by one step along the ``TLane`` axis. A bare ``1``
-means the ordinary linear memory axis, written explicitly as ``1@m``.
-That is used for flat GMEM, flat SMEM, and simple local register
-buffers.
+The number before ``@`` is a **stride**, and the axis after ``@`` is
+where that stride applies. ``1@TLane`` means each increment of the
+logical row index advances one position along the ``TLane`` axis; in
+general ``s@axis`` advances ``s`` positions. A physical coordinate is
+then the per-axis sum of logical-index × stride — the same shape-stride
+model used for ordinary memory, where a row-major ``(R, C)`` tile is
+``S[(R, C) : (C, 1)]`` with ``addr(r, c) = r·C + c·1``. A bare number
+with no ``@``, as in the second slot of ``(1@tid_in_wg, 1)``, targets
+the default memory axis (``m``): an ordinary linear step through
+contiguous storage, which is why the bare form is used for flat GMEM,
+flat SMEM, and simple local register buffers. (This shape-stride
+notation is a simplified, row-major take on CuTe layouts.)
 
 So these two layouts describe the same logical tile shape but two
 different physical views:
@@ -367,7 +427,7 @@ MMA follows the same idea, but the operation is compute instead of copy:
 
 .. code:: python
 
-   Tx.gemm_async(tmem, Asmem, Bsmem, accum=False, dispatch="tcgen05")
+   Tx.gemm_async(tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :], accum=False, dispatch="tcgen05")
 
 Read this as: use Blackwell ``tcgen05`` MMA to multiply the two SMEM
 operand tiles and write the accumulator tile to TMEM. The operand
@@ -418,6 +478,10 @@ Read these API names literally:
 |                                                           | allocation.                                         |
 +-----------------------------------------------------------+-----------------------------------------------------+
 | ``Tx.alloc_local(shape, dtype)``                          | Allocate per-thread register storage.               |
++-----------------------------------------------------------+-----------------------------------------------------+
+| ``Tx.wg_reg_tile(elem_per_thread, dtype=...)``            | Allocate a warpgroup-distributed                    |
+|                                                           | ``(128, elem_per_thread)`` register tile for TMEM   |
+|                                                           | readback.                                           |
 +-----------------------------------------------------------+-----------------------------------------------------+
 | ``Tx.cuda.cta_sync()``                                    | Synchronize all threads in the CTA and order        |
 |                                                           | shared-memory writes.                               |
@@ -497,7 +561,10 @@ allocation address stored in ``tmem_addr``:
 After that declaration, the code can write ``tmem[:, :BLK_N]`` instead
 of manually doing TMEM address arithmetic.
 
-Register storage is local to each thread:
+Register storage comes in two forms. The TMEM readback target must carry
+the warpgroup-distributed ``(128, N) : (1@tid_in_wg, 1)`` layout — that
+layout is the contract, not the spelling. The GEMM chapters obtain it
+two equivalent ways:
 
 .. raw:: latex
 
@@ -505,12 +572,22 @@ Register storage is local to each thread:
 
 .. code:: python
 
+   # explicit: allocate flat, then view it with the distributed layout (Steps 1-6)
    Dreg = Tx.alloc_local((BLK_N,), acc_type)
+   Dreg_wg = Dreg.view(128, BLK_N, layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
+
+   # shorthand: the same (128, BLK_N) distributed tile in one call (later kernels)
+   Dreg_wg = Tx.wg_reg_tile(BLK_N)
+
    Dreg_f16 = Tx.alloc_local((BLK_N,), d_type)
 
-In GEMM writeback, ``Dreg`` holds fp32 values read from TMEM.
-``Dreg_f16`` holds the casted fp16 values that will be stored to output
-memory.
+Either way, ``Dreg_wg`` is the warpgroup-distributed register tile that
+receives the fp32 accumulator read from TMEM via ``tcgen05.ld``; its
+``(1@tid_in_wg, 1)`` layout is exactly the readback view described
+above. What the hardware path checks is that layout, not whether you
+wrote ``Tx.wg_reg_tile`` or ``Tx.alloc_local(...).view(...)``.
+``Dreg_f16`` is per-thread local storage for the casted fp16 values that
+will be stored to output memory.
 
 ``Tx.meta_var(...)`` appears often in address calculations:
 
@@ -529,3 +606,17 @@ and it does not allocate anything.
 When reading the GEMM code, use the same order each time: storage first,
 then scope, then tile primitive, then the wait or barrier that makes the
 next step safe.
+
+Exercises
+---------
+
+1. For a TMEM-to-register readback, name its scope, its source and
+   destination layouts, and its dispatch path. Why must it run under
+   ``Tx.warpgroup()`` and not ``Tx.thread()``?
+2. The same ``Tx.copy_async`` call can lower to a TMA load, a TMA store,
+   or a ``tcgen05.ld`` readback. What in the local context (source,
+   destination, scope, dispatch) decides which?
+3. ``TileLayout(S[(128, N) : (1@TLane, 1@TCol)])`` and
+   ``TileLayout(S[(128, N) : (1@tid_in_wg, 1)])`` describe the same
+   logical tile shape. What does each say about where the tile
+   physically lives, and which step of the GEMM path uses each?

@@ -28,8 +28,8 @@ references.
 | elementwise code, and reductions     | Gate** and **Practice Kernel: |
 |                                      | RMSNorm Reduction**           |
 +--------------------------------------+-------------------------------+
-| Locate the current Flash Attention 4 | **Flash Attention 4 Source    |
-| implementation                       | Map**                         |
+| Read the full Flash Attention 4      | **Flash Attention 4 Source**  |
+| kernel source                        |                               |
 +--------------------------------------+-------------------------------+
 
 Most readers only need **Environment Setup** and **TIRX API Reference**

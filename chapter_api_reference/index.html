@@ -103,7 +103,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -146,7 +146,7 @@ Show Source
 <li class="toctree-l2"><a class="reference internal" href="../chapter_tirx_primer/index.html">8.3. TIRX Language and Compile Pipeline</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_fused_gelu/index.html">8.4. Practice Kernel: Fused GELU Gate</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../chapter_rmsnorm/index.html">8.5. Practice Kernel: RMSNorm Reduction</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source Map</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../chapter_fa4_source/index.html">8.6. Flash Attention 4 Source</a></li>
 </ul>
 </li>
 </ul>
@@ -222,9 +222,8 @@ clusters are used.</p></td>
 </tr>
 </tbody>
 </table>
-<p>Current coordinate APIs do not take <code class="docutils literal notranslate"><span class="pre">parent=...</span></code>. The parent level is
-encoded in the function name, for example <code class="docutils literal notranslate"><span class="pre">cta_id_in_cluster</span></code> and
-<code class="docutils literal notranslate"><span class="pre">warp_id_in_wg</span></code>.</p>
+<p>Coordinate APIs encode the parent level in the name, for example
+<code class="docutils literal notranslate"><span class="pre">cta_id_in_cluster</span></code> and <code class="docutils literal notranslate"><span class="pre">warp_id_in_wg</span></code>.</p>
 </section>
 <section id="execution-scopes">
 <h2><span class="section-number">8.2.2. </span>Execution Scopes<a class="headerlink" href="#execution-scopes" title="Permalink to this heading">¶</a></h2>
@@ -281,56 +280,53 @@ useful for warp-level issue paths, but it is not the same as
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.Buffer(shape,</span> <span class="pre">dtype)</span></code></p></td>
-<td><p>Typed kernel argument in a concrete
-signature.</p></td>
+<td><p>Typed kernel argument in a concrete signature.</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.match_buffer(ptr,</span> <span class="pre">shape,</span> <span class="pre">dtype)</span></code></p></td>
-<td><p>Bind an opaque pointer argument to a typed
-buffer view.</p></td>
+<td><p>Bind an opaque pointer argument to a typed buffer view.</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.alloc_local(shape,</span> <span class="pre">dtype)</span></code></p></td>
 <td><p>Per-thread register/local storage.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.SMEMPool()</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.wg_reg_tile(elem_per_thread,</span> <span class="pre">dtype=...)</span></code></p></td>
+<td><p>Warpgroup-distributed <code class="docutils literal notranslate"><span class="pre">(128,</span> <span class="pre">elem_per_thread)</span></code> register tile for
+TMEM readback; equivalent to
+<code class="docutils literal notranslate"><span class="pre">Tx.alloc_local(...).view(...,</span> <span class="pre">S[(128,</span> <span class="pre">N)</span> <span class="pre">:</span> <span class="pre">(1&#64;tid_in_wg,</span> <span class="pre">1)])</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.SMEMPool()</span></code></p></td>
 <td><p>Shared-memory allocation pool.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pool.alloc(shape,</span> <span class="pre">dtype,</span> <span class="pre">layout=...,</span> <span class="pre">align=...)</span></code></p></td>
-<td><p>Allocate shared-memory storage from the
-pool.</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pool.alloc(shape,</span> <span class="pre">dtype,</span> <span class="pre">layout=...,</span> <span class="pre">align=...)</span></code></p></td>
+<td><p>Allocate shared-memory storage from the pool.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pool.alloc_mma(shape,</span> <span class="pre">dtype)</span></code></p></td>
-<td><p>Allocate shared-memory storage using the
-MMA-friendly helper used by current
-kernels.</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pool.alloc_mma(shape,</span> <span class="pre">dtype)</span></code></p></td>
+<td><p>Allocate shared-memory storage using the MMA-friendly helper used
+by current kernels.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pool.move_base_to(offset)</span></code></p></td>
-<td><p>Advance the pool base before later
-allocations.</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pool.move_base_to(offset)</span></code></p></td>
+<td><p>Advance the pool base before later allocations.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">pool.commit()</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">pool.commit()</span></code></p></td>
 <td><p>Close the shared-memory allocation plan.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.decl_buffer(...,</span> <span class="pre">scope=&quot;tmem&quot;,</span> <span class="pre">allocated_addr=...)</span></code></p></td>
-<td><p>Create an indexable view over a TMEM
-allocation. It does not allocate TMEM by
-itself.</p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.decl_buffer(...,</span> <span class="pre">scope=&quot;tmem&quot;,</span> <span class="pre">allocated_addr=...)</span></code></p></td>
+<td><p>Create an indexable view over a TMEM allocation. It does not
+allocate TMEM by itself.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.TMEMPool(pool,</span> <span class="pre">total_cols=...,</span> <span class="pre">cta_group=...,</span> <span class="pre">tmem_addr=...)</span></code></p></td>
-<td><p>Manage a TMEM allocation through a pool
-object.</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.TMEMPool(pool,</span> <span class="pre">total_cols=...,</span> <span class="pre">cta_group=...,</span> <span class="pre">tmem_addr=...)</span></code></p></td>
+<td><p>Manage a TMEM allocation through a pool object.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tmem_pool.alloc(shape,</span> <span class="pre">dtype,</span> <span class="pre">layout=...,</span> <span class="pre">cols=...,</span> <span class="pre">datapath=...)</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tmem_pool.alloc(shape,</span> <span class="pre">dtype,</span> <span class="pre">layout=...,</span> <span class="pre">cols=...,</span> <span class="pre">datapath=...)</span></code></p></td>
 <td><p>Allocate a TMEM view from the pool.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tmem_pool.commit()</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tmem_pool.commit()</span></code></p></td>
 <td><p>Commit the TMEM allocation.</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tmem_pool.dealloc()</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">tmem_pool.dealloc()</span></code></p></td>
 <td><p>Release the TMEM allocation.</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.TMEMStages(tmem,</span> <span class="pre">col_start=...,</span> <span class="pre">width=...,</span> <span class="pre">stages=...,</span> <span class="pre">stride=...)</span></code></p></td>
-<td><p>Describe repeated TMEM stage regions inside
-one allocation.</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Tx.TMEMStages(tmem,</span> <span class="pre">col_start=...,</span> <span class="pre">width=...,</span> <span class="pre">stages=...,</span> <span class="pre">stride=...)</span></code></p></td>
+<td><p>Describe repeated TMEM stage regions inside one allocation.</p></td>
 </tr>
 </tbody>
 </table>
@@ -533,8 +529,12 @@ consumer roles.</p></td>
 </tr>
 </tbody>
 </table>
-<p>Example:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">kv_state</span> <span class="o">=</span> <span class="n">PipelineState</span><span class="p">(</span><span class="n">SMEM_PIPE_DEPTH_KV</span><span class="p">)</span>
+<p>These five helpers are <em>not</em> on the <code class="docutils literal notranslate"><span class="pre">Tx</span></code> namespace (unlike
+<code class="docutils literal notranslate"><span class="pre">Tx.SMEMPool</span></code>/<code class="docutils literal notranslate"><span class="pre">Tx.TMEMPool</span></code>). Import them explicitly from
+<code class="docutils literal notranslate"><span class="pre">tvm.tirx.lang.pipeline</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.lang.pipeline</span><span class="w"> </span><span class="kn">import</span> <span class="n">PipelineState</span><span class="p">,</span> <span class="n">Pipeline</span><span class="p">,</span> <span class="n">MBarrier</span><span class="p">,</span> <span class="n">TMABar</span><span class="p">,</span> <span class="n">TCGen05Bar</span>
+
+<span class="n">kv_state</span> <span class="o">=</span> <span class="n">PipelineState</span><span class="p">(</span><span class="n">SMEM_PIPE_DEPTH_KV</span><span class="p">)</span>
 <span class="n">kv_load</span> <span class="o">=</span> <span class="n">Pipeline</span><span class="p">(</span><span class="n">pool</span><span class="p">,</span> <span class="n">SMEM_PIPE_DEPTH_KV</span><span class="p">,</span> <span class="n">full</span><span class="o">=</span><span class="s2">&quot;tma&quot;</span><span class="p">,</span> <span class="n">empty</span><span class="o">=</span><span class="s2">&quot;tcgen05&quot;</span><span class="p">,</span> <span class="n">empty_phase_offset</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 </pre></div>
 </div>
@@ -547,22 +547,18 @@ barriers that protect each stage.</p>
 <span class="k">with</span> <span class="n">target</span><span class="p">:</span>
     <span class="n">ex</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">kernel</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">&quot;tirx&quot;</span><span class="p">)</span>
 
-<span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports_</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>Use generated CUDA to verify that scope guards and hardware instructions
 match the intended contract.</p>
 </section>
-<section id="common-footguns">
-<h2><span class="section-number">8.2.9. </span>Common Footguns<a class="headerlink" href="#common-footguns" title="Permalink to this heading">¶</a></h2>
+<section id="common-pitfalls">
+<h2><span class="section-number">8.2.9. </span>Common Pitfalls<a class="headerlink" href="#common-pitfalls" title="Permalink to this heading">¶</a></h2>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">&#64;Tx.prim_func(tirx=True)</span></code> is the old spelling. Use
-<code class="docutils literal notranslate"><span class="pre">&#64;Tx.prim_func</span></code>; use <code class="docutils literal notranslate"><span class="pre">&#64;Tx.jit(...)</span></code> for constexpr-specialized
-kernels.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">with</span> <span class="pre">Tx.kernel():</span></code> is the old entry block. Use
-<code class="docutils literal notranslate"><span class="pre">Tx.device_entry()</span></code>.</p></li>
-<li><p>Do not add <code class="docutils literal notranslate"><span class="pre">parent=...</span></code> to coordinate calls.</p></li>
+<li><p>Use <code class="docutils literal notranslate"><span class="pre">&#64;Tx.jit(...)</span></code> for constexpr-specialized kernels; plain
+<code class="docutils literal notranslate"><span class="pre">&#64;Tx.prim_func</span></code> otherwise.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Tx.filter</span></code> does not have a range form. Pass a variable and a
 predicate.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">Tx.ptx.elect_sync()</span></code> elects one thread per warp, not one thread per
@@ -598,7 +594,7 @@ lanes can signal a barrier too early.</p></li>
 <li><a class="reference internal" href="#synchronization-and-hardware-helpers">8.2.6. Synchronization and Hardware Helpers</a></li>
 <li><a class="reference internal" href="#pipeline-helpers">8.2.7. Pipeline Helpers</a></li>
 <li><a class="reference internal" href="#compile-and-inspect">8.2.8. Compile and Inspect</a></li>
-<li><a class="reference internal" href="#common-footguns">8.2.9. Common Footguns</a></li>
+<li><a class="reference internal" href="#common-pitfalls">8.2.9. Common Pitfalls</a></li>
 </ul>
 </li>
 </ul>

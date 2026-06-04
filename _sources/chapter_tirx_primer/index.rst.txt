@@ -113,9 +113,8 @@ following operation.
    lane_id = Tx.lane_id([32])
    tid_in_wg = Tx.thread_id_in_wg([128])
 
-Current coordinate calls do not use ``parent=...``. The relationship is
-in the name: ``warp_id_in_wg`` means warp inside a warpgroup, and
-``cta_id_in_cluster`` means CTA inside a cluster.
+The relationship is in the name: ``warp_id_in_wg`` means warp inside a
+warpgroup, and ``cta_id_in_cluster`` means CTA inside a cluster.
 
 Scope examples:
 
@@ -193,13 +192,17 @@ The pool is a shared-memory allocation plan. It is not an automatic
 live-range optimizer. Put control objects and tile storage in the order
 you need, then call ``commit()``.
 
-TMEM can be managed manually:
+TMEM can be managed manually. The layout vocabulary (``TileLayout``,
+``S``, ``TLane``, ``TCol``) lives in ``tvm.tirx.layout``, not on ``Tx``,
+so import it explicitly:
 
 .. raw:: latex
 
    \diilbookstyleinputcell
 
 .. code:: python
+
+   from tvm.tirx.layout import S, TileLayout, TLane, TCol
 
    Tx.ptx.tcgen05.alloc(Tx.address_of(tmem_addr), n_cols=512, cta_group=1)
    tmem = Tx.decl_buffer(
@@ -230,13 +233,18 @@ Pipeline Objects
 ----------------
 
 Software-pipelined kernels need stage and phase tracking. Current TIRX
-uses ``PipelineState`` and ``Pipeline``:
+uses ``PipelineState`` and ``Pipeline``. These helpers are *not* part of
+the ``Tx`` namespace; import them explicitly from
+``tvm.tirx.lang.pipeline`` (the same module also exports ``MBarrier``,
+``TMABar``, and ``TCGen05Bar``):
 
 .. raw:: latex
 
    \diilbookstyleinputcell
 
 .. code:: python
+
+   from tvm.tirx.lang.pipeline import Pipeline, PipelineState
 
    kv_state = PipelineState(SMEM_PIPE_DEPTH_KV)
    kv_load = Pipeline(pool, SMEM_PIPE_DEPTH_KV, full="tma", empty="tcgen05", empty_phase_offset=1)
@@ -252,8 +260,9 @@ exact names depend on the producer-consumer direction.
 Metaprogramming Helpers
 -----------------------
 
-``Tx.meta_var(expr)`` keeps simple expressions inline in the generated
-IR:
+``Tx.meta_var(expr)`` is a parser-only value: the wrapped expression is
+substituted inline wherever the name is used, so it never becomes a
+separate IR variable in the final TIR:
 
 .. raw:: latex
 
@@ -328,7 +337,7 @@ helpers lowered as intended:
 
 .. code:: python
 
-   cuda_source = ex.mod.imports_[0].inspect_source("cuda")
+   cuda_source = ex.mod.imports[0].inspect_source("cuda")
    print(cuda_source)
 
 Useful checks:
