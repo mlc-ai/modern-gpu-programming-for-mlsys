@@ -58,7 +58,7 @@
       nat = measure(iframe, nat.w);
       var vw = viewport.clientWidth || 800;
       fitZ = vw / nat.w;                          // true fit-width (the ⤢ button uses this)
-      z = Math.max(1, fitZ);                      // default: at least full design size (scroll if wider than the column)
+      z = fitZ;                                   // default: fit the column width (text may be small; zoom in with +)
       apply();
     }
     function btn(label, title, fn) {
