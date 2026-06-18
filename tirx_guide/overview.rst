@@ -29,7 +29,7 @@ systems.
 TIRx is the next-generation kernel-level compiler structure of Apache TVM, and
 is built on top of the TVM compiler infrastructure.
 
-.. figure:: /img/tirx_overview_hero.png
+.. figure:: https://raw.githubusercontent.com/tlc-pack/web-data/main/images/tirx/tirx_overview_hero.png
    :align: center
    :alt: A TIRx kernel keeps orchestration in native source while exposing tile
          structure to the compiler; agentic, megakernel, and new-backend systems
@@ -150,7 +150,7 @@ a megakernel compiler can stitch and schedule them directly — re-offsetting
 shared memory, renaming barriers, reassigning warp roles, and interleaving
 pipelines across tasks.
 
-.. figure:: /img/tirx_megakernel.png
+.. figure:: https://raw.githubusercontent.com/tlc-pack/web-data/main/images/tirx/tirx_megakernel.png
    :align: center
    :alt: Kernel-by-kernel and CUDA-graph execution leave kernel boundaries
          between tasks, while a megakernel fuses tasks into one kernel with
@@ -168,7 +168,7 @@ and Rust, and offers a structured search space with dense, pre-benchmark
 feedback (well-formedness, synchronization validity, race-freedom, value
 simulation).
 
-.. figure:: /img/tirx_agentic.webp
+.. figure:: https://raw.githubusercontent.com/tlc-pack/web-data/main/images/tirx/tirx_agentic.webp
    :align: center
    :alt: Agent-visible compiler infrastructure exposes TIRx IR and utilities via
          TVM FFI across Python, Rust, and C++, over a structured search space
