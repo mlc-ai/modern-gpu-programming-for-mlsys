@@ -1,6 +1,6 @@
+(chap_fa4_source)=
 # Flash Attention 4 Source
 
-:label:`chap_fa4_source`
 
 This appendix is the full reference source of the Flash Attention 4 kernel that Chapter 6 builds up conceptually. The canonical copy lives in the `tirx-kernels` package at `tirx_kernels/attention/flash_attention4.py`; the listing below is a snapshot of it. The package file stays the source of truth — if it has moved on, prefer it — but everything Chapter 6 describes is gathered here in one place so you can read the whole kernel without leaving the tutorial.
 
@@ -16,7 +16,7 @@ Use this table to navigate the listing; each row points at a region of the sourc
 | `combine_int_frac_ex2`, `ex2_emulation_2` | The fast base-2 exponential the softmax uses. |
 | `get_n_block_max`, `get_n_block_min_causal_mask` | Causal-mode KV-block bounds. |
 | `_kernel` signature and `get_flash_attention4_kernel` | Shape specialization (`constexpr`) and persistent launch configuration. |
-| `Tx.device_entry()` and coordinate calls | Four warpgroups, warp roles, lane ids, and the CTA task id. |
+| `T.device_entry()` and coordinate calls | Four warpgroups, warp roles, lane ids, and the CTA task id. |
 | SMEM/TMEM allocation block | Q/K/V/O staging buffers, TMEM slots, and the pipeline barriers. |
 | `load_q`, `load_k`, `load_v` | TMA loads and byte-counted `Pipeline(..., full="tma")` handoffs. |
 | `gemm_qk` | Score MMA: Q and K in SMEM produce S in TMEM. |
@@ -38,7 +38,8 @@ import torch
 
 import tvm
 import tvm.testing
-from tvm.script import tirx as Tx
+from tvm.script import tirx as T
+from tvm.script.tirx import tile as Tx
 from tvm.tirx.bench import CudaProfiler, bench, tensor_bytes
 from tvm.tirx.lang.pipeline import MBarrier, Pipeline, PipelineState, TCGen05Bar
 from tvm.tirx.lang.tile_scheduler import FlashAttentionLinearScheduler, FlashAttentionLPTScheduler
@@ -61,7 +62,7 @@ def ceildiv(a, b):
 def combine_int_frac_ex2(x_rounded, frac_ex2):
     func_name = "combine_int_frac_ex2"
     source_code = f'\n__device__ __forceinline__ float {func_name}(float x_rounded, float frac_ex2) {{\n  float out;\n  asm volatile(\n    "{{\\n\\t"\n    ".reg .s32 x_rounded_i, frac_ex_i, x_rounded_e, out_i;\\n\\t"\n    "mov.b32 x_rounded_i, %1;\\n\\t"\n    "mov.b32 frac_ex_i, %2;\\n\\t"\n    "shl.b32 x_rounded_e, x_rounded_i, 23;\\n\\t"\n    "add.s32 out_i, x_rounded_e, frac_ex_i;\\n\\t"\n    "mov.b32 %0, out_i;\\n\\t"\n    "}}\\n"\n    : "=f"(out) : "f"(x_rounded), "f"(frac_ex2));\n  return out;\n}}\n'
-    return Tx.cuda.func_call(
+    return T.cuda.func_call(
         func_name, x_rounded, frac_ex2, source_code=source_code, return_type="float32"
     )
 
@@ -73,30 +74,30 @@ def get_n_block_max(m_block_idx, causal, SEQ_LEN_KV, SEQ_LEN_Q, SEQ_Q_PER_TILE):
         return n_block_max
     m_idx_max = (m_block_idx + 1) * SEQ_Q_PER_TILE * SMEM_PIPE_DEPTH_Q
     n_idx = m_idx_max + SEQ_LEN_KV - SEQ_LEN_Q
-    return Tx.min(n_block_max, ceildiv(n_idx, BLK_N))
+    return T.min(n_block_max, ceildiv(n_idx, BLK_N))
 
 
 def get_n_block_min_causal_mask(m_block_idx, SEQ_LEN_KV, SEQ_LEN_Q, SEQ_Q_PER_TILE):
     """KV block index where causal masking stops being needed."""
     m_idx_min = m_block_idx * SEQ_Q_PER_TILE * SMEM_PIPE_DEPTH_Q
     n_idx = m_idx_min + SEQ_LEN_KV - SEQ_LEN_Q
-    return Tx.max(0, n_idx // BLK_N)
+    return T.max(0, n_idx // BLK_N)
 
 
-@Tx.inline
+@T.inline
 def ex2_emulation_2(out, idx, x, y):
-    poly_ex2_deg3 = Tx.meta_var((1.0, 0.6951461434364319, 0.22756439447402954, 0.07711908966302872))
-    fp32_round_int = Tx.meta_var(float(2**23 + 2**22))
-    xy_clamped: Tx.f32[2]
-    xy_clamped[0] = Tx.max(x, -127.0)
-    xy_clamped[1] = Tx.max(y, -127.0)
-    xy_rounded: Tx.f32[2]
+    poly_ex2_deg3 = T.meta_var((1.0, 0.6951461434364319, 0.22756439447402954, 0.07711908966302872))
+    fp32_round_int = T.meta_var(float(2**23 + 2**22))
+    xy_clamped: T.f32[2]
+    xy_clamped[0] = T.max(x, -127.0)
+    xy_clamped[1] = T.max(y, -127.0)
+    xy_rounded: T.f32[2]
     Tx.add(xy_rounded, xy_clamped, fp32_round_int, rounding_mode="rm")
-    xy_rounded_back: Tx.f32[2]
+    xy_rounded_back: T.f32[2]
     Tx.sub(xy_rounded_back, xy_rounded, fp32_round_int, rounding_mode="rn")
-    xy_frac: Tx.f32[2]
+    xy_frac: T.f32[2]
     Tx.sub(xy_frac, xy_clamped, xy_rounded_back, rounding_mode="rn")
-    xy_frac_ex2: Tx.f32[2]
+    xy_frac_ex2: T.f32[2]
     xy_frac_ex2[0] = poly_ex2_deg3[3]
     xy_frac_ex2[1] = poly_ex2_deg3[3]
     Tx.fma(xy_frac_ex2, xy_frac_ex2, xy_frac, poly_ex2_deg3[2])
@@ -166,59 +167,59 @@ b_type_pv = tvm.DataType("float16")
 d_type_pv = tvm.DataType("float32")
 
 
-@Tx.jit(persistent=True)
+@T.jit(persistent=True)
 def _kernel(
-    Q: Tx.Buffer((BATCH_SIZE, SEQ_LEN_Q, NUM_QO_HEADS, HEAD_DIM), "float16"),
-    K: Tx.Buffer((BATCH_SIZE, SEQ_LEN_KV, NUM_KV_HEADS, HEAD_DIM), "float16"),
-    V: Tx.Buffer((BATCH_SIZE, SEQ_LEN_KV, NUM_KV_HEADS, HEAD_DIM), "float16"),
-    O: Tx.Buffer((BATCH_SIZE, SEQ_LEN_Q, NUM_QO_HEADS, HEAD_DIM), "float16"),
-    profiler_buffer: Tx.Buffer((PROFILER_BUFFER_SIZE,), "uint64"),
+    Q: T.Buffer((BATCH_SIZE, SEQ_LEN_Q, NUM_QO_HEADS, HEAD_DIM), "float16"),
+    K: T.Buffer((BATCH_SIZE, SEQ_LEN_KV, NUM_KV_HEADS, HEAD_DIM), "float16"),
+    V: T.Buffer((BATCH_SIZE, SEQ_LEN_KV, NUM_KV_HEADS, HEAD_DIM), "float16"),
+    O: T.Buffer((BATCH_SIZE, SEQ_LEN_Q, NUM_QO_HEADS, HEAD_DIM), "float16"),
+    profiler_buffer: T.Buffer((PROFILER_BUFFER_SIZE,), "uint64"),
     *,
-    BATCH_SIZE: Tx.constexpr,
-    SEQ_LEN_Q: Tx.constexpr,
-    SEQ_LEN_KV: Tx.constexpr,
-    NUM_QO_HEADS: Tx.constexpr,
-    NUM_KV_HEADS: Tx.constexpr,
-    HEAD_DIM: Tx.constexpr,
-    is_causal: Tx.constexpr = False,
-    CTA_GROUP: Tx.constexpr = 1,
+    BATCH_SIZE: T.constexpr,
+    SEQ_LEN_Q: T.constexpr,
+    SEQ_LEN_KV: T.constexpr,
+    NUM_QO_HEADS: T.constexpr,
+    NUM_KV_HEADS: T.constexpr,
+    HEAD_DIM: T.constexpr,
+    is_causal: T.constexpr = False,
+    CTA_GROUP: T.constexpr = 1,
 ):
-    GQA_RATIO = Tx.meta_var(NUM_QO_HEADS // NUM_KV_HEADS)
-    SEQ_Q_PER_TILE = Tx.meta_var(BLK_M // GQA_RATIO)
-    L2_SIZE = Tx.meta_var(50 * 1024 * 1024)
-    SIZE_ONE_KV_HEAD = Tx.meta_var(SEQ_LEN_KV * HEAD_DIM * 2 * F16_BYTES)
-    L2_SWIZZLE = Tx.meta_var(
+    GQA_RATIO = T.meta_var(NUM_QO_HEADS // NUM_KV_HEADS)
+    SEQ_Q_PER_TILE = T.meta_var(BLK_M // GQA_RATIO)
+    L2_SIZE = T.meta_var(50 * 1024 * 1024)
+    SIZE_ONE_KV_HEAD = T.meta_var(SEQ_LEN_KV * HEAD_DIM * 2 * F16_BYTES)
+    L2_SWIZZLE = T.meta_var(
         1 if L2_SIZE < SIZE_ONE_KV_HEAD else 1 << int(math.log2(L2_SIZE // SIZE_ONE_KV_HEAD))
     )
-    SSCALE_TOTAL_SIZE = Tx.meta_var(2 * SMEM_PIPE_DEPTH_Q * BLK_M)
+    SSCALE_TOTAL_SIZE = T.meta_var(2 * SMEM_PIPE_DEPTH_Q * BLK_M)
     assert TMEM_PIPE_DEPTH * MMA_N <= N_COLS_TMEM, "TMEM columns exceeded"
-    num_q_blocks_total = Tx.meta_var(ceildiv(SEQ_LEN_Q, SEQ_Q_PER_TILE))
-    num_q_blocks_per_cta = Tx.meta_var(SMEM_PIPE_DEPTH_Q)
-    num_q_blocks = Tx.meta_var(ceildiv(num_q_blocks_total, num_q_blocks_per_cta))
-    num_total_tasks = Tx.meta_var(BATCH_SIZE * NUM_KV_HEADS * num_q_blocks)
-    max_ctas: Tx.let = 148
-    cta_count: Tx.let = Tx.min(max_ctas, num_total_tasks) if not is_causal else num_total_tasks
-    Tx.device_entry()
-    bx = Tx.cta_id([cta_count])
-    wg_id = Tx.warpgroup_id([4])
-    warp_id = Tx.warp_id_in_wg([4])
-    lane_id = Tx.lane_id([32])
-    tid_in_wg = Tx.thread_id_in_wg([128])
-    pool = Tx.SMEMPool()
+    num_q_blocks_total = T.meta_var(ceildiv(SEQ_LEN_Q, SEQ_Q_PER_TILE))
+    num_q_blocks_per_cta = T.meta_var(SMEM_PIPE_DEPTH_Q)
+    num_q_blocks = T.meta_var(ceildiv(num_q_blocks_total, num_q_blocks_per_cta))
+    num_total_tasks = T.meta_var(BATCH_SIZE * NUM_KV_HEADS * num_q_blocks)
+    max_ctas: T.let = 148
+    cta_count: T.let = T.min(max_ctas, num_total_tasks) if not is_causal else num_total_tasks
+    T.device_entry()
+    bx = T.cta_id([cta_count])
+    wg_id = T.warpgroup_id([4])
+    warp_id = T.warp_id_in_wg([4])
+    lane_id = T.lane_id([32])
+    tid_in_wg = T.thread_id_in_wg([128])
+    pool = T.SMEMPool()
     Q_smem = pool.alloc_mma((SMEM_PIPE_DEPTH_Q, BLK_M, HEAD_DIM), "float16")
     K_smem = pool.alloc_mma((SMEM_PIPE_DEPTH_KV, BLK_N, HEAD_DIM), "float16")
     V_smem = K_smem.view(SMEM_PIPE_DEPTH_KV, BLK_N, HEAD_DIM)
     O_smem = pool.alloc_mma((TMEM_PIPE_DEPTH, BLK_M, HEAD_DIM), "float16")
     sScale = pool.alloc((SSCALE_TOTAL_SIZE,), "float32", align=1024)
     tmem_addr = pool.alloc([1], "uint32")
-    ACC_SCALE_BASE: Tx.let = 0
-    ROW_SUM_BASE: Tx.let = 0
+    ACC_SCALE_BASE: T.let = 0
+    ROW_SUM_BASE: T.let = 0
     kv_pipe = PipelineState(SMEM_PIPE_DEPTH_KV)
-    phase_q: Tx.int32
-    phase_s_full: Tx.int32
-    phase_tmem: Tx.int32
-    phase_s0_s1: Tx.int32
-    phase_q_load: Tx.int32
+    phase_q: T.int32
+    phase_s_full: T.int32
+    phase_tmem: T.int32
+    phase_s0_s1: T.int32
+    phase_q_load: T.int32
     q_load = Pipeline(pool, SMEM_PIPE_DEPTH_Q, full="tma", empty="tcgen05", empty_phase_offset=1)
     kv_load = Pipeline(pool, SMEM_PIPE_DEPTH_KV, full="tma", empty="tcgen05", empty_phase_offset=1)
     p_o_rescale = MBarrier(pool, 2)
@@ -249,23 +250,23 @@ def _kernel(
         num_groups=NUM_GROUPS,
         profiler_enabled=PROFILER_ON,
     )
-    tmem_pool = Tx.TMEMPool(pool, total_cols=N_COLS_TMEM, cta_group=CTA_GROUP, tmem_addr=tmem_addr)
+    tmem_pool = T.TMEMPool(pool, total_cols=N_COLS_TMEM, cta_group=CTA_GROUP, tmem_addr=tmem_addr)
     tmem = tmem_pool.alloc((128, N_COLS_TMEM), "float32")
     tmem_pool.move_base_to(0)
     tmem_as_f16 = tmem_pool.alloc((128, N_COLS_TMEM * 2), "float16")
     tmem_pool.commit()
-    Tx.ptx.fence.proxy_async("shared::cta")
-    Tx.ptx.fence.mbarrier_init()
-    Tx.cuda.cta_sync()
-    Tx.cuda.trap_when_assert_failed(tmem_addr[0] == Tx.uint32(0))
-    TMEM_STAGE_STRIDE = Tx.meta_var(MMA_N)
-    S_region = Tx.meta_var(
-        Tx.TMEMStages(
+    T.ptx.fence.proxy_async("shared::cta")
+    T.ptx.fence.mbarrier_init()
+    T.cuda.cta_sync()
+    T.cuda.trap_when_assert_failed(tmem_addr[0] == T.uint32(0))
+    TMEM_STAGE_STRIDE = T.meta_var(MMA_N)
+    S_region = T.meta_var(
+        T.TMEMStages(
             tmem, col_start=0, width=MMA_N, stages=SMEM_PIPE_DEPTH_Q, stride=TMEM_STAGE_STRIDE
         )
     )
-    O_region = Tx.meta_var(
-        Tx.TMEMStages(
+    O_region = T.meta_var(
+        T.TMEMStages(
             tmem,
             col_start=MMA_N * SMEM_PIPE_DEPTH_Q,
             width=MMA_N,
@@ -273,8 +274,8 @@ def _kernel(
             stride=TMEM_STAGE_STRIDE,
         )
     )
-    P_region = Tx.meta_var(
-        Tx.TMEMStages(
+    P_region = T.meta_var(
+        T.TMEMStages(
             tmem_as_f16,
             col_start=MMA_N,
             width=BLK_N,
@@ -315,29 +316,29 @@ def _kernel(
     phase_tmem = 0
     phase_s_full = 0
     if USE_S0_S1_BARRIER:
-        phase_s0_s1 = Tx.if_then_else(wg_id == 1, 0, 1)
+        phase_s0_s1 = T.if_then_else(wg_id == 1, 0, 1)
     phase_q_load = 0
     bar_s0_s1_sequence.init(32)
-    Tx.ptx.fence.proxy_async("shared::cta")
-    Tx.ptx.fence.mbarrier_init()
-    Tx.cuda.cta_sync()
+    T.ptx.fence.proxy_async("shared::cta")
+    T.ptx.fence.mbarrier_init()
+    T.cuda.cta_sync()
     if wg_id == 2:
-        for i_q in Tx.unroll(2):
+        for i_q in T.unroll(2):
             p_o_rescale.arrive(i_q)
-    num_kv_blocks: Tx.let = ceildiv(SEQ_LEN_KV, BLK_N)
+    num_kv_blocks: T.let = ceildiv(SEQ_LEN_KV, BLK_N)
     while scheduler.valid():
-        m_block_idx = Tx.meta_var(scheduler.m_block_idx)
-        batch_idx = Tx.meta_var(scheduler.batch_idx)
-        kv_head_idx = Tx.meta_var(scheduler.head_idx)
-        m_start = Tx.meta_var(m_block_idx * SEQ_Q_PER_TILE * SMEM_PIPE_DEPTH_Q)
+        m_block_idx = T.meta_var(scheduler.m_block_idx)
+        batch_idx = T.meta_var(scheduler.batch_idx)
+        kv_head_idx = T.meta_var(scheduler.head_idx)
+        m_start = T.meta_var(m_block_idx * SEQ_Q_PER_TILE * SMEM_PIPE_DEPTH_Q)
         if wg_id == 3:
-            Tx.ptx.setmaxnreg(False, 48)
+            T.ptx.setmaxnreg(False, 48)
             with WarpRole(warp_id, 1):
 
-                @Tx.inline
+                @T.inline
                 def load_q(i_q):
                     q_load.empty.wait(i_q, phase_q_load)
-                    tma_copy_q = Tx.meta_var(
+                    tma_copy_q = T.meta_var(
                         {
                             "dispatch": "tma",
                             "mbar": q_load.full.buf.ptr_to([i_q]),
@@ -346,7 +347,7 @@ def _kernel(
                     )
                     profiler.start(ProfileEventType.IssueTMA_Q, lane_id == 0)
                     Q_smem_3d = Q_smem.view(SMEM_PIPE_DEPTH_Q, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM)
-                    with Tx.thread(Tx.ptx.elect_sync()):
+                    if T.ptx.elect_sync():
                         Tx.copy_async(
                             Q_smem_3d[i_q, :, :, :],
                             Q[
@@ -361,10 +362,10 @@ def _kernel(
                         q_load.full.arrive(i_q, CTA_GROUP * BLK_M * HEAD_DIM * F16_BYTES)
                     profiler.end(ProfileEventType.IssueTMA_Q, lane_id == 0)
 
-                @Tx.inline
+                @T.inline
                 def load_k(i_kv):
                     kv_load.empty.wait(kv_pipe.stage, kv_pipe.phase)
-                    tma_copy_k = Tx.meta_var(
+                    tma_copy_k = T.meta_var(
                         {
                             "dispatch": "tma",
                             "mbar": kv_load.full.buf.ptr_to([kv_pipe.stage]),
@@ -372,7 +373,7 @@ def _kernel(
                         }
                     )
                     profiler.start(ProfileEventType.IssueTMA_K, lane_id == 0)
-                    with Tx.thread(Tx.ptx.elect_sync()):
+                    if T.ptx.elect_sync():
                         Tx.copy_async(
                             K_smem[kv_pipe.stage, :, :],
                             K[batch_idx, i_kv * BLK_N : (i_kv + 1) * BLK_N, kv_head_idx, :],
@@ -382,10 +383,10 @@ def _kernel(
                     profiler.end(ProfileEventType.IssueTMA_K, lane_id == 0)
                     kv_pipe.advance()
 
-                @Tx.inline
+                @T.inline
                 def load_v(i_kv):
                     kv_load.empty.wait(kv_pipe.stage, kv_pipe.phase)
-                    tma_copy_v = Tx.meta_var(
+                    tma_copy_v = T.meta_var(
                         {
                             "dispatch": "tma",
                             "mbar": kv_load.full.buf.ptr_to([kv_pipe.stage]),
@@ -393,7 +394,7 @@ def _kernel(
                         }
                     )
                     profiler.start(ProfileEventType.IssueTMA_V, lane_id == 0)
-                    with Tx.thread(Tx.ptx.elect_sync()):
+                    if T.ptx.elect_sync():
                         Tx.copy_async(
                             V_smem[kv_pipe.stage, :, :],
                             V[batch_idx, i_kv * BLK_N : (i_kv + 1) * BLK_N, kv_head_idx, :],
@@ -403,7 +404,7 @@ def _kernel(
                     profiler.end(ProfileEventType.IssueTMA_V, lane_id == 0)
                     kv_pipe.advance()
 
-                load_trip_count: Tx.int32
+                load_trip_count: T.int32
                 load_trip_count = (
                     get_n_block_max(m_block_idx, is_causal, SEQ_LEN_KV, SEQ_LEN_Q, SEQ_Q_PER_TILE)
                     if is_causal
@@ -414,18 +415,18 @@ def _kernel(
                 load_q(1)
                 phase_q_load ^= 1
                 load_v(load_trip_count - 1)
-                for _i in Tx.serial(load_trip_count - 1, unroll=False):
-                    i_kv: Tx.let = load_trip_count - 2 - _i
+                for _i in T.serial(load_trip_count - 1, unroll=False):
+                    i_kv: T.let = load_trip_count - 2 - _i
                     load_k(i_kv)
                     load_v(i_kv)
             with WarpRole(warp_id, 2):
-                for i_q in Tx.unroll(SMEM_PIPE_DEPTH_Q):
+                for i_q in T.unroll(SMEM_PIPE_DEPTH_Q):
                     corr_epi.full.wait(i_q, phase_tmem)
                     if i_q == 0:
                         profiler.start(ProfileEventType.TMAStore, lane_id == 0)
-                    m_start_global = Tx.meta_var(m_start + i_q * SEQ_Q_PER_TILE)
+                    m_start_global = T.meta_var(m_start + i_q * SEQ_Q_PER_TILE)
                     O_smem_3d = O_smem.view(TMEM_PIPE_DEPTH, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM)
-                    with Tx.thread(Tx.ptx.elect_sync()):
+                    if T.ptx.elect_sync():
                         Tx.copy_async(
                             O[
                                 batch_idx,
@@ -436,379 +437,371 @@ def _kernel(
                             O_smem_3d[i_q, :, :, :],
                             dispatch="tma",
                         )
-                    Tx.ptx.cp_async.bulk.commit_group()
-                for i_q in Tx.unroll(SMEM_PIPE_DEPTH_Q):
-                    Tx.ptx.cp_async.bulk.wait_group(1 - i_q)
+                    T.ptx.cp_async.bulk.commit_group()
+                for i_q in T.unroll(SMEM_PIPE_DEPTH_Q):
+                    T.ptx.cp_async.bulk.wait_group(1 - i_q)
                     corr_epi.empty.arrive(i_q)
                 profiler.end(ProfileEventType.TMAStore, lane_id == 0)
                 phase_tmem ^= 1
             with WarpRole(warp_id, 0):
-                acc: Tx.int32
+                acc: T.int32
                 acc = 0
 
-                @Tx.inline
+                @T.inline
                 def gemm_qk(q_stage, kv_stage):
-                    with Tx.warp():
-                        Tx.gemm_async(
-                            S_region[q_stage],
-                            Q_smem[q_stage, 0:BLK_M, 0:HEAD_DIM],
-                            K_smem[kv_stage, 0:BLK_N, 0:HEAD_DIM],
-                            dispatch="tcgen05",
-                            cta_group=CTA_GROUP,
-                        )
-                    if Tx.ptx.elect_sync():
+                    Tx.warp.gemm_async(
+                        S_region[q_stage],
+                        Q_smem[q_stage, 0:BLK_M, 0:HEAD_DIM],
+                        K_smem[kv_stage, 0:BLK_N, 0:HEAD_DIM],
+                        dispatch="tcgen05",
+                        cta_group=CTA_GROUP,
+                    )
+                    if T.ptx.elect_sync():
                         s_ready.arrive(q_stage)
 
-                @Tx.inline
+                @T.inline
                 def gemm_pv(i_q, kv_stage, should_accumulate):
-                    K_SPLIT = Tx.meta_var(6 * MMA_K)
-                    with Tx.warp():
-                        Tx.gemm_async(
-                            O_region[i_q],
-                            P_region[i_q, 0:K_SPLIT],
-                            V_smem[kv_stage, 0:K_SPLIT, 0:HEAD_DIM],
-                            transB=True,
-                            accum=should_accumulate,
-                            dispatch="tcgen05",
-                            cta_group=CTA_GROUP,
-                        )
+                    K_SPLIT = T.meta_var(6 * MMA_K)
+                    Tx.warp.gemm_async(
+                        O_region[i_q],
+                        P_region[i_q, 0:K_SPLIT],
+                        V_smem[kv_stage, 0:K_SPLIT, 0:HEAD_DIM],
+                        transB=True,
+                        accum=should_accumulate,
+                        dispatch="tcgen05",
+                        cta_group=CTA_GROUP,
+                    )
                     p_ready_2.wait(i_q, phase_tmem)
-                    with Tx.warp():
-                        Tx.gemm_async(
-                            O_region[i_q],
-                            P_region[i_q, K_SPLIT:BLK_N],
-                            V_smem[kv_stage, K_SPLIT:BLK_N, 0:HEAD_DIM],
-                            transB=True,
-                            accum=True,
-                            dispatch="tcgen05",
-                            cta_group=CTA_GROUP,
-                        )
+                    Tx.warp.gemm_async(
+                        O_region[i_q],
+                        P_region[i_q, K_SPLIT:BLK_N],
+                        V_smem[kv_stage, K_SPLIT:BLK_N, 0:HEAD_DIM],
+                        transB=True,
+                        accum=True,
+                        dispatch="tcgen05",
+                        cta_group=CTA_GROUP,
+                    )
 
-                for i_q in Tx.unroll(SMEM_PIPE_DEPTH_Q):
+                for i_q in T.unroll(SMEM_PIPE_DEPTH_Q):
                     q_load.full.wait(i_q, phase_q_load)
                     if i_q == 0:
                         kv_load.full.wait(kv_pipe.stage, kv_pipe.phase)
                     gemm_qk(i_q, kv_pipe.stage)
                     if i_q == 1:
-                        if Tx.ptx.elect_sync():
+                        if T.ptx.elect_sync():
                             kv_load.empty.arrive(kv_pipe.stage)
                 kv_pipe.advance()
-                mma_trip_count: Tx.int32
+                mma_trip_count: T.int32
                 mma_trip_count = (
                     get_n_block_max(m_block_idx, is_causal, SEQ_LEN_KV, SEQ_LEN_Q, SEQ_Q_PER_TILE)
                     if is_causal
                     else num_kv_blocks
                 )
-                for i_kv in Tx.serial(mma_trip_count - 1, unroll=False):
-                    stage_v: Tx.let = kv_pipe.stage
-                    phase_v: Tx.let = kv_pipe.phase
+                for i_kv in T.serial(mma_trip_count - 1, unroll=False):
+                    stage_v: T.let = kv_pipe.stage
+                    phase_v: T.let = kv_pipe.phase
                     kv_pipe.advance()
-                    stage_k = Tx.meta_var(kv_pipe.stage)
-                    phase_k = Tx.meta_var(kv_pipe.phase)
-                    for i_q in Tx.unroll(SMEM_PIPE_DEPTH_Q):
+                    stage_k = T.meta_var(kv_pipe.stage)
+                    phase_k = T.meta_var(kv_pipe.phase)
+                    for i_q in T.unroll(SMEM_PIPE_DEPTH_Q):
                         if i_q == 0:
                             kv_load.full.wait(stage_v, phase_v)
                         p_o_rescale.wait(i_q, phase_tmem)
                         gemm_pv(i_q, stage_v, acc)
                         if i_q == 1:
-                            if Tx.ptx.elect_sync():
+                            if T.ptx.elect_sync():
                                 kv_load.empty.arrive(stage_v)
                         if i_q == 0:
                             kv_load.full.wait(stage_k, phase_k)
                         gemm_qk(i_q, stage_k)
                         if i_q == 1:
-                            if Tx.ptx.elect_sync():
+                            if T.ptx.elect_sync():
                                 kv_load.empty.arrive(stage_k)
                     acc = 1
                     kv_pipe.advance()
                     phase_tmem ^= 1
-                for i_q in Tx.unroll(SMEM_PIPE_DEPTH_Q):
+                for i_q in T.unroll(SMEM_PIPE_DEPTH_Q):
                     if i_q == 0:
                         kv_load.full.wait(kv_pipe.stage, kv_pipe.phase)
                     p_o_rescale.wait(i_q, phase_tmem)
                     gemm_pv(i_q, kv_pipe.stage, acc)
                     if i_q == 1:
-                        if Tx.ptx.elect_sync():
+                        if T.ptx.elect_sync():
                             kv_load.empty.arrive(kv_pipe.stage)
-                    if Tx.ptx.elect_sync():
+                    if T.ptx.elect_sync():
                         o_ready.arrive(i_q)
                 kv_pipe.advance()
                 phase_tmem ^= 1
-                for i_q in Tx.unroll(SMEM_PIPE_DEPTH_Q):
-                    if Tx.ptx.elect_sync():
+                for i_q in T.unroll(SMEM_PIPE_DEPTH_Q):
+                    if T.ptx.elect_sync():
                         q_load.empty.arrive(i_q)
                 phase_q_load ^= 1
         elif wg_id < 2:
-            with Tx.warpgroup():
-                Tx.ptx.setmaxnreg(True, 200)
-                scale_log2 = Tx.meta_var(math.log2(math.e) / math.sqrt(HEAD_DIM))
-                rescale_threshold = Tx.meta_var(8.0)
-                row_max: Tx.f32[1]
-                row_sum: Tx.f32[1]
+            T.ptx.setmaxnreg(True, 200)
+            scale_log2 = T.meta_var(math.log2(math.e) / math.sqrt(HEAD_DIM))
+            rescale_threshold = T.meta_var(8.0)
+            row_max: T.f32[1]
+            row_sum: T.f32[1]
 
-                @Tx.inline
-                def mask_r2p(s_chunk_buf, col_limit, ncol: Tx.int32):
-                    """Apply mask using R2P-style bit manipulation.
+            @T.inline
+            def mask_r2p(s_chunk_buf, col_limit, ncol: T.int32):
+                """Apply mask using R2P-style bit manipulation.
 
-                    Optimizes: for j in range(N): buf[j] = -inf if j >= col_limit else buf[j]
-                    Into: bitmask operations that compile to R2P PTX instruction.
+                Optimizes: for j in range(N): buf[j] = -inf if j >= col_limit else buf[j]
+                Into: bitmask operations that compile to R2P PTX instruction.
 
-                    Following flash_attn/cute/mask.py mask_r2p() lines 13-40:
-                    Process in 24-element chunks because shift by 31+ bits is problematic.
-                    For ncol=128: chunks 0-4 have 24 elements, chunk 5 has 8 elements.
+                Following flash_attn/cute/mask.py mask_r2p() lines 13-40:
+                Process in 24-element chunks because shift by 31+ bits is problematic.
+                For ncol=128: chunks 0-4 have 24 elements, chunk 5 has 8 elements.
 
-                    The bit test `mask & (1 << i)` compiles to the R2P (Register to Predicate)
-                    PTX instruction, which is more efficient than per-column comparisons.
-                    """
-                    ncol = Tx.meta_var(ncol)
-                    CHUNK_SIZE: Tx.let = 24
-                    num_chunks: Tx.let = ceildiv(ncol, CHUNK_SIZE)
-                    with Tx.thread():
-                        s_chunk_local = s_chunk_buf.local(ncol)
-                        for s in Tx.unroll(num_chunks):
-                            col_limit_s: Tx.let = Tx.min(
-                                Tx.max(col_limit - s * CHUNK_SIZE, 0), CHUNK_SIZE
+                The bit test `mask & (1 << i)` compiles to the R2P (Register to Predicate)
+                PTX instruction, which is more efficient than per-column comparisons.
+                """
+                ncol = T.meta_var(ncol)
+                CHUNK_SIZE: T.let = 24
+                num_chunks: T.let = ceildiv(ncol, CHUNK_SIZE)
+                s_chunk_local = s_chunk_buf.local(ncol)
+                for s in T.unroll(num_chunks):
+                    col_limit_s: T.let = T.min(
+                        T.max(col_limit - s * CHUNK_SIZE, 0), CHUNK_SIZE
+                    )
+                    mask: T.uint32
+                    mask = T.shift_left(T.int32(1), col_limit_s) - 1
+                    for i in T.unroll(CHUNK_SIZE):
+                        if i < ncol - s * CHUNK_SIZE:
+                            c: T.let = s * CHUNK_SIZE + i
+                            in_bound: T.let = T.bitwise_and(
+                                mask, T.shift_left(T.int32(1), i)
                             )
-                            mask: Tx.uint32
-                            mask = Tx.shift_left(Tx.int32(1), col_limit_s) - 1
-                            for i in Tx.unroll(CHUNK_SIZE):
-                                if i < ncol - s * CHUNK_SIZE:
-                                    c: Tx.let = s * CHUNK_SIZE + i
-                                    in_bound: Tx.let = Tx.bitwise_and(
-                                        mask, Tx.shift_left(Tx.int32(1), i)
-                                    )
-                                    s_chunk_local[c] = Tx.Select(
-                                        Tx.cast(in_bound, "bool"),
-                                        s_chunk_local[c],
-                                        Tx.float32(-float("inf")),
-                                    )
+                            s_chunk_local[c] = T.Select(
+                                T.cast(in_bound, "bool"),
+                                s_chunk_local[c],
+                                T.float32(-float("inf")),
+                            )
 
-                @Tx.inline
-                def apply_causal_mask(s_chunk_buf, m_blk_idx, n_blk_idx):
-                    """Apply causal mask to attention scores.
+            @T.inline
+            def apply_causal_mask(s_chunk_buf, m_blk_idx, n_blk_idx):
+                """Apply causal mask to attention scores.
 
-                    Following flash_attn/cute/mask.py apply_mask_sm100() lines 384-400:
-                    causal_row_offset = 1 + seqlen_k - n_block * tile_n - seqlen_q
-                    row_idx = thread_row + m_block * tile_m
-                    col_limit_right = row_idx + causal_row_offset
-                    Mask if col >= col_limit_right
+                Following flash_attn/cute/mask.py apply_mask_sm100() lines 384-400:
+                causal_row_offset = 1 + seqlen_k - n_block * tile_n - seqlen_q
+                row_idx = thread_row + m_block * tile_m
+                col_limit_right = row_idx + causal_row_offset
+                Mask if col >= col_limit_right
 
-                    Coordinate Mapping:
-                    - BLK_M = 128 packed rows per tile
-                    - SEQ_Q_PER_TILE = BLK_M // GQA_RATIO (e.g., 32 for GQA_RATIO=4)
-                    - Each warpgroup handles one Q stage with SEQ_Q_PER_TILE sequence positions
-                    - tid_in_wg (0-127) maps to packed rows: (seq_pos, head) = (tid//GQA_RATIO, tid%GQA_RATIO)
-                    """
-                    seq_pos_in_wg: Tx.let = tid_in_wg // GQA_RATIO
-                    row_idx: Tx.let = (
-                        m_blk_idx * SEQ_Q_PER_TILE * SMEM_PIPE_DEPTH_Q
-                        + wg_id * SEQ_Q_PER_TILE
-                        + seq_pos_in_wg
+                Coordinate Mapping:
+                - BLK_M = 128 packed rows per tile
+                - SEQ_Q_PER_TILE = BLK_M // GQA_RATIO (e.g., 32 for GQA_RATIO=4)
+                - Each warpgroup handles one Q stage with SEQ_Q_PER_TILE sequence positions
+                - tid_in_wg (0-127) maps to packed rows: (seq_pos, head) = (tid//GQA_RATIO, tid%GQA_RATIO)
+                """
+                seq_pos_in_wg: T.let = tid_in_wg // GQA_RATIO
+                row_idx: T.let = (
+                    m_blk_idx * SEQ_Q_PER_TILE * SMEM_PIPE_DEPTH_Q
+                    + wg_id * SEQ_Q_PER_TILE
+                    + seq_pos_in_wg
+                )
+                causal_row_offset: T.let = 1 + SEQ_LEN_KV - n_blk_idx * BLK_N - SEQ_LEN_Q
+                col_limit_right: T.let = row_idx + causal_row_offset
+                mask_r2p(s_chunk_buf, col_limit_right, BLK_N)
+
+            @T.inline
+            def softmax_step(i_kv, apply_mask=False, is_first=False):
+                s_chunk_buf: T.f32[BLK_N]
+                s_chunk = s_chunk_buf.view(128, BLK_N, layout=wg_local_layout(BLK_N))
+                p_chunk_buf_f32: T.f32[BLK_N // 2]
+                p_chunk_buf = T.decl_buffer(
+                    (BLK_N,), dtype="float16", data=p_chunk_buf_f32.data
+                )
+                p_chunk = p_chunk_buf.view(128, BLK_N, layout=wg_local_layout(BLK_N))
+                s_ready.wait(wg_id, phase_s_full)
+                profiler.start(ProfileEventType.Softmax_MAX, tid_in_wg == 0)
+                tile_max: T.f32[1]
+                for chunk_idx in T.unroll(BLK_N // SOFTMAX_LD_CHUNK):
+                    Tx.wg.copy_async(
+                        s_chunk[
+                            :, chunk_idx * SOFTMAX_LD_CHUNK : (chunk_idx + 1) * SOFTMAX_LD_CHUNK
+                        ],
+                        S_region[
+                            wg_id,
+                            chunk_idx * SOFTMAX_LD_CHUNK : (chunk_idx + 1) * SOFTMAX_LD_CHUNK,
+                        ],
                     )
-                    causal_row_offset: Tx.let = 1 + SEQ_LEN_KV - n_blk_idx * BLK_N - SEQ_LEN_Q
-                    col_limit_right: Tx.let = row_idx + causal_row_offset
-                    mask_r2p(s_chunk_buf, col_limit_right, BLK_N)
-
-                @Tx.inline
-                def softmax_step(i_kv, apply_mask=False, is_first=False):
-                    s_chunk_buf: Tx.f32[BLK_N]
-                    s_chunk = s_chunk_buf.view(128, BLK_N, layout=wg_local_layout(BLK_N))
-                    p_chunk_buf_f32: Tx.f32[BLK_N // 2]
-                    p_chunk_buf = Tx.decl_buffer(
-                        (BLK_N,), dtype="float16", data=p_chunk_buf_f32.data
-                    )
-                    p_chunk = p_chunk_buf.view(128, BLK_N, layout=wg_local_layout(BLK_N))
-                    s_ready.wait(wg_id, phase_s_full)
-                    profiler.start(ProfileEventType.Softmax_MAX, tid_in_wg == 0)
-                    tile_max: Tx.f32[1]
-                    for chunk_idx in Tx.unroll(BLK_N // SOFTMAX_LD_CHUNK):
-                        Tx.copy_async(
-                            s_chunk[
-                                :, chunk_idx * SOFTMAX_LD_CHUNK : (chunk_idx + 1) * SOFTMAX_LD_CHUNK
-                            ],
-                            S_region[
-                                wg_id,
-                                chunk_idx * SOFTMAX_LD_CHUNK : (chunk_idx + 1) * SOFTMAX_LD_CHUNK,
-                            ],
-                        )
-                    if apply_mask:
-                        apply_causal_mask(s_chunk_buf, m_block_idx, i_kv)
-                    row_max_old: Tx.f32
-                    row_max_old = row_max[0]
-                    with Tx.thread():
-                        if is_first:
-                            Tx.max(tile_max, s_chunk_buf)
-                        else:
-                            tile_max[0] = row_max_old
-                            Tx.max(tile_max, s_chunk_buf, accum=True)
-                    row_max_new: Tx.f32
-                    acc_scale: Tx.f32
-                    acc_scale_: Tx.f32
-                    row_max_safe: Tx.f32
-                    row_max_new = tile_max[0]
-                    row_max_safe = Tx.if_then_else(tile_max[0] == -float("inf"), 0.0, tile_max[0])
-                    if is_first:
-                        acc_scale = Tx.float32(1.0)
+                if apply_mask:
+                    apply_causal_mask(s_chunk_buf, m_block_idx, i_kv)
+                row_max_old: T.f32
+                row_max_old = row_max[0]
+                if is_first:
+                    Tx.max(tile_max, s_chunk_buf)
+                else:
+                    tile_max[0] = row_max_old
+                    Tx.max(tile_max, s_chunk_buf, accum=True)
+                row_max_new: T.f32
+                acc_scale: T.f32
+                acc_scale_: T.f32
+                row_max_safe: T.f32
+                row_max_new = tile_max[0]
+                row_max_safe = T.if_then_else(tile_max[0] == -float("inf"), 0.0, tile_max[0])
+                if is_first:
+                    acc_scale = T.float32(1.0)
+                else:
+                    acc_scale_ = (row_max_old - row_max_safe) * scale_log2
+                    if acc_scale_ >= -rescale_threshold:
+                        row_max_new = row_max_old
+                        row_max_safe = row_max_old
+                        acc_scale = T.float32(1.0)
                     else:
-                        acc_scale_ = (row_max_old - row_max_safe) * scale_log2
-                        if acc_scale_ >= -rescale_threshold:
-                            row_max_new = row_max_old
-                            row_max_safe = row_max_old
-                            acc_scale = Tx.float32(1.0)
-                        else:
-                            acc_scale = Tx.ptx.exp2(acc_scale_)
-                    row_max[0] = row_max_new
-                    row_max_scaled: Tx.let = row_max_safe * scale_log2
-                    profiler.end(ProfileEventType.Softmax_MAX, tid_in_wg == 0)
-                    if tid_in_wg < BLK_M and (not is_first):
-                        sScale_idx: Tx.let = ACC_SCALE_BASE + tid_in_wg + wg_id * BLK_M
-                        sScale[sScale_idx] = acc_scale
-                    softmax_corr.full.arrive(wg_id)
-                    profiler.start(ProfileEventType.Softmax_FMA, tid_in_wg == 0)
-                    Tx.fma(s_chunk, s_chunk, scale_log2, -row_max_scaled)
-                    profiler.end(ProfileEventType.Softmax_FMA, tid_in_wg == 0)
-                    if USE_S0_S1_BARRIER:
-                        bar_s0_s1_sequence.wait(wg_id * 4 + warp_id, phase_s0_s1)
-                    profiler.start(ProfileEventType.Softmax_EXP2, tid_in_wg == 0)
-                    for frag_idx in Tx.unroll(4):
-                        with Tx.thread():
-                            s_chunk_local = s_chunk_buf.local(BLK_N)
-                            for i in Tx.unroll(BLK_N // 4 // 2):
-                                idx = Tx.meta_var(frag_idx * BLK_N // 4 + 2 * i)
-                                if i * 2 % 16 < 16 - 4 or frag_idx >= 4 - 1 or apply_mask:
-                                    s_chunk_local[idx] = Tx.ptx.exp2(s_chunk_local[idx])
-                                    s_chunk_local[idx + 1] = Tx.ptx.exp2(s_chunk_local[idx + 1])
-                                else:
-                                    ex2_emulation_2(
-                                        s_chunk_local,
-                                        idx,
-                                        s_chunk_local[idx],
-                                        s_chunk_local[idx + 1],
-                                    )
-                        Tx.cast(
-                            p_chunk[:, frag_idx * BLK_N // 4 : (frag_idx + 1) * BLK_N // 4],
-                            s_chunk[:, frag_idx * BLK_N // 4 : (frag_idx + 1) * BLK_N // 4],
-                        )
-                    if USE_S0_S1_BARRIER:
-                        bar_s0_s1_sequence.arrive((1 - wg_id) * 4 + warp_id)
-                    profiler.end(ProfileEventType.Softmax_EXP2, tid_in_wg == 0)
-                    profiler.start(ProfileEventType.Softmax_TMEM_ST, tid_in_wg == 0)
-                    for i in Tx.unroll(3):
-                        Tx.copy_async(
-                            P_region[wg_id, i * BLK_N // 4 : (i + 1) * BLK_N // 4],
-                            p_chunk[:, i * BLK_N // 4 : (i + 1) * BLK_N // 4],
-                        )
-                    Tx.ptx.tcgen05.wait.st()
-                    p_o_rescale.arrive(wg_id)
-                    Tx.copy_async(
-                        P_region[wg_id, 3 * BLK_N // 4 : BLK_N], p_chunk[:, 3 * BLK_N // 4 : BLK_N]
-                    )
-                    Tx.ptx.tcgen05.wait.st()
-                    p_ready_2.arrive(wg_id)
-                    profiler.end(ProfileEventType.Softmax_TMEM_ST, tid_in_wg == 0)
-                    softmax_corr.empty.wait(wg_id, phase_q)
-                    profiler.start(ProfileEventType.Softmax_SUM, tid_in_wg == 0)
-                    phase_s_full ^= 1
-                    phase_q ^= 1
-                    with Tx.thread():
-                        if is_first:
-                            Tx.sum(row_sum, s_chunk_buf)
-                        else:
-                            row_sum[0] = row_sum[0] * acc_scale
-                            Tx.sum(row_sum, s_chunk_buf, accum=True)
-                    profiler.end(ProfileEventType.Softmax_SUM, tid_in_wg == 0)
-                    if USE_S0_S1_BARRIER:
-                        phase_s0_s1 ^= 1
-
-                softmax_corr.empty.wait(wg_id, phase_q)
-                phase_q ^= 1
-                n_block_max: Tx.let = get_n_block_max(
-                    m_block_idx, is_causal, SEQ_LEN_KV, SEQ_LEN_Q, SEQ_Q_PER_TILE
-                )
-                n_block_min_causal: Tx.let = (
-                    get_n_block_min_causal_mask(m_block_idx, SEQ_LEN_KV, SEQ_LEN_Q, SEQ_Q_PER_TILE)
-                    if is_causal
-                    else n_block_max
-                )
-                softmax_step(n_block_max - 1, apply_mask=is_causal, is_first=True)
-                n_block_max_after_p1: Tx.let = n_block_max - 1
-                num_phase2_blocks: Tx.let = Tx.max(n_block_max_after_p1 - n_block_min_causal, 0)
-                for i in Tx.serial(num_phase2_blocks, unroll=False):
-                    n_block: Tx.let = n_block_max_after_p1 - 1 - i
-                    softmax_step(n_block, apply_mask=True)
-                n_block_max_after_p2: Tx.let = Tx.min(n_block_max_after_p1, n_block_min_causal)
-                for i in Tx.serial(n_block_max_after_p2, unroll=False):
-                    n_block: Tx.let = n_block_max_after_p2 - 1 - i
-                    softmax_step(n_block, apply_mask=False)
-                if tid_in_wg < BLK_M:
-                    sScale[ROW_SUM_BASE + tid_in_wg + wg_id * BLK_M] = row_sum[0]
+                        acc_scale = T.ptx.exp2(acc_scale_)
+                row_max[0] = row_max_new
+                row_max_scaled: T.let = row_max_safe * scale_log2
+                profiler.end(ProfileEventType.Softmax_MAX, tid_in_wg == 0)
+                if tid_in_wg < BLK_M and (not is_first):
+                    sScale_idx: T.let = ACC_SCALE_BASE + tid_in_wg + wg_id * BLK_M
+                    sScale[sScale_idx] = acc_scale
                 softmax_corr.full.arrive(wg_id)
+                profiler.start(ProfileEventType.Softmax_FMA, tid_in_wg == 0)
+                Tx.wg.fma(s_chunk, s_chunk, scale_log2, -row_max_scaled)
+                profiler.end(ProfileEventType.Softmax_FMA, tid_in_wg == 0)
+                if USE_S0_S1_BARRIER:
+                    bar_s0_s1_sequence.wait(wg_id * 4 + warp_id, phase_s0_s1)
+                profiler.start(ProfileEventType.Softmax_EXP2, tid_in_wg == 0)
+                for frag_idx in T.unroll(4):
+                    s_chunk_local = s_chunk_buf.local(BLK_N)
+                    for i in T.unroll(BLK_N // 4 // 2):
+                        idx = T.meta_var(frag_idx * BLK_N // 4 + 2 * i)
+                        if i * 2 % 16 < 16 - 4 or frag_idx >= 4 - 1 or apply_mask:
+                            s_chunk_local[idx] = T.ptx.exp2(s_chunk_local[idx])
+                            s_chunk_local[idx + 1] = T.ptx.exp2(s_chunk_local[idx + 1])
+                        else:
+                            ex2_emulation_2(
+                                s_chunk_local,
+                                idx,
+                                s_chunk_local[idx],
+                                s_chunk_local[idx + 1],
+                            )
+                    Tx.wg.cast(
+                        p_chunk[:, frag_idx * BLK_N // 4 : (frag_idx + 1) * BLK_N // 4],
+                        s_chunk[:, frag_idx * BLK_N // 4 : (frag_idx + 1) * BLK_N // 4],
+                    )
+                if USE_S0_S1_BARRIER:
+                    bar_s0_s1_sequence.arrive((1 - wg_id) * 4 + warp_id)
+                profiler.end(ProfileEventType.Softmax_EXP2, tid_in_wg == 0)
+                profiler.start(ProfileEventType.Softmax_TMEM_ST, tid_in_wg == 0)
+                for i in T.unroll(3):
+                    Tx.wg.copy_async(
+                        P_region[wg_id, i * BLK_N // 4 : (i + 1) * BLK_N // 4],
+                        p_chunk[:, i * BLK_N // 4 : (i + 1) * BLK_N // 4],
+                    )
+                T.ptx.tcgen05.wait.st()
+                p_o_rescale.arrive(wg_id)
+                Tx.wg.copy_async(
+                    P_region[wg_id, 3 * BLK_N // 4 : BLK_N], p_chunk[:, 3 * BLK_N // 4 : BLK_N]
+                )
+                T.ptx.tcgen05.wait.st()
+                p_ready_2.arrive(wg_id)
+                profiler.end(ProfileEventType.Softmax_TMEM_ST, tid_in_wg == 0)
+                softmax_corr.empty.wait(wg_id, phase_q)
+                profiler.start(ProfileEventType.Softmax_SUM, tid_in_wg == 0)
+                phase_s_full ^= 1
+                phase_q ^= 1
+                if is_first:
+                    Tx.sum(row_sum, s_chunk_buf)
+                else:
+                    row_sum[0] = row_sum[0] * acc_scale
+                    Tx.sum(row_sum, s_chunk_buf, accum=True)
+                profiler.end(ProfileEventType.Softmax_SUM, tid_in_wg == 0)
+                if USE_S0_S1_BARRIER:
+                    phase_s0_s1 ^= 1
+
+            softmax_corr.empty.wait(wg_id, phase_q)
+            phase_q ^= 1
+            n_block_max: T.let = get_n_block_max(
+                m_block_idx, is_causal, SEQ_LEN_KV, SEQ_LEN_Q, SEQ_Q_PER_TILE
+            )
+            n_block_min_causal: T.let = (
+                get_n_block_min_causal_mask(m_block_idx, SEQ_LEN_KV, SEQ_LEN_Q, SEQ_Q_PER_TILE)
+                if is_causal
+                else n_block_max
+            )
+            softmax_step(n_block_max - 1, apply_mask=is_causal, is_first=True)
+            n_block_max_after_p1: T.let = n_block_max - 1
+            num_phase2_blocks: T.let = T.max(n_block_max_after_p1 - n_block_min_causal, 0)
+            for i in T.serial(num_phase2_blocks, unroll=False):
+                n_block: T.let = n_block_max_after_p1 - 1 - i
+                softmax_step(n_block, apply_mask=True)
+            n_block_max_after_p2: T.let = T.min(n_block_max_after_p1, n_block_min_causal)
+            for i in T.serial(n_block_max_after_p2, unroll=False):
+                n_block: T.let = n_block_max_after_p2 - 1 - i
+                softmax_step(n_block, apply_mask=False)
+            if tid_in_wg < BLK_M:
+                sScale[ROW_SUM_BASE + tid_in_wg + wg_id * BLK_M] = row_sum[0]
+            softmax_corr.full.arrive(wg_id)
         with WarpgroupRole(wg_id, 2, regs=64):
             softmax_corr.full.wait(0, phase_q)
             softmax_corr.empty.arrive(0)
             softmax_corr.full.wait(1, phase_q)
             phase_q ^= 1
-            corr_trip_count: Tx.let = (
+            corr_trip_count: T.let = (
                 get_n_block_max(m_block_idx, is_causal, SEQ_LEN_KV, SEQ_LEN_Q, SEQ_Q_PER_TILE)
                 if is_causal
                 else num_kv_blocks
             )
-            for i_kv in Tx.serial(corr_trip_count - 1, unroll=False):
-                for i_q in Tx.unroll(2):
+            for i_kv in T.serial(corr_trip_count - 1, unroll=False):
+                for i_q in T.unroll(2):
                     softmax_corr.full.wait(i_q, phase_q)
                     profiler.start(ProfileEventType.Correction, tid_in_wg == 0)
-                    acc_scale: Tx.f32
-                    should_rescale: Tx.i32
+                    acc_scale: T.f32
+                    should_rescale: T.i32
                     if tid_in_wg < BLK_M:
                         acc_scale = sScale[ACC_SCALE_BASE + tid_in_wg + i_q * BLK_M]
-                        should_rescale = Tx.Select(acc_scale < Tx.float32(1.0), 1, 0)
+                        should_rescale = T.Select(acc_scale < T.float32(1.0), 1, 0)
                     else:
                         should_rescale = 0
-                    any_needs_rescale: Tx.let = Tx.ptx.any_sync(4294967295, should_rescale)
+                    any_needs_rescale: T.let = T.ptx.any_sync(4294967295, should_rescale)
                     if any_needs_rescale != 0:
                         if tid_in_wg < BLK_M:
-                            RESCALE_TILE = Tx.meta_var(16)
-                            o_row = Tx.wg_reg_tile(RESCALE_TILE)
-                            for d_tile in Tx.unroll(ceildiv(HEAD_DIM, RESCALE_TILE)):
-                                d_start: Tx.let = d_tile * RESCALE_TILE
+                            RESCALE_TILE = T.meta_var(16)
+                            o_row = T.wg_reg_tile(RESCALE_TILE)
+                            for d_tile in T.unroll(ceildiv(HEAD_DIM, RESCALE_TILE)):
+                                d_start: T.let = d_tile * RESCALE_TILE
                                 if d_start < HEAD_DIM:
-                                    Tx.copy_async(
+                                    Tx.wg.copy_async(
                                         o_row, O_region[i_q, d_start : d_start + RESCALE_TILE]
                                     )
-                                    Tx.mul(o_row, o_row, acc_scale)
-                                    Tx.copy_async(
+                                    Tx.wg.mul(o_row, o_row, acc_scale)
+                                    Tx.wg.copy_async(
                                         O_region[i_q, d_start : d_start + RESCALE_TILE], o_row
                                     )
-                            Tx.ptx.tcgen05.wait.st()
+                            T.ptx.tcgen05.wait.st()
                     p_o_rescale.arrive(i_q)
                     softmax_corr.empty.arrive(1 - i_q)
                     profiler.end(ProfileEventType.Correction, tid_in_wg == 0)
                 phase_q ^= 1
             softmax_corr.empty.arrive(1)
-            for i_q in Tx.unroll(2):
+            for i_q in T.unroll(2):
                 softmax_corr.full.wait(i_q, phase_q)
-                row_sum: Tx.let = sScale[ROW_SUM_BASE + tid_in_wg + i_q * BLK_M]
+                row_sum: T.let = sScale[ROW_SUM_BASE + tid_in_wg + i_q * BLK_M]
                 softmax_corr.empty.arrive(i_q)
                 o_ready.wait(i_q, phase_tmem)
                 corr_epi.empty.wait(i_q, phase_tmem)
                 profiler.start(ProfileEventType.EpiLDTMEM, tid_in_wg == 0)
-                acc_O_mn_row_is_zero_or_nan: Tx.let = tvm.tirx.any(
-                    row_sum == Tx.float32(0.0), row_sum != row_sum
+                acc_O_mn_row_is_zero_or_nan: T.let = tvm.tirx.any(
+                    row_sum == T.float32(0.0), row_sum != row_sum
                 )
-                norm_scale: Tx.let = Tx.ptx.rcp(
-                    Tx.Select(acc_O_mn_row_is_zero_or_nan, Tx.float32(1.0), row_sum)
+                norm_scale: T.let = T.ptx.rcp(
+                    T.Select(acc_O_mn_row_is_zero_or_nan, T.float32(1.0), row_sum)
                 )
-                o_row_f32 = Tx.wg_reg_tile(TMEM_EPI_LD_SIZE)
-                o_row_f16 = Tx.wg_reg_tile(TMEM_EPI_LD_SIZE, "float16")
-                for d_tile in Tx.unroll(ceildiv(HEAD_DIM, TMEM_EPI_LD_SIZE)):
-                    d_start: Tx.let = d_tile * TMEM_EPI_LD_SIZE
+                o_row_f32 = T.wg_reg_tile(TMEM_EPI_LD_SIZE)
+                o_row_f16 = T.wg_reg_tile(TMEM_EPI_LD_SIZE, "float16")
+                for d_tile in T.unroll(ceildiv(HEAD_DIM, TMEM_EPI_LD_SIZE)):
+                    d_start: T.let = d_tile * TMEM_EPI_LD_SIZE
                     if d_start < HEAD_DIM:
-                        Tx.copy_async(
+                        Tx.wg.copy_async(
                             o_row_f32, O_region[i_q, d_start : d_start + TMEM_EPI_LD_SIZE]
                         )
-                        Tx.mul(o_row_f32, o_row_f32, norm_scale)
-                        Tx.cast(o_row_f16, o_row_f32)
-                        Tx.copy(
+                        Tx.wg.mul(o_row_f32, o_row_f32, norm_scale)
+                        Tx.wg.cast(o_row_f16, o_row_f32)
+                        Tx.wg.copy(
                             O_smem[
                                 i_q,
                                 0:BLK_M,
@@ -819,14 +812,14 @@ def _kernel(
                             vec_len=8,
                         )
                     profiler.end(ProfileEventType.EpiLDTMEM, tid_in_wg == 0)
-                Tx.ptx.fence.proxy_async("shared::cta")
+                T.ptx.fence.proxy_async("shared::cta")
                 corr_epi.full.arrive(i_q)
                 p_o_rescale.arrive(i_q)
             phase_tmem ^= 1
             phase_q ^= 1
         scheduler.next_tile()
     tmem_pool.dealloc()
-    Tx.cuda.cta_sync()
+    T.cuda.cta_sync()
 
 
 def get_flash_attention4_kernel(

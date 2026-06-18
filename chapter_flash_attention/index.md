@@ -1,11 +1,11 @@
+(chap_flash_attention)=
 # Flash Attention 4
-:label:`chap_flash_attention`
 
 We now move from GEMM to a more complex kernel: Flash Attention. It still uses the same tile-primitive machinery as the GEMM chapters: TMA tile movement, `tcgen05` MMA, TMEM, warpgroup-local register tiles, and explicit barriers. The extra complexity comes from the algorithm between the two MMA phases: online softmax, masking, rescaling, and final normalization.
 
-This chapter keeps enough of the Flash Attention 4 algorithm to make the kernel readable, then focuses on how that algorithm is expressed in TIRX.
+This chapter keeps enough of the Flash Attention 4 algorithm to make the kernel readable, then focuses on how that algorithm is expressed in TIRx.
 
-The easiest way to read the kernel is to follow the tile path. `Q`, `K`, and `V` start as input tiles loaded from GMEM into SMEM. The score MMA consumes `Q` and `K` to create the score tile `S` in TMEM. Softmax turns `S` into a numerator tile `P`, and the value MMA consumes `P` and `V` to update the output accumulator `O`. When the running softmax maximum changes, the old `O` tile must be rescaled before the next value MMA can accumulate into it. The sections below first explain this path, then show how TIRX assigns the work to warpgroups and connects the stages.
+The easiest way to read the kernel is to follow the tile path. `Q`, `K`, and `V` start as input tiles loaded from GMEM into SMEM. The score MMA consumes `Q` and `K` to create the score tile `S` in TMEM. Softmax turns `S` into a numerator tile `P`, and the value MMA consumes `P` and `V` to update the output accumulator `O`. When the running softmax maximum changes, the old `O` tile must be rescaled before the next value MMA can accumulate into it. The sections below first explain this path, then show how TIRx assigns the work to warpgroups and connects the stages.
 
 ## Algorithm Shape
 
@@ -33,7 +33,7 @@ row_max = m_new
 
 Here `P` is not the final normalized attention matrix. It is the softmax numerator tile for the current K/V block. After all K/V blocks, the kernel writes `O / row_sum`.
 
-For TIRX, the key question is not only what the algorithm computes, but where each tile lives while the kernel runs. `S`, `P`, and `O` are tile values:
+For TIRx, the key question is not only what the algorithm computes, but where each tile lives while the kernel runs. `S`, `P`, and `O` are tile values:
 
 - `S` is the score tile. The score MMA writes it to TMEM.
 - `P` is the softmax numerator tile. Softmax reads `S` from TMEM into registers, computes `P = exp((S - m_new) / sqrt(d))`, and writes `P` back to TMEM.
@@ -58,11 +58,11 @@ This is the FA4 version of the GEMM data path. GEMM has one repeated MMA chain. 
 
 The full graph below expands that short path into producer-consumer edges:
 
-| Stage | Tile movement or compute | TIRX primitive | Hardware path |
+| Stage | Tile movement or compute | TIRx primitive | Hardware path |
 |-------|--------------------------|----------------|---------------|
 | Load Q/K/V | GMEM tiles -> SMEM tiles | `Tx.copy_async(..., dispatch="tma")` | TMA load |
 | Score MMA | Q in SMEM and K in SMEM -> score tile `S` in TMEM | `Tx.gemm_async(..., dispatch="tcgen05")` | `tcgen05.mma` |
-| Softmax read | `S` in TMEM -> warpgroup register tile | `Tx.copy_async(reg, tmem)` under `Tx.warpgroup()` | `tcgen05.ld` |
+| Softmax read | `S` in TMEM -> warpgroup register tile | `Tx.wg.copy_async(reg, tmem)` | `tcgen05.ld` |
 | Softmax write | numerator tile `P` in registers -> fp16 TMEM view | `Tx.copy_async(tmem_as_f16, reg)` | TMEM store, followed by `tcgen05.wait.st()` |
 | Value MMA | `P` in TMEM and V in SMEM -> output accumulator `O` in TMEM | `Tx.gemm_async(..., dispatch="tcgen05")` | `tcgen05.mma` with a TMEM operand |
 | Correction | `O` in TMEM -> registers -> `O` in TMEM | TMEM readback, register multiply, TMEM store | `tcgen05.ld` / TMEM store |
@@ -95,8 +95,8 @@ The two Q stages are the two entries in the Q pipeline. WG0 handles one stage wh
 The code selects these roles with symbolic coordinates:
 
 ```python
-wg_id = Tx.warpgroup_id([4])
-warp_id = Tx.warp_id_in_wg([4])
+wg_id = T.warpgroup_id([4])
+warp_id = T.warp_id_in_wg([4])
 ```
 
 When reading the code, first identify the role branch. That branch tells you which execution team owns the tile primitive inside it:
@@ -140,7 +140,7 @@ The first MMA produces attention scores. The second MMA consumes the softmax num
 
 Each tile op below gets the same **scope / layout / dispatch** card as the GEMM steps, with one extra line — **Handoff** — naming the barrier(s) that pass the tile to the next role.
 
-The kernel does not index raw TMEM columns. It carves the single TMEM allocation into per-stage tile views — `S_region`, `P_region`, and `O_region` — and indexes them by pipeline stage (`S_region[q_stage]`, `O_region[i_q]`, `P_region[i_q, 0:K_SPLIT]`). Those region objects are defined with `Tx.TMEMStages` in the [TMEM Layout and Reuse](#tmem-layout-and-reuse) section below; read the snippets here knowing that each region maps to a slice of the same physical TMEM.
+The kernel does not index raw TMEM columns. It carves the single TMEM allocation into per-stage tile views — `S_region`, `P_region`, and `O_region` — and indexes them by pipeline stage (`S_region[q_stage]`, `O_region[i_q]`, `P_region[i_q, 0:K_SPLIT]`). Those region objects are defined with `T.TMEMStages` in the [TMEM Layout and Reuse](#tmem-layout-and-reuse) section below; read the snippets here knowing that each region maps to a slice of the same physical TMEM.
 
 ### Score MMA
 
@@ -151,15 +151,14 @@ $$S = Q_{\text{block}}K_{\text{block}}^{\top}$$
 and writes the `128 x 128` score tile to TMEM:
 
 ```python
-with Tx.warp():
-    Tx.gemm_async(
-        S_region[q_stage],
-        Q_smem[q_stage, 0:BLK_M, 0:HEAD_DIM],
-        K_smem[kv_stage, 0:BLK_N, 0:HEAD_DIM],
-        dispatch="tcgen05",
-        cta_group=CTA_GROUP,
-    )
-if Tx.ptx.elect_sync():
+Tx.warp.gemm_async(
+    S_region[q_stage],
+    Q_smem[q_stage, 0:BLK_M, 0:HEAD_DIM],
+    K_smem[kv_stage, 0:BLK_N, 0:HEAD_DIM],
+    dispatch="tcgen05",
+    cta_group=CTA_GROUP,
+)
+if T.ptx.elect_sync():
     s_ready.arrive(q_stage)
 ```
 
@@ -216,16 +215,15 @@ $$O = O + P_{\text{block}}V_{\text{block}}$$
 Here `O` has already been initialized or rescaled for this K/V block. The A operand is `P` in TMEM, the B operand is `V` in SMEM, and the output accumulator is `O` in TMEM:
 
 ```python
-with Tx.warp():
-    Tx.gemm_async(
-        O_region[i_q],
-        P_region[i_q, 0:K_SPLIT],
-        V_smem[kv_stage, 0:K_SPLIT, 0:HEAD_DIM],
-        transB=True,
-        accum=should_accumulate,
-        dispatch="tcgen05",
-        cta_group=CTA_GROUP,
-    )
+Tx.warp.gemm_async(
+    O_region[i_q],
+    P_region[i_q, 0:K_SPLIT],
+    V_smem[kv_stage, 0:K_SPLIT, 0:HEAD_DIM],
+    transB=True,
+    accum=should_accumulate,
+    dispatch="tcgen05",
+    cta_group=CTA_GROUP,
+)
 ```
 
 > **Tile-primitive readout — Value MMA**
@@ -266,22 +264,22 @@ The figure is easiest to read as a set of tile slots:
 
 These are not independent buffers in global memory. They are regions of the same TMEM allocation. Sharing is forced, not chosen: with Q-pipeline depth 2 the two `S` slots (2 × MMA_N = 128) and two `O` slots (2 × 128) already fill all 512 fp32 columns of the region, so `P` has no columns of its own — it must alias the same bytes through the fp16 view. The schedule is valid because each region is reused only after the previous consumer has finished. That is why barriers are part of the layout story: TMEM reuse is safe only when the producer-consumer handoff is complete.
 
-The kernel allocates TMEM through a `Tx.TMEMPool`. It takes one fp32 view (`tmem`) for the score and output accumulators, then moves the pool base back to 0 and takes a second, fp16 view (`tmem_as_f16`) that aliases the *same* physical TMEM:
+The kernel allocates TMEM through a `T.TMEMPool`. It takes one fp32 view (`tmem`) for the score and output accumulators, then moves the pool base back to 0 and takes a second, fp16 view (`tmem_as_f16`) that aliases the *same* physical TMEM:
 
 ```python
-tmem_pool = Tx.TMEMPool(pool, total_cols=N_COLS_TMEM, cta_group=CTA_GROUP, tmem_addr=tmem_addr)
+tmem_pool = T.TMEMPool(pool, total_cols=N_COLS_TMEM, cta_group=CTA_GROUP, tmem_addr=tmem_addr)
 tmem = tmem_pool.alloc((128, N_COLS_TMEM), "float32")
 tmem_pool.move_base_to(0)
 tmem_as_f16 = tmem_pool.alloc((128, N_COLS_TMEM * 2), "float16")
 tmem_pool.commit()
 ```
 
-The fp16 view has twice as many indexable columns over the same bytes. The `S`, `P`, and `O` tile slots are then carved out as staged regions with `Tx.TMEMStages`, so the compute code can index them by pipeline stage instead of computing raw TMEM columns:
+The fp16 view has twice as many indexable columns over the same bytes. The `S`, `P`, and `O` tile slots are then carved out as staged regions with `T.TMEMStages`, so the compute code can index them by pipeline stage instead of computing raw TMEM columns:
 
 ```python
-S_region = Tx.TMEMStages(tmem,        col_start=0,                       width=MMA_N, stages=SMEM_PIPE_DEPTH_Q, stride=MMA_N)
-O_region = Tx.TMEMStages(tmem,        col_start=MMA_N * SMEM_PIPE_DEPTH_Q, width=MMA_N, stages=SMEM_PIPE_DEPTH_Q, stride=MMA_N)
-P_region = Tx.TMEMStages(tmem_as_f16, col_start=MMA_N,                   width=BLK_N, stages=SMEM_PIPE_DEPTH_Q, stride=MMA_N * 2)
+S_region = T.TMEMStages(tmem,        col_start=0,                       width=MMA_N, stages=SMEM_PIPE_DEPTH_Q, stride=MMA_N)
+O_region = T.TMEMStages(tmem,        col_start=MMA_N * SMEM_PIPE_DEPTH_Q, width=MMA_N, stages=SMEM_PIPE_DEPTH_Q, stride=MMA_N)
+P_region = T.TMEMStages(tmem_as_f16, col_start=MMA_N,                   width=BLK_N, stages=SMEM_PIPE_DEPTH_Q, stride=MMA_N * 2)
 ```
 
 `S_region` and `O_region` live in the fp32 `tmem`; `P_region` lives in the fp16 `tmem_as_f16`, so its `col_start` and `stride` are in fp16-view columns (hence the `* 2` relative to the fp32 stride). The compute code then writes `S_region[q_stage]`, reads `S_region[wg_id, ...]`, writes `P_region[wg_id, ...]`, and accumulates into `O_region[i_q]` — no manual column arithmetic.
@@ -393,7 +391,7 @@ That interleaving is why the score, softmax, correction, and value rows overlap 
 
 The WG2 row says `release / rescale` because the first K/V block has no old `O` to rescale, but WG2 still participates in the handoff that lets value MMA proceed. On later K/V blocks, WG2 may actually rescale the old `O` tile before value MMA accumulates into it. Normalization and TMA store happen only after the last K/V block for the current attention task.
 
-This is why a single GEMM-style pipeline is not enough. Q, K/V, and TMEM slots advance on different schedules. TIRX keeps those schedules visible as separate tile buffers, `PipelineState` cursors, and barrier phases instead of hiding the whole attention kernel behind one monolithic primitive.
+This is why a single GEMM-style pipeline is not enough. Q, K/V, and TMEM slots advance on different schedules. TIRx keeps those schedules visible as separate tile buffers, `PipelineState` cursors, and barrier phases instead of hiding the whole attention kernel behind one monolithic primitive.
 
 ## Rescaling and Writeback
 
@@ -404,12 +402,12 @@ $$O_{\text{old}} \leftarrow O_{\text{old}} \cdot e^{(m_{\text{old}} - m_{\text{n
 Softmax computes the per-row scale and writes it to SMEM. WG2 waits for that scale through `softmax_corr.full`, reads the current `O` accumulator from TMEM, multiplies by the per-row scale, and writes `O` back to TMEM:
 
 ```python
-RESCALE_TILE = Tx.meta_var(16)
-o_row = Tx.wg_reg_tile(RESCALE_TILE)
+RESCALE_TILE = T.meta_var(16)
+o_row = T.wg_reg_tile(RESCALE_TILE)
 Tx.copy_async(o_row, O_region[i_q, d_start : d_start + RESCALE_TILE])
 Tx.mul(o_row, o_row, acc_scale)
 Tx.copy_async(O_region[i_q, d_start : d_start + RESCALE_TILE], o_row)
-Tx.ptx.tcgen05.wait.st()
+T.ptx.tcgen05.wait.st()
 ```
 
 This is not scalar bookkeeping. It is another TMEM -> RF -> TMEM tile operation:
@@ -516,7 +514,7 @@ In non-causal mode, `scheduler.next_tile()` advances to another task for the sam
 
 The snippets above are excerpts. To run the real kernel, import it from `tirx-kernels`, compile it, and check it against a torch reference. Two things differ from the GEMM verify cell: Flash Attention has a richer entry point (`get_flash_attention4_kernel`), and the kernel takes an extra `profiler_buf` argument used by its built-in profiler. This is the one cell to run for the whole chapter:
 
-```{.python .input}
+```python
 import torch
 import torch.nn.functional as F
 import tvm
@@ -558,7 +556,7 @@ print(f"FA4: B={B} S={S} Hq={Hq} Hkv={Hkv} D={D}, non-causal -> PASS")
 | Barriers | mostly load/compute/writeback handoffs | additional score/softmax/value/correction handoffs |
 | Scheduling unit | output matrix tile | attention task: `(batch, kv_head, m_block)` |
 
-FA4 still uses the same local TIRX contracts:
+FA4 still uses the same local TIRx contracts:
 
 - the tile primitive says what tile moves or computes,
 - the surrounding scope says which threads cooperate,

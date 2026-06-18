@@ -1,9 +1,9 @@
-# Writing TIRX Kernels with Agents
-:label:`chap_ai_assisted`
+(chap_ai_assisted)=
+# Writing TIRx Kernels with Agents
 
-Before asking an agent to work on TIRX, give it the source code it must reason from. It should be able to read the `tvm` codebase for the TIRX DSL, layout objects, tile primitives, and lowering rules, and the `tirx-kernels` codebase for real kernels, scheduler helpers, and barrier patterns. Without those references, the agent will fall back to generic CUDA, Triton, or Hopper assumptions, which are often wrong for Blackwell TIRX.
+Before asking an agent to work on TIRx, give it the source code it must reason from. It should be able to read the `tvm` codebase for the TIRx DSL, layout objects, tile primitives, and lowering rules, and the `tirx-kernels` codebase for real kernels, scheduler helpers, and barrier patterns. Without those references, the agent will fall back to generic CUDA, Triton, or Hopper assumptions, which are often wrong for Blackwell TIRx.
 
-There are two ways to use an agent. The first is delegation: give it a broad goal, such as "make the FA4 barrier section easier to understand," and let it choose the method. That is useful for mechanical edits after you already know the direction, but it teaches you less because the important choices stay hidden. The second is learning-oriented: turn the broad goal into a specific instruction, such as "explain `softmax_corr.full` and `softmax_corr.empty` as a mailbox-slot lifecycle, keep the value-MMA gate in a separate diagram, then rebuild the tutorial." This is usually more effective for TIRX because the important work is not just changing text or code; it is learning what choices are possible and which hardware contracts those choices imply.
+There are two ways to use an agent. The first is delegation: give it a broad goal, such as "make the FA4 barrier section easier to understand," and let it choose the method. That is useful for mechanical edits after you already know the direction, but it teaches you less because the important choices stay hidden. The second is learning-oriented: turn the broad goal into a specific instruction, such as "explain `softmax_corr.full` and `softmax_corr.empty` as a mailbox-slot lifecycle, keep the value-MMA gate in a separate diagram, then rebuild the tutorial." This is usually more effective for TIRx because the important work is not just changing text or code; it is learning what choices are possible and which hardware contracts those choices imply.
 
 When you do not yet know the right instruction, ask the agent for candidates first. A good prompt is:
 
@@ -14,9 +14,9 @@ what it hides, and what code or diagram evidence I should verify.
 Do not edit yet.
 ```
 
-After reading the candidates, choose one and turn it into an explicit instruction. The next time you face the same kind of problem, you should be able to write that instruction yourself. This is the real value of using agents while learning TIRX: they help you discover "what is possible" and convert vague goals into reusable engineering moves.
+After reading the candidates, choose one and turn it into an explicit instruction. The next time you face the same kind of problem, you should be able to write that instruction yourself. This is the real value of using agents while learning TIRx: they help you discover "what is possible" and convert vague goals into reusable engineering moves.
 
-The previous chapters built up a way to read Blackwell kernels: identify the tile path, then check scope, layout, dispatch, and synchronization. That same structure is also the right way to move from a vague goal to a useful agent instruction. The unit of interaction is not a Python function or a whole CUDA file. It is a TIRX kernel contract. TIRX kernels are full of local contracts:
+The previous chapters built up a way to read Blackwell kernels: identify the tile path, then check scope, layout, dispatch, and synchronization. That same structure is also the right way to move from a vague goal to a useful agent instruction. The unit of interaction is not a Python function or a whole CUDA file. It is a TIRx kernel contract. TIRx kernels are full of local contracts:
 
 - which scope owns a tile operation,
 - where each tile lives and how it is laid out,
@@ -30,14 +30,14 @@ The agent can help you draft, compare, and execute choices. The programmer still
 
 ## Workflow
 
-![Writing TIRX Kernels with Agents Workflow](../img/ai_assisted_tirx_workflow.png)
+![Writing TIRx Kernels with Agents Workflow](../img/ai_assisted_tirx_workflow.png)
 
 A practical workflow is:
 
 1. Point the agent at `tvm` and `tirx-kernels`.
 2. Start with the goal, but do not stop there.
 3. If the path is unclear, ask for candidate strategies and tradeoffs.
-4. Choose one strategy and rewrite it as a concrete TIRX instruction: tile path, roles, layouts, barriers, expected checks.
+4. Choose one strategy and rewrite it as a concrete TIRx instruction: tile path, roles, layouts, barriers, expected checks.
 5. Ask the agent to execute, explain, or review one local contract at a time.
 6. Confirm with generated CUDA, tests, and benchmarks.
 7. Record the instruction pattern you learned so future prompts start more precise.
@@ -87,9 +87,9 @@ into the stage being released. Explain the phase flips before editing.
 
 This pattern matters because it turns the agent into a learning tool. You are not only getting a patch. You are learning the vocabulary of possible patches.
 
-## The TIRX Contract Prompt
+## The TIRx Contract Prompt
 
-When asking an agent about a TIRX kernel, do not start with only a code dump. Start with the kernel contract.
+When asking an agent about a TIRx kernel, do not start with only a code dump. Start with the kernel contract.
 
 Each field has a job. The tile path gives the data flow. Then come the same three pillars as the per-step cards in Chapters 3–5: **scope** (roles) says who executes each tile operation, **layout** says where its tiles live, and **dispatch** says which hardware path lowers it. **Barriers** say which producer-consumer edges make the async work safe to consume. The example below is the kind of prompt you can derive from the warp-specialized GEMM chapter.
 
@@ -138,7 +138,7 @@ This case shows why the prompt needs a hardware fact, not just code. The broken 
 ```python
 for k in range(K_TILES):
     tma2mma.wait(mma_ps.stage, mma_ps.phase)
-    with Tx.thread(Tx.ptx.elect_sync()):
+    if T.ptx.elect_sync():
         Tx.gemm_async(
             tmem[:, :BLK_N],
             Asmem[mma_ps.stage],
@@ -153,7 +153,7 @@ for k in range(K_TILES):
     mma_ps.advance()
 ```
 
-In these TIRX wrappers, `TCGen05Bar.arrive()` lowers to `tcgen05.commit`, and the caller must guard it so only the intended issuer calls it. Only the elected thread has the real MMA work in its commit group. The other lanes create empty commit groups, and those empty groups can signal the mbarrier before the MMA finishes. The TMA producer may then overwrite SMEM while the MMA still needs it.
+In these TIRx wrappers, `TCGen05Bar.arrive()` lowers to `tcgen05.commit`, and the caller must guard it so only the intended issuer calls it. Only the elected thread has the real MMA work in its commit group. The other lanes create empty commit groups, and those empty groups can signal the mbarrier before the MMA finishes. The TMA producer may then overwrite SMEM while the MMA still needs it.
 
 A useful agent prompt is not:
 
@@ -165,7 +165,7 @@ It is:
 
 ```text
 The MMA issue uses elect_sync, but mma2tma.arrive is outside that elected scope.
-In these TIRX wrappers, TCGen05Bar.arrive lowers to tcgen05.commit.
+In these TIRx wrappers, TCGen05Bar.arrive lowers to tcgen05.commit.
 Can empty commit groups signal the barrier early?
 ```
 
@@ -174,7 +174,7 @@ The fix is to keep the arrive in the same elected-thread scope as the MMA issue:
 ```python
 for k in range(K_TILES):
     tma2mma.wait(mma_ps.stage, mma_ps.phase)
-    with Tx.thread(Tx.ptx.elect_sync()):
+    if T.ptx.elect_sync():
         Tx.gemm_async(
             tmem[:, :BLK_N],
             Asmem[mma_ps.stage],
@@ -194,7 +194,7 @@ This is the pattern for the rest of the chapter: state the contract, ask the age
 The first useful task is explanation. Ask the agent to convert a code region into a tile-primitive table:
 
 ```text
-Read this TIRX code and make a table with:
+Read this TIRx code and make a table with:
 primitive, scope, source tile, destination tile, dispatch path,
 barrier waited before the primitive, and barrier signaled after it.
 ```
@@ -246,7 +246,7 @@ The agent is not deciding the design. It is checking whether the code still matc
 
 ## Use Case 3: Debug from Symptoms
 
-When a kernel fails, first classify the symptom. Then ask the agent to map the symptom back to the nearest producer-consumer handoff. The table here is the prompt-level version; use the *TIRX Language and Compile Pipeline* appendix page when you need generated-CUDA inspection.
+When a kernel fails, first classify the symptom. Then ask the agent to map the symptom back to the nearest producer-consumer handoff. The table here is the prompt-level version; use the *TIRx Language and Compile Pipeline* appendix page when you need generated-CUDA inspection.
 
 | Symptom | Likely area | First checks |
 |---------|-------------|--------------|
@@ -274,7 +274,7 @@ Test generation is one of the safest agent use cases. Let the agent write the re
 Good prompt:
 
 ```text
-Generate a PyTorch reference for this TIRX kernel.
+Generate a PyTorch reference for this TIRx kernel.
 Operation: D = A @ B.T.
 A shape: [M, K], fp16.
 B shape: [N, K], fp16.
@@ -307,7 +307,7 @@ The generated test still needs review, especially dtype, accumulation precision,
 
 ## Use Case 5: Inspect Generated CUDA
 
-For scope guards and issued intrinsics, the generated CUDA is the ground truth. TIRX source expresses intent; generated CUDA shows the guards and instructions that will actually run. Agents can help read it if you ask a concrete question:
+For scope guards and issued intrinsics, the generated CUDA is the ground truth. TIRx source expresses intent; generated CUDA shows the guards and instructions that will actually run. Agents can help read it if you ask a concrete question:
 
 ```text
 Here is the generated CUDA guard around tcgen05_alloc.
@@ -316,7 +316,7 @@ Does it require all lanes of one warp, or only lane 0?
 
 Useful patterns to check:
 
-| TIRX intent | Generated-code clue |
+| TIRx intent | Generated-code clue |
 |-------------|---------------------|
 | warpgroup branch | `(warp_id_in_cta >> 2) == ...` |
 | warp branch | `(warp_id_in_cta & 3) == ...` |
@@ -326,7 +326,7 @@ Useful patterns to check:
 
 If the agent's explanation disagrees with the generated code, trust the generated code.
 
-For a broader generated-CUDA workflow, use the *TIRX Language and Compile Pipeline* appendix page.
+For a broader generated-CUDA workflow, use the *TIRx Language and Compile Pipeline* appendix page.
 
 ## Agent Review Boundaries
 
@@ -335,7 +335,7 @@ The risky cases are the ones where the agent has to invent the hardware contract
 - Do not ask "fix the barriers." Ask "who arrives at this barrier, and how many arrivals does init expect?"
 - Do not ask "add the right fence." Ask "which producer-consumer edge does this fence order?"
 - Do not ask "is this phase right?" Ask "what happens on the first wait, and when does the phase flip?"
-- Do not accept invented TIRX APIs. Verify unfamiliar names with the API reference or `rg`.
+- Do not accept invented TIRx APIs. Verify unfamiliar names with the API reference or `rg`.
 - Do not accept an `elect_sync()` explanation unless it says the election is one thread per warp.
 - Do not accept performance advice without measurement. Pipeline depth, SMEM use, occupancy, and Tensor Core utilization must be profiled.
 
@@ -348,7 +348,7 @@ A project context file is a short bug log that you paste into future prompts. It
 Example:
 
 ```markdown
-# TIRX Blackwell Bug Notes
+# TIRx Blackwell Bug Notes
 
 ### tcgen05.commit outside elected scope
 Symptom: zeros or random garbage.
