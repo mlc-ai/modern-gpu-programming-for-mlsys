@@ -77,6 +77,28 @@ S[(2, 4, 8) : (1@gpuid_y, 8@m, 1@m)] + R[2 : 1@gpuid_x]
 ```
 *Interactive: a layout distributed over a 2×2 GPU mesh.*
 
+### Replication in practice: scale factors in TMEM
+
+Replication is not only about multiple GPUs — it also describes data the hardware *broadcasts across
+lanes*. Blackwell's block-scaled MMA ({ref}`chap_layout_generations`) is the clean example. Its
+scale factors live in TMEM, and a 128-row scale vector is stored in only **32 TMEM lanes** (logical
+row `r` → lane `r % 32`, with `r // 32` running along columns). Those 32 stored lanes are then
+**replicated along the lane axis** so all 128 lanes of the reading warpgroup get a copy — a `warpx4`
+broadcast, written with a replication dimension:
+
+```text
+S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
+```
+
+Four replicas at a stride of 32 lanes: lanes `l`, `l+32`, `l+64`, `l+96` all hold the same scale.
+The replication dimension carries no new data — it says "the same value, in four lane positions,"
+exactly as `@gpuid_x` broadcast a row across the GPU mesh above.
+
+![SFA/SFB in TMEM: 128 rows packed into 32 lanes (TLane = r % 32), replicated warpx4 to all 128 lanes of the reading warpgroup](../img/sf_tmem.svg)
+
+The byte packing inside each column (the `scale_vec` 1X/2X/4X modes) and the `cta_group::2` split
+are in {ref}`chap_layout_generations`.
+
 ## Swizzle layout
 
 Shared memory is split into **32 banks** that can be read in parallel. A warp's accesses are served

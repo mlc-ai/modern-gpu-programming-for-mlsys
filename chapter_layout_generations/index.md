@@ -189,19 +189,13 @@ A block-scaled MMA (mxfp8, nvfp4) carries two operands beyond A and B — `SFA (
 not SMEM. They take the SMEM→TMEM detour: a TMA load brings them into SMEM, then `tcgen05.cp` (a
 `Tx.copy_async` whose destination is a `tmem` buffer) copies them into TMEM before the MMA.
 
-And they are **packed**: a 128-row scale vector occupies only **32 TMEM lanes**, not 128. The
-layout (`sf_tmem_layout`, which implements the PTX *tcgen05 MMA scale-factor A layout*) is:
+The TMEM layout itself (`sf_tmem_layout`, the PTX *tcgen05 MMA scale-factor A layout*) is the
+lane-replication example from {ref}`chap_data_layout`: a 128-row scale vector packs into 32 lanes
+(row → lane `r % 32`, `r // 32` along TMEM columns at stride `epc = 4`) and is broadcast `warpx4`
+to all 128 reading lanes (`R[4 : 32@TLane]`).
 
-- The row index — M for `SFA`, N for `SFB` — maps to **lane `r % 32`**, so four logical rows share
-  a physical lane; the `r // 32` group runs along TMEM columns (stride `epc = 4`).
-- Each `uint32` column packs **four** scale bytes (`epc = 4`), holding the per-MMA K-blocks.
-- A `R[4 : 32@TLane]` **warpx4 broadcast** feeds the 32 stored rows to all 128 lanes of the reading
-  warpgroup.
-
-![SFA/SFB in TMEM: 128 M-rows occupy 32 TMEM lanes (TLane = m % 32); the m // 32 group runs along columns, with a warpx4 broadcast to the 128-lane warpgroup](../img/sf_tmem.svg)
-
-How many distinct scales a u32 holds depends on the **scale_vec** mode — the byte packing that
-matches the PTX *scale-factor A* 1x/2x/4x layouts:
+What is new here is the byte packing: how many distinct scales a `uint32` column holds depends on
+the **scale_vec** mode, matching the PTX *scale-factor A* 1x/2x/4x layouts:
 
 ![scale_vec byte packing: 1X (fp8) broadcasts one scale across 4 bytes; 2X (mxfp4) packs two scales each duplicated; 4X (nvfp4) packs four K-block scales](../img/sf_scale_vec.svg)
 
