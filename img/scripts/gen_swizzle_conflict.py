@@ -8,7 +8,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-OUT = "/home/bohanhou/worktree/tirx-tutorial/tirx-tutorial/img"
+from pathlib import Path; OUT = str(Path(__file__).resolve().parent.parent)  # the repo img/ dir
 # 8 distinct colors = 8 bank groups
 COLS = ["#ef4444", "#f59e0b", "#eab308", "#22c55e", "#14b8a6", "#3b82f6", "#8b5cf6", "#ec4899"]
 TXT = "#1f2937"

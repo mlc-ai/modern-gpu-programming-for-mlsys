@@ -13,7 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, FancyBboxPatch
 
-OUT = "/home/bohanhou/worktree/tirx-tutorial/tirx-tutorial/img"
+from pathlib import Path; OUT = str(Path(__file__).resolve().parent.parent)  # the repo img/ dir
 
 SMEM_BG = "#eff6ff"
 TMEM_BG = "#fffbeb"

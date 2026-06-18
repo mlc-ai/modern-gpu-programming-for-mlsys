@@ -12,7 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-OUT = "/home/bohanhou/worktree/tirx-tutorial/tirx-tutorial/img"
+from pathlib import Path; OUT = str(Path(__file__).resolve().parent.parent)  # the repo img/ dir
 TXT = "#1f2937"
 PURPLE = ["#7c3aed", "#8b5cf6", "#a78bfa", "#c4b5fd"]
 

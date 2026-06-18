@@ -13,7 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-OUT = "/home/bohanhou/worktree/tirx-tutorial/tirx-tutorial/img"
+from pathlib import Path; OUT = str(Path(__file__).resolve().parent.parent)  # the repo img/ dir
 TXT = "#1f2937"
 C_A = "#3b82f6"
 C_B = "#60a5fa"

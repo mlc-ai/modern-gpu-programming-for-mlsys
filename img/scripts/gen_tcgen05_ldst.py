@@ -9,7 +9,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-OUT = "/home/bohanhou/worktree/tirx-tutorial/tirx-tutorial/img"
+from pathlib import Path; OUT = str(Path(__file__).resolve().parent.parent)  # the repo img/ dir
 ROWC = ["#3b82f6", "#10b981", "#f59e0b", "#8b5cf6", "#ef4444", "#0ea5e9", "#ec4899", "#65a30d"]
 TXT = "#1f2937"
 
