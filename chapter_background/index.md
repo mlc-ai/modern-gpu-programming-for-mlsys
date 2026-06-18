@@ -1,137 +1,150 @@
-# Blackwell Background
-:label:`chap_background`
+(chap_background)=
+# The GPU Execution and Memory Model
 
-Blackwell kernels coordinate thread groups, memory spaces, TMA, `tcgen05`, barriers, and CTA clusters. This chapter introduces each one, because the rest of the tutorial builds on them.
+A GPU runs a kernel across a hierarchy of threads, a set of distinct memory spaces, and a few
+compute and data-movement engines. This chapter covers those — the thread hierarchy, the compute
+units, the memory spaces, and how a GEMM flows across them. The `tcgen05` compute path
+({ref}`chap_tensor_cores`), TMA data movement ({ref}`chap_tma`), and the mbarrier coordination
+model ({ref}`chap_async_barriers`) each get their own chapter; this one establishes the hierarchy
+and dataflow they build on.
 
+```{raw} html
+<div style="overflow-x:auto;">
+<iframe src="../demo/sm_architecture.html" title="Blackwell SM architecture" loading="lazy"
+        style="width:100%; min-width:1320px; height:680px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+</div>
+```
+*Interactive: the Blackwell SM — its warps/warpgroups, shared memory, Tensor Memory, and the
+Tensor Core and TMA engines.*
 
-## Thread Hierarchy
+## The Execution Hierarchy
 
-Blackwell organizes threads into a nested hierarchy:
+A GPU organizes threads into a nested hierarchy. On Blackwell the levels are:
 
-![*Blackwell Thread Hierarchy*](../img/blackwell_thread_hierarchy.png)
+![Blackwell thread hierarchy](../img/blackwell_thread_hierarchy.png)
 
-- **CTA** — short for *Cooperative Thread Array*, the same concept that CUDA programmers know as a thread block. It is the basic scheduling unit: a CTA runs on a single SM and has access to that SM's shared memory.
+- **Thread** — the scalar unit of execution, identified by a lane ID within its warp.
+- **Warp** — 32 threads executing in SIMT (*single instruction, multiple threads*): the lanes
+  issue the same instruction together, but each keeps its own registers and data.
+- **Warpgroup** — 4 consecutive warps (128 threads). New on the Hopper/Blackwell generation,
+  the warpgroup is the cooperation unit for Tensor Memory reads: the 128 threads collectively
+  cover TMEM's 128 rows, each warp owning one 32-row slab (warp 0 → rows 0–31, warp 1 → 32–63,
+  and so on).
+- **CTA** (*Cooperative Thread Array*, a.k.a. a CUDA thread block) — the basic scheduling unit.
+  A CTA runs on a single SM and owns that SM's shared memory.
+- **Cluster** — a group of cooperating CTAs (across SMs) that can share memory and synchronize.
 
-- **Warpgroup**: 4 consecutive warps (128 threads). On Blackwell, the warpgroup is the cooperation unit for TMEM reads — the 128 threads collectively cover the 128 `TLane` rows (`TLane` is TMEM's row axis, defined under Memory Spaces below), with each of the four warps owning one 32-lane slab (warp 0 → lanes 0-31, warp 1 → 32-63, warp 2 → 64-95, warp 3 → 96-127).
+These levels matter because Blackwell operations are **not all issued by the same group of
+threads**. A TMA copy is issued by one thread and finished by hardware; a TMEM→register load is
+warpgroup-cooperative; a `tcgen05` MMA is committed by one elected thread; a clustered MMA spans
+two CTAs. This is the **scope** knob from the introduction: which threads run an operation.
 
-- **Warp**: A warp contains 32 threads and is the basic SIMT (*single instruction, multiple threads*) execution unit. The threads in a warp issue the same instruction together, while each thread keeps its own registers, lane ID, and data.
+## Compute: CUDA Cores and Tensor Cores
 
-- **Thread**: Each thread is identified by a lane ID within its warp.
+An SM has two kinds of math engine:
 
-- **Cluster**: A group of cooperating CTAs. Clustered kernels use clusters for cross-CTA cooperation, multicast TMA, and 2-CTA cooperative MMA.
+- **CUDA cores** — general-purpose SIMT ALUs that execute scalar/vector instructions for indexing,
+  elementwise math, reductions, and control flow.
+- **Tensor Cores** — fixed-function units that execute a dense matrix multiply-accumulate at *tile*
+  granularity in a single instruction: $D = AB + C$.
 
-These levels matter because Blackwell operations are not all issued by the same group of threads. A TMA copy is issued by one thread and completed by hardware; a TMEM-to-register load is warpgroup-cooperative; a `tcgen05.mma` commit is issued by an elected thread; clustered MMA may involve multiple CTAs.
-
+Tensor Cores are **not new** — they have performed tile-level MMA since Volta (2017), and dense
+linear algebra (GEMM, convolution, attention) reaches peak throughput only on them. What changes
+from one GPU generation to the next is *how* the Tensor Core is programmed and *where* its results
+live: the asynchronous warpgroup MMA model arrived with Hopper, and Blackwell's fifth-generation
+Tensor Core (`tcgen05`, with accumulators in Tensor Memory) is covered in {ref}`chap_tensor_cores`.
 
 ## Memory Spaces
 
-Blackwell kernels use a memory hierarchy spanning GMEM, SMEM, TMEM, and registers:
+A kernel moves data through a hierarchy of memories, each with its own capacity, latency, and
+access rules:
 
-| Memory | Ownership | Role | Description |
-|--------|-----------|---------|-------------|
-| **Global Memory (GMEM)** | Device-wide | Persistent tensor storage | Large capacity HBM, shared by all SMs |
-| **Shared Memory (SMEM)** | Per-CTA (on one SM) | Tile staging | Low-latency scratchpad; up to 228 KB per SM on B200 / compute capability 10.0 |
-| **Tensor Memory (TMEM)** | Per-SM | MMA accumulator storage | Dedicated Blackwell scratchpad used by `tcgen05`; also used by some MMA variants as an A-operand staging area |
-| **Register File (RF)** | Per-thread | Scalar and per-thread tile fragments | Fast per-thread storage used for epilogues, scalar math, and temporary values |
+| Memory | Ownership | Role | Notes |
+|--------|-----------|------|-------|
+| **Global (GMEM)** | Device-wide | Persistent tensor storage | Large HBM, shared by all SMs |
+| **Shared (SMEM)** | Per-CTA (one SM) | Tile staging | Low-latency scratchpad; up to 228 KB/SM on B200 |
+| **Tensor Memory (TMEM)** | Per-SM | MMA accumulator storage | New on Blackwell; used by `tcgen05` |
+| **Register File (RF)** | Per-thread | Scalars and per-thread tile fragments | Fast; holds epilogue/temp values |
 
-Each memory space has different access rules. GMEM is the large persistent store, SMEM is the staging area for tiles, TMEM holds MMA accumulators, and registers hold the per-thread fragments that the epilogue reads back from TMEM, casts, and stores to GMEM.
+The data path of almost every kernel in this book is **GMEM → SMEM → (compute) → registers →
+GMEM**, with TMEM holding accumulators in the middle for tensor-core kernels.
 
-**Tensor Memory (TMEM)** is new in Blackwell. It is a per-SM, high-bandwidth scratchpad memory used by the `tcgen05` MMA path. Unlike earlier GPU generations where large MMA accumulators lived in registers, Blackwell writes `tcgen05` accumulator output directly to TMEM first. The kernel then explicitly reads those results from TMEM into registers, or stages them through shared memory for output.
+![Memory dataflow across the hierarchy](../img/memory_dataflow.png)
 
-- **TMEM reads are explicit and cooperative.** To consume MMA results, the kernel explicitly loads from TMEM into the register file. These reads are performed cooperatively by the full warpgroup (128 threads).
+**Tensor Memory (TMEM)** is the one space without a pre-Blackwell analog, so it is worth naming
+here even though its details belong to {ref}`chap_tensor_cores`. Earlier GPUs kept large MMA
+accumulators in registers; Blackwell instead writes `tcgen05` accumulator output to TMEM, a
+per-SM 2D scratchpad (128 rows × up to 512 32-bit columns). The kernel then explicitly reads
+TMEM into registers for the epilogue. Two consequences show up everywhere later: TMEM reads are
+**explicit and warpgroup-cooperative**, and TMEM must be **explicitly allocated and freed**.
 
-- **TMEM uses its own addressing and allocation model.** It is not accessed like normal memory; instead, it uses a special 2D address space whose rows are indexed by a hardware axis called `TLane` (128 lanes) and whose columns are indexed by `TCol` (up to 512 columns). TMEM must be explicitly allocated and deallocated; allocation is performed by a single warp in units of 32 columns, with the column count rounded up to a power of two.
-
-
-## TMA
-
-TMA is a hardware unit that asynchronously copies rectangular tiles between global memory and shared memory. A kernel issues a tile copy, and the TMA engine performs the transfer in the background.
-
-- **Single-thread launch**: One thread issues the TMA operation, and the hardware performs the actual tile transfer asynchronously in the background. TMA does not require all CTA threads to execute explicit load/store instructions.
-
-- **Swizzled layouts**: TMA can apply layout swizzling during the transfer, helping produce shared-memory layouts that are friendly to Tensor Core access.
-
-- **Barrier integration**: TMA works with mbarriers. The transfer has an expected byte count, and the hardware signals completion when that amount of data has arrived.
-
-- **Store support**: TMA is not only for GMEM→SMEM loads; it can also store data from SMEM back to GMEM. TMA stores use a commit-group / wait-group mechanism for completion tracking.
-
-TMA changes tile movement from a per-thread load/store loop into an asynchronous hardware operation with byte-count tracking and explicit completion synchronization.
-
-
-## Tensor Cores and Blackwell MMA
-
-Tensor Cores are the hardware units that execute dense matrix multiply at tile granularity. Blackwell exposes this compute path through the `tcgen05` MMA instruction family. `tcgen05` does not include TMA: TMA is the data-movement path, while `tcgen05` is the compute path.
-
-At the math level, a Tensor Core instruction performs a tile-granularity matrix multiply-accumulate:
-
-$$D = AB + C, \quad A \in \mathbb{R}^{M \times K},\ B \in \mathbb{R}^{K \times N},\ C, D \in \mathbb{R}^{M \times N}.$$
-
-Tensor Cores are different from **CUDA cores**, the GPU's general-purpose SIMT ALUs. CUDA cores execute scalar and vector instructions for indexing, elementwise math, reductions, and control flow. Tensor Cores execute dense tile-level MMA instructions for GEMM, convolution, and attention. Both engines live on the same SM, but dense linear algebra relies on Tensor Cores for peak throughput.
-
-On Blackwell, an MMA is more than the math. It is **asynchronous**: issuing it is not the same as finishing it, so completion is tracked with a barrier. An MMA also spells out three things you will see for every tile operation in this tutorial — its **scope / layout / dispatch**:
-
-1. **Scope** — who cooperates. An MMA may involve a warpgroup, and some Blackwell modes allow two CTAs to cooperate on one MMA tile.
-2. **Layout** — where the operands and result live. MMA operands are tiles in SMEM (some Blackwell variants also read TMEM), and the accumulator is written to TMEM.
-3. **Dispatch** — which hardware path runs it. `tcgen05` issues the MMA and returns before the math is done; the barrier mentioned above is what marks it complete.
-
-One Blackwell-specific detail is where the MMA result lives. `tcgen05.mma` does not keep large accumulator tiles in registers during the whole compute phase. It writes them to **TMEM**, a 128 × 512 32-bit scratchpad per SM. Later, the kernel reads the needed TMEM values into registers for the epilogue and writes the final result back to GMEM.
-
-The GEMM chapters use this path directly: TMA stages operand tiles, `tcgen05.mma` computes into TMEM, and the epilogue reads TMEM to produce the output. A slow kernel waits for each tile load before starting the matching MMA. A fast kernel overlaps them: while the Tensor Core computes on the current tile, TMA brings in the next tile. This is why Blackwell GEMM needs both asynchronous data movement and asynchronous compute, plus barriers to hand data from one hardware unit to the next.
-
-
-## Memory Barrier (mbarrier)
-
-mbarriers are hardware synchronization primitives stored in shared memory. They combine a counter with a phase bit to enable reusable, asynchronous synchronization.
-
-**Lifecycle of an mbarrier:**
-
-1. **Init**: Set the expected number of arrivals. The barrier starts at phase 0.
-2. **Arrive**: Each arrival decrements the counter. There are three ways to arrive:
-   - **TMA auto-arrive**: The hardware arrives automatically once the byte transfer completes.
-
-   - **tcgen05 auto-arrive**: The hardware arrives once committed MMAs complete.
-
-   - **Thread arrive**: A thread arrives explicitly, for example to signal that a shared resource can be reused.
-3. **Wait**: A consumer waits until the barrier reaches the expected phase for that iteration, which indicates that all required arrivals have completed.
-4. **Phase flip**: Once all arrivals are done, the barrier automatically toggles its phase (0 → 1 → 0 → ...). This lets the same barrier be reused across loop iterations: iteration 0 uses phase 0, iteration 1 uses phase 1, iteration 2 uses phase 0 again, etc.
-
-The producer-consumer pattern is direct: a producer (for example, TMA) arrives on a barrier when data is ready, and the consumer waits before using the data.
-
-
-## Synchronization Rules
-
-Blackwell kernels mix ordinary thread instructions with asynchronous engines such as TMA and `tcgen05` MMA. The rule is simple: whenever one hardware path produces data and another path consumes it, the kernel must make that handoff explicit.
-
-There are three common handoffs:
-
-- **Thread code to hardware engine.** If threads write SMEM and a later MMA or TMA store reads it, the kernel needs a thread-level synchronization or fence first.
-- **TMA to MMA.** If TMA fills SMEM, the MMA side must wait until the TMA transfer has completed before reading that tile.
-- **MMA to epilogue.** If `tcgen05.mma` writes TMEM, the epilogue must wait until the MMA has completed before reading the result.
-
-The same rule applies before releasing resources such as TMEM: every CTA that may still read or write the resource must be finished first. The GEMM chapters spell out the exact waits and fences used for each handoff.
-
+**Distributed shared memory (DSMEM).** SMEM is per-CTA, but within a cluster (covered in the next
+section) a CTA can reach a *peer* CTA's shared memory. The hardware exposes this
+in two parts. First, an address: the `mapa` instruction maps a local SMEM pointer to a specific
+CTA rank in the cluster — in TIRx that is `T.ptx.map_shared_rank(ptr, cta_id)`, which returns the
+same offset in CTA `cta_id`'s SMEM. Second, a transfer: a single thread can bulk-copy a tile
+between two CTAs' shared memory through the cluster. That is the **DSMEM** dispatch of
+`Tx.copy_async` — given a remote CTA id and an mbarrier it emits
+`cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes`, copying from the issuing
+CTA's SMEM into the mapped peer SMEM and signalling the mbarrier when the bytes land. The 2-CTA
+cluster GEMM in Part III uses exactly this to share operand tiles across the pair without a round
+trip through global memory.
 
 ## CTA Clusters
 
-Blackwell supports **CTA clusters**: groups of CTAs that can cooperate more tightly than independent thread blocks. A clustered kernel can coordinate CTAs across multiple SMs, access peer CTA shared memory, and synchronize work across the cluster.
+Blackwell lets a group of CTAs form a **cluster** that cooperates more tightly than independent
+blocks: cluster CTAs can synchronize together and access each other's shared memory (distributed
+shared memory, DSMEM).
 
-Clusters matter for large tile kernels because one CTA's local SMEM budget is finite. Cooperative MMA can let multiple CTAs contribute SMEM operands to one larger MMA tile. TMA multicast is a separate cluster feature: one TMA load can deliver the same GMEM tile to multiple CTAs, reducing repeated global-memory traffic.
+![A CTA cluster sharing distributed shared memory](../img/cta_cluster.png)
 
+Clusters matter for large tiles because one CTA's SMEM budget is finite. Two cluster features
+recur in the GEMM chapters: **2-CTA cooperative MMA** (two CTAs contribute SMEM operands to one
+larger MMA tile) and **TMA multicast** (one TMA load delivers the same GMEM tile to several
+CTAs, cutting redundant global traffic).
+
+## The GEMM Data Pipeline
+
+```{raw} html
+<div style="overflow-x:auto;">
+<iframe src="../demo/pipeline_arch.html" title="Blackwell GEMM data pipeline" loading="lazy"
+        style="width:100%; min-width:1320px; height:680px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+</div>
+```
+*Interactive: the load → MMA → epilogue pipeline on Blackwell, and how the stages overlap.*
+
+Here is how a GEMM tile flows across the hardware:
+
+1. **Load.** A TMA copy ({ref}`chap_tma`) streams an A/B operand tile from GMEM into SMEM. One
+   thread issues it; the TMA engine does the transfer and signals an mbarrier when the bytes land.
+2. **Compute.** A `tcgen05` MMA ({ref}`chap_tensor_cores`) reads the SMEM operands and
+   accumulates into a TMEM tile. It is issued by one elected thread and signals a barrier when done.
+3. **Epilogue.** The warpgroup reads the TMEM accumulator into registers, casts it to the output
+   dtype, and stores it back to GMEM (often via SMEM staging + a TMA store).
+
+The difference between a slow and a fast kernel is **overlap**. A naive kernel runs these steps
+in sequence — load, wait, compute, wait, store — leaving each engine idle most of the time. A
+fast kernel pipelines them: while the Tensor Core computes on tile `k`, the TMA engine is already
+fetching tile `k+1` and the epilogue is draining tile `k-1`. Making three asynchronous engines
+hand work to each other safely is the job of the barrier/phase model ({ref}`chap_async_barriers`);
+Part III's GEMM ladder is built on it.
 
 ## Numbers to Keep in Mind
 
-Keep these orders of magnitude in mind when reading the GEMM chapters. They explain why kernels stage only a few operand tiles, manage TMEM explicitly, and work hard to keep Tensor Cores fed.
+These orders of magnitude (B200, approximate) explain why kernels stage only a few operand tiles,
+budget TMEM carefully, and work hard to keep the Tensor Cores fed:
 
 | Quantity | Value (B200, approx.) | Where it shows up |
 |:--|:-:|:--|
-| Streaming multiprocessors per GPU | 148 | grid sizing, persistent schedulers |
-| Shared memory per SM | 228 KB on B200 / compute capability 10.0 | SMEM budget for pipeline depth |
-| Tensor memory per SM | 128 lanes × 512 cols (32-bit) | TMEM accumulator budget |
-| Registers per thread (max) | 255 × 32-bit | why large accumulator tiles are not kept entirely in RF |
-| Tensor Core peak @ FP16/BF16 (dense) | order of 2 PFLOPS | GEMM roof; exact value depends on SKU and clock |
-| Tensor Core peak @ FP8 / FP4 (dense) | several PFLOPS | mixed-precision GEMM; exact value depends on SKU, clock, and sparsity mode |
-| HBM3e bandwidth | order of 8 TB/s | bandwidth roof |
-| L2 cache | device-specific; 128 MB-class, partitioned per die | where tile operands actually live after warm-up |
+| Streaming multiprocessors per GPU | ~148 | grid sizing, persistent schedulers |
+| Shared memory per SM | up to 228 KB | SMEM budget for pipeline depth |
+| Tensor Memory per SM | 128 rows × 512 cols (32-bit) | accumulator budget |
+| Registers per thread (max) | 255 × 32-bit | why big accumulators don't stay in RF |
+| Tensor Core peak @ fp16/bf16 (dense) | order of 2 PFLOP/s | the compute roof ({ref}`chap_performance`) |
+| Tensor Core peak @ fp8 / fp4 (dense) | several PFLOP/s | mixed-precision GEMM |
+| HBM3e bandwidth | order of 8 TB/s | the memory roof |
 | One fp16 128×64 tile in SMEM | 16 KB | example staged operand-tile size |
 
-NVIDIA often reports multiple peak numbers depending on dtype, sparsity mode, and product SKU. Use the table as scale, not as a full performance model: SMEM can hold only a small number of staged operand tiles, TMEM must be budgeted for accumulator tiles, and Tensor Core throughput is high enough that data movement has to overlap compute.
+Exact peak numbers depend on SKU, clock, and sparsity mode — use the table as *scale*, not a
+performance model. The takeaway: SMEM holds only a handful of staged tiles, TMEM must be
+budgeted, and tensor-core throughput is high enough that data movement *must* overlap compute.

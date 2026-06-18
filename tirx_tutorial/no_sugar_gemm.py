@@ -1,6 +1,6 @@
 """Full no-sugar single-tile GEMM: raw TMA + raw MMA + raw TMEM->RF->GMEM.
 
-Every bit of TIRX sugar is unfolded here:
+Every bit of TIRx sugar is unfolded here:
 
   - No ``Tx.copy`` / ``Tx.copy_async``
         -> raw ``Tx.ptx.cp_async.bulk.tensor.g2c``
@@ -15,7 +15,7 @@ Every bit of TIRX sugar is unfolded here:
         -> raw ``Tx.ptx.mbarrier.{init, arrive.expect_tx, try_wait}``
 
 Single tile (M = N = 128, K = 64), no pipelining, no cluster, single CTA,
-single warpgroup. Used by :numref:`chap_layouts` to motivate every TIRX
+single warpgroup. Used by :numref:`chap_layouts` to motivate every TIRx
 abstraction introduced in the rest of the chapter.
 """
 import numpy as np

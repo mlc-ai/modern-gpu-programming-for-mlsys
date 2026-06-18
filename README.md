@@ -1,6 +1,6 @@
-# TIRX: High-Performance GPU Kernel Programming
+# TIRx: High-Performance GPU Kernel Programming
 
-A hands-on tutorial for writing GPU kernels on NVIDIA Blackwell GPUs using TIRX.
+A hands-on tutorial for writing GPU kernels on NVIDIA Blackwell GPUs using TIRx.
 
 ## Quickstart
 
@@ -9,18 +9,18 @@ preview instructions below.
 
 **Run locally** (requires Blackwell GPU):
 
-> **Installation instructions are being updated.** The TIRX nightly wheel URL and
+> **Installation instructions are being updated.** The TIRx nightly wheel URL and
 > pinned package versions move quickly, so the exact `pip install` commands are
 > pending a refresh. See the **Environment Setup** chapter for the current status.
 
-Once TIRX is installed, verify the import:
+Once TIRx is installed, verify the import:
 
 ```bash
-# Should print "TIRX OK"
-python -c "from tvm.script import tirx as Tx; print('TIRX OK')"
+# Should print "TIRx OK"
+python -c "from tvm.script import tirx as T; print('TIRx OK')"
 ```
 
-For a runnable minimal kernel, see the **Environment Setup** chapter. TIRX parses
+For a runnable minimal kernel, see the **Environment Setup** chapter. TIRx parses
 kernel source with Python's source inspection, so examples should live in a file
 or notebook cell rather than inside `python -c`.
 

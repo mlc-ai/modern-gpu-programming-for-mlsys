@@ -1,7 +1,7 @@
+(chap_setup)=
 # Environment Setup
-:label:`chap_setup`
 
-Set up TVM/TIRX first, then verify the install with a tiny GPU kernel.
+Set up TVM/TIRx first, then verify the install with a tiny GPU kernel.
 
 ## Requirements
 
@@ -12,48 +12,48 @@ Set up TVM/TIRX first, then verify the install with a tiny GPU kernel.
 
 ## Install Packages
 
-> **Installation instructions are being updated.** The TIRX nightly wheel URL and pinned package versions move quickly, so the exact `pip install` commands are pending a refresh and will be added here.
+> **Installation instructions are being updated.** The TIRx nightly wheel URL and pinned package versions move quickly, so the exact `pip install` commands are pending a refresh and will be added here.
 
 If you are working from source, use the local `tvm` checkout and keep `tirx-kernels` updated to the same development window.
 
 ## Minimal Kernel
 
-The smallest useful verification is a one-dimensional GPU kernel. It checks the current TIRX entry-point style:
+The smallest useful verification is a one-dimensional GPU kernel. It checks the current TIRx entry-point style:
 
-- `@Tx.prim_func` defines one TIRX primitive function.
-- `Tx.device_entry()` marks the start of device code.
-- `Tx.cta_id([...])` names the CTA index and launch extent.
-- `Tx.thread_id([...])` names the thread index inside a CTA.
-- `with Tx.thread():` marks per-thread work.
+- `@T.prim_func` defines one TIRx primitive function.
+- `T.device_entry()` marks the start of device code.
+- `T.cta_id([...])` names the CTA index and launch extent.
+- `T.thread_id([...])` names the thread index inside a CTA.
+- Per-thread work needs no scope wrapper; a predicate like `if i < n:` selects which threads run.
 
-```{.python .input}
+```python
 import torch
 import tvm
-from tvm.script import tirx as Tx
+from tvm.script import tirx as T
+from tvm.script.tirx import tile as Tx
 
 BLOCK = 256
 ```
 
-```{.python .input}
-@Tx.prim_func
-def double_it(a_ptr: Tx.handle, b_ptr: Tx.handle):
-    n = Tx.int32()
-    A = Tx.match_buffer(a_ptr, [n], "float32")
-    B = Tx.match_buffer(b_ptr, [n], "float32")
+```python
+@T.prim_func
+def double_it(a_ptr: T.handle, b_ptr: T.handle):
+    n = T.int32()
+    A = T.match_buffer(a_ptr, [n], "float32")
+    B = T.match_buffer(b_ptr, [n], "float32")
 
-    Tx.device_entry()
-    bx = Tx.cta_id([(n + BLOCK - 1) // BLOCK])
-    tid = Tx.thread_id([BLOCK])
+    T.device_entry()
+    bx = T.cta_id([(n + BLOCK - 1) // BLOCK])
+    tid = T.thread_id([BLOCK])
 
-    with Tx.thread():
-        i = bx * BLOCK + tid
-        if i < n:
-            B[i] = A[i] * 2.0
+    i = bx * BLOCK + tid
+    if i < n:
+        B[i] = A[i] * 2.0
 ```
 
 Compile and run:
 
-```{.python .input}
+```python
 target = tvm.target.Target("cuda")
 with target:
     ex = tvm.compile(tvm.IRModule({"main": double_it}), target=target, tir_pipeline="tirx")

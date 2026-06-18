@@ -1,7 +1,7 @@
-# Practice Kernel: RMSNorm Reduction
-:label:`chap_rmsnorm`
+(chap_rmsnorm)=
+# First Kernels: Reductions (RMSNorm)
 
-RMSNorm (Root Mean Square Layer Normalization) is used in LLMs such as Llama and Qwen. This optional practice kernel uses a manual reduction so you can see **warp-level reduction** and **shared memory communication** directly. Current production kernels may use higher-level helpers such as `Tx.cuda.cta_sum(...)` for the same reduction.
+RMSNorm (Root Mean Square Layer Normalization) is used in LLMs such as Llama and Qwen. This optional practice kernel uses a manual reduction so you can see **warp-level reduction** and **shared memory communication** directly. Current production kernels may use higher-level helpers such as `T.cuda.cta_sum(...)` for the same reduction.
 
 **Operation**: Given input `x[batch, hidden]` and weight `w[hidden]`, for each row $b$:
 
@@ -13,7 +13,7 @@ Each row is normalized independently by its own RMS value. Here $b$ indexes the 
 
 - Vectorized memory access with `Tx.copy()` and `Tx.cast()`
 
-- Warp-level reduction using `Tx.tvm_warp_shuffle_xor()`
+- Warp-level reduction using `T.tvm_warp_shuffle_xor()`
 
 - Shared memory for cross-warp communication
 
@@ -23,12 +23,13 @@ Each row is normalized independently by its own RMS value. Here $b$ indexes the 
 
 First, the helper functions and constants:
 
-```{.python .input}
+```python
 
 import math
 import numpy as np
 import tvm
-from tvm.script import tirx as Tx
+from tvm.script import tirx as T
+from tvm.script.tirx import tile as Tx
 
 EPS = 1e-6
 F16_BYTES = 2
@@ -50,15 +51,15 @@ Computing RMS requires summing $x^2$ across the entire hidden dimension — a gl
 
 ### Thread Organization
 
-Each CTA has `bdx * bdy` threads, arranged in a 2D layout via `Tx.thread_id([bdx, bdy])`:
+Each CTA has `bdx * bdy` threads, arranged in a 2D layout via `T.thread_id([bdx, bdy])`:
 
 ```python
-tx, ty = Tx.thread_id([bdx, bdy])
+tx, ty = T.thread_id([bdx, bdy])
 # tx: lane ID within the warp (0-31)
 # ty: warp index (0 to bdy-1)
 ```
 
-Passing a **2D list `[bdx, bdy]`** means the CTA's threads are logically arranged as a 2D grid of size `bdx × bdy`, and the call returns **two indices** `(tx, ty)`. In contrast, `Tx.thread_id([NUM_THREADS])` is 1D and returns a single `tid`.
+Passing a **2D list `[bdx, bdy]`** means the CTA's threads are logically arranged as a 2D grid of size `bdx × bdy`, and the call returns **two indices** `(tx, ty)`. In contrast, `T.thread_id([NUM_THREADS])` is 1D and returns a single `tid`.
 
 - `bdx = 32` — one warp (32 threads). `tx` is the lane ID within the warp.
 - `bdy = ceildiv(block_size, 32)` — how many warps per CTA. `ty` is the warp index.
@@ -95,8 +96,8 @@ A real warp has 32 threads and 5 steps (offsets 16, 8, 4, 2, 1), but the pattern
 In code:
 ```python
 # Reduce within a warp using butterfly pattern (XOR shuffle)
-for kr in Tx.unroll(find_power_of_two(bdx // 2) + 1):
-    sum_sq[0] = sum_sq[0] + Tx.tvm_warp_shuffle_xor(
+for kr in T.unroll(find_power_of_two(bdx // 2) + 1):
+    sum_sq[0] = sum_sq[0] + T.tvm_warp_shuffle_xor(
         0xFFFFFFFF, sum_sq[0], (bdx // 2) >> kr, 32, 32)
 ```
 
@@ -113,12 +114,12 @@ The cross-warp reduction has three phases: Steps 1-2 **gather** all warp results
 In code:
 ```python
 sum_sq_smem[ty] = sum_sq[0]        # step 1: each warp writes (ty = warp index)
-Tx.ptx.bar.sync(1, bdx * bdy)     # step 2: barrier (all warps done writing)
+T.ptx.bar.sync(1, bdx * bdy)     # step 2: barrier (all warps done writing)
 if ty == 0:                         # steps 3-5: only warp 0
     sum_sq[0] = sum_sq_smem[tx]    #   read partial sums (only tx < bdy; see full kernel for the guard)
     # shuffle XOR reduction ...     #   reduce to grand total
     sum_sq_smem[0] = sum_sq[0]     #   write grand total
-Tx.ptx.bar.sync(1, bdx * bdy)     # step 6: barrier (grand total ready)
+T.ptx.bar.sync(1, bdx * bdy)     # step 6: barrier (grand total ready)
 # Now all threads read sum_sq_smem[0]
 ```
 
@@ -133,131 +134,129 @@ Caching avoids reading global memory twice.
 ### bar.sync vs cta_sync
 
 Both are synchronization barriers, but they differ:
-- `Tx.cuda.cta_sync()` = `__syncthreads()` — synchronizes **all** threads in the CTA.
+- `T.cuda.cta_sync()` = `__syncthreads()` — synchronizes **all** threads in the CTA.
 
-- `Tx.ptx.bar.sync(barrier_id, thread_count)` — synchronizes exactly `thread_count` threads on barrier `barrier_id`. This is more flexible when the CTA is not fully utilized (e.g., only `bdx * bdy` threads participate, not the full 128/256-thread CTA).
+- `T.ptx.bar.sync(barrier_id, thread_count)` — synchronizes exactly `thread_count` threads on barrier `barrier_id`. This is more flexible when the CTA is not fully utilized (e.g., only `bdx * bdy` threads participate, not the full 128/256-thread CTA).
 
-In this kernel, `Tx.ptx.bar.sync(1, bdx * bdy)` is used because the actual thread count (`bdx * bdy`) may be less than the CTA size. The following shared-memory reads rely on this barrier for thread synchronization and shared-memory ordering.
+In this kernel, `T.ptx.bar.sync(1, bdx * bdy)` is used because the actual thread count (`bdx * bdy`) may be less than the CTA size. The following shared-memory reads rely on this barrier for thread synchronization and shared-memory ordering.
 
-The kernel implementation follows. It uses `Tx.serial(...)` for the row scan and `Tx.unroll(...)` for small fixed reductions and vector fragments. Use the API lookup if you need the exact syntax later.
+The kernel implementation follows. It uses `T.serial(...)` for the row scan and `T.unroll(...)` for small fixed reductions and vector fragments. Use the API lookup if you need the exact syntax later.
 
-```{.python .input}
+```python
 def get_rmsnorm_kernel(hidden_size):
     vec_size = math.gcd(16 // F16_BYTES, hidden_size)  # elements per vector load (128-bit)
     block_size = min(256, hidden_size // vec_size)
     bdx = 32                          # threads per warp (always 32)
     bdy = ceildiv(block_size, 32)     # number of warps per CTA
 
-    @Tx.prim_func
-    def rmsnorm(input_ptr: Tx.handle, weight_ptr: Tx.handle, out_ptr: Tx.handle):
-        batch_size = Tx.int32()       # determined at runtime from buffer shape
-        input_global = Tx.match_buffer(input_ptr, [batch_size, hidden_size], "float16")
-        weight_global = Tx.match_buffer(weight_ptr, [hidden_size], "float16")
-        out_global = Tx.match_buffer(out_ptr, [batch_size, hidden_size], "float16")
+    @T.prim_func
+    def rmsnorm(input_ptr: T.handle, weight_ptr: T.handle, out_ptr: T.handle):
+        batch_size = T.int32()       # determined at runtime from buffer shape
+        input_global = T.match_buffer(input_ptr, [batch_size, hidden_size], "float16")
+        weight_global = T.match_buffer(weight_ptr, [hidden_size], "float16")
+        out_global = T.match_buffer(out_ptr, [batch_size, hidden_size], "float16")
 
-        Tx.device_entry()
-        bx = Tx.cta_id([SM_COUNT])
-        tx, ty = Tx.thread_id([bdx, bdy])  # tx=lane, ty=warp
-        thread_id = Tx.meta_var(ty * bdx + tx)
+        T.device_entry()
+        bx = T.cta_id([SM_COUNT])
+        tx, ty = T.thread_id([bdx, bdy])  # tx=lane, ty=warp
+        thread_id = T.meta_var(ty * bdx + tx)
 
-        with Tx.cta():
-            pool = Tx.SMEMPool()
-            x_smem = pool.alloc([hidden_size], "float32")   # cache x for Pass 2
-            sum_sq_smem = pool.alloc([bdy], "float32")      # one partial sum per warp
-            pool.commit()
+        pool = T.SMEMPool()
+        x_smem = pool.alloc([hidden_size], "float32")   # cache x for Pass 2
+        sum_sq_smem = pool.alloc([bdy], "float32")      # one partial sum per warp
+        pool.commit()
 
-            with Tx.thread():
-                    # Per-thread registers: fp16 for loads, fp32 for computation
-                    input_vec = Tx.alloc_local([vec_size], "float16")
-                    input_vec_f32 = Tx.alloc_local([vec_size], "float32")
-                    weight_vec = Tx.alloc_local([vec_size], "float16")
-                    weight_vec_f32 = Tx.alloc_local([vec_size], "float32")
-                    x_vec = Tx.alloc_local([vec_size], "float32")
-                    x_tmp = Tx.alloc_local([1], "float32")
-                    sum_sq = Tx.alloc_local([1], "float32")
-                    rms_norm = Tx.alloc_local([1], "float32")
-                    idx = Tx.alloc_local([1], "int32")
+        # Per-thread registers: fp16 for loads, fp32 for computation
+        input_vec = T.alloc_local([vec_size], "float16")
+        input_vec_f32 = T.alloc_local([vec_size], "float32")
+        weight_vec = T.alloc_local([vec_size], "float16")
+        weight_vec_f32 = T.alloc_local([vec_size], "float32")
+        x_vec = T.alloc_local([vec_size], "float32")
+        x_tmp = T.alloc_local([1], "float32")
+        sum_sq = T.alloc_local([1], "float32")
+        rms_norm = T.alloc_local([1], "float32")
+        idx = T.alloc_local([1], "int32")
 
-                    idx[0] = bx                    # each CTA starts at its own row
-                    while idx[0] < batch_size:     # loop over rows (persistent pattern)
+        idx[0] = bx                    # each CTA starts at its own row
+        while idx[0] < batch_size:     # loop over rows (persistent pattern)
 
-                        # ============ Pass 1: Compute sum of squares ============
-                        # Each thread loads vec_size elements, computes x^2,
-                        # accumulates into sum_sq, and caches x to SMEM.
-                        sum_sq[0] = 0.0
-                        for ki in Tx.serial(ceildiv(hidden_size, vec_size * bdx * bdy)):
-                            # zero out for boundary safety (last chunk may be partial)
-                            for kv in Tx.unroll(vec_size):
-                                input_vec[kv] = 0.0
-                                x_vec[kv] = 0.0
-                            st = Tx.meta_var((ki * bdx * bdy + thread_id) * vec_size)
-                            if st < hidden_size:
-                                Tx.copy(input_vec[:], input_global[idx[0], st:st+vec_size])
-                                Tx.cast(input_vec_f32[:], input_vec[:])  # fp16 → fp32
-                                for kv in Tx.unroll(vec_size):
-                                    x_tmp[0] = input_vec_f32[kv]
-                                    sum_sq[0] += x_tmp[0] * x_tmp[0]    # accumulate x^2
-                                    x_vec[kv] = x_tmp[0]
-                                Tx.copy(x_smem[st:st+vec_size], x_vec[:])  # cache to SMEM
+            # ============ Pass 1: Compute sum of squares ============
+            # Each thread loads vec_size elements, computes x^2,
+            # accumulates into sum_sq, and caches x to SMEM.
+            sum_sq[0] = 0.0
+            for ki in T.serial(ceildiv(hidden_size, vec_size * bdx * bdy)):
+                # zero out for boundary safety (last chunk may be partial)
+                for kv in T.unroll(vec_size):
+                    input_vec[kv] = 0.0
+                    x_vec[kv] = 0.0
+                st = T.meta_var((ki * bdx * bdy + thread_id) * vec_size)
+                if st < hidden_size:
+                    Tx.copy(input_vec[:], input_global[idx[0], st:st+vec_size])
+                    Tx.cast(input_vec_f32[:], input_vec[:])  # fp16 → fp32
+                    for kv in T.unroll(vec_size):
+                        x_tmp[0] = input_vec_f32[kv]
+                        sum_sq[0] += x_tmp[0] * x_tmp[0]    # accumulate x^2
+                        x_vec[kv] = x_tmp[0]
+                    Tx.copy(x_smem[st:st+vec_size], x_vec[:])  # cache to SMEM
 
-                        # Warp-level reduction: combine 32 partial sums into one.
-                        # Shuffle XOR lets threads exchange values directly through
-                        # registers — no shared memory needed. Each step pairs threads
-                        # at decreasing distances (16, 8, 4, 2, 1) and adds their values.
-                        # After 5 steps, every thread in the warp holds the same total.
-                        # 0xFFFFFFFF = all 32 lanes participate in the shuffle.
-                        for kr in Tx.unroll(find_power_of_two(bdx // 2) + 1):
-                            sum_sq[0] = sum_sq[0] + Tx.tvm_warp_shuffle_xor(
-                                0xFFFFFFFF, sum_sq[0], (bdx // 2) >> kr, 32, 32)
+            # Warp-level reduction: combine 32 partial sums into one.
+            # Shuffle XOR lets threads exchange values directly through
+            # registers — no shared memory needed. Each step pairs threads
+            # at decreasing distances (16, 8, 4, 2, 1) and adds their values.
+            # After 5 steps, every thread in the warp holds the same total.
+            # 0xFFFFFFFF = all 32 lanes participate in the shuffle.
+            for kr in T.unroll(find_power_of_two(bdx // 2) + 1):
+                sum_sq[0] = sum_sq[0] + T.tvm_warp_shuffle_xor(
+                    0xFFFFFFFF, sum_sq[0], (bdx // 2) >> kr, 32, 32)
 
-                        # Cross-warp reduction: SMEM as bridge (see Cross-Warp Reduction above)
-                        sum_sq_smem[ty] = sum_sq[0]
-                        Tx.ptx.bar.sync(1, bdx * bdy)
-                        Tx.ptx.fence.proxy_async("shared::cta")
-                        if ty == 0:
-                            if tx < bdy:
-                                sum_sq[0] = sum_sq_smem[tx]
-                            else:
-                                sum_sq[0] = 0.0
-                            for kr in Tx.unroll(find_power_of_two(bdx // 2) + 1):
-                                sum_sq[0] = sum_sq[0] + Tx.tvm_warp_shuffle_xor(
-                                    0xFFFFFFFF, sum_sq[0], (bdx // 2) >> kr, 32, 32)
-                            sum_sq_smem[0] = sum_sq[0]
-                        Tx.ptx.bar.sync(1, bdx * bdy)
-                        Tx.ptx.fence.proxy_async("shared::cta")
+            # Cross-warp reduction: SMEM as bridge (see Cross-Warp Reduction above)
+            sum_sq_smem[ty] = sum_sq[0]
+            T.ptx.bar.sync(1, bdx * bdy)
+            T.ptx.fence.proxy_async("shared::cta")
+            if ty == 0:
+                if tx < bdy:
+                    sum_sq[0] = sum_sq_smem[tx]
+                else:
+                    sum_sq[0] = 0.0
+                for kr in T.unroll(find_power_of_two(bdx // 2) + 1):
+                    sum_sq[0] = sum_sq[0] + T.tvm_warp_shuffle_xor(
+                        0xFFFFFFFF, sum_sq[0], (bdx // 2) >> kr, 32, 32)
+                sum_sq_smem[0] = sum_sq[0]
+            T.ptx.bar.sync(1, bdx * bdy)
+            T.ptx.fence.proxy_async("shared::cta")
 
-                        # Compute 1/RMS — every thread reads the same value from SMEM
-                        # 1/sqrt(x), faster than 1.0/sqrt(x)
-                        rms_norm[0] = Tx.rsqrt(sum_sq_smem[0] / hidden_size + EPS)
+            # Compute 1/RMS — every thread reads the same value from SMEM
+            # 1/sqrt(x), faster than 1.0/sqrt(x)
+            rms_norm[0] = T.rsqrt(sum_sq_smem[0] / hidden_size + EPS)
 
-                        # ============ Pass 2: Apply normalization + weight ============
-                        # Read cached x from SMEM (not global memory), multiply
-                        # by (1/RMS * weight), cast back to fp16, write output.
-                        for ki in Tx.serial(ceildiv(hidden_size, vec_size * bdx * bdy)):
-                            for kv in Tx.unroll(vec_size):
-                                input_vec[kv] = 0.0
-                                weight_vec_f32[kv] = 0.0
-                                x_vec[kv] = 0.0
-                            st = Tx.meta_var((ki * bdx * bdy + thread_id) * vec_size)
-                            if st < hidden_size:
-                                Tx.copy(weight_vec[:], weight_global[st:st+vec_size])
-                                Tx.copy(x_vec[:], x_smem[st:st+vec_size])  # from SMEM cache
-                                Tx.cast(weight_vec_f32[:], weight_vec[:])
-                            for kv in Tx.unroll(vec_size):
-                                input_vec_f32[kv] = x_vec[kv] * rms_norm[0] * weight_vec_f32[kv]
-                            if st < hidden_size:
-                                Tx.cast(input_vec[:], input_vec_f32[:])  # fp32 → fp16
-                                Tx.copy(out_global[idx[0], st:st+vec_size], input_vec[:])
+            # ============ Pass 2: Apply normalization + weight ============
+            # Read cached x from SMEM (not global memory), multiply
+            # by (1/RMS * weight), cast back to fp16, write output.
+            for ki in T.serial(ceildiv(hidden_size, vec_size * bdx * bdy)):
+                for kv in T.unroll(vec_size):
+                    input_vec[kv] = 0.0
+                    weight_vec_f32[kv] = 0.0
+                    x_vec[kv] = 0.0
+                st = T.meta_var((ki * bdx * bdy + thread_id) * vec_size)
+                if st < hidden_size:
+                    Tx.copy(weight_vec[:], weight_global[st:st+vec_size])
+                    Tx.copy(x_vec[:], x_smem[st:st+vec_size])  # from SMEM cache
+                    Tx.cast(weight_vec_f32[:], weight_vec[:])
+                for kv in T.unroll(vec_size):
+                    input_vec_f32[kv] = x_vec[kv] * rms_norm[0] * weight_vec_f32[kv]
+                if st < hidden_size:
+                    Tx.cast(input_vec[:], input_vec_f32[:])  # fp32 → fp16
+                    Tx.copy(out_global[idx[0], st:st+vec_size], input_vec[:])
 
-                        Tx.ptx.bar.sync(1, bdx * bdy)
-                        idx[0] += SM_COUNT         # move to next row
+            T.ptx.bar.sync(1, bdx * bdy)
+            idx[0] += SM_COUNT         # move to next row
 
     return rmsnorm
 ```
 
 Compile and verify:
 
-```{.python .input}
+```python
 import torch
 
 hidden_size = 4096
@@ -294,7 +293,7 @@ print("PASS")
 
 **If something goes wrong**:
 - `max_err` near or above the `0.05` guard: Check fp16->fp32 cast before accumulation (`Tx.cast(input_vec_f32[:], input_vec[:])`)
-- Kernel hangs / deadlock: Check `Tx.ptx.bar.sync(1, bdx * bdy)` -- the count must match the actual number of threads
+- Kernel hangs / deadlock: Check `T.ptx.bar.sync(1, bdx * bdy)` -- the count must match the actual number of threads
 - Wrong results on some rows: Check `idx[0] += SM_COUNT` -- if missing, all CTAs process the same row
 
 
@@ -306,7 +305,7 @@ In Transformer models, RMSNorm is almost always preceded by a residual addition:
 ## Exercises
 
 1. Why does the kernel store `x` to shared memory (`x_smem`) during Pass 1, rather than re-reading from global memory in Pass 2?
-2. The warp shuffle reduction uses `Tx.tvm_warp_shuffle_xor` with decreasing offsets. For a warp of 32 threads, how many shuffle steps are needed? Draw the communication pattern.
+2. The warp shuffle reduction uses `T.tvm_warp_shuffle_xor` with decreasing offsets. For a warp of 32 threads, how many shuffle steps are needed? Draw the communication pattern.
 3. Why does the cross-warp reduction run only in warp 0 (`ty == 0`)? What would happen if all warps tried to do the final reduction?
 4. How would you modify this kernel to compute LayerNorm instead of RMSNorm? What additional computation is needed?
 

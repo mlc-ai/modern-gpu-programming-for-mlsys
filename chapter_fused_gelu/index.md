@@ -1,7 +1,7 @@
-# Practice Kernel: Fused GELU Gate
-:label:`chap_fused_gelu`
+(chap_fused_gelu)=
+# First Kernels: Elementwise (Fused GELU)
 
-Fused GELU-Tanh with multiply is used in MLP gate layers of Transformer models. Elementwise kernels are the smallest TIRX programs that still exercise launch geometry, indexing, and coalesced global-memory access.
+Fused GELU-Tanh with multiply is used in MLP gate layers of Transformer models. Elementwise kernels are the smallest TIRx programs that still exercise launch geometry, indexing, and coalesced global-memory access.
 
 **Operation**: The input tensor has shape `[batch, 2*d]`, split into two halves along the last dimension. The first half passes through GELU-tanh activation, then multiplies with the second half:
 
@@ -58,56 +58,56 @@ input1 = input_buf[row, col]              # activation half
 input2 = input_buf[row, col + out_dim]    # gate half
 ```
 
-`input1` goes through the GELU-tanh approximation, then the result is multiplied by `input2`. The constants are cast with `Tx.float16(...)` so the expression stays in fp16 arithmetic. Because the whole GELU path — including the `x^3` term and the `tanh` — runs in fp16 while the numpy reference computes in fp32, a small but bounded rounding error is expected; that is why the verification tolerance is loose (`0.05`) rather than exact.
+`input1` goes through the GELU-tanh approximation, then the result is multiplied by `input2`. The constants are cast with `T.float16(...)` so the expression stays in fp16 arithmetic. Because the whole GELU path — including the `x^3` term and the `tanh` — runs in fp16 while the numpy reference computes in fp32, a small but bounded rounding error is expected; that is why the verification tolerance is loose (`0.05`) rather than exact.
 
-```{.python .input}
+```python
 import math
 import numpy as np
 import tvm
-from tvm.script import tirx as Tx
+from tvm.script import tirx as T
+from tvm.script.tirx import tile as Tx
 import torch
 
 def ceildiv(a, b):
     return (a + b - 1) // b
 ```
 
-```{.python .input}
+```python
 def fused_gelu_kernel(out_dim, batch_size):
     total = batch_size * out_dim
     NUM_THREADS = 256
     NUM_BLOCKS = ceildiv(total, NUM_THREADS)
 
-    @Tx.prim_func
-    def fused_gelu_tanh_multiply(input_cat_ptr: Tx.handle, output_ptr: Tx.handle):
-        input_buf = Tx.match_buffer(input_cat_ptr, [batch_size, out_dim * 2], "float16")
-        output_buf = Tx.match_buffer(output_ptr, [batch_size, out_dim], "float16")
+    @T.prim_func
+    def fused_gelu_tanh_multiply(input_cat_ptr: T.handle, output_ptr: T.handle):
+        input_buf = T.match_buffer(input_cat_ptr, [batch_size, out_dim * 2], "float16")
+        output_buf = T.match_buffer(output_ptr, [batch_size, out_dim], "float16")
 
-        Tx.device_entry()
-        bx = Tx.cta_id([NUM_BLOCKS])
-        tid = Tx.thread_id([NUM_THREADS])
+        T.device_entry()
+        bx = T.cta_id([NUM_BLOCKS])
+        tid = T.thread_id([NUM_THREADS])
 
-        with Tx.thread():
-            gid = bx * NUM_THREADS + tid
-            row = gid // out_dim
-            col = gid % out_dim
+        gid = bx * NUM_THREADS + tid
+        row = gid // out_dim
+        col = gid % out_dim
 
-            if gid < total:
-                # input_buf is [batch, 2*out_dim]: first half is x, second half is gate
-                input1 = input_buf[row, col]
-                input2 = input_buf[row, col + out_dim]
-                x_cubed = input1 * input1 * input1
-                inner = Tx.float16(0.7978845608) * (
-                    input1 + Tx.float16(0.044715) * x_cubed)
-                gelu_out = Tx.float16(0.5) * input1 * (
-                    Tx.float16(1.0) + Tx.tanh(inner))
-                output_buf[row, col] = gelu_out * input2
+        if gid < total:
+            # input_buf is [batch, 2*out_dim]: first half is x, second half is gate
+            input1 = input_buf[row, col]
+            input2 = input_buf[row, col + out_dim]
+            x_cubed = input1 * input1 * input1
+            inner = T.float16(0.7978845608) * (
+                input1 + T.float16(0.044715) * x_cubed)
+            gelu_out = T.float16(0.5) * input1 * (
+                T.float16(1.0) + T.tanh(inner))
+            output_buf[row, col] = gelu_out * input2
 
     return fused_gelu_tanh_multiply
 ```
 
 ### Compile, Verify, and Benchmark
 
-```{.python .input}
+```python
 out_dim = 4096
 batch_size = 64
 device = torch.device('cuda')  # gpu(0)
@@ -142,7 +142,7 @@ print("PASS")
 
 **If something goes wrong**:
 
-- `max_err` near the `0.05` guard or above ~0.5: Check that `Tx.float16(0.7978845608)` is correct (this is sqrt(2/pi))
+- `max_err` near the `0.05` guard or above ~0.5: Check that `T.float16(0.7978845608)` is correct (this is sqrt(2/pi))
 
 - Kernel hangs: Check `if gid < total` boundary guard is present
 
