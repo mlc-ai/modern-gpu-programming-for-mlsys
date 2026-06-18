@@ -9,6 +9,21 @@ release = "0.0.1"
 
 extensions = ["myst_parser", "sphinx.ext.autodoc", "sphinx.ext.napoleon"]
 
+# Autodoc imports `tvm` to document the TIRx API. tvm is a from-source build and
+# isn't available on a docs-only CI runner (e.g. GitHub Pages), so mock it there:
+# the book still builds fully and the API pages degrade gracefully. A local build
+# with tvm importable keeps the full API reference. Force-mock with DOCS_MOCK_TVM=1.
+import os
+
+_mock_tvm = os.environ.get("DOCS_MOCK_TVM") == "1"
+if not _mock_tvm:
+    try:
+        import tvm  # noqa: F401
+    except Exception:
+        _mock_tvm = True
+if _mock_tvm:
+    autodoc_mock_imports = ["tvm"]
+
 # Markdown (MyST) is the primary source format.
 source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
 root_doc = "index"
