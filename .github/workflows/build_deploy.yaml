@@ -40,7 +40,6 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./_build/html
-          # Custom domain: the repo was renamed to modern-gpu-programming; update
-          # or remove this to match your DNS. Remove the line to serve at
-          # https://mlc-ai.github.io/modern-gpu-programming/
-          cname: tirx-tutorial.mlc.ai
+          # No custom domain: the site serves at the org default,
+          # https://mlc.ai/modern-gpu-programming/ . To use a custom domain, add a
+          # `cname:` line here and the matching DNS record.
