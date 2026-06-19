@@ -48,12 +48,17 @@
     var nat = { w: 1280, h: 600 }, z = 1, fitZ = 1;
 
     function apply() {
-      // Use CSS `zoom` (not `transform: scale`): zoom scales the layout box AND
-      // keeps pointer/click events correctly mapped inside the iframe — a scaled
-      // (transform) iframe mis-routes clicks, so the demo's buttons stop working.
+      // Scale with `transform: scale` (not CSS `zoom`): Safari does not apply `zoom`
+      // to an <iframe>'s content, so the zoom controls did nothing and demos looked
+      // broken there. With transform-origin at the top-left and the stage sized to
+      // the *scaled* box, pointer/click events still map correctly into the iframe
+      // in both Chrome and Safari.
       iframe.style.width = nat.w + "px";
       iframe.style.height = nat.h + "px";
-      iframe.style.zoom = z;
+      iframe.style.transformOrigin = "0 0";
+      iframe.style.transform = "scale(" + z + ")";
+      stage.style.width = Math.round(nat.w * z) + "px";
+      stage.style.height = Math.round(nat.h * z) + "px";
     }
     var settleUntil = 0;
     function recompute(resetZoom) {

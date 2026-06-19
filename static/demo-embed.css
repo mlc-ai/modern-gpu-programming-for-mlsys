@@ -37,8 +37,13 @@
 }
 .demo-stage {
   position: relative;
+  overflow: hidden;
 }
 .demo-stage iframe {
   display: block;
   border: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
 }
