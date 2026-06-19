@@ -348,6 +348,28 @@ is</p>
 </div>
 <p>This is the classic shape/stride model, written compactly (a row-major simplification of CuTe’s
 notation). Everything below is built from it.</p>
+<p>If you have used PyTorch or NumPy, you have already used this model — a tensor <em>is</em> a shape plus a
+stride over a flat storage buffer:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="n">t</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">12</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>
+<span class="n">t</span><span class="o">.</span><span class="n">shape</span>        <span class="c1"># torch.Size([3, 4])</span>
+<span class="n">t</span><span class="o">.</span><span class="n">stride</span><span class="p">()</span>     <span class="c1"># (4, 1)        ← exactly S[(3, 4) : (4, 1)]</span>
+</pre></div>
+</div>
+<p>The payoff: many “reshaping” operations don’t touch the data at all — they just rewrite the strides
+and hand back a <strong>view</strong> over the same storage. Transpose/permute is the clearest case:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tt</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>               <span class="c1"># or t.T</span>
+<span class="n">tt</span><span class="o">.</span><span class="n">shape</span>                           <span class="c1"># torch.Size([4, 3])</span>
+<span class="n">tt</span><span class="o">.</span><span class="n">stride</span><span class="p">()</span>                        <span class="c1"># (1, 4)        ← strides swapped, no data moved</span>
+<span class="n">tt</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">()</span> <span class="o">==</span> <span class="n">t</span><span class="o">.</span><span class="n">data_ptr</span><span class="p">()</span>      <span class="c1"># True — same bytes</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">t.permute(1,</span> <span class="pre">0)</span></code> is <code class="docutils literal notranslate"><span class="pre">S[(4,</span> <span class="pre">3)</span> <span class="pre">:</span> <span class="pre">(1,</span> <span class="pre">4)]</span></code> over the <em>same</em> memory: the transpose is purely a stride
+change. <code class="docutils literal notranslate"><span class="pre">reshape</span></code>/<code class="docutils literal notranslate"><span class="pre">view</span></code> on a contiguous tensor are the same story — new shape and strides, same
+storage. (NumPy is identical; its <code class="docutils literal notranslate"><span class="pre">.strides</span></code> are just counted in bytes rather than elements.)</p>
+<p>That is exactly how layouts work on a GPU, and the rest of this chapter generalizes it: a tile’s
+mapping — to memory, or via named axes to lanes and registers — is a stride rule over a fixed
+buffer, so rearranging a tile is usually a change of <em>layout</em>, not a copy.</p>
 </section>
 <section id="tile-layout">
 <h2>Tile layout<a class="headerlink" href="#tile-layout" title="Link to this heading">#</a></h2>

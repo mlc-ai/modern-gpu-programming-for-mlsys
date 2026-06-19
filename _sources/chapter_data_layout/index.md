@@ -22,6 +22,34 @@ S[(4, 4) : (4, 1)]        addr(i, j) = i·4 + j·1
 This is the classic shape/stride model, written compactly (a row-major simplification of CuTe's
 notation). Everything below is built from it.
 
+If you have used PyTorch or NumPy, you have already used this model — a tensor *is* a shape plus a
+stride over a flat storage buffer:
+
+```python
+import torch
+t = torch.arange(12).reshape(3, 4)
+t.shape        # torch.Size([3, 4])
+t.stride()     # (4, 1)        ← exactly S[(3, 4) : (4, 1)]
+```
+
+The payoff: many "reshaping" operations don't touch the data at all — they just rewrite the strides
+and hand back a **view** over the same storage. Transpose/permute is the clearest case:
+
+```python
+tt = t.permute(1, 0)               # or t.T
+tt.shape                           # torch.Size([4, 3])
+tt.stride()                        # (1, 4)        ← strides swapped, no data moved
+tt.data_ptr() == t.data_ptr()      # True — same bytes
+```
+
+`t.permute(1, 0)` is `S[(4, 3) : (1, 4)]` over the *same* memory: the transpose is purely a stride
+change. `reshape`/`view` on a contiguous tensor are the same story — new shape and strides, same
+storage. (NumPy is identical; its `.strides` are just counted in bytes rather than elements.)
+
+That is exactly how layouts work on a GPU, and the rest of this chapter generalizes it: a tile's
+mapping — to memory, or via named axes to lanes and registers — is a stride rule over a fixed
+buffer, so rearranging a tile is usually a change of *layout*, not a copy.
+
 ## Tile layout
 
 Tiling is just a layout with more dimensions. An 8×8 matrix cut into 2×4 tiles is a 4-D layout —
