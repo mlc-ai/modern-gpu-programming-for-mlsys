@@ -276,9 +276,9 @@
             </div>
             <nav aria-label="Page">
                 <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-guide">Reading guide</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#full-source">Full source</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-run-it">How to run it</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-guide">Reading Guide</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#full-source">Full Source</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-run-it">How to Run It</a></li>
 </ul>
             </nav>
         </div>
@@ -295,7 +295,7 @@
 <p>This appendix is the full reference source of the Flash Attention 4 kernel that Chapter 6 builds up conceptually. The canonical copy lives in the <code class="docutils literal notranslate"><span class="pre">tirx-kernels</span></code> package at <code class="docutils literal notranslate"><span class="pre">tirx_kernels/attention/flash_attention4.py</span></code>; the listing below is a snapshot of it. The package file stays the source of truth — if it has moved on, prefer it — but everything Chapter 6 describes is gathered here in one place so you can read the whole kernel without leaving the tutorial.</p>
 <p>The benchmarking harness at the end of the file (the <code class="docutils literal notranslate"><span class="pre">run_bench</span></code> function with its FlashInfer and CuTe-DSL baseline plumbing) is omitted: it is test scaffolding, not part of the kernel. Everything through <code class="docutils literal notranslate"><span class="pre">run_test</span></code> is included verbatim.</p>
 <section id="reading-guide">
-<h2>Reading guide<a class="headerlink" href="#reading-guide" title="Link to this heading">#</a></h2>
+<h2>Reading Guide<a class="headerlink" href="#reading-guide" title="Link to this heading">#</a></h2>
 <p>Use this table to navigate the listing; each row points at a region of the source and the Chapter 6 concept it implements.</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
@@ -345,7 +345,7 @@
 </div>
 </section>
 <section id="full-source">
-<h2>Full source<a class="headerlink" href="#full-source" title="Link to this heading">#</a></h2>
+<h2>Full Source<a class="headerlink" href="#full-source" title="Link to this heading">#</a></h2>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">annotations</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
@@ -1225,7 +1225,7 @@
 </div>
 </section>
 <section id="how-to-run-it">
-<h2>How to run it<a class="headerlink" href="#how-to-run-it" title="Link to this heading">#</a></h2>
+<h2>How to Run It<a class="headerlink" href="#how-to-run-it" title="Link to this heading">#</a></h2>
 <p>The kernel takes five arguments: <code class="docutils literal notranslate"><span class="pre">Q</span></code>, <code class="docutils literal notranslate"><span class="pre">K</span></code>, <code class="docutils literal notranslate"><span class="pre">V</span></code>, <code class="docutils literal notranslate"><span class="pre">O</span></code>, and a <code class="docutils literal notranslate"><span class="pre">profiler_buffer</span></code>. The profiler buffer is part of the signature even when profiling is off (<code class="docutils literal notranslate"><span class="pre">PROFILER_ON</span> <span class="pre">=</span> <span class="pre">False</span></code>), so it must still be passed.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
@@ -1293,9 +1293,9 @@
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-guide">Reading guide</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#full-source">Full source</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-run-it">How to run it</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-guide">Reading Guide</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#full-source">Full Source</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-run-it">How to Run It</a></li>
 </ul>
   </nav></div>
 

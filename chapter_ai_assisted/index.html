@@ -692,17 +692,17 @@ Does it require all lanes of one warp, or only lane 0?
 <p>For example:</p>
 <div class="highlight-markdown notranslate"><div class="highlight"><pre><span></span><span class="gh"># TIRx Blackwell Bug Notes</span>
 
-<span class="gu">### tcgen05.commit outside elected scope</span>
+<span class="gu">### tcgen05.commit Outside Elected Scope</span>
 Symptom: zeros or random garbage.
 Cause: only the elected thread has a non-empty commit group; other lanes can signal early.
 Fix: keep TCGen05Bar.arrive inside the same elect_sync scope as gemm_async.
 
-<span class="gu">### MBarrier.init from wrong warpgroup</span>
+<span class="gu">### MBarrier.init from Wrong Warpgroup</span>
 Symptom: deadlock.
 Cause: default leader is CTA thread 0. If init is inside wg_id == 1, no thread runs it.
 Fix: initialize barriers at CTA level before role branches.
 
-<span class="gu">### TMA store reused Dsmem too early</span>
+<span class="gu">### TMA Store Reused Dsmem Too Early</span>
 Symptom: intermittent wrong rows.
 Cause: the TMA store group was not committed or waited far enough before Dsmem reuse.
 Fix: commit the store group and wait far enough for the staging SMEM buffer&#39;s reuse pattern.

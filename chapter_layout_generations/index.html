@@ -278,20 +278,20 @@
             <nav aria-label="Page">
                 <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#two-constraints-that-never-went-away">Two Constraints That Never Went Away</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ampere-register-fragment-over-warp-lane">Ampere — Register Fragment over warp/lane</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-an-m8n8-register-fragment">What the Tensor Core expects: an m8n8 register fragment</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ldmatrix-smem-the-fragment"><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: SMEM → the fragment</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#writing-the-fragment-back">Writing the fragment back</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-the-same-conflict-already-on-ampere">Swizzle: the same conflict, already on Ampere</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ampere-register-fragment-over-warp-lane">Ampere — Register Fragment over Warp/Lane</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-an-m8n8-register-fragment">What the Tensor Core Expects: an m8n8 Register Fragment</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ldmatrix-smem-the-fragment"><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: SMEM → the Fragment</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#writing-the-fragment-back">Writing the Fragment Back</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-the-same-conflict-already-on-ampere">Swizzle: the Same Conflict, Already on Ampere</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hopper-wgmma-smem-descriptors-and-swizzle-formats">Hopper — <code class="docutils literal notranslate"><span class="pre">wgmma</span></code>, SMEM Descriptors, and Swizzle Formats</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-a-smem-matrix-descriptor">What the Tensor Core expects: a SMEM matrix descriptor</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-a-smem-matrix-descriptor">What the Tensor Core Expects: a SMEM Matrix Descriptor</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#blackwell-tcgen05-and-tmem">Blackwell — <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> and TMEM</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-smem-operands-and-a-tmem-accumulator">What the Tensor Core expects: SMEM operands and a TMEM accumulator</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor-layout-in-tmem">Scale-factor layout in TMEM</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-smem-operands-and-a-tmem-accumulator">What the Tensor Core Expects: SMEM Operands and a TMEM Accumulator</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor-layout-in-tmem">Scale-Factor Layout in TMEM</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-throughline">The Throughline</a></li>
@@ -342,7 +342,7 @@ never touched a tensor core. What the rest of this chapter adds is a third deman
 them: the specific layout the <em>tensor core</em> itself insists on for its operands.</p>
 </section>
 <section id="ampere-register-fragment-over-warp-lane">
-<h2>Ampere — Register Fragment over warp/lane<a class="headerlink" href="#ampere-register-fragment-over-warp-lane" title="Link to this heading">#</a></h2>
+<h2>Ampere — Register Fragment over Warp/Lane<a class="headerlink" href="#ampere-register-fragment-over-warp-lane" title="Link to this heading">#</a></h2>
 <p>On Ampere-class GPUs (<code class="docutils literal notranslate"><span class="pre">sm_80</span></code>) the tensor-core instruction is the warp-level
 <code class="docutils literal notranslate"><span class="pre">mma.sync.aligned.m16n8k*</span></code>, and the defining fact about it is where it reads its operands from:
 <strong>registers</strong>. A, B, and the C/D accumulator are all per-thread register fragments, spread across the
@@ -353,7 +353,7 @@ afterward:</p>
 </pre></div>
 </div>
 <section id="what-the-tensor-core-expects-an-m8n8-register-fragment">
-<h3>What the Tensor Core expects: an m8n8 register fragment<a class="headerlink" href="#what-the-tensor-core-expects-an-m8n8-register-fragment" title="Link to this heading">#</a></h3>
+<h3>What the Tensor Core Expects: an m8n8 Register Fragment<a class="headerlink" href="#what-the-tensor-core-expects-an-m8n8-register-fragment" title="Link to this heading">#</a></h3>
 <p>To use the instruction at all, we have to know precisely which value sits in which lane’s register —
 the layout is not an implementation detail we can ignore, it is part of the instruction’s contract.
 The register fragment is built from <strong>8×8 (“m8n8”) sub-tiles</strong>, which are the unit that <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>
@@ -375,7 +375,7 @@ per lane.</p></li>
 adjacent columns per 8×8 and four consecutive lanes cover one row.</p>
 </section>
 <section id="ldmatrix-smem-the-fragment">
-<h3><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: SMEM → the fragment<a class="headerlink" href="#ldmatrix-smem-the-fragment" title="Link to this heading">#</a></h3>
+<h3><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: SMEM → the Fragment<a class="headerlink" href="#ldmatrix-smem-the-fragment" title="Link to this heading">#</a></h3>
 <p><img alt="ldmatrix loads an 8x8 SMEM tile into the warp register fragment; stmatrix, the reverse, is a Hopper (sm_90+) instruction" src="../_images/ldstmatrix.svg" /></p>
 <p>The job of <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> is to get the tile out of SMEM and into that fragment. A single
 <code class="docutils literal notranslate"><span class="pre">ldmatrix.sync.aligned.m8n8.x{1,2,4}[.trans].shared.b16</span></code> loads one, two, or four 8×8 16-bit matrices
@@ -396,7 +396,7 @@ stored the opposite way from what the MMA expects.</p></li>
 this one <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> performs the entire SMEM→register shuffle the tensor core demands.</p>
 </section>
 <section id="writing-the-fragment-back">
-<h3>Writing the fragment back<a class="headerlink" href="#writing-the-fragment-back" title="Link to this heading">#</a></h3>
+<h3>Writing the Fragment Back<a class="headerlink" href="#writing-the-fragment-back" title="Link to this heading">#</a></h3>
 <p>Once the MMA finishes, its result sits scattered across the lanes in the C/D layout we described
 above, and we still have to get it out. On Ampere we write it back with ordinary per-thread
 <code class="docutils literal notranslate"><span class="pre">st.shared</span></code> stores — optionally with a warp shuffle first to regather it — into a SMEM tile, from
@@ -407,7 +407,7 @@ simple: the register fragment is fixed by the hardware, <code class="docutils li
 and plain stores bridge it back out on the way out.</p>
 </section>
 <section id="swizzle-the-same-conflict-already-on-ampere">
-<h3>Swizzle: the same conflict, already on Ampere<a class="headerlink" href="#swizzle-the-same-conflict-already-on-ampere" title="Link to this heading">#</a></h3>
+<h3>Swizzle: the Same Conflict, Already on Ampere<a class="headerlink" href="#swizzle-the-same-conflict-already-on-ampere" title="Link to this heading">#</a></h3>
 <p>Ampere kernels already needed swizzle, and the reason is the conflicting access pattern we have just
 set up. The same SMEM tile is <em>written</em> one way and <em>read</em> another: it is filled coalesced from GMEM
 along a <strong>row</strong>, and then read by <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> along a <strong>column</strong>. With a plain row-major tile the row
@@ -425,7 +425,7 @@ live in hand-written index math.</p>
 <section id="hopper-wgmma-smem-descriptors-and-swizzle-formats">
 <h2>Hopper — <code class="docutils literal notranslate"><span class="pre">wgmma</span></code>, SMEM Descriptors, and Swizzle Formats<a class="headerlink" href="#hopper-wgmma-smem-descriptors-and-swizzle-formats" title="Link to this heading">#</a></h2>
 <section id="what-the-tensor-core-expects-a-smem-matrix-descriptor">
-<h3>What the Tensor Core expects: a SMEM matrix descriptor<a class="headerlink" href="#what-the-tensor-core-expects-a-smem-matrix-descriptor" title="Link to this heading">#</a></h3>
+<h3>What the Tensor Core Expects: a SMEM Matrix Descriptor<a class="headerlink" href="#what-the-tensor-core-expects-a-smem-matrix-descriptor" title="Link to this heading">#</a></h3>
 <p>Recall that the Ampere data path spends real instructions shuffling operands through registers.
 Hopper (<code class="docutils literal notranslate"><span class="pre">sm_90</span></code>) removes that cost on the <em>input</em> side. Its <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> instruction reads its operands
 <strong>straight from SMEM</strong>, with no <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> in between: the <strong>B</strong> operand always comes from a SMEM
@@ -492,7 +492,7 @@ Moving the accumulator out of registers altogether is the change that waits for 
 <section id="blackwell-tcgen05-and-tmem">
 <h2>Blackwell — <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> and TMEM<a class="headerlink" href="#blackwell-tcgen05-and-tmem" title="Link to this heading">#</a></h2>
 <section id="what-the-tensor-core-expects-smem-operands-and-a-tmem-accumulator">
-<h3>What the Tensor Core expects: SMEM operands and a TMEM accumulator<a class="headerlink" href="#what-the-tensor-core-expects-smem-operands-and-a-tmem-accumulator" title="Link to this heading">#</a></h3>
+<h3>What the Tensor Core Expects: SMEM Operands and a TMEM Accumulator<a class="headerlink" href="#what-the-tensor-core-expects-smem-operands-and-a-tmem-accumulator" title="Link to this heading">#</a></h3>
 <p>Blackwell (<code class="docutils literal notranslate"><span class="pre">sm_100</span></code>) inherits Hopper’s SMEM matrix descriptor for the A/B operands — and an A operand
 may additionally be read from TMEM — so the input side will feel largely familiar. The real change is
 on the output side: the <strong>accumulator</strong> now moves into TMEM. Unlike an Ampere <code class="docutils literal notranslate"><span class="pre">mma</span></code> accumulator,
@@ -503,7 +503,7 @@ how the (M, N) accumulator and the A/B operands split across one or two CTAs (<c
 the one we will focus on here, is the <strong>scale factors</strong> of a block-scaled MMA.</p>
 </section>
 <section id="scale-factor-layout-in-tmem">
-<h3>Scale-factor layout in TMEM<a class="headerlink" href="#scale-factor-layout-in-tmem" title="Link to this heading">#</a></h3>
+<h3>Scale-Factor Layout in TMEM<a class="headerlink" href="#scale-factor-layout-in-tmem" title="Link to this heading">#</a></h3>
 <p>A block-scaled MMA (mxfp8, nvfp4) carries two extra operands beyond A and B — <code class="docutils literal notranslate"><span class="pre">SFA</span> <span class="pre">(M,</span> <span class="pre">SFK)</span></code> and
 <code class="docutils literal notranslate"><span class="pre">SFB</span> <span class="pre">(N,</span> <span class="pre">SFK)</span></code>, where <code class="docutils literal notranslate"><span class="pre">SFK</span> <span class="pre">=</span> <span class="pre">K</span> <span class="pre">/</span> <span class="pre">block</span></code>. The thing that sets them apart is where they live: unlike A
 and B, <strong>the scale factors reside in TMEM</strong> rather than SMEM, so they cannot simply ride the ordinary
@@ -609,20 +609,20 @@ one of them fall out of step with the others and the tensor core will happily re
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#two-constraints-that-never-went-away">Two Constraints That Never Went Away</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ampere-register-fragment-over-warp-lane">Ampere — Register Fragment over warp/lane</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-an-m8n8-register-fragment">What the Tensor Core expects: an m8n8 register fragment</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ldmatrix-smem-the-fragment"><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: SMEM → the fragment</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#writing-the-fragment-back">Writing the fragment back</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-the-same-conflict-already-on-ampere">Swizzle: the same conflict, already on Ampere</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ampere-register-fragment-over-warp-lane">Ampere — Register Fragment over Warp/Lane</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-an-m8n8-register-fragment">What the Tensor Core Expects: an m8n8 Register Fragment</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ldmatrix-smem-the-fragment"><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: SMEM → the Fragment</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#writing-the-fragment-back">Writing the Fragment Back</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-the-same-conflict-already-on-ampere">Swizzle: the Same Conflict, Already on Ampere</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hopper-wgmma-smem-descriptors-and-swizzle-formats">Hopper — <code class="docutils literal notranslate"><span class="pre">wgmma</span></code>, SMEM Descriptors, and Swizzle Formats</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-a-smem-matrix-descriptor">What the Tensor Core expects: a SMEM matrix descriptor</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-a-smem-matrix-descriptor">What the Tensor Core Expects: a SMEM Matrix Descriptor</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#blackwell-tcgen05-and-tmem">Blackwell — <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> and TMEM</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-smem-operands-and-a-tmem-accumulator">What the Tensor Core expects: SMEM operands and a TMEM accumulator</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor-layout-in-tmem">Scale-factor layout in TMEM</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-smem-operands-and-a-tmem-accumulator">What the Tensor Core Expects: SMEM Operands and a TMEM Accumulator</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor-layout-in-tmem">Scale-Factor Layout in TMEM</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-throughline">The Throughline</a></li>

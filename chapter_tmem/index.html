@@ -277,9 +277,9 @@
             </div>
             <nav aria-label="Page">
                 <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-2d-address-space">A 2D address space</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-2d-address-space">A 2D Address Space</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#allocation">Allocation</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-and-writing-tmem">Reading and writing TMEM</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-and-writing-tmem">Reading and Writing TMEM</a></li>
 </ul>
             </nav>
         </div>
@@ -313,7 +313,7 @@ cannot write a Blackwell GEMM without understanding it. This chapter covers what
 addressed and allocated, and how data moves in and out of it — the foundation you will then put to
 work in <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a>.</p>
 <section id="a-2d-address-space">
-<h2>A 2D address space<a class="headerlink" href="#a-2d-address-space" title="Link to this heading">#</a></h2>
+<h2>A 2D Address Space<a class="headerlink" href="#a-2d-address-space" title="Link to this heading">#</a></h2>
 <p>On earlier generations a large MMA accumulator stayed in registers for the whole compute phase. On
 Blackwell <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> writes it to TMEM instead, and the space it writes into is <strong>128 rows × up to
 512 32-bit columns</strong>, scoped to the CTA. That shape is worth pausing on, because it tells you how
@@ -335,7 +335,7 @@ much as you would size your SMEM ring buffers, and you have to stay within the p
 hardware gives you.</p>
 </section>
 <section id="reading-and-writing-tmem">
-<h2>Reading and writing TMEM<a class="headerlink" href="#reading-and-writing-tmem" title="Link to this heading">#</a></h2>
+<h2>Reading and Writing TMEM<a class="headerlink" href="#reading-and-writing-tmem" title="Link to this heading">#</a></h2>
 <p>Since TMEM is an address space of its own, the ordinary <code class="docutils literal notranslate"><span class="pre">ld.shared</span></code> and <code class="docutils literal notranslate"><span class="pre">st.shared</span></code> instructions
 cannot reach into it. Data travels in and out through three dedicated <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> instructions, one for
 each path the accumulator and its scale factors need to take.</p>
@@ -416,9 +416,9 @@ into registers and produce the output.</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-2d-address-space">A 2D address space</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-2d-address-space">A 2D Address Space</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#allocation">Allocation</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-and-writing-tmem">Reading and writing TMEM</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reading-and-writing-tmem">Reading and Writing TMEM</a></li>
 </ul>
   </nav></div>
 

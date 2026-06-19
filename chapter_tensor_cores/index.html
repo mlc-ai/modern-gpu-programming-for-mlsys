@@ -280,7 +280,7 @@
             <nav aria-label="Page">
                 <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-tcgen05-mma">The <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-accumulator-lives-in-tmem">The accumulator lives in TMEM</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-accumulator-lives-in-tmem">The Accumulator Lives in TMEM</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cta-group-1-vs-cta-group-2-and-the-m-dimension"><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code> vs <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>, and the M Dimension</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#block-scaled-mma-mxfp8-nvfp4">Block-Scaled MMA (mxfp8 / nvfp4)</a></li>
 </ul>
@@ -351,7 +351,7 @@ is still grinding away, and only waits on the barrier at the last moment, when i
 the result in hand.</p>
 </section>
 <section id="the-accumulator-lives-in-tmem">
-<h2>The accumulator lives in TMEM<a class="headerlink" href="#the-accumulator-lives-in-tmem" title="Link to this heading">#</a></h2>
+<h2>The Accumulator Lives in TMEM<a class="headerlink" href="#the-accumulator-lives-in-tmem" title="Link to this heading">#</a></h2>
 <p>Of all the things Blackwell changes, where the accumulator lives is the defining one. On earlier
 generations the running sum <span class="math notranslate nohighlight">\(C\)</span> sat in registers, and that had a real cost: it tied how large an
 accumulator you could keep to a thread’s register budget, a budget that is always in short supply.
@@ -591,7 +591,7 @@ broadcast SFB (pair mask)” pattern.</p>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-tcgen05-mma">The <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-accumulator-lives-in-tmem">The accumulator lives in TMEM</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-accumulator-lives-in-tmem">The Accumulator Lives in TMEM</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cta-group-1-vs-cta-group-2-and-the-m-dimension"><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code> vs <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>, and the M Dimension</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#block-scaled-mma-mxfp8-nvfp4">Block-Scaled MMA (mxfp8 / nvfp4)</a></li>
 </ul>

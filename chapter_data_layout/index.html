@@ -277,14 +277,14 @@
             </div>
             <nav aria-label="Page">
                 <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-shapestride-model">The shape–stride model</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-layout">Tile layout</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#named-axes">Named axes</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#distributed-layout">Distributed layout</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#intra-kernel-replication-pattern-scale-factors-in-tmem">Intra-kernel replication pattern: scale factors in TMEM</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-shapestride-model">The Shape–Stride Model</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-layout">Tile Layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#named-axes">Named Axes</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#distributed-layout">Distributed Layout</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#intra-kernel-replication-pattern-scale-factors-in-tmem">Intra-Kernel Replication Pattern: Scale Factors in TMEM</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-layout">Swizzle layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-layout">Swizzle Layout</a></li>
 </ul>
             </nav>
         </div>
@@ -325,7 +325,7 @@ modern GPU programming, and to keep the discussion tractable we will develop a s
 runs into. We will close with <strong>swizzling</strong>, the mechanism that makes both row-wise and column-wise
 access to a tile efficient at the same time.</p>
 <section id="the-shapestride-model">
-<h2>The shape–stride model<a class="headerlink" href="#the-shapestride-model" title="Link to this heading">#</a></h2>
+<h2>The Shape–Stride Model<a class="headerlink" href="#the-shapestride-model" title="Link to this heading">#</a></h2>
 <p>It is worth starting from the simplest possible layout, because everything else in the chapter is
 built on top of it. At its core, a layout is just two things: a <strong>shape</strong> and a matching set of
 <strong>strides</strong>. We write the pair as <code class="docutils literal notranslate"><span class="pre">S[(shape)</span> <span class="pre">:</span> <span class="pre">(strides)]</span></code>, and to find where a logical index lives
@@ -369,7 +369,7 @@ SMEM swizzle, you generally need real data movement — loads, stores, shuffles,
 transposes.</p>
 </section>
 <section id="tile-layout">
-<h2>Tile layout<a class="headerlink" href="#tile-layout" title="Link to this heading">#</a></h2>
+<h2>Tile Layout<a class="headerlink" href="#tile-layout" title="Link to this heading">#</a></h2>
 <p>So far we have described layouts for whole tensors. GPU kernels, however, rarely operate on an
 entire matrix at once; they work on smaller tiles, which are loaded, transformed, and computed on by
 different parts of the hardware. The good news is that tiling asks for nothing new. It is still
@@ -388,7 +388,7 @@ coordinates and then mapped to a physical address.</p>
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: click a cell to see its tiled index and address.</em></p>
 </section>
 <section id="named-axes">
-<h2>Named axes<a class="headerlink" href="#named-axes" title="Link to this heading">#</a></h2>
+<h2>Named Axes<a class="headerlink" href="#named-axes" title="Link to this heading">#</a></h2>
 <p>Up to this point we have treated an address as a location in linear memory. On a GPU, though, data
 can live in more than one place: besides memory, a tile may be spread across warp lanes, across
 thread registers, or across TMEM lanes and columns. To describe all of these uniformly, we extend
@@ -411,7 +411,7 @@ lanes and per-lane registers, rather than placing them in linear memory.</p>
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: a layout over <code class="docutils literal notranslate"><span class="pre">&#64;laneid</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;reg</span></code> — click a cell to see which lane/register holds it.</em></p>
 </section>
 <section id="distributed-layout">
-<h2>Distributed layout<a class="headerlink" href="#distributed-layout" title="Link to this heading">#</a></h2>
+<h2>Distributed Layout<a class="headerlink" href="#distributed-layout" title="Link to this heading">#</a></h2>
 <p>What makes named axes so useful is that they let us describe placement uniformly across many levels
 of the system. We have just used them for lanes and registers inside a single GPU, but the very same
 idea reaches across devices: axes such as <code class="docutils literal notranslate"><span class="pre">&#64;gpuid_x</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;gpuid_y</span></code> can say where data lives in a GPU
@@ -426,7 +426,7 @@ below shows several ways to express sharding and replication on a 2×2 GPU mesh:
 <iframe src="../demo/tile_distributed.html" title="Distributed layout across a GPU mesh" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: a layout distributed over a 2×2 GPU mesh.</em></p>
 <section id="intra-kernel-replication-pattern-scale-factors-in-tmem">
-<h3>Intra-kernel replication pattern: scale factors in TMEM<a class="headerlink" href="#intra-kernel-replication-pattern-scale-factors-in-tmem" title="Link to this heading">#</a></h3>
+<h3>Intra-Kernel Replication Pattern: Scale Factors in TMEM<a class="headerlink" href="#intra-kernel-replication-pattern-scale-factors-in-tmem" title="Link to this heading">#</a></h3>
 <p>The same replication dimension turns out to describe something that happens entirely inside a single
 kernel as well: data that the hardware <em>broadcasts across lanes</em>. Blackwell’s block-scaled MMA
 (<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>) is a good example. Its scale factors live in TMEM, where a 128-row
@@ -451,7 +451,7 @@ extended with explicit hardware-named axes and a dedicated replication structure
 </section>
 </section>
 <section id="swizzle-layout">
-<h2>Swizzle layout<a class="headerlink" href="#swizzle-layout" title="Link to this heading">#</a></h2>
+<h2>Swizzle Layout<a class="headerlink" href="#swizzle-layout" title="Link to this heading">#</a></h2>
 <p>The final layout in this chapter exists to solve one specific hardware problem. Shared memory on a
 GPU is organized into memory banks, and accesses run fastest when different lanes land on different
 banks. When several lanes instead reach different addresses within the <em>same</em> bank, the hardware has
@@ -539,14 +539,14 @@ chapter.</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-shapestride-model">The shape–stride model</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-layout">Tile layout</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#named-axes">Named axes</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#distributed-layout">Distributed layout</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#intra-kernel-replication-pattern-scale-factors-in-tmem">Intra-kernel replication pattern: scale factors in TMEM</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-shapestride-model">The Shape–Stride Model</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-layout">Tile Layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#named-axes">Named Axes</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#distributed-layout">Distributed Layout</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#intra-kernel-replication-pattern-scale-factors-in-tmem">Intra-Kernel Replication Pattern: Scale Factors in TMEM</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-layout">Swizzle layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-layout">Swizzle Layout</a></li>
 </ul>
   </nav></div>
 

@@ -284,7 +284,7 @@
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipelinestate">PipelineState</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warpgroup-sync-barrier-ids"><code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> Barrier IDs</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#epilogue-writeback-details">Epilogue (Writeback) Details</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-step-7-misbehaves">When Step 7 misbehaves</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-step-7-misbehaves">When Step 7 Misbehaves</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-8-2-cta-cluster">Step 8: 2-CTA Cluster</a><ul class="visible nav section-nav flex-column">
@@ -304,8 +304,8 @@
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#reference-generated-cuda-skeleton">Reference: Generated CUDA Skeleton</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#symptom-map">Symptom Map</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#deadlocks">Deadlocks</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#crashes-xid-43-illegal-memory-access">Crashes (XID 43 / illegal memory access)</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#wrong-results">Wrong results</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#crashes-xid-43-illegal-memory-access">Crashes (XID 43 / Illegal Memory Access)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#wrong-results">Wrong Results</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#end-to-end-result">End-to-End Result</a></li>
@@ -650,7 +650,7 @@
 </ul>
 </section>
 <section id="when-step-7-misbehaves">
-<h3>When Step 7 misbehaves<a class="headerlink" href="#when-step-7-misbehaves" title="Link to this heading">#</a></h3>
+<h3>When Step 7 Misbehaves<a class="headerlink" href="#when-step-7-misbehaves" title="Link to this heading">#</a></h3>
 <p>The same concurrency that makes Step 7 fast also makes it the first GEMM kernel that is genuinely easy to break. With TMA, MMA, and writeback all in flight at once, a single misplaced barrier can deadlock the kernel, crash the CUDA context, or quietly corrupt the output. These same failure modes come back in Steps 8 and 9, so rather than repeat them three times, we have gathered the whole debugging playbook into <em>Debugging Warp-Specialized Kernels</em> at the end of this chapter — turn to it whenever something goes wrong.</p>
 <p><strong>Pipeline depth tuning.</strong> The Step 7 kernel runs at <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=2</span></code>, the minimum. Pushing it to 4 or 6 lets the TMA producer race further ahead of the MMA consumer and hide more memory latency, but it does so by spending more SMEM, and SMEM is finite. The B200 offers 228 KB per SM (see <em>Numbers to Keep in Mind</em> in <a class="reference internal" href="../chapter_background/index.html#chap-background"><span class="std std-ref">GPU Execution Model</span></a>). With <code class="docutils literal notranslate"><span class="pre">BLK_M=BLK_N=128,</span> <span class="pre">BLK_K=64,</span> <span class="pre">fp16</span></code>, each pipeline stage costs <code class="docutils literal notranslate"><span class="pre">(128*64</span> <span class="pre">+</span> <span class="pre">128*64)</span> <span class="pre">*</span> <span class="pre">2</span> <span class="pre">=</span> <span class="pre">32</span> <span class="pre">KB</span></code> for A and B together, and the <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> writeback staging buffer adds another 32 KB on top. That puts <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=4</span></code> at roughly 160 KB and <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=6</span></code> at roughly 224 KB — right up against the budget. To go any deeper than that, you would have to rethink the writeback staging strategy.</p>
 <hr class="docutils" />
@@ -1330,7 +1330,7 @@
 </ul>
 </section>
 <section id="crashes-xid-43-illegal-memory-access">
-<h3>Crashes (XID 43 / illegal memory access)<a class="headerlink" href="#crashes-xid-43-illegal-memory-access" title="Link to this heading">#</a></h3>
+<h3>Crashes (XID 43 / Illegal Memory Access)<a class="headerlink" href="#crashes-xid-43-illegal-memory-access" title="Link to this heading">#</a></h3>
 <p>These corrupt the CUDA context, and the tell-tale sign is that a <em>later</em>, perfectly innocent <code class="docutils literal notranslate"><span class="pre">torch.randn</span></code> fails too. All three causes are allocation- or warp-shape mistakes:</p>
 <ul class="simple">
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">pool.alloc</span></code> after <code class="docutils literal notranslate"><span class="pre">pool.commit()</span></code>.</strong> Barrier wrappers call <code class="docutils literal notranslate"><span class="pre">alloc</span></code> internally. Correct order: <code class="docutils literal notranslate"><span class="pre">tmem_addr</span> <span class="pre">→</span> <span class="pre">barrier</span> <span class="pre">wrappers</span> <span class="pre">→</span> <span class="pre">move_base_to(1024)</span> <span class="pre">→</span> <span class="pre">Asmem</span> <span class="pre">/</span> <span class="pre">Bsmem</span> <span class="pre">/</span> <span class="pre">Dsmem</span> <span class="pre">→</span> <span class="pre">commit()</span></code>.</p></li>
@@ -1339,7 +1339,7 @@
 </ul>
 </section>
 <section id="wrong-results">
-<h3>Wrong results<a class="headerlink" href="#wrong-results" title="Link to this heading">#</a></h3>
+<h3>Wrong Results<a class="headerlink" href="#wrong-results" title="Link to this heading">#</a></h3>
 <p>The tell here lives in the error pattern itself. Mismatch counts that come out as exact multiples of 128 (128, 256, or 384 rows) point to a sync race rather than bad arithmetic — whole warpgroup-sized stripes are wrong because a handoff slipped, not because any single number was computed incorrectly.</p>
 <ul class="simple">
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> outside <code class="docutils literal notranslate"><span class="pre">elect_sync</span></code></strong> — all 32 threads create commit groups; the 31 empty ones signal the mbarrier immediately. TMA overwrites SMEM before MMA reads it. Output is zeros or garbage.</p></li>
@@ -1494,7 +1494,7 @@
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipelinestate">PipelineState</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warpgroup-sync-barrier-ids"><code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> Barrier IDs</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#epilogue-writeback-details">Epilogue (Writeback) Details</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-step-7-misbehaves">When Step 7 misbehaves</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-step-7-misbehaves">When Step 7 Misbehaves</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-8-2-cta-cluster">Step 8: 2-CTA Cluster</a><ul class="visible nav section-nav flex-column">
@@ -1514,8 +1514,8 @@
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#reference-generated-cuda-skeleton">Reference: Generated CUDA Skeleton</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#symptom-map">Symptom Map</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#deadlocks">Deadlocks</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#crashes-xid-43-illegal-memory-access">Crashes (XID 43 / illegal memory access)</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#wrong-results">Wrong results</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#crashes-xid-43-illegal-memory-access">Crashes (XID 43 / Illegal Memory Access)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#wrong-results">Wrong Results</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#end-to-end-result">End-to-End Result</a></li>
