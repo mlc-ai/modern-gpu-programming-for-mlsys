@@ -27,11 +27,7 @@ jobs:
       - name: Install doc dependencies
         run: pip install -r requirements-docs.txt
 
-      # tvm is a from-source build and not available on CI, so mock it for the
-      # API autodoc (DOCS_MOCK_TVM=1). The rest of the book builds in full.
       - name: Build (Sphinx)
-        env:
-          DOCS_MOCK_TVM: "1"
         run: sphinx-build -b html . _build/html
 
       - name: Deploy to GitHub Pages
