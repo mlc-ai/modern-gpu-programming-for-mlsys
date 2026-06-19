@@ -29,8 +29,11 @@
   background: var(--pst-color-surface, #ececec);
 }
 .demo-viewport {
-  overflow: auto;
-  max-height: 80vh;
+  /* Grow vertically with the iframe (auto-resized to its content); scroll only
+     horizontally when the demo is zoomed wider than the column. No max-height —
+     the frame follows the content height instead of capping and scrolling. */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .demo-stage {
   position: relative;
