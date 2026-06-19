@@ -437,8 +437,8 @@ delivers the same GMEM tile to several CTAs and so cuts redundant global traffic
 <iframe src="../demo/pipeline_arch.html" title="Blackwell GEMM data pipeline" loading="lazy"
         style="width:100%; min-width:1320px; height:680px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div><p><em>Interactive: the load → MMA → epilogue pipeline on Blackwell, and how the stages overlap.</em></p>
-<p>We now have all the pieces — threads, engines, memories, clusters — so we can trace how they work
-together on the workload this book cares about most. A GEMM tile flows across the hardware in three
+<p>We now have all the pieces — the thread hierarchy, the compute and data-movement engines, and the
+memory spaces — so we can trace how they work together on the workload this book cares about most. A GEMM tile flows across the hardware in three
 stages:</p>
 <ol class="arabic simple">
 <li><p><strong>Load.</strong> A TMA copy (<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>) streams an A/B operand tile from GMEM into SMEM. One
