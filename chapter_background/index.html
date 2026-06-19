@@ -357,11 +357,11 @@ elementwise math, reductions, and control flow.</p></li>
 <li><p><strong>Tensor Cores</strong> — fixed-function units that execute a dense matrix multiply-accumulate at <em>tile</em>
 granularity in a single instruction: <span class="math notranslate nohighlight">\(D = AB + C\)</span>.</p></li>
 </ul>
-<p>Tensor Cores are <strong>not new</strong>: they have performed tile-level MMA since Volta (2017), and dense
-linear algebra (GEMM, convolution, attention) reaches peak throughput only on them. What changes from one GPU generation to the next is not their existence but <em>how</em> the
-Tensor Core is programmed and <em>where</em> its results live: the asynchronous warpgroup MMA model
-arrived with Hopper, and Blackwell’s fifth-generation Tensor Core (<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>, with accumulators in
-Tensor Memory) is covered in <a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Tensor Cores: tcgen05</span></a>.</p>
+<p>Dense linear algebra (GEMM, convolution, attention) reaches peak throughput only on the Tensor
+Cores, and what changes from one GPU generation to the next is <em>how</em> they are programmed and
+<em>where</em> their results live: the asynchronous warpgroup MMA model arrived with Hopper, and
+Blackwell’s fifth-generation Tensor Core (<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>, with accumulators in Tensor Memory) is covered
+in <a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Tensor Cores: tcgen05</span></a>.</p>
 </section>
 <section id="memory-spaces">
 <h2>Memory Spaces<a class="headerlink" href="#memory-spaces" title="Link to this heading">#</a></h2>
