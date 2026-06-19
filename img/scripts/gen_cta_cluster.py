@@ -23,7 +23,7 @@ FS_BOX = 18
 FS_BOX_SUB = 16
 FS_LABEL = 18
 FS_OUT = 17
-FS_CAPTION = 18
+FS_CAPTION = 14
 
 
 def box(ax, x, y, w, h, fill, edge, lw=2.0, rounding=0.10, z=1):
@@ -165,7 +165,7 @@ def main():
     ax.add_patch(FancyArrowPatch((10.95, 3.80), (10.95, 2.15), **down_kw, zorder=1))
 
     # --- Bottom caption ---
-    box(ax, 3.3, 0.02, 8.4, 0.66, "#FFF8E1", "#F5A623", lw=2.2, rounding=0.12, z=2)
+    box(ax, 2.3, 0.02, 10.4, 0.66, "#FFF8E1", "#F5A623", lw=2.2, rounding=0.12, z=2)
     ax.text(
         7.5,
         0.35,
