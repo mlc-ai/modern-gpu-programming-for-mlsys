@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -310,6 +310,14 @@
                   
   <section id="tensor-layout">
 <span id="chap-data-layouts"></span><h1>Tensor Layout<a class="headerlink" href="#tensor-layout" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>The TIRx layout API: <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> (shard / replica / offset over named axes), <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code>, and <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code>.</p></li>
+<li><p>A layout maps each logical index to a <em>set</em> of physical coordinates; <code class="docutils literal notranslate"><span class="pre">layout.apply()</span></code> evaluates it.</p></li>
+<li><p>Ready-made constructors (<code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code>, <code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code>, <code class="docutils literal notranslate"><span class="pre">wg_local_layout</span></code>) cover the common hardware tiles.</p></li>
+</ul>
+</div>
 <p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a> introduced the layout <em>notation</em> — the shape–stride pair
 <code class="docutils literal notranslate"><span class="pre">S[shape</span> <span class="pre">:</span> <span class="pre">strides]</span></code>, strides tagged with named <strong>axes</strong>, and the replication
 term <code class="docutils literal notranslate"><span class="pre">R[n</span> <span class="pre">:</span> <span class="pre">stride]</span></code> for data the hardware copies rather than partitions. This

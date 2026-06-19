@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -315,6 +315,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="building-a-tiled-gemm">
 <span id="chap-gemm-basics"></span><h1>Building a Tiled GEMM<a class="headerlink" href="#building-a-tiled-gemm" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>Builds a correct tiled GEMM from the TIRx tile primitives, starting from a single output tile.</p></li>
+<li><p>Step 1 is a single-tile GEMM, Step 2 adds the K-loop accumulation, Step 3 tiles spatially across CTAs for full matrices.</p></li>
+<li><p>Correctness comes first; performance is the job of the next two chapters.</p></li>
+</ul>
+</div>
 <p>So far we have the TIRx tile primitives in the abstract — the scope / layout / dispatch model from <a class="reference internal" href="../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">Introduction to TIRx</span></a> and <a class="reference internal" href="../tirx_guide/layout.html#chap-data-layouts"><span class="std std-ref">Tensor Layout</span></a>. Now we put them to work on a real kernel. We start small, with a single 128 x 128 output tile, and grow it into a kernel that handles full-size matrices. Getting there takes two additions on top of the first tile: accumulating partial products along the K dimension, and tiling the output spatially across many CTAs.</p>
 <p>This is the first of three chapters that walk one GEMM optimization path end to end. Here we build a correct tiled kernel. The next chapter (<a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">Pipelining GEMM with TMA</span></a>) replaces thread copies with TMA and overlaps movement with compute through pipelining, and <a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> adds warp specialization and CTA clusters. Each chapter assumes the previous one, so the kernels accumulate features rather than restart.</p>
 <p>A useful way to read each step is as an edit to a single contract: which <strong>scope</strong> runs the operation, which <strong>layout</strong> the operand tiles use, which <strong>dispatch</strong> path executes it. Almost every optimization touches exactly one of these three pillars and leaves the other two alone, which is why a small card at the start of each step names the pillar that changes. Step 1 sets the baseline that the rest of the path edits.</p>

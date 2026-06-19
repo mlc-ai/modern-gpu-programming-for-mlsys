@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -293,6 +293,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="async-coordination-mbarriers">
 <span id="chap-async-barriers"></span><h1>Async Coordination: mbarriers<a class="headerlink" href="#async-coordination-mbarriers" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>TMA and the Tensor Core are asynchronous, so issuing work is not the same as finishing it — consumers need an explicit completion signal.</p></li>
+<li><p>An mbarrier is that signal: producers arrive, consumers wait, and it tracks arrival counts and (for TMA) byte counts.</p></li>
+<li><p>Each barrier carries a <em>phase</em> that flips every round; waiting on the correct phase is what gates a consumer safely.</p></li>
+</ul>
+</div>
 <p>By now a theme has emerged from the last two chapters: the Tensor Core
 (<a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Tensor Cores: tcgen05</span></a>) and TMA (<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>) are both <em>asynchronous</em>, and on both of them
 issuing work is not the same as finishing it. That asynchrony is what buys overlap, but it also

@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -308,6 +308,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="data-layout-across-gpu-generations">
 <span id="chap-layout-generations"></span><h1>Data Layout Across GPU Generations<a class="headerlink" href="#data-layout-across-gpu-generations" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>Across Ampere → Hopper → Blackwell the MMA math is unchanged; what changes is how operands must be laid out to reach the Tensor Core.</p></li>
+<li><p>Ampere uses a per-lane register fragment, Hopper a SMEM matrix descriptor with swizzle formats, Blackwell SMEM operands plus a TMEM accumulator.</p></li>
+<li><p>Two constraints hold every generation: global-memory coalescing and shared-memory bank conflicts.</p></li>
+</ul>
+</div>
 <p>Why organize a chapter by GPU generation at all? Because the thing that actually changed from
 <strong>Ampere</strong> to <strong>Hopper</strong> to <strong>Blackwell</strong> is not the math the tensor core does — it is <em>how operands
 reach the tensor core</em>. Each generation’s memory and compute engines demand a <em>specific</em> operand

@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -293,6 +293,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="special-memory-tmem">
 <span id="chap-tmem"></span><h1>Special Memory: TMEM<a class="headerlink" href="#special-memory-tmem" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>TMEM is a Blackwell-only per-SM 2D scratchpad (128 lanes × up to 512 columns) that holds the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> accumulator and its scale factors.</p></li>
+<li><p>It is addressed by <code class="docutils literal notranslate"><span class="pre">TLane</span></code> × <code class="docutils literal notranslate"><span class="pre">TCol</span></code> and must be explicitly allocated and freed by the kernel, in 32-column units.</p></li>
+<li><p>Ordinary shared-memory ld/st cannot reach it; three asynchronous <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> instructions move data in and out.</p></li>
+</ul>
+</div>
 <p>Through Hopper, the Tensor Core’s accumulator lived in registers — which works until the tiles grow
 large enough that the accumulator crowds out everything else the threads need to hold. Blackwell’s
 answer is a memory space earlier GPUs do not have: <strong>Tensor Memory (TMEM)</strong>, a per-SM 2D scratchpad

@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -296,6 +296,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="tensor-cores-tcgen05">
 <span id="chap-tensor-cores"></span><h1>Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code><a class="headerlink" href="#tensor-cores-tcgen05" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>The <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA is Blackwell’s tile matrix-multiply-accumulate: a single cooperative instruction issued by one elected thread.</p></li>
+<li><p>Its accumulator lives in TMEM, not registers, and <code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code> vs <code class="docutils literal notranslate"><span class="pre">::2</span></code> sets whether one or two CTAs cooperate (and the M dimension).</p></li>
+<li><p>Block-scaled MMAs (mxfp8 / nvfp4) add per-block scale factors, also staged through TMEM.</p></li>
+</ul>
+</div>
 <p>Tensor Cores are not new. They have executed tile-level matrix multiply-accumulate
 (<span class="math notranslate nohighlight">\(D = AB + C\)</span>) since Volta (2017), and every generation since has carried them — see
 <a class="reference internal" href="../chapter_background/index.html#chap-background"><span class="std std-ref">GPU Execution Model</span></a> for what a Tensor Core is and how it differs from a CUDA core. So if the

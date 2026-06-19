@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -312,6 +312,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="flash-attention-4">
 <span id="chap-flash-attention"></span><h1>Flash Attention 4<a class="headerlink" href="#flash-attention-4" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>Attention runs two MMAs with softmax wedged between them, so it cannot just repeat one MMA the way GEMM does.</p></li>
+<li><p>The kernel composes everything from Part III (TMA, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>, TMEM, barriers) with warp roles, online-softmax rescaling, causal masking, and GQA.</p></li>
+<li><p>It is the capstone: the whole machine in one real kernel.</p></li>
+</ul>
+</div>
 <p>Everything we built for GEMM — TMA tile movement, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA, TMEM, warpgroup-local register tiles, explicit barriers — carries over here unchanged. So why does Flash Attention deserve its own chapter? Because GEMM repeats <em>one</em> MMA, whereas attention runs <em>two</em> MMAs with real work wedged in between them: online softmax, masking, rescaling, and a final normalization. That middle stage is where all the new difficulty lives, and it is what we spend the chapter understanding.</p>
 <p>Our goal is narrow on purpose. We keep just enough of the Flash Attention 4 algorithm to make the kernel readable, then focus on how that algorithm becomes TIRx.</p>
 <p>The cleanest way in is to follow one tile as it flows through the kernel. <code class="docutils literal notranslate"><span class="pre">Q</span></code>, <code class="docutils literal notranslate"><span class="pre">K</span></code>, and <code class="docutils literal notranslate"><span class="pre">V</span></code> enter as input tiles loaded from GMEM into SMEM. The score MMA multiplies <code class="docutils literal notranslate"><span class="pre">Q</span></code> and <code class="docutils literal notranslate"><span class="pre">K</span></code> into a score tile <code class="docutils literal notranslate"><span class="pre">S</span></code> in TMEM. Softmax turns <code class="docutils literal notranslate"><span class="pre">S</span></code> into a numerator tile <code class="docutils literal notranslate"><span class="pre">P</span></code>, and the value MMA combines <code class="docutils literal notranslate"><span class="pre">P</span></code> and <code class="docutils literal notranslate"><span class="pre">V</span></code> to update the output accumulator <code class="docutils literal notranslate"><span class="pre">O</span></code>. There is one twist that GEMM never had: when the running softmax maximum changes, the <code class="docutils literal notranslate"><span class="pre">O</span></code> accumulated so far is in the wrong scale and must be rescaled before the next value MMA can add into it. The sections below trace this path first, then show how TIRx hands each stage to a warpgroup and wires the stages together.</p>

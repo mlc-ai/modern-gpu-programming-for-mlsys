@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -309,6 +309,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="pipelining-gemm-with-tma">
 <span id="chap-gemm-async"></span><h1>Pipelining GEMM with TMA<a class="headerlink" href="#pipelining-gemm-with-tma" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>The basic GEMM wastes time taking turns — copy a tile, compute, copy the next — when the two could run at once.</p></li>
+<li><p>Step 4 switches to TMA async loads, Step 5 builds a software pipeline (PIPE_DEPTH=2) that overlaps load with compute, Step 6 makes the kernel persistent with a tile scheduler.</p></li>
+<li><p>The goal is to load the next tile while the Tensor Cores chew through the current one.</p></li>
+</ul>
+</div>
 <p>The previous chapter got us a correct tiled GEMM, but it spends most of its time waiting — threads copy a tile, then sit idle while the Tensor Cores work, then copy the next tile. The compute and the data movement take turns when they could be running at once. This chapter keeps the tile data path exactly as it was and goes after that idleness, by changing <em>when</em> and <em>by whom</em> the work is scheduled.</p>
 <p>We do it in three incremental steps. Step 4 hands the bulk GMEM &lt;-&gt; SMEM transfers to TMA, so dedicated hardware moves tiles instead of threads. Step 5 adds a two-stage software pipeline so the load for the next K tile can overlap the MMA on the current one. Step 6 reshapes the launch into a persistent kernel driven by a tile scheduler, amortizing setup and improving locality. Throughout, the SMEM, TMEM, and register layouts stay on the contracts from before; what is new is the asynchronous handoff between hardware units.</p>
 <section id="step-4-tma-async-load">

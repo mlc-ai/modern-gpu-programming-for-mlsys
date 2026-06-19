@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -298,6 +298,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="introduction-to-data-layout">
 <span id="chap-data-layout"></span><h1>Introduction to Data Layout<a class="headerlink" href="#introduction-to-data-layout" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>A <em>data layout</em> maps a tensor’s logical indices to physical locations, and it decides coalescing, bank conflicts, and whether an engine can read a tile.</p></li>
+<li><p>The book writes layouts in one notation: <code class="docutils literal notranslate"><span class="pre">S[(shape)</span> <span class="pre">:</span> <span class="pre">(strides)]</span></code>, with named axes (<code class="docutils literal notranslate"><span class="pre">&#64;laneid</span></code>, <code class="docutils literal notranslate"><span class="pre">&#64;TLane</span></code>, …) and a replication term <code class="docutils literal notranslate"><span class="pre">R[...]</span></code> for broadcast or copied data.</p></li>
+<li><p>Swizzle is an XOR remapping of addresses that removes shared-memory bank conflicts.</p></li>
+</ul>
+</div>
 <p>Two kernels can compute the same result over the same numbers and yet differ in speed by an order
 of magnitude, purely because of where those numbers sit in the machine. That “where” is the <em>data
 layout</em>: the map from a tensor’s logical indices <code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">j,</span> <span class="pre">…)</span></code> to a physical location — which byte of

@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -292,6 +292,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="advanced-topics-cluster-launch-control">
 <span id="chap-clc"></span><h1>Advanced Topics: Cluster Launch Control<a class="headerlink" href="#advanced-topics-cluster-launch-control" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>A persistent kernel keeps one CTA resident per SM and loops over output tiles instead of relaunching a CTA per tile.</p></li>
+<li><p>Cluster Launch Control is the hardware mechanism that hands each persistent CTA its next tile — a work-stealing loop driven by two instructions.</p></li>
+<li><p>The payoff is even SM utilization from launch to finish.</p></li>
+</ul>
+</div>
 <p>Suppose we want to keep every SM busy from launch to finish. A <em>persistent</em> kernel takes a step
 toward that: it keeps one CTA resident per SM and has it loop over many output tiles — rather than
 launching a fresh CTA per tile — pulling each next tile from a scheduler (the pattern Part III

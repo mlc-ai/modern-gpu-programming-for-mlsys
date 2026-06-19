@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -323,6 +323,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="scaling-gemm-with-warp-specialization-and-clusters">
 <span id="chap-gemm-advanced"></span><h1>Scaling GEMM with Warp Specialization and Clusters<a class="headerlink" href="#scaling-gemm-with-warp-specialization-and-clusters" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>The pipelined GEMM still has one warpgroup doing load, MMA, and writeback in sequence — the bottleneck this chapter removes.</p></li>
+<li><p>Step 7 specializes warps into roles, Step 8 adds a 2-CTA cluster, Step 9 adds multiple consumers.</p></li>
+<li><p>Each step removes a serial bottleneck, ending near state-of-the-art throughput.</p></li>
+</ul>
+</div>
 <p>The previous chapter (<a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">Pipelining GEMM with TMA</span></a>) ended with a persistent, software-pipelined GEMM, but it still left one warpgroup doing load, MMA, and writeback in sequence. That single warpgroup is the bottleneck this chapter attacks. We scale the kernel in three steps, and the unifying idea is simple to state: stop making one team of threads take turns at jobs that could run at once, and start making more hardware cooperate on each tile.</p>
 <p>The three steps widen cooperation one level at a time. Step 7 splits the warpgroup into specialized roles — a warp issuing TMA loads (<em>producer</em>), a warp running the MMA (<em>consumer</em>), and a writeback warpgroup — so loading and computing overlap instead of alternating. Step 8 lets two CTAs cooperate as a cluster, so one <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA produces a 256×256 tile spanning both CTAs and a single B load feeds twice the MMA work. Step 9 adds a second MMA consumer, growing the cluster output to 512×256 so each staged B tile is reused by both consumers — the densest variant in the tutorial.</p>
 <p>Throughout, the SMEM, TMEM, and register layouts still follow the contracts from the previous two chapters; what changes is <em>who cooperates</em>. Keep an eye on Step 8 in particular, because it is the first time the cooperating scope widens past a single CTA: its operand tiles are split across the two CTAs’ shared memory, and one layout spans both CTAs along the <code class="docutils literal notranslate"><span class="pre">cbx</span></code> cluster axis introduced there.</p>

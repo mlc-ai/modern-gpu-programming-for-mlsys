@@ -32,7 +32,7 @@
 
     <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
     <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
-    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=994f5abe" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
     <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=e7774416" />
   
   <!-- So that users can add custom icons -->
@@ -299,6 +299,14 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="what-makes-a-kernel-fast">
 <span id="chap-performance"></span><h1>What Makes a Kernel Fast<a class="headerlink" href="#what-makes-a-kernel-fast" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">Overview</p>
+<ul class="simple">
+<li><p>The roofline model bounds a kernel by either memory bandwidth or compute, decided by its <em>arithmetic intensity</em> (FLOPs per byte moved).</p></li>
+<li><p>Low arithmetic intensity means memory-bound: raise it (bigger tiles, fusion) or you cannot reach peak FLOPs.</p></li>
+<li><p>The main lever for speed is <em>overlap</em> — running data movement and compute at once — limited by occupancy and resource pressure.</p></li>
+</ul>
+</div>
 <p>Suppose you have written a kernel and it runs. Is it fast? The question is meaningless on its own:
 fast compared to what? Before optimizing anything, you need a way to answer two more precise
 questions — <em>how fast could this kernel possibly run on this GPU?</em> and <em>which resource is stopping
