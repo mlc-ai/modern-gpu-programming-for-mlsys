@@ -303,7 +303,7 @@
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-an-m8n8-register-fragment">What the Tensor Core expects: an m8n8 register fragment</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ldmatrix-smem-the-fragment"><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: SMEM → the fragment</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stmatrix-the-fragment-smem"><code class="docutils literal notranslate"><span class="pre">stmatrix</span></code>: the fragment → SMEM</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-one-layout-for-both-the-write-and-the-read">Swizzle: one layout for both the write and the read</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-the-same-conflict-already-on-ampere">Swizzle: the same conflict, already on Ampere</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hopper-wgmma-smem-descriptors-and-swizzle-formats">Hopper — <code class="docutils literal notranslate"><span class="pre">wgmma</span></code>, SMEM Descriptors, and Swizzle Formats</a><ul class="visible nav section-nav flex-column">
@@ -369,10 +369,9 @@ Four consecutive lanes cover one row’s eight columns.</p></li>
 b32 registers per lane, each packing two fp16 along K.</p></li>
 <li><p><strong>B operand (K×N = 16×8):</strong> K matches A; N is the 8-lane group — two b32 registers per lane.</p></li>
 </ul>
-<p>The slide demo below visualizes this per-lane register layout — click a cell to see which lane and
-which register hold it:</p>
-<iframe src="../demo/thread_register.html" title="Thread + register layout (mma fragment)" loading="lazy"
-        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: the <code class="docutils literal notranslate"><span class="pre">mma</span></code> C/D fragment — each lane holds two adjacent columns per 8×8, four lanes per row.</em></p>
+<p>This is the concrete <code class="docutils literal notranslate"><span class="pre">m16n8k16</span></code> C/D fragment behind the named-axes demo in <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>
+(<code class="docutils literal notranslate"><span class="pre">S[(8,</span> <span class="pre">4,</span> <span class="pre">2)</span> <span class="pre">:</span> <span class="pre">(4&#64;laneid,</span> <span class="pre">1&#64;laneid,</span> <span class="pre">1&#64;reg)]</span></code>): each lane holds two adjacent columns per 8×8, with
+four consecutive lanes covering one row.</p>
 </section>
 <section id="ldmatrix-smem-the-fragment">
 <h3><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: SMEM → the fragment<a class="headerlink" href="#ldmatrix-smem-the-fragment" title="Link to this heading">#</a></h3>
@@ -400,38 +399,18 @@ counterpart: after the MMA, the accumulator is scattered across lanes in the C/D
 store) reaches GMEM. The Ampere story is this shuffle in both directions: the register fragment is
 fixed by hardware, and ldmatrix/stmatrix are the bridges between it and SMEM.</p>
 </section>
-<section id="swizzle-one-layout-for-both-the-write-and-the-read">
-<h3>Swizzle: one layout for both the write and the read<a class="headerlink" href="#swizzle-one-layout-for-both-the-write-and-the-read" title="Link to this heading">#</a></h3>
-<p>Swizzle is not a Hopper invention — Ampere kernels already needed it, precisely because the SMEM
-tile is <em>written</em> one way (coalesced from GMEM) and <em>read</em> another way (by <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>).</p>
-<p>SMEM has 32 banks of 4 bytes; two threads in a warp conflict when they hit different addresses in
-the same bank. Assume each thread accesses 128 bits (16 bytes = 4 banks) and look at one group of
-eight threads, <strong>T0–T7</strong> — together they touch 8 × 4 = 32 banks, exactly the whole bank space, so
-they are conflict-free <em>iff</em> their eight 16-byte chunks land in eight distinct groups of 4 banks.</p>
-<p>Take an 8×8 tile of 128-bit elements stored row-major. Element <code class="docutils literal notranslate"><span class="pre">(r,</span> <span class="pre">c)</span></code> sits at offset
-<code class="docutils literal notranslate"><span class="pre">(r·8</span> <span class="pre">+</span> <span class="pre">c)·16</span> <span class="pre">B</span></code>, so its 4-bank group is <code class="docutils literal notranslate"><span class="pre">(r·8</span> <span class="pre">+</span> <span class="pre">c)</span> <span class="pre">mod</span> <span class="pre">8</span> <span class="pre">=</span> <span class="pre">c</span></code> — the bank depends only on the
-column:</p>
-<ul class="simple">
-<li><p><strong>Write (GMEM→SMEM, coalesced)</strong> touches a <em>row</em>: T0–T7 → <code class="docutils literal notranslate"><span class="pre">(r,</span> <span class="pre">0..7)</span></code> → bank groups
-<code class="docutils literal notranslate"><span class="pre">{0,1,…,7}</span></code>, all distinct → <strong>conflict-free</strong>.</p></li>
-<li><p><strong>Read (<code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>)</strong> needs the data the other way, touching a <em>column</em>: T0–T7 → <code class="docutils literal notranslate"><span class="pre">(0..7,</span> <span class="pre">c)</span></code> →
-bank group <code class="docutils literal notranslate"><span class="pre">{c,</span> <span class="pre">c,</span> <span class="pre">…,</span> <span class="pre">c}</span></code>, all the same → <strong>8-way conflict</strong>.</p></li>
-</ul>
+<section id="swizzle-the-same-conflict-already-on-ampere">
+<h3>Swizzle: the same conflict, already on Ampere<a class="headerlink" href="#swizzle-the-same-conflict-already-on-ampere" title="Link to this heading">#</a></h3>
+<p>Swizzle is not a Hopper invention — Ampere kernels already needed it, because the SMEM tile is
+<em>written</em> one way (coalesced from GMEM, along a <strong>row</strong>) and <em>read</em> another way (by <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>,
+along a <strong>column</strong>). With a plain row-major tile the row write hits 8 distinct banks (conflict-free)
+but the column read hits one bank 8 times (an 8-way conflict); col-major is the mirror image, and no
+unpermuted layout satisfies both:</p>
 <p><img alt="Row write hits 8 distinct banks (conflict-free); column read hits one bank 8 times (conflict)" src="../_images/swizzle_conflict.svg" /></p>
-<p>A plain row-major layout makes the write free but the read conflict; col-major is the mirror image
-(read free, write conflicts). No unpermuted layout satisfies both.</p>
-<p><strong>Swizzle</strong> fixes it by permuting the column with an XOR: store element <code class="docutils literal notranslate"><span class="pre">(r,</span> <span class="pre">c)</span></code> at column <code class="docutils literal notranslate"><span class="pre">c</span> <span class="pre">⊕</span> <span class="pre">r</span></code>,
-so the bank group becomes <code class="docutils literal notranslate"><span class="pre">c</span> <span class="pre">⊕</span> <span class="pre">r</span></code>:</p>
-<ul class="simple">
-<li><p>Write a row (<code class="docutils literal notranslate"><span class="pre">r</span></code> fixed): <code class="docutils literal notranslate"><span class="pre">{0⊕r,</span> <span class="pre">1⊕r,</span> <span class="pre">…,</span> <span class="pre">7⊕r}</span></code> — a permutation of <code class="docutils literal notranslate"><span class="pre">{0..7}</span></code> → conflict-free.</p></li>
-<li><p>Read a column (<code class="docutils literal notranslate"><span class="pre">c</span></code> fixed): <code class="docutils literal notranslate"><span class="pre">{c⊕0,</span> <span class="pre">c⊕1,</span> <span class="pre">…,</span> <span class="pre">c⊕7}</span></code> — a permutation of <code class="docutils literal notranslate"><span class="pre">{0..7}</span></code> → conflict-free.</p></li>
-</ul>
-<p>One layout, both accesses conflict-free. That XOR permutation is the essence of every swizzle mode.
-The demo shows the same 8×8 tile with and without it:</p>
-<iframe src="../demo/swizzle_8x8.html" title="8x8 XOR swizzle: bank conflicts with and without" loading="lazy"
-        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: an 8×8 tile read by column — bank-conflicted in plain row-major, conflict-free after the XOR swizzle.</em></p>
-<p>Hopper later folds the same permutation into the TMA and MMA descriptors (next sections), but the
-need — and the trick — are already there on Ampere.</p>
+<p>The fix is the XOR <strong>swizzle</strong> from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a> — store <code class="docutils literal notranslate"><span class="pre">(r,</span> <span class="pre">c)</span></code> at column <code class="docutils literal notranslate"><span class="pre">c</span> <span class="pre">⊕</span> <span class="pre">r</span></code>, which
+makes the row write <em>and</em> the column read conflict-free at once. Hopper later folds the same
+permutation into the TMA and MMA descriptors (next section); on Ampere it lived in hand-written
+index math.</p>
 </section>
 </section>
 <section id="hopper-wgmma-smem-descriptors-and-swizzle-formats">
@@ -481,10 +460,8 @@ first-class format on Hopper — <code class="docutils literal notranslate"><spa
 both the TMA descriptor that fills the tile and the <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> descriptor that reads it, so the load and
 the MMA agree by construction. (On Ampere that
 same permutation lived in hand-written index math.)</p>
-<p>The demo below shows the element arrangement inside one atom for each format — <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>
-(8 × 128 B), <code class="docutils literal notranslate"><span class="pre">SWIZZLE_64B</span></code> (8 × 64 B), and <code class="docutils literal notranslate"><span class="pre">SWIZZLE_32B</span></code>:</p>
-<iframe src="../demo/swizzle_atom_general.html" title="Swizzle atom layout per format (128B/64B/32B)" loading="lazy"
-        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: pick a swizzle format to see its atom shape (8 × N B) and how elements are permuted inside it.</em></p>
+<p>The element arrangement inside one atom for each format (<code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> = 8 × 128 B, <code class="docutils literal notranslate"><span class="pre">SWIZZLE_64B</span></code>,
+<code class="docutils literal notranslate"><span class="pre">SWIZZLE_32B</span></code>) is the swizzle-atom demo in <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>.</p>
 <p>The <strong>output</strong>, though, is unchanged: <code class="docutils literal notranslate"><span class="pre">wgmma</span></code>’s accumulator <code class="docutils literal notranslate"><span class="pre">D</span></code> is still a per-thread <strong>register</strong>
 fragment in the same m8n8 layout as Ampere (above). A Hopper GEMM reads operands the new way but
 writes its accumulator and runs its epilogue exactly as before — moving the accumulator out of
@@ -606,7 +583,7 @@ consumes it must all agree on the same swizzle, or the tensor core reads scrambl
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#what-the-tensor-core-expects-an-m8n8-register-fragment">What the Tensor Core expects: an m8n8 register fragment</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ldmatrix-smem-the-fragment"><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: SMEM → the fragment</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#stmatrix-the-fragment-smem"><code class="docutils literal notranslate"><span class="pre">stmatrix</span></code>: the fragment → SMEM</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-one-layout-for-both-the-write-and-the-read">Swizzle: one layout for both the write and the read</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle-the-same-conflict-already-on-ampere">Swizzle: the same conflict, already on Ampere</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hopper-wgmma-smem-descriptors-and-swizzle-formats">Hopper — <code class="docutils literal notranslate"><span class="pre">wgmma</span></code>, SMEM Descriptors, and Swizzle Formats</a><ul class="visible nav section-nav flex-column">

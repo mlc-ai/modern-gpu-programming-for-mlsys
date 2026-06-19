@@ -158,6 +158,16 @@ Real hardware names the permutation by its granularity — `SWIZZLE_NONE`, `SWIZ
 ```
 *Interactive: the SWIZZLE_128B pattern.*
 
+A swizzle mode is defined on a small repeating **atom** — `SWIZZLE_128B` is an 8 × 128 B atom,
+`SWIZZLE_64B` an 8 × 64 B atom, `SWIZZLE_32B` an 8 × 32 B atom — and the whole tile is tiled by that
+atom. The demo shows the element arrangement inside one atom for each format:
+
+```{raw} html
+<iframe src="../demo/swizzle_atom_general.html" title="Swizzle atom layout per format (128B/64B/32B)" loading="lazy"
+        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+```
+*Interactive: pick a swizzle format to see its atom shape (8 × N B) and how elements are permuted inside it.*
+
 Swizzle is a remapping the hardware applies for you: pick a consistent mode (e.g. `SWIZZLE_128B`)
 across the ops that touch a tile and let the hardware handle the addressing — `SWIZZLE_128B` gives
 conflict-free access to 8 rows and 8 columns at a time (fp16). *Which* swizzle each engine demands

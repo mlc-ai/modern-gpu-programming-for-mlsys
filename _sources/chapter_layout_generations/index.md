@@ -44,14 +44,9 @@ tensor core reads. For `mma.m16n8k16` (fp16/bf16 in, fp32 accumulate), the 32 la
   b32 registers per lane, each packing two fp16 along K.
 - **B operand (K×N = 16×8):** K matches A; N is the 8-lane group — two b32 registers per lane.
 
-The slide demo below visualizes this per-lane register layout — click a cell to see which lane and
-which register hold it:
-
-```{raw} html
-<iframe src="../demo/thread_register.html" title="Thread + register layout (mma fragment)" loading="lazy"
-        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-```
-*Interactive: the `mma` C/D fragment — each lane holds two adjacent columns per 8×8, four lanes per row.*
+This is the concrete `m16n8k16` C/D fragment behind the named-axes demo in {ref}`chap_data_layout`
+(`S[(8, 4, 2) : (4@laneid, 1@laneid, 1@reg)]`): each lane holds two adjacent columns per 8×8, with
+four consecutive lanes covering one row.
 
 ### `ldmatrix`: SMEM → the fragment
 
@@ -80,47 +75,20 @@ counterpart: after the MMA, the accumulator is scattered across lanes in the C/D
 store) reaches GMEM. The Ampere story is this shuffle in both directions: the register fragment is
 fixed by hardware, and ldmatrix/stmatrix are the bridges between it and SMEM.
 
-### Swizzle: one layout for both the write and the read
+### Swizzle: the same conflict, already on Ampere
 
-Swizzle is not a Hopper invention — Ampere kernels already needed it, precisely because the SMEM
-tile is *written* one way (coalesced from GMEM) and *read* another way (by `ldmatrix`).
-
-SMEM has 32 banks of 4 bytes; two threads in a warp conflict when they hit different addresses in
-the same bank. Assume each thread accesses 128 bits (16 bytes = 4 banks) and look at one group of
-eight threads, **T0–T7** — together they touch 8 × 4 = 32 banks, exactly the whole bank space, so
-they are conflict-free *iff* their eight 16-byte chunks land in eight distinct groups of 4 banks.
-
-Take an 8×8 tile of 128-bit elements stored row-major. Element `(r, c)` sits at offset
-`(r·8 + c)·16 B`, so its 4-bank group is `(r·8 + c) mod 8 = c` — the bank depends only on the
-column:
-
-- **Write (GMEM→SMEM, coalesced)** touches a *row*: T0–T7 → `(r, 0..7)` → bank groups
-  `{0,1,…,7}`, all distinct → **conflict-free**.
-- **Read (`ldmatrix`)** needs the data the other way, touching a *column*: T0–T7 → `(0..7, c)` →
-  bank group `{c, c, …, c}`, all the same → **8-way conflict**.
+Swizzle is not a Hopper invention — Ampere kernels already needed it, because the SMEM tile is
+*written* one way (coalesced from GMEM, along a **row**) and *read* another way (by `ldmatrix`,
+along a **column**). With a plain row-major tile the row write hits 8 distinct banks (conflict-free)
+but the column read hits one bank 8 times (an 8-way conflict); col-major is the mirror image, and no
+unpermuted layout satisfies both:
 
 ![Row write hits 8 distinct banks (conflict-free); column read hits one bank 8 times (conflict)](../img/swizzle_conflict.svg)
 
-A plain row-major layout makes the write free but the read conflict; col-major is the mirror image
-(read free, write conflicts). No unpermuted layout satisfies both.
-
-**Swizzle** fixes it by permuting the column with an XOR: store element `(r, c)` at column `c ⊕ r`,
-so the bank group becomes `c ⊕ r`:
-
-- Write a row (`r` fixed): `{0⊕r, 1⊕r, …, 7⊕r}` — a permutation of `{0..7}` → conflict-free.
-- Read a column (`c` fixed): `{c⊕0, c⊕1, …, c⊕7}` — a permutation of `{0..7}` → conflict-free.
-
-One layout, both accesses conflict-free. That XOR permutation is the essence of every swizzle mode.
-The demo shows the same 8×8 tile with and without it:
-
-```{raw} html
-<iframe src="../demo/swizzle_8x8.html" title="8x8 XOR swizzle: bank conflicts with and without" loading="lazy"
-        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-```
-*Interactive: an 8×8 tile read by column — bank-conflicted in plain row-major, conflict-free after the XOR swizzle.*
-
-Hopper later folds the same permutation into the TMA and MMA descriptors (next sections), but the
-need — and the trick — are already there on Ampere.
+The fix is the XOR **swizzle** from {ref}`chap_data_layout` — store `(r, c)` at column `c ⊕ r`, which
+makes the row write *and* the column read conflict-free at once. Hopper later folds the same
+permutation into the TMA and MMA descriptors (next section); on Ampere it lived in hand-written
+index math.
 
 ## Hopper — `wgmma`, SMEM Descriptors, and Swizzle Formats
 
@@ -158,14 +126,8 @@ both the TMA descriptor that fills the tile and the `wgmma` descriptor that read
 the MMA agree by construction. (On Ampere that
 same permutation lived in hand-written index math.)
 
-The demo below shows the element arrangement inside one atom for each format — `SWIZZLE_128B`
-(8 × 128 B), `SWIZZLE_64B` (8 × 64 B), and `SWIZZLE_32B`:
-
-```{raw} html
-<iframe src="../demo/swizzle_atom_general.html" title="Swizzle atom layout per format (128B/64B/32B)" loading="lazy"
-        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-```
-*Interactive: pick a swizzle format to see its atom shape (8 × N B) and how elements are permuted inside it.*
+The element arrangement inside one atom for each format (`SWIZZLE_128B` = 8 × 128 B, `SWIZZLE_64B`,
+`SWIZZLE_32B`) is the swizzle-atom demo in {ref}`chap_data_layout`.
 
 The **output**, though, is unchanged: `wgmma`'s accumulator `D` is still a per-thread **register**
 fragment in the same m8n8 layout as Ampere (above). A Hopper GEMM reads operands the new way but
