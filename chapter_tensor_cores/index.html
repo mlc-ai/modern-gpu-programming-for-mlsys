@@ -304,10 +304,9 @@
 <li><p>Block-scaled MMAs (mxfp8 / nvfp4) add per-block scale factors, also staged through TMEM.</p></li>
 </ul>
 </div>
-<p>Tensor Cores are not new. They have executed tile-level matrix multiply-accumulate
+<p>Tensor Cores have executed tile-level matrix multiply-accumulate
 (<span class="math notranslate nohighlight">\(D = AB + C\)</span>) since Volta (2017), and every generation since has carried them — see
-<a class="reference internal" href="../chapter_background/index.html#chap-background"><span class="std std-ref">GPU Execution Model</span></a> for what a Tensor Core is and how it differs from a CUDA core. So if the
-unit has been around for nearly a decade, what is there left to learn? The answer is that the
+<a class="reference internal" href="../chapter_background/index.html#chap-background"><span class="std std-ref">GPU Execution Model</span></a> for what a Tensor Core is and how it differs from a CUDA core. The
 math has stayed constant while everything <em>around</em> it has moved: what changes from generation to
 generation is <em>how the Tensor Core is programmed</em> and <em>where its results live</em>.</p>
 <p>Blackwell’s <strong>fifth-generation</strong> Tensor Core, exposed through the <strong><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></strong> instruction
@@ -321,11 +320,10 @@ written, so this chapter focuses on the <code class="docutils literal notranslat
 </div><p><em>Interactive: the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA writing its accumulator into Tensor Memory (TMEM).</em></p>
 <section id="the-tcgen05-mma">
 <h2>The <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA<a class="headerlink" href="#the-tcgen05-mma" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> is Blackwell’s tensor-core instruction family, and it is worth being precise about its
-job: it is <em>only</em> the compute path, the unit that multiplies tiles. Moving the operands into place
-is somebody else’s responsibility, namely TMA’s (<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>). With that scope settled, the
-math is the easy part — what you actually configure when you issue an MMA are the three knobs from
-the introduction, each answering a different question:</p>
+<p><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> is Blackwell’s tensor-core instruction family. It is <em>only</em> the compute path, the unit
+that multiplies tiles; moving the operands into place is TMA’s job (<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>). What you
+configure when you issue an MMA are the three knobs from the introduction, each answering a
+different question:</p>
 <ol class="arabic simple">
 <li><p><strong>Scope — who cooperates.</strong> An MMA is issued for a warpgroup, and some Blackwell modes let two
 CTAs in a cluster cooperate on one larger MMA tile. The instruction itself is <em>committed</em> by a
@@ -336,30 +334,27 @@ what the Tensor Core expects, which is where swizzle (<a class="reference intern
 <li><p><strong>Dispatch — which path runs it.</strong> <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> issues the MMA and <em>returns before the math is
 done</em> — it is asynchronous. Completion is tracked with a barrier (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>).</p></li>
 </ol>
-<p>That third knob deserves emphasis, because it is the one that catches people out: <strong>issuing an MMA
-is not the same as finishing it.</strong> The instruction returns immediately, which is precisely what
-makes overlap possible — a fast kernel issues the next tile’s loads while the current MMA is still
-running, then waits on the barrier only when it actually needs the result.</p>
+<p>On the third knob: <strong>issuing an MMA is not the same as finishing it.</strong> The instruction returns
+immediately, which is what makes overlap possible — a fast kernel issues the next tile’s loads
+while the current MMA is still running, then waits on the barrier only when it needs the result.</p>
 </section>
 <section id="the-accumulator-lives-in-tmem">
 <h2>The accumulator lives in TMEM<a class="headerlink" href="#the-accumulator-lives-in-tmem" title="Link to this heading">#</a></h2>
-<p>We keep returning to <em>where the accumulator lives</em> because it is the defining Blackwell change, and
-it is worth stating plainly before we get into the layout details. On earlier generations the
+<p>Where the accumulator lives is the defining Blackwell change. On earlier generations the
 running sum <span class="math notranslate nohighlight">\(C\)</span> sat in registers, which tied accumulator capacity to a thread’s register budget. On
 Blackwell, <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> instead writes it to <strong>Tensor Memory (TMEM)</strong> — the per-SM 2D scratchpad
-covered in <a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a> — and the epilogue reads it back with <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. With that
-established, the rest of this chapter is the MMA itself: how it is issued and how its operands
-split across the various modes.</p>
+covered in <a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a> — and the epilogue reads it back with <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. The rest of this
+chapter is the MMA itself: how it is issued and how its operands split across the various modes.</p>
 </section>
 <section id="cta-group-1-vs-cta-group-2-and-the-m-dimension">
 <h2><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code> vs <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>, and the M Dimension<a class="headerlink" href="#cta-group-1-vs-cta-group-2-and-the-m-dimension" title="Link to this heading">#</a></h2>
-<p>Why does a single instruction need several modes at all? Because the useful tile shapes do not all
-fit the same way into TMEM, and because one CTA is sometimes too small to hold a worthwhile tile. A
-<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA therefore runs over one CTA (<code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code>) or a pair of CTAs in a cluster
+<p>A single instruction needs several modes because the useful tile shapes do not all
+fit the same way into TMEM, and one CTA is sometimes too small to hold a worthwhile tile. A
+<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA runs over one CTA (<code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code>) or a pair of CTAs in a cluster
 (<code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>). The mode and the tile’s <strong>M</strong> together decide how the (M, N) accumulator is laid
-out in TMEM — which lane and column each logical element <code class="docutils literal notranslate"><span class="pre">C[m,</span> <span class="pre">n]</span></code> lands on. The constant across
-every mode is the column axis: TMEM is 128 lanes × up to 512 columns, and <strong>N always maps to
-columns</strong>, so what genuinely changes from case to case is only the <em>lane</em> mapping of the M rows.
+out in TMEM — which lane and column each logical element <code class="docutils literal notranslate"><span class="pre">C[m,</span> <span class="pre">n]</span></code> lands on. The column axis is
+constant across every mode: TMEM is 128 lanes × up to 512 columns, and <strong>N always maps to
+columns</strong>, so what changes from case to case is only the <em>lane</em> mapping of the M rows.
 Not every M is legal in every mode; the combinations are these:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
@@ -399,17 +394,17 @@ mapping is the obvious one: row <code class="docutils literal notranslate"><span
 × N columns, with nothing wasted. This is the layout to picture by default; the others are
 variations on what to do when the row count and the lane count no longer match.</p>
 <p><img alt="cta_group::1, M=128: identity — row m maps to TMEM lane m" src="../_images/mma_cg1_m128.svg" /></p>
-<p><strong><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code>, M = 64.</strong> Now there are only 64 rows to place in 128 lanes, so a naive packing
+<p><strong><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code>, M = 64.</strong> Now there are only 64 rows to place in 128 lanes, so packing
 into lanes 0–63 would leave half of TMEM idle. The hardware spreads them out instead, as four runs
 of 16 rows at a <strong>lane stride of 32</strong>: rows 0–15 → lanes 0–15, rows 16–31 → lanes 32–47, rows 32–47
 → lanes 64–79, rows 48–63 → lanes 96–111 — leaving lanes 16–31, 48–63, 80–95, 112–127 free. Those
-gaps are the point: a <code class="docutils literal notranslate"><span class="pre">lane_align</span></code> of 16 shifts the whole pattern up by 16, so <strong>two independent
+gaps have a use: a <code class="docutils literal notranslate"><span class="pre">lane_align</span></code> of 16 shifts the whole pattern up by 16, so <strong>two independent
 M = 64 MMAs can share the 128 lanes</strong> (one at align 0, one at align 16). Columns remain the full N.</p>
 <p><img alt="cta_group::1, M=64: four 16-row runs at lane stride 32, gaps free for a second M=64 tile" src="../_images/mma_cg1_m64.svg" /></p>
 <p>When one CTA’s TMEM is not enough — a tile taller than 128 rows — we move to <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> and let
 a pair cooperate. <strong><code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>, M = 256</strong> is the clean version: an even/odd CTA pair in the
 cluster splits M contiguously, CTA 0 taking rows 0–127 and CTA 1 rows 128–255, <strong>each into its own
-TMEM lanes 0–127, full N columns</strong>. The key thing to notice is that the (256, N) accumulator is two
+TMEM lanes 0–127, full N columns</strong>. The (256, N) accumulator is two
 separate 128-row TMEM regions, one per CTA — not one buffer spanning both. Each CTA holds its own
 128 A-rows in SMEM, and the <strong>even CTA</strong> issues the instruction and commits the completion barrier
 for the pair. This is the mode the 2-CTA cluster GEMM in <a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> uses.</p>
@@ -420,18 +415,18 @@ N is split in half: within each CTA the low-N half occupies lanes 0–63 and the
 into lanes 64–127. Both CTAs end up using all 128 lanes, packing 64 rows × two N-halves rather than
 leaving the upper lanes empty.</p>
 <p><img alt="cta_group::2, M=128: 64 rows per CTA with N split across the lower/upper 64 lanes" src="../_images/mma_cg2_m128.svg" /></p>
-<p>What ties all four together is what does <em>not</em> change between them. In every case B (N, K) lives in
+<p>What does <em>not</em> change across the four modes: in every case B (N, K) lives in
 SMEM, and for <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> each CTA supplies operands from its own SMEM (with A split by M as
 above). The accumulator C (M, N) is always f32 in TMEM.</p>
 </section>
 <section id="block-scaled-mma-mxfp8-nvfp4">
 <h2>Block-Scaled MMA (mxfp8 / nvfp4)<a class="headerlink" href="#block-scaled-mma-mxfp8-nvfp4" title="Link to this heading">#</a></h2>
-<p>The trouble with very low precision is dynamic range: an fp8 or fp4 element simply cannot represent
+<p>The trouble with very low precision is dynamic range: an fp8 or fp4 element cannot represent
 the spread of magnitudes a real matrix contains, so a single global scale either clips the large
 values or flushes the small ones to zero. The fix is to scale more finely. Low-precision formats
 hold accuracy by attaching a <strong>scale factor to each block of K</strong>: every group of <code class="docutils literal notranslate"><span class="pre">B</span></code> consecutive
 K-elements shares one scale, which keeps each block’s values inside the representable range. A
-block-scaled MMA therefore carries two operands beyond A and B — the scale-factor tensors
+block-scaled MMA carries two operands beyond A and B — the scale-factor tensors
 <strong>SFA (M, SFK)</strong> and <strong>SFB (N, SFK)</strong>, where <code class="docutils literal notranslate"><span class="pre">SFK</span> <span class="pre">=</span> <span class="pre">K</span> <span class="pre">/</span> <span class="pre">B</span></code>.</p>
 <p>How fine the blocking is depends on the format, since the block size <code class="docutils literal notranslate"><span class="pre">B</span></code> is exactly the
 scale-vector granularity:</p>
@@ -462,15 +457,15 @@ scale-vector granularity:</p>
 </tbody>
 </table>
 </div>
-<p>The math then does exactly what the motivation suggests — a per-block dequantize-then-accumulate,
-where each quantized value is multiplied back by its block’s scale before the product is summed in
+<p>The math is a per-block dequantize-then-accumulate:
+each quantized value is multiplied back by its block’s scale before the product is summed in
 f32:</p>
 <div class="math notranslate nohighlight">
 \[D[m,n] \mathrel{+}= \sum_k \big(A_q[m,k]\cdot \mathrm{SFA}[m,\, k/B]\big)\,\big(B_q[n,k]\cdot \mathrm{SFB}[n,\, k/B]\big).\]</div>
 <p>The scale dtype shapes what those factors can express. For e8m0 scales the factor is an exact power
 of two — the stored byte is a biased exponent, so the scale is <span class="math notranslate nohighlight">\(2^{\text{byte}-127}\)</span> — while
 nvfp4’s e4m3 scales are small floats and can land between powers of two.</p>
-<p>Where do these new operands live? Here the placement has one twist that the plain MMA does not:
+<p>The placement differs from the plain MMA in one way:
 <strong>the scale factors live in TMEM</strong>, not SMEM, because the block-scaled <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> reads them from
 TMEM:</p>
 <div class="pst-scrollable-table-container"><table class="table">
@@ -509,10 +504,10 @@ data operands never do: they are first TMA-loaded into SMEM, then copied SMEM �
 <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> before the MMA can run. The TMEM layout is compact — a 128-row scale vector packs into
 just 32 lanes (<code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">%</span> <span class="pre">32</span></code>, with <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">//</span> <span class="pre">32</span></code> running along columns) and is broadcast <code class="docutils literal notranslate"><span class="pre">warpx4</span></code> to all 128
 reading lanes; the full layout is in <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>.</p>
-<p>The two-CTA case follows a principle worth holding onto: a scale travels with whatever it scales.
+<p>In the two-CTA case a scale travels with whatever it scales.
 Under <strong><code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code></strong> the scale factors split exactly like the data they describe. <strong>SFA follows
 A</strong>, so each CTA holds the M-half matching its own A rows, whereas <strong>SFB is multicast to both CTAs</strong>,
-because each CTA’s M-half multiplies against the very same per-N column scales. In the kernels this
+because each CTA’s M-half multiplies against the same per-N column scales. In the kernels this
 shows up as the “load SFA per-CTA (single-CTA mask), broadcast SFB (pair mask)” pattern.</p>
 <p><img alt="Block-scaled MMA placement: A/B packed in SMEM; SFA, SFB, and C in TMEM, with SFA split by M and SFB multicast across the CTA pair" src="../_images/mma_block_scaled.svg" /></p>
 </section>

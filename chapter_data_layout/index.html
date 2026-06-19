@@ -315,7 +315,7 @@ engine expects, and so it is where much of GPU performance is won or lost. To ta
 precisely we need a way to write layouts down. This chapter builds a compact <strong>notation</strong> for
 layouts that the rest of Part I uses; <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a> then applies it to each GPU
 generation’s hardware requirements. Treat the notation here as plain mathematical notation — the
-goal is simply to get fluent at reading a layout.</p>
+goal is to get fluent at reading a layout.</p>
 <section id="the-shapestride-model">
 <h2>The shape–stride model<a class="headerlink" href="#the-shapestride-model" title="Link to this heading">#</a></h2>
 <p>We start from the simplest possible layout and build everything else on top of it. At its core a
@@ -326,8 +326,8 @@ the strides. A row-major 4×4 matrix, for instance, is</p>
 </pre></div>
 </div>
 <p>This is the classic shape/stride model, written compactly (a row-major simplification of CuTe’s
-notation). Everything below is built from it, so it is worth dwelling on.</p>
-<p>The reassuring part is that you have almost certainly used this model already. If you have written
+notation). Everything below is built from it.</p>
+<p>You have almost certainly used this model already. If you have written
 PyTorch or NumPy, then you have, because a tensor there <em>is</em> exactly a shape plus a stride over a
 flat storage buffer:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
@@ -336,7 +336,7 @@ flat storage buffer:</p>
 <span class="n">t</span><span class="o">.</span><span class="n">stride</span><span class="p">()</span>     <span class="c1"># (4, 1)        ← exactly S[(3, 4) : (4, 1)]</span>
 </pre></div>
 </div>
-<p>Seeing a tensor this way pays off immediately: it explains why many “reshaping” operations don’t
+<p>Seeing a tensor this way explains why many “reshaping” operations don’t
 touch the data at all. They just rewrite the strides and hand back a <strong>view</strong> over the same
 storage. Transpose/permute is the clearest case:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tt</span> <span class="o">=</span> <span class="n">t</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>               <span class="c1"># or t.T</span>
@@ -348,15 +348,14 @@ storage. Transpose/permute is the clearest case:</p>
 <p><code class="docutils literal notranslate"><span class="pre">t.permute(1,</span> <span class="pre">0)</span></code> is <code class="docutils literal notranslate"><span class="pre">S[(4,</span> <span class="pre">3)</span> <span class="pre">:</span> <span class="pre">(1,</span> <span class="pre">4)]</span></code> over the <em>same</em> memory: the transpose is purely a stride
 change. <code class="docutils literal notranslate"><span class="pre">reshape</span></code>/<code class="docutils literal notranslate"><span class="pre">view</span></code> on a contiguous tensor are the same story — new shape and strides, same
 storage. (NumPy is identical; its <code class="docutils literal notranslate"><span class="pre">.strides</span></code> are just counted in bytes rather than elements.)</p>
-<p>This is exactly how layouts work on a GPU, and the rest of the chapter is really one idea
-generalized: a tile’s mapping — to memory, or via named axes to lanes and registers — is a stride
-rule over a fixed buffer, so rearranging a tile is usually a change of <em>layout</em>, not a copy. Hold
-on to that, because it is what makes the more exotic layouts ahead manageable.</p>
+<p>This is exactly how layouts work on a GPU, and the rest of the chapter generalizes one idea:
+a tile’s mapping — to memory, or via named axes to lanes and registers — is a stride
+rule over a fixed buffer, so rearranging a tile is usually a change of <em>layout</em>, not a copy.</p>
 </section>
 <section id="tile-layout">
 <h2>Tile layout<a class="headerlink" href="#tile-layout" title="Link to this heading">#</a></h2>
-<p>GPU kernels rarely work on a whole matrix at once; they work on tiles. The pleasant surprise is
-that tiling needs no new machinery — it is just a layout with more dimensions. An 8×8 matrix cut
+<p>GPU kernels rarely work on a whole matrix at once; they work on tiles. Tiling needs no new
+machinery — it is just a layout with more dimensions. An 8×8 matrix cut
 into 2×4 tiles becomes a 4-D layout — <code class="docutils literal notranslate"><span class="pre">(tile_row,</span> <span class="pre">row_in_tile,</span> <span class="pre">tile_col,</span> <span class="pre">col_in_tile)</span></code> — with
 strides chosen so each tile is contiguous:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>S[(4, 2, 2, 4) : (16, 4, 8, 1)]
@@ -379,10 +378,10 @@ explicit, a row-major 8×16 tile in memory is just</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>S[(8, 16) : (16@m, 1@m)]
 </pre></div>
 </div>
-<p>The tags earn their keep when a layout describes data <em>spread across threads</em> rather than laid out
+<p>The tags matter when a layout describes data <em>spread across threads</em> rather than laid out
 in memory. For instance, <code class="docutils literal notranslate"><span class="pre">S[(8,</span> <span class="pre">4,</span> <span class="pre">2)</span> <span class="pre">:</span> <span class="pre">(4&#64;laneid,</span> <span class="pre">1&#64;laneid,</span> <span class="pre">1&#64;reg)]</span></code> maps rows and columns onto
-lane IDs and a per-lane register instead of linear memory — and this is not a contrived example: it
-is exactly the tensor-core register fragment you will meet in <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>.</p>
+lane IDs and a per-lane register instead of linear memory — this is
+the tensor-core register fragment you will meet in <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>.</p>
 <iframe src="../demo/thread_register.html" title="Thread + register layout via named axes" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: a layout over <code class="docutils literal notranslate"><span class="pre">&#64;laneid</span></code> and <code class="docutils literal notranslate"><span class="pre">&#64;reg</span></code> — click a cell to see which lane/register holds it.</em></p>
 </section>
@@ -399,10 +398,9 @@ and we express it with a <strong>replication</strong> dimension <code class="doc
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: a layout distributed over a 2×2 GPU mesh.</em></p>
 <section id="intra-kernel-replication-pattern-scale-factors-in-tmem">
 <h3>Intra-kernel replication pattern: scale factors in TMEM<a class="headerlink" href="#intra-kernel-replication-pattern-scale-factors-in-tmem" title="Link to this heading">#</a></h3>
-<p>Replication might sound like a multi-GPU concern, but the same dimension describes something that
+<p>The same dimension also describes something that
 happens inside a single kernel: data the hardware <em>broadcasts across lanes</em>. Blackwell’s
-block-scaled MMA (<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>) is the clean example, and it is worth tracing
-because the layout looks surprising at first. Its scale factors live in TMEM, and a 128-row scale
+block-scaled MMA (<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>) is one example. Its scale factors live in TMEM, and a 128-row scale
 vector is stored in only <strong>32 TMEM lanes</strong> (logical row <code class="docutils literal notranslate"><span class="pre">r</span></code> → lane <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">%</span> <span class="pre">32</span></code>, with <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">//</span> <span class="pre">32</span></code> running
 along columns). Those 32 stored lanes are then <strong>replicated along the lane axis</strong> so that all 128
 lanes of the reading warpgroup get a copy — a <code class="docutils literal notranslate"><span class="pre">warpx4</span></code> broadcast, written with a replication
@@ -421,14 +419,14 @@ are in <a class="reference internal" href="../chapter_layout_generations/index.h
 </section>
 <section id="swizzle-layout">
 <h2>Swizzle layout<a class="headerlink" href="#swizzle-layout" title="Link to this heading">#</a></h2>
-<p>The last layout in this chapter exists to solve a specific hardware problem, so it helps to see the
-problem first. Shared memory is split into <strong>32 banks</strong> that can be read in parallel, and a warp’s
+<p>The last layout in this chapter solves a specific hardware problem. Shared memory is split into
+<strong>32 banks</strong> that can be read in parallel, and a warp’s
 accesses are served in a single cycle only if they hit <em>distinct</em> banks; when several lanes land in
 different addresses of the <em>same</em> bank, those accesses <strong>serialize</strong> into a bank conflict. This bites
 in a very common situation: a layout where reading a <em>row</em> is conflict-free but reading a <em>column</em>
 funnels every element into one bank, so the column access runs many times slower than the row
 access over identical data.</p>
-<p><strong>Swizzle</strong> is the fix. It permutes the address mapping — typically by XOR-ing the column index with
+<p><strong>Swizzle</strong> fixes this. It permutes the address mapping — typically by XOR-ing the column index with
 the row — so that <em>both</em> row and column accesses spread across banks:</p>
 <iframe src="../demo/swizzle_8x8.html" title="8x8 XOR swizzle" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: an 8×8 tile, bank-conflicted by column in plain row-major, conflict-free after the XOR swizzle.</em></p>
@@ -442,11 +440,11 @@ defined: <code class="docutils literal notranslate"><span class="pre">SWIZZLE_12
 inside one atom for each format:</p>
 <iframe src="../demo/swizzle_atom_general.html" title="Swizzle atom layout per format (128B/64B/32B)" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: pick a swizzle format to see its atom shape (8 × N B) and how elements are permuted inside it.</em></p>
-<p>The practical upshot is that swizzle is a remapping the hardware applies for you, so your job is not
+<p>Swizzle is a remapping the hardware applies for you, so your job is not
 to compute permuted addresses but to pick a consistent mode (e.g. <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>) across all the
 ops that touch a tile and let the hardware handle the addressing — <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>, for example,
 gives conflict-free access to 8 rows and 8 columns at a time in fp16. <em>Which</em> swizzle each engine
-demands is generation-specific, and that is precisely the subject of the next chapter.</p>
+demands is generation-specific, and is the subject of the next chapter.</p>
 </section>
 </section>
 
