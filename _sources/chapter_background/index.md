@@ -9,16 +9,16 @@
 - Every later optimization serves one tile pipeline — load (GMEM → SMEM), compute (SMEM → TMEM), epilogue (TMEM → registers → GMEM) — and aims to keep the compute and data-movement engines busy at once.
 :::
 
-Two kernels can compute the same result over the same numbers and
-still differ in speed by an order of magnitude — and the gap is almost never the arithmetic, it is
-how well the code fits the chip underneath. So before we write a single kernel, this chapter brings
-that chip into focus: the hierarchy of threads that run the work, the distinct memory spaces they
-move data through, and the handful of compute and data-movement engines that do the heavy lifting.
-Nearly every optimization later in the book is a way of arranging work across those three things. We
-assemble the picture here — the thread hierarchy, the compute units, the memory spaces, and how a
-GEMM flows across them — and the `tcgen05` compute path ({ref}`chap_tensor_cores`), TMA data
-movement ({ref}`chap_tma`), and the mbarrier model ({ref}`chap_async_barriers`) each build on it in
-their own chapters.
+Two kernels can compute the same result and still differ in speed by an
+order of magnitude. The difference is usually not the arithmetic itself, but how well the kernel
+matches the hardware it runs on. This chapter sets up that hardware view before we write any
+kernels: the thread hierarchy that executes the work, the memory spaces that hold and move the
+data, and the compute and data-movement engines that do the heavy lifting. Nearly every
+optimization later in the book is some way of arranging work across those pieces. The goal here is
+to build that baseline picture once, so the later chapters on `tcgen05` compute
+({ref}`chap_tensor_cores`), TMA data movement ({ref}`chap_tma`), and mbarrier-based coordination
+({ref}`chap_async_barriers`) can focus on their specific mechanisms instead of reintroducing the
+machine each time.
 
 The interactive below gives that whole Blackwell SM picture in one place before we zoom in on each part.
 
