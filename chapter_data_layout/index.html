@@ -456,8 +456,10 @@ technique designed to break this tension.</p>
 with the row — so that <em>both</em> row and column accesses end up spread across banks. The conflict-free
 guarantee it provides is specific: it holds for the matching element width, swizzle mode, and access
 pattern (the one an engine’s descriptor expects), and not for arbitrary element widths or alignments.</p>
-<p>The first interactive in this section shows the problem-and-fix pair side by side: plain row-major
-on the left, XOR-swizzled addressing on the right.</p>
+<p>The first interactive below makes this concrete. Click a column index and watch which bank each
+element lands in: in the plain row-major tile on the left, a column funnels all eight elements into a
+single bank, so the read serializes into eight cycles; in the XOR-swizzled layout on the right, that
+same column is spread across eight distinct banks and reads in a single cycle.</p>
 <iframe src="../demo/swizzle_8x8.html" title="8x8 XOR swizzle" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: an 8×8 tile, bank-conflicted by column in plain row-major, conflict-free after the XOR swizzle.</em></p>
 <p>The little 8×8 example captures the core idea, but real GPU memories have many more banks than that
