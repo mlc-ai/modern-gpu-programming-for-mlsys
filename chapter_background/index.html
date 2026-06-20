@@ -308,8 +308,8 @@ pieces one by one, then put them together in a GEMM pipeline so it is clear how 
 flow through the hardware. Nearly every optimization later in the book is some way of arranging
 work across those same pieces.</p>
 <p>Modern GPUs also contain many specialized hardware units. To give a first taste, the interactive
-below shows the main elements inside a Blackwell streaming multiprocessor before we zoom in on each
-part.</p>
+demo below shows the main elements inside a Blackwell streaming multiprocessor before we zoom in on each
+part. You can click into each part to see its details.</p>
 <div style="overflow-x:auto;">
 <iframe src="../demo/sm_architecture.html" title="Blackwell SM architecture" loading="lazy"
         style="width:100%; min-width:1320px; height:680px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
@@ -318,13 +318,10 @@ Tensor Core and TMA engines.</em></p>
 <section id="the-execution-hierarchy">
 <h2>The Execution Hierarchy<a class="headerlink" href="#the-execution-hierarchy" title="Link to this heading">#</a></h2>
 <p>We begin with the threads that do the work. A GPU does not present its thousands of threads as one
-flat pool. Instead it groups them into a
-nested hierarchy, and it does so because cooperation happens at several different scales at once. At
-the finest scale, the lanes of a warp march through the same instruction in lockstep. A step coarser,
-the threads of a CTA share a common pool of fast scratch memory. Coarser still, the CTAs of a
-cluster can reach across physically separate SMs to synchronize and to read each other’s memory. Each
-level exists to make one of these forms of cooperation cheap. The following figure shows the
-hierarchy on Blackwell.</p>
+flat pool. Instead it groups them into a nested hierarchy, and it does so because cooperation happens
+at several different scales at once. Each level exists to make cooperation cheap at one of those
+scales. The following figure shows the hierarchy on Blackwell; you can click into each level to
+highlight it.</p>
 <iframe src="../demo/thread_hierarchy.html" title="Blackwell thread hierarchy" loading="lazy"
         style="width:100%; min-width:900px; height:520px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: click a level — thread → warp → warpgroup → CTA → cluster → grid.</em></p>
 <ul class="simple">
@@ -457,12 +454,12 @@ CTAs at once, eliminating the redundant global traffic that separate loads would
 <h2>The GEMM Data Pipeline<a class="headerlink" href="#the-gemm-data-pipeline" title="Link to this heading">#</a></h2>
 <p>So far we have introduced the hardware units individually. To see how they work together, we can
 use a typical general-purpose matrix multiplication (GEMM) pipeline as an example. The
-interactive demo below shows the units involved in a three-stage GEMM tile pipeline; click on
-stages such as <code class="docutils literal notranslate"><span class="pre">tma</span> <span class="pre">load</span></code> to see which hardware units participate.</p>
+interactive demo below shows the units involved in a three-stage GEMM tile pipeline; click an action
+such as <code class="docutils literal notranslate"><span class="pre">tma</span> <span class="pre">load</span></code> to highlight the data path it takes across the hardware units.</p>
 <div style="overflow-x:auto;">
 <iframe src="../demo/pipeline_arch.html" title="Blackwell GEMM data pipeline" loading="lazy"
         style="width:100%; min-width:1320px; height:680px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-</div><p><em>Interactive: the load → MMA → epilogue pipeline on Blackwell, and how the stages overlap.</em></p>
+</div><p><em>Interactive: the load → MMA → epilogue pipeline on Blackwell — click an action to trace its data path across the hardware units.</em></p>
 <p>A single GEMM tile flows through three stages.</p>
 <ol class="arabic simple">
 <li><p><strong>Load.</strong> A TMA copy (<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>) streams an A or B operand tile from GMEM into SMEM. One

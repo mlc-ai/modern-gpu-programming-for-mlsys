@@ -321,7 +321,7 @@ tile op. The API mirrors the notation, so there is little new syntax to learn �
 (<code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>, <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code>, <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> from <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code>), the named-axis
 vocabulary, the ready-made constructors for common hardware tiles, and the single rule a layout
 evaluates by, worked through two real hardware tiles. If the notation looks unfamiliar, read
-{ref}`chap_data_layout` first; here we build on it.</p>
+<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a> first; here we build on it.</p>
 <p>The workflow is deliberately simple. You build a layout once and attach it to a
 buffer — either through <code class="docutils literal notranslate"><span class="pre">pool.alloc(shape,</span> <span class="pre">dtype,</span> <span class="pre">layout=...)</span></code> or through
 <code class="docutils literal notranslate"><span class="pre">T.decl_buffer(shape,</span> <span class="pre">dtype,</span> <span class="pre">scope=...,</span> <span class="pre">layout=...)</span></code> — and from then on every
@@ -796,7 +796,7 @@ the parameters were chosen for — and not for an arbitrary access. The <code cl
 parameter is tuned per swizzle width precisely so that the eight 16-byte rows of a
 column always land on distinct banks.</p>
 <p>You can watch all of this in the interactive demo. Pick a dtype and a swizzle mode
-(<code class="docutils literal notranslate"><span class="pre">none</span></code> / <code class="docutils literal notranslate"><span class="pre">32B</span></code> / <code class="docutils literal notranslate"><span class="pre">64B</span></code> / <code class="docutils literal notranslate"><span class="pre">128B</span></code>) in the <em>Swizzle (SMEM)</em> control, and the
+(<code class="docutils literal notranslate"><span class="pre">off</span></code> / <code class="docutils literal notranslate"><span class="pre">none</span></code> / <code class="docutils literal notranslate"><span class="pre">32B</span></code> / <code class="docutils literal notranslate"><span class="pre">64B</span></code> / <code class="docutils literal notranslate"><span class="pre">128B</span></code>) in the <em>Swizzle (SMEM)</em> control, and the
 physical panel switches to a <em>line × bank</em> view, where each cell is one 4-byte bank
 word holding <code class="docutils literal notranslate"><span class="pre">4</span> <span class="pre">/</span> <span class="pre">dtype_bytes</span></code> elements side by side. Choose <code class="docutils literal notranslate"><span class="pre">none</span></code> and a column
 collapses onto a single bank — the conflict, made visible; turn a swizzle on and the

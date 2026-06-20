@@ -314,12 +314,13 @@ The reason is a single design decision: the accumulator no longer lives in regis
 moves out into a dedicated on-chip memory, <strong>Tensor Memory (TMEM)</strong> (<a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a>). That one
 relocation ripples through everything else about how a kernel is written, which is why the rest of
 this chapter is built around the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA itself.</p>
-<p>The interactive demo below gives a first look at <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> in a few different configurations. In
-each case, the MMA writes its partial sums into TMEM rather than registers.</p>
+<p>The interactive demo below gives a first look at <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>. Toggle the transpose of A or B, pick the
+output width <code class="docutils literal notranslate"><span class="pre">N</span></code>, and step through the <code class="docutils literal notranslate"><span class="pre">K</span> <span class="pre">iteration</span></code> bar to watch the MMA accumulate. In each
+configuration, it writes its partial sums into TMEM rather than registers.</p>
 <div style="overflow-x:auto;">
 <iframe src="../demo/tcgen05_intro.html" title="tcgen05 and Tensor Memory" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-</div><p><em>Interactive: a few <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> configurations and their TMEM accumulator behavior.</em></p>
+</div><p><em>Interactive: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> accumulator behavior — toggle transpose and <code class="docutils literal notranslate"><span class="pre">N</span></code>, then step the <code class="docutils literal notranslate"><span class="pre">K</span> <span class="pre">iteration</span></code> to watch partial sums build up in TMEM.</em></p>
 <section id="the-tcgen05-mma">
 <h2>The <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA<a class="headerlink" href="#the-tcgen05-mma" title="Link to this heading">#</a></h2>
 <p>With the accumulator’s new home in view, we can turn to the instruction that fills it. <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> is

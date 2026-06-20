@@ -329,7 +329,7 @@ consequence is that we wait on the answer with the very same phase-and-barrier m
 for a TMA load (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>) — there is nothing new to learn about how to await it.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">query_cancel</span></code></strong> — once that barrier fires, this reads the response, and it does so in two steps.
 First, <code class="docutils literal notranslate"><span class="pre">clusterlaunchcontrol.query_cancel.is_canceled</span></code> returns a <strong>predicate</strong>: did a cancellation
-actually succeed? Only when it did do we go on to call
+actually succeed? Only when it did succeed do we go on to call
 <code class="docutils literal notranslate"><span class="pre">clusterlaunchcontrol.query_cancel.get_first_ctaid</span></code>, which extracts the cancelled cluster’s first
 CTA id — a coordinate vector (<code class="docutils literal notranslate"><span class="pre">x</span></code>, <code class="docutils literal notranslate"><span class="pre">y</span></code>, <code class="docutils literal notranslate"><span class="pre">z</span></code>) that names the tile to process. A false predicate
 simply means there is <em>no work left</em>. Note that we branch on the predicate itself; there is no
