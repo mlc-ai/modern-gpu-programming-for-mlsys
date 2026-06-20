@@ -311,23 +311,18 @@
 <li><p>Ready-made constructors (<code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code>, <code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code>, <code class="docutils literal notranslate"><span class="pre">wg_local_layout</span></code>) cover the common hardware tiles.</p></li>
 </ul>
 </div>
-<p>Notation tells you what a layout <em>means</em>; it does not yet put a
-single number anywhere on the chip. To write a kernel you need every element of a
-tile pinned to a precise physical place — which thread holds it, which register or
-TMEM lane it lands in — and you need that placement to be something the compiler
-can read, check, and feed to each tile op rather than a convention you carry in
-your head. That is what the TIRx layout API gives you: a <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> you
-construct once and attach to a buffer, written in a fixed vocabulary of named
-hardware axes and evaluated by a single rule. <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a> introduced
-the layout <em>notation</em> — the shape–stride pair <code class="docutils literal notranslate"><span class="pre">S[shape</span> <span class="pre">:</span> <span class="pre">strides]</span></code>, strides
-tagged with named <strong>axes</strong>, and the replication term <code class="docutils literal notranslate"><span class="pre">R[n</span> <span class="pre">:</span> <span class="pre">stride]</span></code> for data
-the hardware copies rather than partitions; this chapter turns that notation into
-the real objects you import from <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code> — <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>,
-<code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code>, and <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> — together with the axis vocabulary they
-are written in, the ready-made constructors TIRx ships for the common hardware
-tiles, and the exact rule a layout evaluates to, run through two real hardware
-tiles. If the notation below looks unfamiliar, read that chapter first; here we
-assume it and build on it.</p>
+<p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a> introduced the <em>notation</em> for layouts — the shape–stride pair
+<code class="docutils literal notranslate"><span class="pre">S[shape</span> <span class="pre">:</span> <span class="pre">strides]</span></code> with each stride tagged by a named axis, and the replication term
+<code class="docutils literal notranslate"><span class="pre">R[n</span> <span class="pre">:</span> <span class="pre">stride]</span></code> for data the hardware copies rather than partitions. That notation is enough to
+read a layout and reason about it on paper. A kernel needs one more thing: an actual layout <em>object</em>
+the compiler can use. It has to pin every element of a tile to an exact physical slot — which thread
+holds it, which register or TMEM lane it lands in — and it has to be something the compiler can
+read, check, and hand to each tile op, not a convention you keep in your head. That object is the
+<strong>TileLayout</strong>, built from the same <code class="docutils literal notranslate"><span class="pre">S[...]</span></code> notation and evaluated by a single rule. This chapter
+is that API: <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>, <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code>, and <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> from <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code>, the
+axis vocabulary they are written in, the ready-made constructors TIRx ships for common hardware
+tiles, and the exact rule a layout evaluates to, run through two real hardware tiles. If the notation
+looks unfamiliar, read {ref}`chap_data_layout` first; here we build on it.</p>
 <p>The workflow is deliberately simple. You build a layout once and attach it to a
 buffer — either through <code class="docutils literal notranslate"><span class="pre">pool.alloc(shape,</span> <span class="pre">dtype,</span> <span class="pre">layout=...)</span></code> or through
 <code class="docutils literal notranslate"><span class="pre">T.decl_buffer(shape,</span> <span class="pre">dtype,</span> <span class="pre">scope=...,</span> <span class="pre">layout=...)</span></code> — and from then on every
