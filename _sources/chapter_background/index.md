@@ -12,10 +12,10 @@
 To write fast GPU programs, it is important to understand the hardware
 itself and how code runs on that hardware. This chapter gives an overview of the GPU execution
 model: the thread hierarchy that executes the work, the memory spaces that hold and move the data,
-and the compute and data-movement engines that do the heavy lifting. Nearly every optimization
-later in the book is some way of arranging work across those pieces. The later chapters on
-`tcgen05` compute ({ref}`chap_tensor_cores`), TMA data movement ({ref}`chap_tma`), and
-mbarrier-based coordination ({ref}`chap_async_barriers`) all build on this baseline picture.
+and the compute and data-movement engines that do the heavy lifting. We first introduce these
+pieces one by one, then put them together in a GEMM pipeline so it is clear how data and execution
+flow through the machine. Nearly every optimization later in the book is some way of arranging
+work across those same pieces.
 
 Modern GPUs also contain many specialized hardware elements. To give a first taste, the interactive
 below shows the main elements inside a Blackwell streaming multiprocessor before we zoom in on each
@@ -211,3 +211,12 @@ the table as a sense of *scale* rather than as a performance model. The lesson i
 large enough to hold only a handful of staged tiles, TMEM is scarce enough that it must be budgeted,
 and tensor-core throughput is so high that data movement *has* to overlap compute — there is no other
 way to keep those engines busy.
+
+## What to Read Next
+
+Now that we have seen the high-level picture, we can move on to the chapters that dive deeper into
+the main mechanisms:
+
+- {ref}`chap_tensor_cores` explains `tcgen05` compute and Tensor Memory in detail.
+- {ref}`chap_tma` covers TMA-based asynchronous data movement.
+- {ref}`chap_async_barriers` introduces the mbarrier and phase model that coordinates these engines.

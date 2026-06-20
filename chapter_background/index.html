@@ -278,6 +278,7 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cta-clusters">CTA Clusters</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-gemm-data-pipeline">The GEMM Data Pipeline</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#numbers-to-keep-in-mind">Numbers to Keep in Mind</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-to-read-next">What to Read Next</a></li>
 </ul>
             </nav>
         </div>
@@ -302,10 +303,10 @@
 <p>To write fast GPU programs, it is important to understand the hardware
 itself and how code runs on that hardware. This chapter gives an overview of the GPU execution
 model: the thread hierarchy that executes the work, the memory spaces that hold and move the data,
-and the compute and data-movement engines that do the heavy lifting. Nearly every optimization
-later in the book is some way of arranging work across those pieces. The later chapters on
-<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> compute (<a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Tensor Cores: tcgen05</span></a>), TMA data movement (<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>), and
-mbarrier-based coordination (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>) all build on this baseline picture.</p>
+and the compute and data-movement engines that do the heavy lifting. We first introduce these
+pieces one by one, then put them together in a GEMM pipeline so it is clear how data and execution
+flow through the machine. Nearly every optimization later in the book is some way of arranging
+work across those same pieces.</p>
 <p>Modern GPUs also contain many specialized hardware elements. To give a first taste, the interactive
 below shows the main elements inside a Blackwell streaming multiprocessor before we zoom in on each
 part.</p>
@@ -535,6 +536,16 @@ large enough to hold only a handful of staged tiles, TMEM is scarce enough that 
 and tensor-core throughput is so high that data movement <em>has</em> to overlap compute — there is no other
 way to keep those engines busy.</p>
 </section>
+<section id="what-to-read-next">
+<h2>What to Read Next<a class="headerlink" href="#what-to-read-next" title="Link to this heading">#</a></h2>
+<p>Now that we have seen the high-level picture, we can move on to the chapters that dive deeper into
+the main mechanisms:</p>
+<ul class="simple">
+<li><p><a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Tensor Cores: tcgen05</span></a> explains <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> compute and Tensor Memory in detail.</p></li>
+<li><p><a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a> covers TMA-based asynchronous data movement.</p></li>
+<li><p><a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a> introduces the mbarrier and phase model that coordinates these engines.</p></li>
+</ul>
+</section>
 </section>
 
 
@@ -590,6 +601,7 @@ way to keep those engines busy.</p>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cta-clusters">CTA Clusters</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-gemm-data-pipeline">The GEMM Data Pipeline</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#numbers-to-keep-in-mind">Numbers to Keep in Mind</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-to-read-next">What to Read Next</a></li>
 </ul>
   </nav></div>
 
