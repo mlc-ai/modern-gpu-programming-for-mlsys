@@ -212,23 +212,22 @@ pattern (the one an engine's descriptor expects), and not for arbitrary element 
 The little 8×8 example captures the core idea, but real GPU memories have many more banks than that
 toy picture suggests. To make swizzling work at full scale, we do not treat the whole tile as one
 monolithic object. Instead, we cut memory into small segments and apply the swizzle pattern within
-each segment, and in this way the same row/column-remapping trick carries over to the full banked
-memory system.
-
-Different hardware modes pick different sizes for this basic segment, or **atom**. The common choices
-are `SWIZZLE_NONE`, `SWIZZLE_32B`, `SWIZZLE_64B`, and `SWIZZLE_128B`, each applying the same general
-idea at a different granularity:
+each segment. The next figure shows the most common case in practice, `SWIZZLE_128B`, where the
+layout is organized around 128-byte segments so the same row/column-remapping trick fits naturally
+into a 32-bank memory system:
 
 ```{raw} html
 <iframe src="../demo/swizzle_128B.html" title="SWIZZLE_128B layout" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
-*Interactive: the SWIZZLE_128B pattern.*
+*Interactive: the `SWIZZLE_128B` pattern, applied within 128-byte segments.*
 
-What the granularity refers to is the size of the small repeating **atom** on which the permutation
-is defined. `SWIZZLE_128B` uses an 8 × 128 B atom, `SWIZZLE_64B` an 8 × 64 B atom, and `SWIZZLE_32B`
-an 8 × 32 B atom; the whole tile is then tiled by whichever atom is in use. The demo shows the
-element arrangement inside one atom for each format:
+The same idea extends beyond this 128-byte case. To simplify the visualization, we will now use a
+single color block to refer to one segment, instead of drawing individual banks. In general,
+hardware defines a small repeating **atom** on which the permutation is applied, and different
+swizzle modes choose different atom sizes. `SWIZZLE_128B` uses an 8 × 128 B atom, `SWIZZLE_64B` an
+8 × 64 B atom, and `SWIZZLE_32B` an 8 × 32 B atom; the whole tile is then tiled by whichever atom
+is in use. The demo shows the element arrangement inside one atom for each format:
 
 ```{raw} html
 <iframe src="../demo/swizzle_atom_general.html" title="Swizzle atom layout per format (128B/64B/32B)" loading="lazy"
