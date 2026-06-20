@@ -153,7 +153,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Introduction to Data Layout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Data Layout Across GPU Generations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
@@ -311,7 +311,7 @@
 <li><p>Ready-made constructors (<code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code>, <code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code>, <code class="docutils literal notranslate"><span class="pre">wg_local_layout</span></code>) cover the common hardware tiles.</p></li>
 </ul>
 </div>
-<p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a> introduced the layout <em>notation</em> — the shape–stride pair
+<p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a> introduced the layout <em>notation</em> — the shape–stride pair
 <code class="docutils literal notranslate"><span class="pre">S[shape</span> <span class="pre">:</span> <span class="pre">strides]</span></code> with strides on named axes, and the replication term <code class="docutils literal notranslate"><span class="pre">R[n</span> <span class="pre">:</span> <span class="pre">stride]</span></code> for
 data the hardware copies rather than partitions. This chapter turns that notation into a real
 compiler object: the same <code class="docutils literal notranslate"><span class="pre">S[...]</span></code> and <code class="docutils literal notranslate"><span class="pre">R[...]</span></code> you read on paper now <em>construct</em> a
@@ -335,7 +335,7 @@ live in a single module:</p>
 <span class="p">)</span>
 </pre></div>
 </div>
-<p>There is really only one idea to carry over from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>. A layout
+<p>There is really only one idea to carry over from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>. A layout
 does not map a logical index to a single address; it maps it to a <em>set</em> of
 coordinates on the named axes, because one element can genuinely live in several
 places at once. That map breaks cleanly into three parts — shard (<code class="docutils literal notranslate"><span class="pre">D</span></code>), replica
@@ -690,7 +690,7 @@ and the swizzle then permutes that address. The next few sections explain why th
 permutation is needed in the first place and how it is defined.</p>
 <section id="why-swizzle">
 <h3>Why Swizzle<a class="headerlink" href="#why-swizzle" title="Link to this heading">#</a></h3>
-<p>Recall the mechanism from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>. Shared memory is organized as
+<p>Recall the mechanism from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>. Shared memory is organized as
 <strong>32 banks of 4 bytes</strong>, and a <em>bank conflict</em> occurs — serializing the access —
 whenever the lanes of a single access touch different addresses that fall in the
 same bank. With a plain row-major tile this conflict is not bad luck but

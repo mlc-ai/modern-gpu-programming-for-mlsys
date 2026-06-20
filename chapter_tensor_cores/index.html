@@ -153,7 +153,7 @@
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Introduction to Data Layout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Data Layout Across GPU Generations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
@@ -307,7 +307,7 @@ results live, and on Blackwell those two questions are the whole game: the <stro
 the accumulator off-register and decides how each tile is issued, and getting both right is what
 separates a peak kernel from a slow one. This chapter is about driving that unit: the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA
 and its modes (<a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a>), the accumulator’s new home, and the operand layouts
-(<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>) and async completion (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>) the MMA depends on.</p>
+(<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>) and async completion (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>) the MMA depends on.</p>
 <p>Blackwell’s <strong>fifth-generation</strong> Tensor Core, exposed through the <strong><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></strong> instruction
 family, is the latest such shift, and for kernel authors it is the most consequential one in years.
 The reason is a single design decision: the accumulator no longer lives in registers. Instead it
@@ -334,7 +334,7 @@ instruction itself is <em>committed</em> by a single elected thread.</p></li>
 <li><p><strong>Layout — where the operands and the result live.</strong> The operands are tiles in SMEM (a few
 variants also read an A-operand straight from TMEM), and the accumulator is written to TMEM. The
 operand layouts have to match exactly what the Tensor Core expects to find, and that expectation
-is where swizzle (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>) enters the picture.</p></li>
+is where swizzle (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>) enters the picture.</p></li>
 <li><p><strong>Dispatch — which path runs it.</strong> <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> issues the MMA and then <em>returns before the math is
 done</em>: it is asynchronous. To know when the result is actually ready, you track completion with a
 barrier (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>).</p></li>

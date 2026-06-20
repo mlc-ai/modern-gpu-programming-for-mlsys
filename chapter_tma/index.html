@@ -151,7 +151,7 @@
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Introduction to Data Layout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Data Layout Across GPU Generations</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Async Data Movement: TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
@@ -302,7 +302,7 @@ load/store issue — that has nothing to do with the math. The <strong>Tensor Me
 the hardware engine that fixes this: one thread issues a copy, and the engine moves the rectangular
 tile between global and shared memory on its own, leaving the threads free to compute. This chapter
 covers how a single thread issues that copy, how TMA swizzles the tile so the layout matches what the
-Tensor Core expects (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>), and how loads and stores signal completion — loads
+Tensor Core expects (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>), and how loads and stores signal completion — loads
 through an mbarrier (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>), stores through a commit/wait group.</p>
 <p>The interactive demo below shows the whole picture at a glance: TMA moves a tile from global to
 shared memory, and can optionally swizzle it as it lands. The sections that follow then unpack the
@@ -335,7 +335,7 @@ permute the layout so that the Tensor Core later reads it without bank conflicts
 swizzle it applies matches the layout (and mode) the MMA expects. The swizzle pattern itself rides
 along in the TMA descriptor, which is what lets one thread set it once and have the engine apply it to
 the whole tile.</p>
-<p>This is the point where <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a> meets the hardware. The TMA descriptor, the SMEM
+<p>This is the point where <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a> meets the hardware. The TMA descriptor, the SMEM
 tile, and the MMA all have to agree on the same swizzle. If they disagree, the engine will still
 faithfully deposit bytes into shared memory — they simply will not be arranged the way the Tensor Core
 wants to read them, and the computation will be wrong.</p>

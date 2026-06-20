@@ -51,7 +51,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Async Data Movement: TMA" href="../chapter_tma/index.html" />
-    <link rel="prev" title="Introduction to Data Layout" href="../chapter_data_layout/index.html" />
+    <link rel="prev" title="Data Layout" href="../chapter_data_layout/index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="" />
@@ -151,7 +151,7 @@
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Introduction to Data Layout</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Data Layout Across GPU Generations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
@@ -317,7 +317,7 @@ form stays fixed while <em>how its operands reach the tensor core</em> does not 
 dtypes, and accumulator each generation supports. What each generation actually demands is a
 <em>specific</em> operand layout, and a layout the hardware merely tolerates as ordinary memory can still be
 the wrong one for the tensor core. This chapter follows that one moving part across <strong>Ampere</strong> →
-<strong>Hopper</strong> → <strong>Blackwell</strong>, building on the layout notation from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a> (<code class="docutils literal notranslate"><span class="pre">S[...]</span></code>,
+<strong>Hopper</strong> → <strong>Blackwell</strong>, building on the layout notation from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a> (<code class="docutils literal notranslate"><span class="pre">S[...]</span></code>,
 named axes, swizzle); the Blackwell TMEM specifics are in <a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a>.</p>
 <section id="two-constraints-that-never-went-away">
 <h2>Two Constraints That Never Went Away<a class="headerlink" href="#two-constraints-that-never-went-away" title="Link to this heading">#</a></h2>
@@ -364,7 +364,7 @@ the registers — four b32 registers per lane, each packing two fp16 along K.</p
 per lane.</p></li>
 </ul>
 <p>This is exactly the concrete <code class="docutils literal notranslate"><span class="pre">m16n8k16</span></code> C/D fragment hiding behind the named-axes demo in
-<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a> (<code class="docutils literal notranslate"><span class="pre">S[(8,</span> <span class="pre">4,</span> <span class="pre">2)</span> <span class="pre">:</span> <span class="pre">(4&#64;laneid,</span> <span class="pre">1&#64;laneid,</span> <span class="pre">1&#64;reg)]</span></code>), where each lane holds two
+<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a> (<code class="docutils literal notranslate"><span class="pre">S[(8,</span> <span class="pre">4,</span> <span class="pre">2)</span> <span class="pre">:</span> <span class="pre">(4&#64;laneid,</span> <span class="pre">1&#64;laneid,</span> <span class="pre">1&#64;reg)]</span></code>), where each lane holds two
 adjacent columns per 8×8 and four consecutive lanes cover one row.</p>
 </section>
 <section id="ldmatrix-smem-the-fragment">
@@ -413,7 +413,7 @@ write hits 8 distinct banks and is conflict-free, but the column read hits one b
 accesses pays the price. No unpermuted layout can make both of them happy:</p>
 <p>The figure below makes that row-write / column-read conflict concrete.</p>
 <p><img alt="Row write hits 8 distinct banks (conflict-free); column read hits one bank 8 times (conflict)" src="../_images/swizzle_conflict.svg" /></p>
-<p>The way out is the XOR <strong>swizzle</strong> from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>: we store element <code class="docutils literal notranslate"><span class="pre">(r,</span> <span class="pre">c)</span></code> at column
+<p>The way out is the XOR <strong>swizzle</strong> from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>: we store element <code class="docutils literal notranslate"><span class="pre">(r,</span> <span class="pre">c)</span></code> at column
 <code class="docutils literal notranslate"><span class="pre">c</span> <span class="pre">⊕</span> <span class="pre">r</span></code>, and that single permutation makes the row write <em>and</em> the column read conflict-free at the
 same time. As we will see in the next section, Hopper later folds this exact permutation into the TMA
 and MMA descriptors so that nobody has to spell it out by hand; on Ampere, though, it still had to
@@ -478,7 +478,7 @@ descriptor that fills the tile and the <code class="docutils literal notranslate
 same format, the load and the MMA agree by construction, instead of relying on the hand-written index
 math that carried this on Ampere.</p>
 <p>The element arrangement inside a single atom, for each of the formats (<code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> = 8 × 128 B,
-<code class="docutils literal notranslate"><span class="pre">SWIZZLE_64B</span></code>, <code class="docutils literal notranslate"><span class="pre">SWIZZLE_32B</span></code>), is precisely the swizzle-atom demo in <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>.</p>
+<code class="docutils literal notranslate"><span class="pre">SWIZZLE_64B</span></code>, <code class="docutils literal notranslate"><span class="pre">SWIZZLE_32B</span></code>), is precisely the swizzle-atom demo in <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>.</p>
 <p>The <strong>output</strong> side, by contrast, has not moved. The accumulator <code class="docutils literal notranslate"><span class="pre">D</span></code> of <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> is still a per-thread
 <strong>register</strong> fragment, built from the same 8×8 sub-tiles we met on Ampere — although now its register
 count and exact lane mapping scale with the instruction’s <strong>N</strong> (a <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> is shaped <code class="docutils literal notranslate"><span class="pre">m64nNk16</span></code>), so
@@ -508,7 +508,7 @@ and B, <strong>the scale factors reside in TMEM</strong> rather than SMEM, so th
 operand path. Instead they take a small SMEM→TMEM detour: a TMA load first brings them into SMEM, and
 then <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> copies them on into TMEM before the MMA runs.</p>
 <p>Once they are in TMEM, their layout — the PTX <em>tcgen05 MMA scale-factor A layout</em> — turns out to be
-exactly the lane-replication example from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Introduction to Data Layout</span></a>. A 128-row scale vector packs into
+exactly the lane-replication example from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>. A 128-row scale vector packs into
 32 lanes (row <code class="docutils literal notranslate"><span class="pre">r</span></code> goes to lane <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">%</span> <span class="pre">32</span></code>, with <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">//</span> <span class="pre">32</span></code> running along TMEM columns at stride
 <code class="docutils literal notranslate"><span class="pre">epc</span> <span class="pre">=</span> <span class="pre">4</span></code>) and is then broadcast <code class="docutils literal notranslate"><span class="pre">warpx4</span></code> to all 128 reading lanes (<code class="docutils literal notranslate"><span class="pre">R[4</span> <span class="pre">:</span> <span class="pre">32&#64;TLane]</span></code>).</p>
 <p>The one piece here that has no Ampere or Hopper analogue is the byte packing — that is, how many
@@ -576,7 +576,7 @@ one of them fall out of step with the others and the tensor core will happily re
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Introduction to Data Layout</p>
+        <p class="prev-next-title">Data Layout</p>
       </div>
     </a>
     <a class="right-next"
