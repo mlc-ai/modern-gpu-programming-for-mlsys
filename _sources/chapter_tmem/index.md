@@ -45,8 +45,6 @@ per-CTA limit the hardware gives you.
 
 ## Reading and Writing TMEM
 
-After allocation, the practical question is how data crosses the TMEM boundary during a kernel.
-
 Since TMEM is an address space of its own, the ordinary `ld.shared` and `st.shared` instructions
 cannot reach into it. Data travels in and out through three dedicated `tcgen05` instructions, one for
 each path the accumulator and its scale factors need to take.
