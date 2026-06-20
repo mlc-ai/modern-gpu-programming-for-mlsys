@@ -325,7 +325,7 @@ each case, the MMA writes its partial sums into TMEM rather than registers.</p>
 <p><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> is Blackwell’s tensor-core instruction family, and it is worth being precise about what it
 does and does not cover. It is <em>only</em> the compute path — the unit that actually multiplies the
 tiles. Getting the operands into place beforehand is a separate job, and that job belongs to TMA
-(<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>). So when you issue an MMA, what you are really configuring are the three knobs we
+(<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>). So when you issue an MMA, what you are really configuring are the three design elements we
 introduced earlier, and each one answers a different question:</p>
 <ol class="arabic simple">
 <li><p><strong>Scope — who cooperates.</strong> An MMA is issued for a warpgroup. On Blackwell, some modes go a step
@@ -339,7 +339,7 @@ is where swizzle (<a class="reference internal" href="../chapter_data_layout/ind
 done</em>: it is asynchronous. To know when the result is actually ready, you track completion with a
 barrier (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>).</p></li>
 </ol>
-<p>That third knob deserves a moment on its own, because it is easy to gloss over. <strong>Issuing an MMA is
+<p>That third design element deserves a moment on its own, because it is easy to gloss over. <strong>Issuing an MMA is
 not the same as finishing it.</strong> The instruction hands control back immediately, and that is exactly
 what makes overlap possible: a fast kernel issues the loads for the next tile while the current MMA
 is still grinding away, and only waits on the barrier at the last moment, when it genuinely needs

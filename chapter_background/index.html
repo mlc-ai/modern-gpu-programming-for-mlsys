@@ -350,7 +350,7 @@ thread and then carried out by hardware. A TMEM-to-register load is warpgroup-di
 really four warp-collective <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> instructions, one per warp, each handling that warp’s 32
 TMEM lanes. A <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA is committed by one elected thread, while a clustered MMA spans two CTAs
 at once. Each operation thus has its own natural granularity, and the set of threads that runs it is
-what we call the operation’s <strong>scope</strong> — the first of the three recurring knobs (scope, layout, and
+what we call the operation’s <strong>scope</strong> — the first of the three recurring design elements (scope, layout, and
 dispatch) that this book returns to again and again.</p>
 </section>
 <section id="compute-cuda-cores-and-tensor-cores">
