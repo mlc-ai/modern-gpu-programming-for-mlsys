@@ -152,7 +152,10 @@ CTAs at once, eliminating the redundant global traffic that separate loads would
 
 ## The GEMM Data Pipeline
 
-The interactive below traces the three-stage GEMM tile pipeline that the rest of the book keeps optimizing.
+So far we have discussed the hardware units individually. To see how they work together, it helps
+to use a typical general-purpose matrix multiplication (GEMM) pipeline as an example. The
+interactive demo below shows the units involved in a three-stage GEMM tile pipeline; click on
+stages such as `tma load` to see which hardware units participate.
 
 ```{raw} html
 <div style="overflow-x:auto;">
@@ -162,9 +165,7 @@ The interactive below traces the three-stage GEMM tile pipeline that the rest of
 ```
 *Interactive: the load → MMA → epilogue pipeline on Blackwell, and how the stages overlap.*
 
-Now that the thread hierarchy, the compute engines, and the memory spaces are all on the table, we
-can put them together and trace what actually happens when the hardware runs a GEMM. A single GEMM
-tile flows through three stages.
+A single GEMM tile flows through three stages.
 
 1. **Load.** A TMA copy ({ref}`chap_tma`) streams an A or B operand tile from GMEM into SMEM. One
    thread issues the copy after `mbarrier.arrive.expect_tx(bytes)` has recorded how many bytes — the

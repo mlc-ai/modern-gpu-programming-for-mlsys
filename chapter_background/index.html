@@ -449,14 +449,15 @@ CTAs at once, eliminating the redundant global traffic that separate loads would
 </section>
 <section id="the-gemm-data-pipeline">
 <h2>The GEMM Data Pipeline<a class="headerlink" href="#the-gemm-data-pipeline" title="Link to this heading">#</a></h2>
-<p>The interactive below traces the three-stage GEMM tile pipeline that the rest of the book keeps optimizing.</p>
+<p>So far we have discussed the hardware units individually. To see how they work together, it helps
+to use a typical general-purpose matrix multiplication (GEMM) pipeline as an example. The
+interactive demo below shows the units involved in a three-stage GEMM tile pipeline; click on
+stages such as <code class="docutils literal notranslate"><span class="pre">tma</span> <span class="pre">load</span></code> to see which hardware units participate.</p>
 <div style="overflow-x:auto;">
 <iframe src="../demo/pipeline_arch.html" title="Blackwell GEMM data pipeline" loading="lazy"
         style="width:100%; min-width:1320px; height:680px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div><p><em>Interactive: the load → MMA → epilogue pipeline on Blackwell, and how the stages overlap.</em></p>
-<p>Now that the thread hierarchy, the compute engines, and the memory spaces are all on the table, we
-can put them together and trace what actually happens when the hardware runs a GEMM. A single GEMM
-tile flows through three stages.</p>
+<p>A single GEMM tile flows through three stages.</p>
 <ol class="arabic simple">
 <li><p><strong>Load.</strong> A TMA copy (<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>) streams an A or B operand tile from GMEM into SMEM. One
 thread issues the copy after <code class="docutils literal notranslate"><span class="pre">mbarrier.arrive.expect_tx(bytes)</span></code> has recorded how many bytes — the
