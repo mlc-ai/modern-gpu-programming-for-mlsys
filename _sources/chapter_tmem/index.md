@@ -36,15 +36,12 @@ is written `S[(128, N) : (1@TLane, 1@TCol)]` in the notation of {ref}`chap_data_
 
 ## Allocation
 
-Once TMEM is understood as a per-SM 2D resource, the next question is how a kernel reserves part of it.
-
-Registers come to you for free, in the sense that the compiler decides which ones to use and when to
-release them. TMEM does not work that way: the kernel has to **allocate and free** it explicitly.
-The allocation is a per-CTA affair. One warp in the CTA performs it, requesting columns in units of
-32, and the column count is rounded up to a power of two. From there you can think of TMEM the same
-way you think of shared memory. It is a budgeted resource that belongs to the CTA, so you size it
-much as you would size your SMEM ring buffers, and you have to stay within the per-CTA limit the
-hardware gives you.
+Unlike registers, which do not require explicit allocation, TMEM has to be **allocated and freed**
+by the kernel itself. The allocation is a per-CTA affair. One warp in the CTA performs it,
+requesting columns in units of 32, and the column count is rounded up to a power of two. From there
+you can think of TMEM much like shared memory. It is a budgeted resource that belongs to the CTA,
+so you size it much as you would size your SMEM ring buffers, and you have to stay within the
+per-CTA limit the hardware gives you.
 
 ## Reading and Writing TMEM
 
