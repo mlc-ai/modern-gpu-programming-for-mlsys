@@ -17,7 +17,7 @@ pieces one by one, then put them together in a GEMM pipeline so it is clear how 
 flow through the machine. Nearly every optimization later in the book is some way of arranging
 work across those same pieces.
 
-Modern GPUs also contain many specialized hardware elements. To give a first taste, the interactive
+Modern GPUs also contain many specialized hardware units. To give a first taste, the interactive
 below shows the main elements inside a Blackwell streaming multiprocessor before we zoom in on each
 part.
 
@@ -152,8 +152,8 @@ CTAs at once, eliminating the redundant global traffic that separate loads would
 
 ## The GEMM Data Pipeline
 
-So far we have discussed the hardware units individually. To see how they work together, it helps
-to use a typical general-purpose matrix multiplication (GEMM) pipeline as an example. The
+So far we have introduced the hardware units individually. To see how they work together, we can
+use a typical general-purpose matrix multiplication (GEMM) pipeline as an example. The
 interactive demo below shows the units involved in a three-stage GEMM tile pipeline; click on
 stages such as `tma load` to see which hardware units participate.
 
@@ -193,7 +193,7 @@ to one another safely is precisely the job of the barrier and phase model
 In the end, nearly every design decision in this book comes back to a handful of capacities and
 speeds. It helps to have their orders of magnitude in mind, because they are what explain why kernels
 stage only a few operand tiles at a time, why they budget TMEM so carefully, and why they go to such
-lengths to keep the Tensor Cores fed. The figures below are for the B200 and are approximate.
+lengths to keep the Tensor Cores fed. The values in the table below are approximate B200 numbers.
 
 | Quantity | Value (B200, approx.) | Where it shows up |
 |:--|:-:|:--|

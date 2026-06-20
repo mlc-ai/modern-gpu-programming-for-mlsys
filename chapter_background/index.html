@@ -307,7 +307,7 @@ and the compute and data-movement engines that do the heavy lifting. We first in
 pieces one by one, then put them together in a GEMM pipeline so it is clear how data and execution
 flow through the machine. Nearly every optimization later in the book is some way of arranging
 work across those same pieces.</p>
-<p>Modern GPUs also contain many specialized hardware elements. To give a first taste, the interactive
+<p>Modern GPUs also contain many specialized hardware units. To give a first taste, the interactive
 below shows the main elements inside a Blackwell streaming multiprocessor before we zoom in on each
 part.</p>
 <div style="overflow-x:auto;">
@@ -450,8 +450,8 @@ CTAs at once, eliminating the redundant global traffic that separate loads would
 </section>
 <section id="the-gemm-data-pipeline">
 <h2>The GEMM Data Pipeline<a class="headerlink" href="#the-gemm-data-pipeline" title="Link to this heading">#</a></h2>
-<p>So far we have discussed the hardware units individually. To see how they work together, it helps
-to use a typical general-purpose matrix multiplication (GEMM) pipeline as an example. The
+<p>So far we have introduced the hardware units individually. To see how they work together, we can
+use a typical general-purpose matrix multiplication (GEMM) pipeline as an example. The
 interactive demo below shows the units involved in a three-stage GEMM tile pipeline; click on
 stages such as <code class="docutils literal notranslate"><span class="pre">tma</span> <span class="pre">load</span></code> to see which hardware units participate.</p>
 <div style="overflow-x:auto;">
@@ -486,7 +486,7 @@ to one another safely is precisely the job of the barrier and phase model
 <p>In the end, nearly every design decision in this book comes back to a handful of capacities and
 speeds. It helps to have their orders of magnitude in mind, because they are what explain why kernels
 stage only a few operand tiles at a time, why they budget TMEM so carefully, and why they go to such
-lengths to keep the Tensor Cores fed. The figures below are for the B200 and are approximate.</p>
+lengths to keep the Tensor Cores fed. The values in the table below are approximate B200 numbers.</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head text-left"><p>Quantity</p></th>
