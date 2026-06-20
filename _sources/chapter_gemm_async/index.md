@@ -59,12 +59,12 @@ Switching to TMA changes two things at once: who starts a copy, and how the code
 
 This is exactly why `cta_sync()` is no longer sufficient. `cta_sync()` waits only for the CTA's own threads and orders only their shared-memory writes; it knows nothing about an in-flight TMA transfer, so it happily returns while the tile is still arriving. The fix is to make completion explicit: for a TMA load, the selected thread first tells the mbarrier how many bytes to expect, and the CTA then waits on *that* mbarrier before any MMA touches the SMEM tile.
 
-The figure below isolates that load-side handshake: one selected thread launches TMA, the mbarrier
-counts the expected bytes, and MMA waits on the release before reading SMEM.
-
 ![TMA Async Load: Synchronization Flow](../img/tma_sync_flow.png)
 
-The figure traces the load side only. Where it says "Elected Thread" it means the selected thread that starts TMA — in our code that is the `tid == 0` thread, not an `elect_sync()` lane.
+The figure above isolates the load-side handshake: one selected thread launches TMA, the mbarrier
+counts the expected bytes, and MMA waits on the release before reading SMEM. Where it says
+"Elected Thread" it means the selected thread that starts TMA — in our code that is the `tid == 0`
+thread, not an `elect_sync()` lane.
 
 Putting the load path together, then: the selected thread issues both `copy_async` calls and follows them with `arrive.expect_tx(total_bytes)`, where the byte count is precisely how much data the mbarrier should hold out for. Once the engine has moved that many bytes, the matching `mbarrier.try_wait(phase)` releases, and only then is the SMEM tile safe to feed to MMA.
 
