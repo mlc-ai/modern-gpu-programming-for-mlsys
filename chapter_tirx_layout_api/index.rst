@@ -402,19 +402,6 @@ and double-buffering. The payoff is that a single ``TileLayout`` model expresses
 both the accumulator (a pure placement, no replica) and its scale factors (a
 replicated, routed placement) within the very same tensor-memory address space.
 
-One Model, Many Targets
-~~~~~~~~~~~~~~~~~~~~~~~
-
-The two case studies were not special cases at all; they were the one model pointed
-at two different pieces of hardware, and that generality is the whole reason for
-naming axes in the first place. Bind strides to the block and cluster axes (``bx``
-… ``cbz``) and the layout **shards a tile across the grid**; bind them to on-chip
-memory axes instead and it expresses the native accelerator memories — a
-2D-partitioned scratchpad (partition ``P`` and free ``F`` axes), shared-memory banks
-(``Bank``), or NVIDIA Blackwell tensor memory with its native 2D addressing
-(``TLane`` × ``TCol``). The demo ships a preset for each of these, so you can swap
-the target hardware without ever leaving the layout language.
-
 Ready-Made Layouts
 ~~~~~~~~~~~~~~~~~~~
 
