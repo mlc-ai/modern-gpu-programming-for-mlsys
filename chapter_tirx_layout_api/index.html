@@ -667,7 +667,7 @@ replicated, routed placement) within the very same tensor-memory address space.<
 <h3>Ready-Made Layouts<a class="headerlink" href="#ready-made-layouts" title="Link to this heading">#</a></h3>
 <p>In practice you rarely hand-write the hardware tiles above. The placements that come
 up again and again — a <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> accumulator, the register fragment a
-<code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> produces, a warpgroup-local register tile — already ship as
+<code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> produces, a warpgroup register tile — already ship as
 constructors in <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code>, each one returning a ready-to-use
 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>:</p>
 <ul class="simple">
@@ -680,7 +680,7 @@ per-warpgroup register tile that a <code class="docutils literal notranslate"><s
 tile is warpgroup-distributed, but it lowers to four warp-collective
 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> / <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> instructions — each PTX instruction is issued by
 one warp, which moves its own 32 TMEM lanes.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">wg_local_layout(cols,</span> <span class="pre">rows=128)</span></code> gives you a warpgroup-local register tile,
+<li><p><code class="docutils literal notranslate"><span class="pre">wg_local_layout(cols,</span> <span class="pre">rows=128)</span></code> gives you a warpgroup register tile,
 with one row per thread on <code class="docutils literal notranslate"><span class="pre">tid_in_wg</span></code>.</p></li>
 </ul>
 <p>Every one of these returns an ordinary <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> built from the same <code class="docutils literal notranslate"><span class="pre">S</span></code> /
