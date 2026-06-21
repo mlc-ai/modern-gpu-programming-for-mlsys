@@ -4,83 +4,71 @@
 :::{admonition} Overview
 :class: overview
 
-- A persistent kernel keeps about one CTA resident per SM (not a guaranteed 1:1 mapping) and loops over output tiles instead of relaunching a CTA per tile.
-- Cluster Launch Control is the hardware mechanism that hands each persistent CTA its next tile: a work-stealing loop driven by two instructions.
-- The payoff is even SM utilization from launch to finish.
+- A persistent kernel keeps a fixed set of CTAs or CTA clusters resident (often sized so there is roughly one active work owner per SM, though not relying on a guaranteed 1:1 mapping) and has them loop over many output tiles instead of launching one CTA per tile.
+- Cluster Launch Control is the Blackwell hardware mechanism that lets a resident cluster ask for another tile at runtime. It is a hardware work-stealing path built around two PTX instructions: one instruction requests work, and the other reads back whether the request succeeded.
+- The main benefit is better tail behavior. When tiles have uneven cost, or when the number of tiles does not divide evenly across the available SMs, CTAs that finish early can pull more work instead of sitting idle.
 :::
 
-A persistent kernel keeps roughly one CTA resident per SM (residency is not a
-guaranteed 1:1 mapping) and loops over many output tiles instead of relaunching a fresh CTA per
-tile, the pattern Part III builds. The open question is how each CTA decides which tile to do next.
-The simplest answer is a *static* formula, tile = f(grid index), computed up front. That works only
-when every tile costs the same and the tile count divides evenly across the SMs; the moment it
-doesn't, the schedule is locked in before any work runs, so a few unlucky SMs grind through the tail
-while the rest finish their share and sit idle. What we want instead is to hand out the next tile
-only when an SM is actually ready for it, so an SM that finishes early just pulls more. That is what
-Cluster Launch Control provides, and the rest of this chapter follows it from the two PTX
-instructions ({ref}`chap_async_barriers` for the barrier model they reuse) to the work-stealing loop
-and back to the persistent GEMM of {ref}`chap_gemm_advanced`.
+A persistent GEMM does not treat the CUDA grid as a fixed one-CTA-per-output-tile launch. Instead, it launches a smaller set of long-lived CTAs or CTA clusters. Each one computes a tile, advances to another tile, computes again, and keeps going until the output space is finished. This is the execution pattern built up in {ref}`chap_gemm_advanced`.
 
-The cure for that imbalance is to stop deciding the schedule in advance and instead hand work out
-only when an SM is ready for it. This is exactly what **Cluster Launch Control (CLC)**, the Blackwell
-(`sm_100`) hardware mechanism, gives us. Rather than computing its next tile from a fixed formula, a
-persistent cluster turns around and asks the grid scheduler, in hardware, for the next
-not-yet-launched cluster's work, and then takes that work over. Because tiles are handed out on
-demand, an SM that happens to finish early simply pulls more, and the long tail we worried about
-flattens out on its own.
+Once the kernel is persistent, the main scheduling question becomes simple: after a CTA or cluster finishes its current tile, where does the next tile come from?
 
-It is worth being precise about what is new here. Thread block clusters *themselves*, launching CTAs
-in clusters that share DSMEM and synchronize through cluster barriers, are a Hopper feature
-({ref}`chap_background`), and we already have them. CLC is not the clusters; it is the Blackwell
-addition that makes their **scheduling** dynamic.
+The simplest answer is a static formula. For example, the kernel can compute the tile coordinate from the CTA id, then advance by a grid stride. That is easy to implement, and it works well when all tiles have roughly the same cost and the tile count is evenly distributed across the GPU. But the schedule is decided before the work actually runs. If a few tiles take longer, or if the last few tiles are unevenly assigned, some SMs finish their share early while others are still working through the tail.
+
+Cluster Launch Control, or CLC, changes that scheduling model. Instead of deciding the whole assignment up front, a persistent cluster can ask the hardware grid scheduler for another not-yet-launched cluster's work. If the request succeeds, the current cluster takes over that cluster coordinate and computes the corresponding tile. If the request fails, there is no more work to steal, and the loop exits.
+
+This is not the same thing as thread block clusters themselves. Thread block clusters (CTAs launched together, with cluster-level synchronization and access to distributed shared memory) were introduced with Hopper ({ref}`chap_background`). CLC is the Blackwell addition that makes scheduling over those cluster coordinates dynamic. The cluster is already the unit of launch; CLC lets an already-running cluster cancel a pending launch and inherit its coordinates.
+
+The rest of this chapter follows that mechanism in three steps: the two PTX instructions, the persistent work-stealing loop, and the connection back to the persistent GEMM scheduler used later.
 
 ## The Two Instructions
 
-CLC hands tiles out on demand. A CTA asks for one through just two PTX instructions
-(`clusterlaunchcontrol`, PTX ISA 8.6): one asks the grid scheduler for the next tile, and the other
-reads back the answer. Let us look at each in turn.
+Cluster Launch Control is exposed through two PTX instructions. The first instruction sends an asynchronous request to the grid scheduler. The second instruction reads the response.
 
-- **`try_cancel`**: `clusterlaunchcontrol.try_cancel.async`. This is a single asynchronous request
-  that asks the scheduler to *cancel the launch* of the next pending cluster and hand this cluster its
-  coordinates instead. The 16-byte response is written into SMEM, and when it lands an mbarrier is
-  signalled (`mbarrier::complete_tx::bytes`), multicast to every CTA in the cluster. The nice
-  consequence is that we wait on the answer with the very same phase-and-barrier model we already use
-  for a TMA load ({ref}`chap_async_barriers`); there is nothing new to learn about how to await it.
-- **`query_cancel`**: once that barrier fires, this reads the response, and it does so in two steps.
-  First, `clusterlaunchcontrol.query_cancel.is_canceled` returns a **predicate**: did a cancellation
-  actually succeed? Only when it did succeed do we go on to call
-  `clusterlaunchcontrol.query_cancel.get_first_ctaid`, which extracts the cancelled cluster's first
-  CTA id, a coordinate vector (`x`, `y`, `z`) that names the tile to process. A false predicate
-  simply means there is *no work left*. Note that we branch on the predicate itself; there is no
-  numeric sentinel value to compare against.
+The request instruction is `clusterlaunchcontrol.try_cancel.async`.
 
-The reason the response takes this shape is that stealing a tile is, under the hood, cancelling some
-other cluster's pending launch and inheriting its coordinates. So every reply is one of two things:
-either a successful cancellation, carrying a real cluster coordinate, or a failure that tells us the
-grid is exhausted.
+A `try_cancel` asks the scheduler to cancel the launch of a pending cluster and return that cluster's coordinates to the caller. The response is written to shared memory as a 16-byte record. Since the request is asynchronous, the instruction does not wait for the response to arrive. Instead, completion is reported through an `mbarrier`, using the same barrier-and-phase model used by TMA.
+
+This is an important detail because it means CLC does not introduce a new waiting model. The kernel issues the request, associates it with a barrier, and later waits on the barrier before reading the response. The response arrival is signaled through the barrier with byte-count completion, in the same general style as other asynchronous hardware operations (see {ref}`chap_async_barriers`).
+
+Once the barrier has fired, the kernel uses the query instructions.
+
+The first query is `clusterlaunchcontrol.query_cancel.is_canceled`. It returns a predicate telling the kernel whether the cancellation succeeded. A true predicate means the scheduler found a pending cluster launch, canceled it, and returned its coordinate. A false predicate means there was no pending work left to take.
+
+Only when `is_canceled` is true should the kernel read the coordinate. It does that with `clusterlaunchcontrol.query_cancel.get_first_ctaid`, which extracts the first CTA id of the canceled cluster. That CTA id is a coordinate vector, usually read as `(x, y, z)`, and the kernel decodes it into the output tile it should compute next.
+
+There is no numeric sentinel tile id in this protocol. The kernel branches on the predicate. If the predicate is true, the coordinate is valid. If the predicate is false, the work-stealing loop is done.
+
+Under the hood, this shape follows directly from what CLC is doing. The hardware is not allocating an abstract task from a software queue. It is canceling a cluster launch that has not happened yet. A successful response therefore contains a real cluster coordinate. A failed response simply means the launch queue has been exhausted.
 
 ## The Work-Stealing Loop
 
-With `try_cancel` to request a tile and `query_cancel` to read the answer in hand, we can see how a
-persistent kernel uses them. The two instructions collapse the kernel into a short loop that keeps
-asking the scheduler for work until there is none left. Each iteration does three things:
+With those two instructions, the persistent scheduler becomes a short loop.
 
-1. It issues a `try_cancel` for the next cluster. This is an asynchronous request, so it returns
-   immediately and leaves us free to do other work.
-2. It processes the tile this cluster already holds, while that request is still in flight.
-3. It waits on the request's mbarrier and then calls `query_cancel`. If `is_canceled` is true, it
-   reads `get_first_ctaid`, decodes it into tile coordinates, and goes around again; otherwise it
-   exits the loop.
+At any point in the loop, the cluster has one tile it is responsible for computing. Before it starts that tile, it sends a `try_cancel` request for the next one. The request runs asynchronously. While the scheduler is working on that request, the cluster computes its current tile.
 
-The ordering in those steps is the whole trick, so it is worth dwelling on. The request goes out
-*before* the cluster computes its current tile, which means the asynchronous, barrier-tracked
-`try_cancel` overlaps that computation rather than blocking it. By the time the current tile is
-finished, the assignment for the next tile is already in hand, and the SM glides from one tile
-straight into the next without ever stalling to ask what to do.
+After the current tile is finished, the cluster waits on the `mbarrier` associated with the `try_cancel` response. Once the response is ready, it calls `query_cancel.is_canceled`. If the predicate is true, it calls `query_cancel.get_first_ctaid`, decodes the returned coordinate, and uses that as the next tile. If the predicate is false, there is no more work left, and the cluster exits.
 
-TIRx exposes CLC as a dynamic tile scheduler. To keep its walkthrough simple, the persistent GEMM in
-{ref}`chap_gemm_advanced` (Step 6) uses the *static* `ClusterPersistentScheduler2D`, a
-grid-stride-style assignment computed up front. CLC is the drop-in dynamic alternative: same loop,
-but tiles are distributed by hardware work-stealing instead of a fixed formula. The payoff becomes
-visible precisely when per-tile cost varies, or when the tile count does not divide evenly across the
-SMs, the cases where a static schedule would leave some SMs idle through the tail.
+In code shape, the loop is:
+
+1. issue `try_cancel` for a possible next tile;
+2. compute the current tile while the request is in flight;
+3. wait for the response barrier;
+4. query whether the cancellation succeeded;
+5. either continue with the returned coordinate or exit.
+
+The placement of the request is what makes the loop useful. The cluster does not wait until it has finished the current tile before asking for more work. It asks first, then computes. That overlaps the scheduler request with useful work. By the time the current tile is done, the answer for the next tile is often already available.
+
+This is the same basic reason persistent kernels use asynchronous copies and tensor-core barriers elsewhere. The kernel avoids putting a long-latency operation directly on the critical path. CLC applies the same idea to tile scheduling: ask for the next unit of work early, compute the current unit, then consume the scheduling result when it is needed.
+
+## Relation to Persistent GEMM
+
+The persistent GEMM in {ref}`chap_gemm_advanced` uses a static scheduler for the main walkthrough. A static scheduler is easier to explain because the next tile can be computed directly from loop state. For example, a scheduler such as `ClusterPersistentScheduler2D` can assign tiles using a grid-stride pattern over the output tile space.
+
+CLC is the dynamic replacement for that static assignment. The outer loop stays the same: each resident cluster repeatedly computes one output tile and then advances to another. What changes is where the next tile comes from. With the static scheduler, the next tile is computed by a formula. With CLC, the next tile is returned by hardware work stealing.
+
+That difference matters most near the tail of the launch. In a static schedule, the remaining work may not be evenly distributed. Some SMs may run out of assigned tiles while others still have several left. With CLC, the cluster that finishes early asks for another pending cluster coordinate. As long as there is work left in the launch queue, early finishers keep pulling more tiles.
+
+It also matters when tile cost is not uniform. Some GEMM tiles may take different paths because of boundaries, masking, sparsity, grouped scheduling, or fused work around the main matrix multiply. A static schedule assumes the tile assignment is good enough before any of those costs are observed. CLC does not need that assumption. It assigns more work only after a cluster becomes available.
+
+In TIRx, CLC can therefore be exposed as a dynamic tile scheduler. The programming model does not need to change the computation of a tile. The tile body is the same persistent GEMM body used by the static scheduler. The scheduler changes from "compute my next tile coordinate from a formula" to "ask hardware for the next available cluster coordinate." The result is the same persistent loop, but with hardware-driven work distribution instead of a fixed launch-time schedule.
