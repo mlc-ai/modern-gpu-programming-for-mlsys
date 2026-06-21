@@ -278,7 +278,7 @@
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#forward-mapping">Forward Mapping</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#case-study-nvidia-tensor-core-tile">Case Study: NVIDIA Tensor-Core Tile</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#case-study-blackwell-tensor-memory">Case Study: Blackwell Tensor Memory</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#beyond-gpu-registers">Beyond GPU Registers</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#one-model-many-targets">One Model, Many Targets</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ready-made-layouts">Ready-Made Layouts</a></li>
 </ul>
 </li>
@@ -664,8 +664,8 @@ and double-buffering. The payoff is that a single <code class="docutils literal 
 both the accumulator (a pure placement, no replica) and its scale factors (a
 replicated, routed placement) within the very same tensor-memory address space.</p>
 </section>
-<section id="beyond-gpu-registers">
-<h3>Beyond GPU Registers<a class="headerlink" href="#beyond-gpu-registers" title="Link to this heading">#</a></h3>
+<section id="one-model-many-targets">
+<h3>One Model, Many Targets<a class="headerlink" href="#one-model-many-targets" title="Link to this heading">#</a></h3>
 <p>The two case studies were not special cases at all; they were the one model pointed
 at two different pieces of hardware, and that generality is the whole reason for
 naming axes in the first place. Bind strides to the block and cluster axes (<code class="docutils literal notranslate"><span class="pre">bx</span></code>
@@ -881,7 +881,7 @@ III–IV) rather than to the layout itself.</p></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#forward-mapping">Forward Mapping</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#case-study-nvidia-tensor-core-tile">Case Study: NVIDIA Tensor-Core Tile</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#case-study-blackwell-tensor-memory">Case Study: Blackwell Tensor Memory</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#beyond-gpu-registers">Beyond GPU Registers</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#one-model-many-targets">One Model, Many Targets</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ready-made-layouts">Ready-Made Layouts</a></li>
 </ul>
 </li>
