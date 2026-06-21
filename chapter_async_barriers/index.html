@@ -147,7 +147,7 @@
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I — Understanding the GPU</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I, Understanding the GPU</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
@@ -159,18 +159,18 @@
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Async Coordination: mbarriers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">Advanced: Cluster Launch Control</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II — TIRx Overview</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II, TIRx Overview</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">Introduction to TIRx</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III — GEMM: Tiled to SOTA</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III, GEMM: Tiled to SOTA</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_basics/index.html">Building a Tiled GEMM</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_async/index.html">Pipelining GEMM with TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_advanced/index.html">Scaling GEMM with Warp Specialization and Clusters</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV — Flash Attention 4</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV, Flash Attention 4</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
@@ -289,7 +289,7 @@
 <div class="overview admonition">
 <p class="admonition-title">Overview</p>
 <ul class="simple">
-<li><p>TMA and the Tensor Core are asynchronous, so issuing work is not the same as finishing it — consumers need an explicit completion signal.</p></li>
+<li><p>TMA and the Tensor Core are asynchronous, so issuing work is not the same as finishing it, and consumers need an explicit completion signal.</p></li>
 <li><p>An mbarrier is that signal: producers arrive, consumers wait, and it tracks arrival counts and (for TMA) byte counts.</p></li>
 <li><p>Each barrier carries a <em>phase</em> that flips every round; waiting on the correct phase is what gates a consumer safely.</p></li>
 </ul>
@@ -299,8 +299,8 @@
 lets a kernel overlap memory movement with compute, but it also means a consumer cannot infer that
 its input is ready just because the producer instruction has been issued. If TMA is still filling a
 tile when the Tensor Core reads it, the result is wrong; if the kernel waits on the wrong signal, it
-deadlocks. Whenever one engine produces data that another path will consume — TMA filling a tile for
-MMA, or MMA producing a result for the epilogue — the handoff needs an explicit completion signal.
+deadlocks. Whenever one engine produces data that another path will consume (TMA filling a tile for
+MMA, or MMA producing a result for the epilogue), the handoff needs an explicit completion signal.
 The <strong>mbarrier</strong>, together with the <em>phase</em> it carries, is the mechanism that makes those handoffs
 safe across repeated pipeline iterations. This chapter introduces the barrier itself, then phase
 tracking, and finally the small set of synchronization rules a tensor-core kernel must obey
@@ -309,13 +309,13 @@ tracking, and finally the small set of synchronization rules a tensor-core kerne
 <h2>The mbarrier<a class="headerlink" href="#the-mbarrier" title="Link to this heading">#</a></h2>
 <p>Start with the object itself. An mbarrier (“memory barrier”) is the small piece of shared-memory
 state that every handoff in this chapter is built on, so it is worth seeing exactly what it holds and
-what a kernel can do to it. The demo below lays out that state — the arrival counter and the phase
-bit — alongside the three APIs that touch it; click a field to focus it and read how <code class="docutils literal notranslate"><span class="pre">init</span></code>,
+what a kernel can do to it. The demo below lays out that state, the arrival counter and the phase
+bit, alongside the three APIs that touch it; click a field to focus it and read how <code class="docutils literal notranslate"><span class="pre">init</span></code>,
 <code class="docutils literal notranslate"><span class="pre">arrive</span></code>, and <code class="docutils literal notranslate"><span class="pre">wait</span></code> each act on the counter and the bit.</p>
 <div style="overflow-x:auto;">
 <iframe src="../demo/mbarrier_mechanism.html" title="mbarrier data structure and APIs" loading="lazy"
         style="width:100%; min-width:1320px; height:620px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-</div><p><em>Interactive: an mbarrier’s counter + phase bit, and its init / arrive / wait APIs — click a field to focus it.</em></p>
+</div><p><em>Interactive: an mbarrier’s counter + phase bit, and its init / arrive / wait APIs; click a field to focus it.</em></p>
 <p>An mbarrier is a hardware synchronization object that lives in shared memory. At heart it is just a
 counter that knows when it has reached zero, paired with a single <strong>phase bit</strong>; together the
 <strong>arrival counter</strong> and that phase bit are everything a kernel needs to coordinate a handoff. To see
@@ -330,12 +330,12 @@ in three different ways, and the differences matter:</p>
 (tx) count and also counts as the issuing thread’s arrival. As the load runs, the TMA engine
 issues <code class="docutils literal notranslate"><span class="pre">complete-tx</span></code> while bytes land, and the barrier flips its phase only once BOTH the
 pending arrival count and the tx (byte) count have been satisfied. In other words, the
-<code class="docutils literal notranslate"><span class="pre">expect_tx</span></code> call is not a second ordinary “arrival” — it sets up a byte budget that the
+<code class="docutils literal notranslate"><span class="pre">expect_tx</span></code> call is not a second ordinary “arrival”; it sets up a byte budget that the
 hardware drains on its own (see <a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>).</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> commit arrival.</strong> This one is not automatic. The arrival only happens once you issue
 an explicit <code class="docutils literal notranslate"><span class="pre">tcgen05.commit.mbarrier::arrive</span></code>, and it is the completion of that commit group
 that drives the barrier arrival. Forget the commit and the barrier never advances.</p></li>
-<li><p><strong>Thread arrive.</strong> A thread can also arrive directly, the plain way — for example to announce
+<li><p><strong>Thread arrive.</strong> A thread can also arrive directly, the plain way, for example to announce
 that a shared buffer it was using is now free to reuse.</p></li>
 </ul>
 </li>
@@ -344,7 +344,7 @@ iteration, which is the same as saying every required arrival has happened.</p><
 </ol>
 <p>The first two of these arrival paths come straight from the asynchronous engines we met in the
 previous chapters: the same hardware that runs ahead of the program also reports back through the
-mbarrier. That is what gives us the producer/consumer pattern for free. The producer — TMA, say —
+mbarrier. That is what gives us the producer/consumer pattern for free. The producer, TMA, say,
 arrives once its data is ready, and the consumer simply waits before touching it.</p>
 </section>
 <section id="phase-tracking">
@@ -360,7 +360,7 @@ opposite phase from the one before.</p>
 </div><p><em>Interactive: the phase bit flipping as a barrier is reused across pipeline iterations.</em></p>
 <p>Why does the barrier carry a phase bit at all? The answer is reuse. A long K-loop runs the very
 same handoff hundreds of times over, and allocating a fresh barrier for each iteration would be both
-wasteful and impossible — that many barriers would never fit in SMEM. So we reuse one barrier, and
+wasteful and impossible, since that many barriers would never fit in SMEM. So we reuse one barrier, and
 the phase bit is what keeps one round of reuse from being mistaken for the next. Each time all of its
 arrivals complete, the barrier automatically <strong>flips its phase</strong> (0 → 1 → 0 → …). A single barrier
 can therefore serve every iteration of a pipelined loop: iteration 0 waits on phase 0, iteration 1

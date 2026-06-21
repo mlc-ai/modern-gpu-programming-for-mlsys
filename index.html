@@ -148,7 +148,7 @@
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I — Understanding the GPU</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I, Understanding the GPU</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_performance/index.html">What Makes a Kernel Fast</a></li>
@@ -160,18 +160,18 @@
 <li class="toctree-l1"><a class="reference internal" href="chapter_async_barriers/index.html">Async Coordination: mbarriers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_clc/index.html">Advanced: Cluster Launch Control</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II — TIRx Overview</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II, TIRx Overview</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="chapter_intro_tirx/index.html">Introduction to TIRx</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III — GEMM: Tiled to SOTA</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III, GEMM: Tiled to SOTA</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="chapter_gemm_basics/index.html">Building a Tiled GEMM</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_gemm_async/index.html">Pipelining GEMM with TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_gemm_advanced/index.html">Scaling GEMM with Warp Specialization and Clusters</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV — Flash Attention 4</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV, Flash Attention 4</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
@@ -308,20 +308,20 @@ hardware, which lets us reason about low-level control while still learning thro
 <section id="how-this-book-is-organized">
 <h2>How This Book Is Organized<a class="headerlink" href="#how-this-book-is-organized" title="Link to this heading">#</a></h2>
 <ul class="simple">
-<li><p><strong>Part I — Understanding the GPU.</strong> This part introduces the overall organization of the GPU,
+<li><p><strong>Part I, Understanding the GPU.</strong> This part introduces the overall organization of the GPU,
 general recipes for writing fast kernels, and key concepts such as data layout, asynchronous
 memory operations, and coordination. It builds the hardware intuition that the rest of the book
 relies on.</p></li>
-<li><p><strong>Part II — TIRx Overview.</strong> This part introduces the key elements of TIRx, which serve as the
+<li><p><strong>Part II, TIRx Overview.</strong> This part introduces the key elements of TIRx, which serve as the
 foundation for the code examples throughout the book.</p></li>
-<li><p><strong>Part III — GEMM: Tiled to SOTA.</strong> A complete guide to optimizing a tiled GEMM, built up through
+<li><p><strong>Part III, GEMM: Tiled to SOTA.</strong> A complete guide to optimizing a tiled GEMM, built up through
 TMA pipelining, persistent scheduling, warp specialization, and 2-CTA clusters.</p></li>
-<li><p><strong>Part IV — Flash Attention 4.</strong> A complete attention kernel built from the Part III techniques:
+<li><p><strong>Part IV, Flash Attention 4.</strong> A complete attention kernel built from the Part III techniques:
 two MMAs with softmax between them, online-softmax rescaling, causal masking, and GQA.</p></li>
 <li><p><strong>Reference.</strong> TIRx language reference and compiler internals.</p></li>
 </ul>
 <div class="toctree-wrapper compound">
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I — Understanding the GPU</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I, Understanding the GPU</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_performance/index.html">What Makes a Kernel Fast</a></li>
@@ -335,14 +335,14 @@ two MMAs with softmax between them, online-softmax rescaling, causal masking, an
 </ul>
 </div>
 <div class="toctree-wrapper compound">
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II — TIRx Overview</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II, TIRx Overview</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="chapter_intro_tirx/index.html">Introduction to TIRx</a></li>
 <li class="toctree-l1"><a class="reference internal" href="chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
 </ul>
 </div>
 <div class="toctree-wrapper compound">
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III — GEMM: Tiled to SOTA</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III, GEMM: Tiled to SOTA</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="chapter_gemm_basics/index.html">Building a Tiled GEMM</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="chapter_gemm_basics/index.html#gemm">GEMM</a></li>
@@ -372,7 +372,7 @@ two MMAs with softmax between them, online-softmax rescaling, causal masking, an
 </ul>
 </div>
 <div class="toctree-wrapper compound">
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV — Flash Attention 4</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV, Flash Attention 4</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="chapter_flash_attention/index.html">Flash Attention 4</a><ul>
 <li class="toctree-l2"><a class="reference internal" href="chapter_flash_attention/index.html#algorithm-shape">Algorithm Shape</a></li>

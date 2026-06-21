@@ -147,7 +147,7 @@
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I — Understanding the GPU</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I, Understanding the GPU</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
@@ -159,18 +159,18 @@
 <li class="toctree-l1"><a class="reference internal" href="../chapter_async_barriers/index.html">Async Coordination: mbarriers</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Advanced: Cluster Launch Control</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II — TIRx Overview</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II, TIRx Overview</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">Introduction to TIRx</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III — GEMM: Tiled to SOTA</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III, GEMM: Tiled to SOTA</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_basics/index.html">Building a Tiled GEMM</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_async/index.html">Pipelining GEMM with TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_advanced/index.html">Scaling GEMM with Warp Specialization and Clusters</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV — Flash Attention 4</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV, Flash Attention 4</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
@@ -289,13 +289,13 @@
 <p class="admonition-title">Overview</p>
 <ul class="simple">
 <li><p>A persistent kernel keeps about one CTA resident per SM (not a guaranteed 1:1 mapping) and loops over output tiles instead of relaunching a CTA per tile.</p></li>
-<li><p>Cluster Launch Control is the hardware mechanism that hands each persistent CTA its next tile — a work-stealing loop driven by two instructions.</p></li>
+<li><p>Cluster Launch Control is the hardware mechanism that hands each persistent CTA its next tile: a work-stealing loop driven by two instructions.</p></li>
 <li><p>The payoff is even SM utilization from launch to finish.</p></li>
 </ul>
 </div>
 <p>A persistent kernel keeps roughly one CTA resident per SM (residency is not a
 guaranteed 1:1 mapping) and loops over many output tiles instead of relaunching a fresh CTA per
-tile — the pattern Part III builds. The open question is how each CTA decides which tile to do next.
+tile, the pattern Part III builds. The open question is how each CTA decides which tile to do next.
 The simplest answer is a <em>static</em> formula, tile = f(grid index), computed up front. That works only
 when every tile costs the same and the tile count divides evenly across the SMs; the moment it
 doesn’t, the schedule is locked in before any work runs, so a few unlucky SMs grind through the tail
@@ -307,12 +307,12 @@ and back to the persistent GEMM of <a class="reference internal" href="../chapte
 <p>The cure for that imbalance is to stop deciding the schedule in advance and instead hand work out
 only when an SM is ready for it. This is exactly what <strong>Cluster Launch Control (CLC)</strong>, the Blackwell
 (<code class="docutils literal notranslate"><span class="pre">sm_100</span></code>) hardware mechanism, gives us. Rather than computing its next tile from a fixed formula, a
-persistent cluster turns around and asks the grid scheduler — in hardware — for the next
+persistent cluster turns around and asks the grid scheduler, in hardware, for the next
 not-yet-launched cluster’s work, and then takes that work over. Because tiles are handed out on
 demand, an SM that happens to finish early simply pulls more, and the long tail we worried about
 flattens out on its own.</p>
-<p>It is worth being precise about what is new here. Thread block clusters <em>themselves</em> — launching CTAs
-in clusters that share DSMEM and synchronize through cluster barriers — are a Hopper feature
+<p>It is worth being precise about what is new here. Thread block clusters <em>themselves</em>, launching CTAs
+in clusters that share DSMEM and synchronize through cluster barriers, are a Hopper feature
 (<a class="reference internal" href="../chapter_background/index.html#chap-background"><span class="std std-ref">GPU Execution Model</span></a>), and we already have them. CLC is not the clusters; it is the Blackwell
 addition that makes their <strong>scheduling</strong> dynamic.</p>
 <section id="the-two-instructions">
@@ -321,17 +321,17 @@ addition that makes their <strong>scheduling</strong> dynamic.</p>
 (<code class="docutils literal notranslate"><span class="pre">clusterlaunchcontrol</span></code>, PTX ISA 8.6): one asks the grid scheduler for the next tile, and the other
 reads back the answer. Let us look at each in turn.</p>
 <ul class="simple">
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">try_cancel</span></code></strong> — <code class="docutils literal notranslate"><span class="pre">clusterlaunchcontrol.try_cancel.async</span></code>. This is a single asynchronous request
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">try_cancel</span></code></strong>: <code class="docutils literal notranslate"><span class="pre">clusterlaunchcontrol.try_cancel.async</span></code>. This is a single asynchronous request
 that asks the scheduler to <em>cancel the launch</em> of the next pending cluster and hand this cluster its
 coordinates instead. The 16-byte response is written into SMEM, and when it lands an mbarrier is
 signalled (<code class="docutils literal notranslate"><span class="pre">mbarrier::complete_tx::bytes</span></code>), multicast to every CTA in the cluster. The nice
 consequence is that we wait on the answer with the very same phase-and-barrier model we already use
-for a TMA load (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>) — there is nothing new to learn about how to await it.</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">query_cancel</span></code></strong> — once that barrier fires, this reads the response, and it does so in two steps.
+for a TMA load (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>); there is nothing new to learn about how to await it.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">query_cancel</span></code></strong>: once that barrier fires, this reads the response, and it does so in two steps.
 First, <code class="docutils literal notranslate"><span class="pre">clusterlaunchcontrol.query_cancel.is_canceled</span></code> returns a <strong>predicate</strong>: did a cancellation
 actually succeed? Only when it did succeed do we go on to call
 <code class="docutils literal notranslate"><span class="pre">clusterlaunchcontrol.query_cancel.get_first_ctaid</span></code>, which extracts the cancelled cluster’s first
-CTA id — a coordinate vector (<code class="docutils literal notranslate"><span class="pre">x</span></code>, <code class="docutils literal notranslate"><span class="pre">y</span></code>, <code class="docutils literal notranslate"><span class="pre">z</span></code>) that names the tile to process. A false predicate
+CTA id, a coordinate vector (<code class="docutils literal notranslate"><span class="pre">x</span></code>, <code class="docutils literal notranslate"><span class="pre">y</span></code>, <code class="docutils literal notranslate"><span class="pre">z</span></code>) that names the tile to process. A false predicate
 simply means there is <em>no work left</em>. Note that we branch on the predicate itself; there is no
 numeric sentinel value to compare against.</p></li>
 </ul>
@@ -363,7 +363,7 @@ straight into the next without ever stalling to ask what to do.</p>
 grid-stride-style assignment computed up front. CLC is the drop-in dynamic alternative: same loop,
 but tiles are distributed by hardware work-stealing instead of a fixed formula. The payoff becomes
 visible precisely when per-tile cost varies, or when the tile count does not divide evenly across the
-SMs — the cases where a static schedule would leave some SMs idle through the tail.</p>
+SMs, the cases where a static schedule would leave some SMs idle through the tail.</p>
 </section>
 </section>
 

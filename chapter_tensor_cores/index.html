@@ -149,7 +149,7 @@
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I — Understanding the GPU</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I, Understanding the GPU</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
@@ -161,18 +161,18 @@
 <li class="toctree-l1"><a class="reference internal" href="../chapter_async_barriers/index.html">Async Coordination: mbarriers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">Advanced: Cluster Launch Control</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II — TIRx Overview</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II, TIRx Overview</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">Introduction to TIRx</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III — GEMM: Tiled to SOTA</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III, GEMM: Tiled to SOTA</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_basics/index.html">Building a Tiled GEMM</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_async/index.html">Pipelining GEMM with TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_advanced/index.html">Scaling GEMM with Warp Specialization and Clusters</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV — Flash Attention 4</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV, Flash Attention 4</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
@@ -300,7 +300,7 @@
 <p>Dense linear algebra is the bulk of the work in a modern model, and a GPU reaches
 its advertised peak on that work in exactly one place: the Tensor Core. A CUDA-core matrix multiply
 leaves most of the chip idle, so every fast GEMM or attention kernel lives or dies by how well it
-feeds and drives this one unit — see <a class="reference internal" href="../chapter_background/index.html#chap-background"><span class="std std-ref">GPU Execution Model</span></a> for what a Tensor Core is and how it
+feeds and drives this one unit; see <a class="reference internal" href="../chapter_background/index.html#chap-background"><span class="std std-ref">GPU Execution Model</span></a> for what a Tensor Core is and how it
 differs from a CUDA core. The tile-level multiply-accumulate <span class="math notranslate nohighlight">\(D = AB + C\)</span> has stayed constant since
 Volta (2017), but each generation changes <em>how</em> the Tensor Core is programmed and <em>where</em> its
 results live, and on Blackwell those two questions are the whole game: the <strong><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></strong> MMA moves
@@ -320,24 +320,24 @@ configuration, it writes its partial sums into TMEM rather than registers.</p>
 <div style="overflow-x:auto;">
 <iframe src="../demo/tcgen05_intro.html" title="tcgen05 and Tensor Memory" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-</div><p><em>Interactive: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> accumulator behavior — toggle transpose and <code class="docutils literal notranslate"><span class="pre">N</span></code>, then step the <code class="docutils literal notranslate"><span class="pre">K</span> <span class="pre">iteration</span></code> to watch partial sums build up in TMEM.</em></p>
+</div><p><em>Interactive: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> accumulator behavior; toggle transpose and <code class="docutils literal notranslate"><span class="pre">N</span></code>, then step the <code class="docutils literal notranslate"><span class="pre">K</span> <span class="pre">iteration</span></code> to watch partial sums build up in TMEM.</em></p>
 <section id="the-tcgen05-mma">
 <h2>The <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA<a class="headerlink" href="#the-tcgen05-mma" title="Link to this heading">#</a></h2>
 <p>With the accumulator’s new home in view, we can turn to the instruction that fills it. <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> is
 Blackwell’s tensor-core instruction family, and it is worth being precise about what it does and does
-not cover. It is <em>only</em> the compute path — the unit that actually multiplies the
+not cover. It is <em>only</em> the compute path, the unit that actually multiplies the
 tiles. Getting the operands into place beforehand is a separate job, and that job belongs to TMA
 (<a class="reference internal" href="../chapter_tma/index.html#chap-tma"><span class="std std-ref">Async Data Movement: TMA</span></a>). So when you issue an MMA, what you are really configuring are three design
 elements, and each one answers a different question:</p>
 <ol class="arabic simple">
-<li><p><strong>Scope — who cooperates.</strong> An MMA is issued for a warpgroup. On Blackwell, some modes go a step
+<li><p><strong>Scope: who cooperates.</strong> An MMA is issued for a warpgroup. On Blackwell, some modes go a step
 further and let two CTAs in a cluster cooperate on one larger MMA tile. Either way, the
 instruction itself is <em>committed</em> by a single elected thread.</p></li>
-<li><p><strong>Layout — where the operands and the result live.</strong> The operands are tiles in SMEM (a few
+<li><p><strong>Layout: where the operands and the result live.</strong> The operands are tiles in SMEM (a few
 variants also read an A-operand straight from TMEM), and the accumulator is written to TMEM. The
 operand layouts have to match exactly what the Tensor Core expects to find, and that expectation
 is where swizzle (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>) enters the picture.</p></li>
-<li><p><strong>Dispatch — which path runs it.</strong> <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> issues the MMA and then <em>returns before the math is
+<li><p><strong>Dispatch: which path runs it.</strong> <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> issues the MMA and then <em>returns before the math is
 done</em>: it is asynchronous. To know when the result is actually ready, you track completion with a
 barrier (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>).</p></li>
 </ol>
@@ -352,18 +352,18 @@ the result in hand.</p>
 <p>Of all the things Blackwell changes, where the accumulator lives is the defining one. On earlier
 generations the running sum <span class="math notranslate nohighlight">\(C\)</span> sat in registers, and that had a real cost: it tied how large an
 accumulator you could keep to a thread’s register budget, a budget that is always in short supply.
-Blackwell breaks that link. Now <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> writes the accumulator to <strong>Tensor Memory (TMEM)</strong> —
-the per-SM 2D scratchpad we cover in <a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a> — and the epilogue reads it back out with
+Blackwell breaks that link. Now <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> writes the accumulator to <strong>Tensor Memory (TMEM)</strong>,
+the per-SM 2D scratchpad we cover in <a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a>, and the epilogue reads it back out with
 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. With that settled, the rest of this chapter can concentrate on the MMA itself: how it
 is issued, and how its operands split across the various modes.</p>
 </section>
 <section id="cta-group-1-vs-cta-group-2-and-the-m-dimension">
 <h2><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code> vs <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>, and the M Dimension<a class="headerlink" href="#cta-group-1-vs-cta-group-2-and-the-m-dimension" title="Link to this heading">#</a></h2>
 <p>A <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA runs in one of two modes: over a single CTA (<code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code>), or over a pair of CTAs
-in a cluster (<code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>). Two things make that choice matter — the useful tile shapes do not all
+in a cluster (<code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>). Two things make that choice matter: the useful tile shapes do not all
 fit into TMEM the same way, and one CTA is sometimes simply too small to hold a tile worth computing.
 Together, the mode and the tile’s <strong>M</strong> dimension decide how
-the (M, N) accumulator gets laid out in TMEM — that is, which lane and which column each logical
+the (M, N) accumulator gets laid out in TMEM, that is, which lane and which column each logical
 element <code class="docutils literal notranslate"><span class="pre">C[m,</span> <span class="pre">n]</span></code> ends up on (recall that TMEM is 128 lanes × up to 512 columns). In the single-CTA
 modes, N maps onto TMEM columns and the only thing that varies from case to case is how the M rows
 map onto lanes. The 2-CTA mode goes one step further and also splits N across lanes, as the table
@@ -402,28 +402,28 @@ makes clear. Note, too, that not every M is legal in every mode; here are the co
 </div>
 <p>The simplest case to start from is <strong><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code>, M = 128 (identity).</strong> A single CTA holds
 A (M, K) and B (N, K) in its SMEM and the accumulator in its TMEM. Because there happen to be exactly
-as many rows as there are lanes, the mapping is the obvious one — row <code class="docutils literal notranslate"><span class="pre">m</span></code> goes to lane <code class="docutils literal notranslate"><span class="pre">m</span></code>, and
+as many rows as there are lanes, the mapping is the obvious one: row <code class="docutils literal notranslate"><span class="pre">m</span></code> goes to lane <code class="docutils literal notranslate"><span class="pre">m</span></code>, and
 column <code class="docutils literal notranslate"><span class="pre">n</span></code> goes to a TMEM column. C fills all 128 lanes × N columns, with nothing left idle. This is
 the picture to keep in your head as the default; every other mode is best understood as a variation
 on what to do when the row count and the lane count no longer line up so neatly. The figure
 below shows this identity mapping.</p>
-<p><img alt="cta_group::1, M=128: identity — row m maps to TMEM lane m" src="../_images/mma_cg1_m128.svg" /></p>
+<p><img alt="cta_group::1, M=128: identity, row m maps to TMEM lane m" src="../_images/mma_cg1_m128.svg" /></p>
 <p><strong><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code>, M = 64.</strong> Here the row count and the lane count come apart: there are only 64 rows
 to place into 128 lanes. The naive thing would be to pack them into lanes 0–63, but that would leave
 the other half of TMEM sitting idle. So the hardware does something less obvious and spreads them
 out instead, as four runs of 16 rows at a <strong>lane stride of 32</strong>: rows 0–15 go to lanes 0–15, rows
-16–31 to lanes 32–47, rows 32–47 to lanes 64–79, and rows 48–63 to lanes 96–111 — which leaves lanes
+16–31 to lanes 32–47, rows 32–47 to lanes 64–79, and rows 48–63 to lanes 96–111, which leaves lanes
 16–31, 48–63, 80–95, and 112–127 free. Those gaps are not waste; they are there on purpose. A
 <code class="docutils literal notranslate"><span class="pre">lane_align</span></code> of 16 shifts the whole pattern up by 16, so <strong>two independent M = 64 MMAs can share the
 same 128 lanes</strong>, one running at align 0 and the other at align 16. Throughout all of this, the
 columns stay the full N. The figure below traces the four runs and the gaps they leave behind.</p>
 <p><img alt="cta_group::1, M=64: four 16-row runs at lane stride 32, gaps free for a second M=64 tile" src="../_images/mma_cg1_m64.svg" /></p>
-<p>When one CTA’s TMEM simply cannot hold the tile — anything taller than 128 rows — we step up to
+<p>When one CTA’s TMEM simply cannot hold the tile, anything taller than 128 rows, we step up to
 <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> and let a pair of CTAs cooperate. <strong><code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>, M = 256</strong> is the cleanest version
 of this. An even/odd CTA pair in the cluster splits M contiguously: CTA 0 takes rows 0–127 and CTA 1
 takes rows 128–255, and <strong>each writes into its own TMEM lanes 0–127, across the full N columns</strong>. It
 helps to be explicit about what this means physically: the (256, N) accumulator is two separate
-128-row TMEM regions, one per CTA — not a single buffer that somehow spans both. Each CTA keeps its
+128-row TMEM regions, one per CTA, not a single buffer that somehow spans both. Each CTA keeps its
 own 128 A-rows in SMEM, and the <strong>even CTA</strong> is the one that issues the instruction and commits the
 completion barrier on behalf of the pair. This is exactly the mode the 2-CTA cluster GEMM in
 <a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> is built on. The figure below shows the contiguous split across the pair.</p>
@@ -433,7 +433,7 @@ interesting twist is what happens to the slack. With only 128 rows to share betw
 is room to spare in M, and the hardware spends it on N instead. Each CTA takes only <strong>64 M-rows</strong>
 (CTA 0 gets rows 0–63, CTA 1 gets rows 64–127), and N is split in half: within each CTA, the low-N
 half occupies lanes 0–63 and the high-N half stacks on top into lanes 64–127. The result is that
-both CTAs again use all 128 lanes — packing 64 rows × two N-halves — rather than leaving the upper
+both CTAs again use all 128 lanes, packing 64 rows × two N-halves, rather than leaving the upper
 lanes empty. The figure below shows how the N-halves stack within each CTA.</p>
 <p><img alt="cta_group::2, M=128: 64 rows per CTA with N split across the lower/upper 64 lanes" src="../_images/mma_cg2_m128.svg" /></p>
 <p>It is worth pausing on what stays the same across all four modes, since it is easy to lose sight of
@@ -450,7 +450,7 @@ efficiency, but it comes with a real catch: a tiny <strong>dynamic range</strong
 the spread of magnitudes that a real matrix contains, so if you try to cover everything with a single
 global scale, you are forced into a bad trade: either you clip the large values, or you flush the
 small ones to zero. The way out is to stop scaling globally and start scaling finely. That is exactly
-how low-precision formats hold onto their accuracy — they attach a <strong>scale factor to each block of
+how low-precision formats hold onto their accuracy: they attach a <strong>scale factor to each block of
 K</strong>. Every group of <code class="docutils literal notranslate"><span class="pre">B</span></code> consecutive K-elements shares one scale, and because the group is small, that
 scale can keep its block’s values comfortably inside the representable range. Mechanically, this means
 a block-scaled MMA carries two extra operands beyond A and B: the scale-factor tensors
@@ -490,11 +490,11 @@ magnitude:</p>
 <div class="math notranslate nohighlight">
 \[D[m,n] \mathrel{+}= \sum_k \big(A_q[m,k]\cdot \mathrm{SFA}[m,\, k/B]\big)\,\big(B_q[n,k]\cdot \mathrm{SFB}[n,\, k/B]\big).\]</div>
 <p>The choice of scale dtype shapes what those factors are even able to express. With e8m0 scales the
-factor is always an exact power of two — the stored byte is a biased exponent, so the scale works out
-to <span class="math notranslate nohighlight">\(2^{\text{byte}-127}\)</span> — whereas nvfp4’s e4m3 scales are small floats, which lets them land at
+factor is always an exact power of two (the stored byte is a biased exponent, so the scale works out
+to <span class="math notranslate nohighlight">\(2^{\text{byte}-127}\)</span>), whereas nvfp4’s e4m3 scales are small floats, which lets them land at
 values in between powers of two.</p>
 <p>Compared with the plain MMA, the placement of operands differs in just one respect, but it is an
-important one: <strong>the scale factors live in TMEM</strong>, not SMEM. The reason is straightforward — the
+important one: <strong>the scale factors live in TMEM</strong>, not SMEM. The reason is straightforward: the
 block-scaled <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> reads them from TMEM:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
@@ -530,7 +530,7 @@ block-scaled <code class="docutils literal notranslate"><span class="pre">tcgen0
 <p>Here is where a small wrinkle appears. TMA always delivers into SMEM, so this TMEM requirement forces
 the scale factors onto a detour that the data operands never have to take: they are first TMA-loaded
 into SMEM, and only then copied from SMEM to TMEM with <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code>, before the MMA is allowed to run.
-The layout they take in TMEM is pleasingly compact — a 128-row scale vector packs into just 32 lanes
+The layout they take in TMEM is pleasingly compact: a 128-row scale vector packs into just 32 lanes
 (<code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">%</span> <span class="pre">32</span></code>, with <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">//</span> <span class="pre">32</span></code> running along the columns) and is then broadcast <code class="docutils literal notranslate"><span class="pre">warpx4</span></code> to all 128 reading
 lanes. The full layout is spelled out in <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>.</p>
 <p>In the two-CTA case, the guiding principle is simple: a scale travels with whatever it scales. Under

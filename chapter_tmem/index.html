@@ -147,7 +147,7 @@
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I — Understanding the GPU</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I, Understanding the GPU</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
@@ -159,18 +159,18 @@
 <li class="toctree-l1"><a class="reference internal" href="../chapter_async_barriers/index.html">Async Coordination: mbarriers</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">Advanced: Cluster Launch Control</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II — TIRx Overview</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II, TIRx Overview</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">Introduction to TIRx</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III — GEMM: Tiled to SOTA</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III, GEMM: Tiled to SOTA</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_basics/index.html">Building a Tiled GEMM</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_async/index.html">Pipelining GEMM with TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_advanced/index.html">Scaling GEMM with Warp Specialization and Clusters</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV — Flash Attention 4</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV, Flash Attention 4</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
@@ -298,12 +298,12 @@
 until the tiles grow large enough that the accumulator crowds out everything else a thread needs to
 hold. A bigger MMA tile is exactly what you want for throughput, but registers are a fixed,
 per-thread budget, so past some tile size the two goals collide. Blackwell’s answer is a memory space
-earlier GPUs simply do not have: <strong>Tensor Memory (TMEM)</strong>, a CTA-scoped 2D scratchpad — 128 lanes ×
-up to 512 32-bit columns per CTA — where the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> Tensor Core (<a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Tensor Cores: tcgen05</span></a>) keeps
+earlier GPUs simply do not have: <strong>Tensor Memory (TMEM)</strong>, a CTA-scoped 2D scratchpad (128 lanes ×
+up to 512 32-bit columns per CTA) where the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> Tensor Core (<a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Tensor Cores: tcgen05</span></a>) keeps
 its accumulator and, for block-scaled MMAs, its scale factors. Unlike registers, which the compiler
 hands out for you, TMEM is something the kernel must explicitly allocate, fill, and free, so you
 cannot write a Blackwell GEMM without understanding it. This chapter covers what TMEM is, how it is
-addressed and allocated, and how data moves in and out of it — the foundation you will then put to
+addressed and allocated, and how data moves in and out of it, the foundation you will then put to
 work in <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a>.</p>
 <section id="a-2d-address-space">
 <h2>A 2D Address Space<a class="headerlink" href="#a-2d-address-space" title="Link to this heading">#</a></h2>
@@ -335,7 +335,7 @@ cannot reach into it. Data travels in and out through three dedicated <code clas
 each path the accumulator and its scale factors need to take.</p>
 <p>The first of these, <strong><code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code></strong>, moves data from <strong>TMEM into registers</strong>. At the DSL level a
 single copy is warpgroup-distributed, and it lowers to four warp-collective <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> instructions
-— one per warp, each handling its own 32 TMEM lanes, so that the four warps together cover all 128.
+, one per warp, each handling its own 32 TMEM lanes, so that the four warps together cover all 128.
 The instruction is not a single fixed shape but one drawn from a <em>family</em> of datapath atoms: the
 shapes <code class="docutils literal notranslate"><span class="pre">.16x64b</span></code>, <code class="docutils literal notranslate"><span class="pre">.16x128b</span></code>, <code class="docutils literal notranslate"><span class="pre">.16x256b</span></code>, <code class="docutils literal notranslate"><span class="pre">.32x32b</span></code>, and <code class="docutils literal notranslate"><span class="pre">.16x32bx2</span></code>, each carrying a repeat factor
 from <code class="docutils literal notranslate"><span class="pre">.x1</span></code> up to <code class="docutils literal notranslate"><span class="pre">.x128</span></code>. This path picks one of them, and the number of registers each thread ends
@@ -344,12 +344,12 @@ the TMEM tile across registers (<a class="reference internal" href="../chapter_l
 and two columns. The reason this particular layout matters is continuity: the epilogue pulls the
 accumulator out of TMEM into the <em>same</em> per-lane fragment that an Ampere <code class="docutils literal notranslate"><span class="pre">mma</span></code> or a Hopper <code class="docutils literal notranslate"><span class="pre">wgmma</span></code>
 would produce, which means it can cast and store the result using code that already exists. The
-second instruction, <strong><code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code></strong>, simply runs that path in reverse — from <strong>registers back into
-TMEM</strong>, in the same fragment — and you reach for it when a thread already holds data in registers, an
+second instruction, <strong><code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code></strong>, simply runs that path in reverse, from <strong>registers back into
+TMEM</strong>, in the same fragment, and you reach for it when a thread already holds data in registers, an
 A operand for instance, and you want to stage it into TMEM. The third, <strong><code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code></strong>, is a bulk
 copy from <strong>SMEM into TMEM</strong> (the <code class="docutils literal notranslate"><span class="pre">32x128b.warpx4</span></code> form); this is the one that stages the scale
 factors for a block-scaled MMA. The figure below traces the two register paths, <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> and
-<code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code>, and the m8n8 fragment they map onto — lane <code class="docutils literal notranslate"><span class="pre">l</span></code> landing on row <code class="docutils literal notranslate"><span class="pre">l/4</span></code> and two columns.</p>
+<code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code>, and the m8n8 fragment they map onto: lane <code class="docutils literal notranslate"><span class="pre">l</span></code> landing on row <code class="docutils literal notranslate"><span class="pre">l/4</span></code> and two columns.</p>
 <p><img alt="tcgen05.ld / st move the TMEM accumulator to and from registers in the m8n8 fragment (lane l → row l/4, two columns)" src="../_images/tcgen05_ldst.svg" /></p>
 <p>What all three have in common is the trait that also defines TMA: they are <strong>asynchronous</strong>. Each
 returns before the data has actually moved, so anything that depends on the result has to be gated by
@@ -357,7 +357,7 @@ an explicit synchronization (<a class="reference internal" href="../chapter_asyn
 instruction. A <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> or <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> completes through <code class="docutils literal notranslate"><span class="pre">tcgen05.wait::ld</span></code> or
 <code class="docutils literal notranslate"><span class="pre">tcgen05.wait::st</span></code>, whereas a <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> or <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> completes through a commit group together
 with an mbarrier. And when the result is handed off between threads, you need fences on top of that.</p>
-<p>Taken together with TMA, these three instructions carry a tile through its entire life on Blackwell —
+<p>Taken together with TMA, these three instructions carry a tile through its entire life on Blackwell,
 the very path you will write out by hand in <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a>. TMA stages the operands into
 SMEM, <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> accumulates into TMEM, and then the epilogue uses <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> to bring TMEM back
 into registers and produce the output.</p>
