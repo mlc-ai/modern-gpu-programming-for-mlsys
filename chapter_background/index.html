@@ -393,8 +393,6 @@ own capacity, its own latency, and its own rules for who may access it.</p>
 <p>Read in order, these spaces describe a path. The data path of almost every kernel in this book is
 <strong>GMEM → SMEM → (compute) → registers → SMEM → GMEM</strong>, and for tensor-core kernels TMEM sits in the
 middle of that path, holding the accumulators while the math runs.</p>
-<p>The figure below summarizes that end-to-end data path and where each memory space sits in it.</p>
-<p><img alt="Memory dataflow across the hierarchy" src="../_images/memory_dataflow.png" /></p>
 <p>Of the four, <strong>Tensor Memory (TMEM)</strong> is the only one with no analog on pre-Blackwell hardware, and
 its full details wait until <a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Tensor Cores: tcgen05</span></a>. The motivation for it is worth understanding
 now, though. Earlier GPUs kept large MMA accumulators in registers, where they competed for a scarce
