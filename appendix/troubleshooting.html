@@ -1,0 +1,627 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Troubleshooting &#8212; Modern GPU Programming For MLSys</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=46df97fe" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../_static/documentation_options.js?v=e645c8fa"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'appendix/troubleshooting';</script>
+    <script src="../_static/demo-embed.js?v=1ee8c5fa"></script>
+    <link rel="icon" href="../_static/mlc-favicon.ico"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Compiler Internals" href="../tirx_guide/arch/index.html" />
+    <link rel="prev" title="Reference" href="index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="Modern GPU Programming For MLSys - Home"/>
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="Modern GPU Programming For MLSys - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I, Understanding the GPU</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout and Its Notation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core Operand Layouts Across GPU Generations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Special Memory: TMEM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_async_barriers/index.html">Async Coordination: mbarriers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">Advanced: Cluster Launch Control</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II, TIRx Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">Introduction to TIRx</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III, GEMM: Tiled to SOTA</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_basics/index.html">Building a Tiled GEMM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_async/index.html">Pipelining GEMM with TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_advanced/index.html">Scaling GEMM with Warp Specialization and Clusters</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV, Flash Attention 4</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="index.html">Reference</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Troubleshooting</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx lowering pipeline</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx Language Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/parser_utils.html">Parser utilities</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/data_types.html">Data types and expressions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/buffers.html">Buffers and memory</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/control_flow.html">Control flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Troubleshooting</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#isolating-the-environment">Isolating the Environment</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#symptom-cause-fix">Symptom, cause, fix</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#install-and-import">Install and import</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#compile-time">Compile time</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#crash-at-run-time">Crash at run time</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#wrong-result-compiles-and-runs-bad-numbers">Wrong result (compiles and runs, bad numbers)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#slow-correct-but-underperforming">Slow (correct but underperforming)</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inspecting-the-generated-cuda">Inspecting the generated CUDA</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#when-to-restart-python">When to restart Python</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#filing-a-good-issue">Filing a good issue</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="troubleshooting">
+<span id="chap-troubleshooting"></span><h1>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading">#</a></h1>
+<p>Debugging asynchronous GPU kernels requires isolating the failure before reading the code. A crash usually means a bad pointer or an uninitialized barrier; a hang means a mismatched synchronization point; and silent corruption means a missing fence or a phase-tracking bug.</p>
+<p>This appendix gathers the common failure modes for the kernels built in this book. It builds on the performance model in <a class="reference internal" href="../chapter_performance/index.html#chap-performance"><span class="std std-ref">What Makes a Kernel Fast</span></a> and the generated-CUDA skeleton in <a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a>.</p>
+<section id="isolating-the-environment">
+<h2>Isolating the Environment<a class="headerlink" href="#isolating-the-environment" title="Link to this heading">#</a></h2>
+<p>Before assuming the kernel logic is flawed, verify the runtime context. A kernel compiled for Blackwell will immediately fail with an unspecified launch failure on Hopper, and a stale import path can cause you to debug the wrong code entirely.</p>
+<ol class="arabic simple">
+<li><p><strong>Confirm the imported package:</strong> Run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-c</span> <span class="pre">&quot;import</span> <span class="pre">tvm,</span> <span class="pre">tvm.tirx;</span> <span class="pre">print(tvm.__file__,</span> <span class="pre">tvm.__version__)&quot;</span></code>. This rules out importing a stale checkout.</p></li>
+<li><p><strong>Confirm the GPU capability:</strong> Run <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-c</span> <span class="pre">&quot;import</span> <span class="pre">torch;</span> <span class="pre">print(torch.cuda.get_device_name(),</span> <span class="pre">torch.cuda.get_device_capability())&quot;</span></code>. The kernels in this book target Blackwell (<code class="docutils literal notranslate"><span class="pre">sm_100a</span></code>); attempting to launch them on older architectures explains most immediate failures.</p></li>
+<li><p><strong>Run the smallest correctness check:</strong> Always run the kernel’s own correctness check (e.g., <code class="docutils literal notranslate"><span class="pre">run_correctness()</span></code>) against a small shape before trusting any performance numbers.</p></li>
+</ol>
+</section>
+<section id="symptom-cause-fix">
+<h2>Symptom, cause, fix<a class="headerlink" href="#symptom-cause-fix" title="Link to this heading">#</a></h2>
+<p>The tables below group the common failures. Each row is <em>symptom</em>, <em>likely cause</em>,
+and <em>first check / fix</em>.</p>
+<section id="install-and-import">
+<h3>Install and import<a class="headerlink" href="#install-and-import" title="Link to this heading">#</a></h3>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Likely cause</p></th>
+<th class="head"><p>First check / fix</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">tvm.tirx</span></code> fails</p></td>
+<td><p>wrong or missing wheel</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">apache-tvm==0.25.0</span></code>; re-run check command 1</p></td>
+</tr>
+<tr class="row-odd"><td><p>Imports the wrong code</p></td>
+<td><p>a second checkout on <code class="docutils literal notranslate"><span class="pre">PYTHONPATH</span></code></p></td>
+<td><p>print <code class="docutils literal notranslate"><span class="pre">tvm.__file__</span></code> and confirm the path</p></td>
+</tr>
+<tr class="row-even"><td><p>Launch fails immediately on any kernel</p></td>
+<td><p>not a Blackwell GPU</p></td>
+<td><p>check command 2; the kernels require <code class="docutils literal notranslate"><span class="pre">sm_100a</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="compile-time">
+<h3>Compile time<a class="headerlink" href="#compile-time" title="Link to this heading">#</a></h3>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Likely cause</p></th>
+<th class="head"><p>First check / fix</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>“unknown TIRx API” / attribute error</p></td>
+<td><p>API name drift vs. the installed wheel</p></td>
+<td><p>look the name up in <a class="reference internal" href="../tirx_guide/language_reference/index.html#chap-language-reference"><span class="std std-ref">TIRx Language Reference</span></a> and the installed <code class="docutils literal notranslate"><span class="pre">tvm.tirx</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>unsupported <code class="docutils literal notranslate"><span class="pre">dispatch=</span></code></p></td>
+<td><p>a copy/MMA dispatch the target does not support</p></td>
+<td><p>confirm the <code class="docutils literal notranslate"><span class="pre">dispatch</span></code> argument against <a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">Pipelining GEMM with TMA</span></a></p></td>
+</tr>
+<tr class="row-even"><td><p>buffer scope mismatch</p></td>
+<td><p>a buffer used outside its <code class="docutils literal notranslate"><span class="pre">scope</span></code> (e.g. a <code class="docutils literal notranslate"><span class="pre">tmem</span></code> buffer read like normal memory)</p></td>
+<td><p>review the scope rules in <a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="crash-at-run-time">
+<h3>Crash at run time<a class="headerlink" href="#crash-at-run-time" title="Link to this heading">#</a></h3>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Likely cause</p></th>
+<th class="head"><p>First check / fix</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">illegal</span> <span class="pre">memory</span> <span class="pre">access</span></code></p></td>
+<td><p>out-of-range index or wrong layout/offset</p></td>
+<td><p>shrink to one tile; the CUDA context is now poisoned, so see <a class="reference internal" href="#when-to-restart-python">When to restart Python</a></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">unspecified</span> <span class="pre">launch</span> <span class="pre">failure</span></code></p></td>
+<td><p>a barrier left uninitialized, or a resource over-allocated</p></td>
+<td><p>check that every <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> is initialized at top level (see the pitfalls below)</p></td>
+</tr>
+<tr class="row-even"><td><p>Hang / deadlock</p></td>
+<td><p>a collective barrier that not all expected threads reach</p></td>
+<td><p>check for <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> inside a warpgroup branch (see below)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="wrong-result-compiles-and-runs-bad-numbers">
+<h3>Wrong result (compiles and runs, bad numbers)<a class="headerlink" href="#wrong-result-compiles-and-runs-bad-numbers" title="Link to this heading">#</a></h3>
+<p>These are the dangerous ones: no error, just a wrong answer. Each links to where
+the book works through it.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Likely cause</p></th>
+<th class="head"><p>First check / fix</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Wrong after the first K chunk</p></td>
+<td><p>a reused mbarrier with the phase not flipped (<code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">^=</span> <span class="pre">1</span></code> dropped), so a wait returns <em>before</em> its MMA finished</p></td>
+<td><p><a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a> walks through the phase-tracking table</p></td>
+</tr>
+<tr class="row-odd"><td><p>Hang once warpgroups specialize</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> (<code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code>) inside a <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> branch, not all CTA threads arrive</p></td>
+<td><p>use <code class="docutils literal notranslate"><span class="pre">T.cuda.warpgroup_sync(10)</span></code> for a single-warpgroup barrier (<a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a>)</p></td>
+</tr>
+<tr class="row-even"><td><p>Garbage / uninitialized accumulator</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> <code class="docutils literal notranslate"><span class="pre">.init()</span></code> nested inside a <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> guard, so no thread satisfies it and the barrier is never initialized</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">.init()</span></code> must be at top level; <code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code> should appear once near the top of the generated CUDA</p></td>
+</tr>
+<tr class="row-odd"><td><p>Corruption near the epilogue / TMEM</p></td>
+<td><p>missing <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> before <code class="docutils literal notranslate"><span class="pre">tcgen05.dealloc</span></code>, so TMEM is freed while writeback still reads it</p></td>
+<td><p>add the <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> before dealloc (<a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a>)</p></td>
+</tr>
+<tr class="row-even"><td><p>TMA store writes stale data</p></td>
+<td><p>missing <code class="docutils literal notranslate"><span class="pre">T.ptx.fence.proxy_async(&quot;shared::cta&quot;)</span></code> before a TMA store, so the engine does not see thread-written SMEM</p></td>
+<td><p>fence before the store; see the producer-to-engine handoff in <a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="slow-correct-but-underperforming">
+<h3>Slow (correct but underperforming)<a class="headerlink" href="#slow-correct-but-underperforming" title="Link to this heading">#</a></h3>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Symptom</p></th>
+<th class="head"><p>Likely cause</p></th>
+<th class="head"><p>First check / fix</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Generated CUDA has no TMA</p></td>
+<td><p>a copy that did not lower to <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code></p></td>
+<td><p>grep the generated CUDA for the TMA intrinsic; check the <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tma&quot;</span></code> path</p></td>
+</tr>
+<tr class="row-odd"><td><p>Tensor pipe underutilized</p></td>
+<td><p>too-shallow pipeline / poor overlap</p></td>
+<td><p>revisit the overlap argument in <a class="reference internal" href="../chapter_performance/index.html#chap-performance"><span class="std std-ref">What Makes a Kernel Fast</span></a></p></td>
+</tr>
+<tr class="row-even"><td><p>Register spill</p></td>
+<td><p>tile or unroll too large for the register budget</p></td>
+<td><p>check the <code class="docutils literal notranslate"><span class="pre">ptxas</span></code> resource report; reduce tile/unroll</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="inspecting-the-generated-cuda">
+<h2>Inspecting the generated CUDA<a class="headerlink" href="#inspecting-the-generated-cuda" title="Link to this heading">#</a></h2>
+<p>The single most useful debugging move is to read what the compiler actually
+emitted. Every built module exposes it:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Default (no argument) prints the lowered source:</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">())</span>
+
+<span class="c1"># Ask for CUDA specifically, and save it so you can search and diff it:</span>
+<span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;artifacts/my_kernel.cu&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>A few patterns are worth recognizing when you scan that output:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>In the generated CUDA</p></th>
+<th class="head"><p>Means</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code></p></td>
+<td><p>a single-thread guard, e.g. an elected issuer or an <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> <code class="docutils literal notranslate"><span class="pre">.init()</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code></p></td>
+<td><p>an mbarrier initialization; should be at top level, before any branch</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cta_sync();</span></code> (<code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code>)</p></td>
+<td><p>a CTA-wide barrier and shared-memory ordering point</p></td>
+</tr>
+<tr class="row-odd"><td><p>a <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA call</p></td>
+<td><p>the Blackwell Tensor Core path was actually generated</p></td>
+</tr>
+<tr class="row-even"><td><p>a <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code> (TMA) call</p></td>
+<td><p>the copy lowered to TMA rather than a thread copy</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Use the correct-kernel skeleton in <a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> as the reference
+shape, and watch for things that should <strong>not</strong> appear: every lane issuing an MMA,
+a <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> inside a <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> branch, a missing TMA commit/wait, or a missing
+<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> wait before the accumulator is read.</p>
+</section>
+<section id="when-to-restart-python">
+<h2>When to restart Python<a class="headerlink" href="#when-to-restart-python" title="Link to this heading">#</a></h2>
+<p>A CUDA error does not always clean up after itself. After an <code class="docutils literal notranslate"><span class="pre">illegal</span> <span class="pre">memory</span> <span class="pre">access</span></code> or any “CUDA context poisoned” error, the context is in an undefined state
+and <strong>later unrelated calls (even <code class="docutils literal notranslate"><span class="pre">torch.randn</span></code>) may keep failing</strong>. When that
+happens, restart the Python process before drawing any conclusions.</p>
+</section>
+<section id="filing-a-good-issue">
+<h2>Filing a good issue<a class="headerlink" href="#filing-a-good-issue" title="Link to this heading">#</a></h2>
+<p>This guide covers the most common patterns, but you may encounter issues not listed here. If you are still stuck, please file an issue on the <a class="reference external" href="https://github.com/apache/tvm/issues">Apache TVM GitHub repository</a>. To help others reproduce and debug the problem, please include the environment details (the TVM path and GPU capability commands above) and a minimal reproducible example at a small shape.</p>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="index.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Reference</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../tirx_guide/arch/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Compiler Internals</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#isolating-the-environment">Isolating the Environment</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#symptom-cause-fix">Symptom, cause, fix</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#install-and-import">Install and import</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#compile-time">Compile time</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#crash-at-run-time">Crash at run time</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#wrong-result-compiles-and-runs-bad-numbers">Wrong result (compiles and runs, bad numbers)</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#slow-correct-but-underperforming">Slow (correct but underperforming)</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inspecting-the-generated-cuda">Inspecting the generated CUDA</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#when-to-restart-python">When to restart Python</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#filing-a-good-issue">Filing a good issue</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
