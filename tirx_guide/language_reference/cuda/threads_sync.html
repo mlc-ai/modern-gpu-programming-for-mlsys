@@ -274,6 +274,7 @@
             <nav aria-label="Page">
                 <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#calling-backend-intrinsics">Calling backend intrinsics</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#synchronization-semantics">Synchronization semantics</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inlining-raw-cuda">Inlining raw CUDA</a></li>
 </ul>
             </nav>
@@ -328,6 +329,57 @@ synchronization, mbarriers, reductions, and the PTX data-movement / MMA families
 <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.tensor</span></code> (TMA), <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> / <code class="docutils literal notranslate"><span class="pre">stmatrix</span></code>, <code class="docutils literal notranslate"><span class="pre">tcgen05.*</span></code>
 (Blackwell MMA), <code class="docutils literal notranslate"><span class="pre">atomic_add</span></code>, <code class="docutils literal notranslate"><span class="pre">fence</span></code> … See the backend API reference for the
 full <code class="docutils literal notranslate"><span class="pre">tvm.backend.cuda</span></code> reference.</p>
+</section>
+<section id="synchronization-semantics">
+<h2>Synchronization semantics<a class="headerlink" href="#synchronization-semantics" title="Link to this heading">#</a></h2>
+<p>Four synchronization mechanisms come up constantly in the GEMM and Flash Attention
+kernels. Because they control asynchronous engines and parallel thread groups,
+misusing any of them usually leads to silent corruption or deadlock.</p>
+<p><strong>Mbarrier Phases.</strong> Mbarriers track arrivals using a single internal phase bit.
+The <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.try_wait(bar,</span> <span class="pre">phase)</span></code> intrinsic blocks until the barrier’s
+internal phase <em>differs</em> from the <code class="docutils literal notranslate"><span class="pre">phase</span></code> argument provided by the caller.
+Consequently, when reusing a barrier across loop iterations, the caller must flip
+its local phase tracker (<code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">^=</span> <span class="pre">1</span></code>) after every wait. Failing to do so causes
+subsequent waits to return immediately, allowing the engine to read half-written
+memory. <a class="reference internal" href="../../../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a> walks through the full phase-tracking table.</p>
+<p><strong>Election.</strong> <code class="docutils literal notranslate"><span class="pre">T.ptx.elect_sync()</span></code> elects a <em>single active lane within a warp</em>,
+not lane 0, and not one thread per CTA. To narrow an issuer down to exactly one
+thread, you must pair it with a warp-level guard. The pattern <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0:</span></code>
+followed by <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">T.ptx.elect_sync():</span></code> is used to issue <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> and
+<code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> in <a class="reference internal" href="../../../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a>.</p>
+<p><strong>Named Warpgroup Barriers.</strong> <code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code> maps to <code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code> and
+requires <em>every</em> CTA thread to arrive. Once warpgroups specialize onto different
+code paths, placing a <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> inside a warpgroup branch deadlocks the kernel
+because the other warpgroups never reach it. The hardware provides 16 named
+barriers (IDs 0 to 15); <code class="docutils literal notranslate"><span class="pre">T.cuda.warpgroup_sync(10)</span></code> synchronizes only the threads
+of one warpgroup. Distinct warpgroups take distinct IDs (e.g.,
+<code class="docutils literal notranslate"><span class="pre">warpgroup_sync(wg_id</span> <span class="pre">+</span> <span class="pre">10)</span></code>) so they never collide on the same hardware barrier.
+See <a class="reference internal" href="../../../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a>.</p>
+<p><strong>Fences.</strong> Fences order a producer’s writes before a consumer (often an
+asynchronous engine) reads them:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 50.0%" />
+<col style="width: 50.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Fence</p></th>
+<th class="head"><p>Orders</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.fence.proxy_async(&quot;shared::cta&quot;)</span></code></p></td>
+<td><p>thread-written shared memory before an async proxy (TMA store / MMA) reads it</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.fence.mbarrier_init()</span></code></p></td>
+<td><p>mbarrier initialization before later arrivals or waits use the barrier</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code></p></td>
+<td><p>a conservative ordering fence on the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> writeback edge (Steps 8 and 9 add it; it is not needed on the TMA-to-MMA path)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
 </section>
 <section id="inlining-raw-cuda">
 <h2>Inlining raw CUDA<a class="headerlink" href="#inlining-raw-cuda" title="Link to this heading">#</a></h2>
@@ -393,6 +445,7 @@ source string with <code class="docutils literal notranslate"><span class="pre">
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#calling-backend-intrinsics">Calling backend intrinsics</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#synchronization-semantics">Synchronization semantics</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inlining-raw-cuda">Inlining raw CUDA</a></li>
 </ul>
   </nav></div>

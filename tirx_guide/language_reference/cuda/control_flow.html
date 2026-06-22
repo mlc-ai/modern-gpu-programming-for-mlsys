@@ -275,6 +275,7 @@
             <nav aria-label="Page">
                 <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#if">if</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#uniform-vs-divergent-control-flow">Uniform vs. divergent control flow</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#loop">loop</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#while">while</a></li>
 </ul>
@@ -313,7 +314,26 @@ thread/lane comparison, or elect a single issuing thread with
 <span class="p">}</span>
 </pre></div>
 </div>
-<p>For an expression-level choice (no branch), use <code class="docutils literal notranslate"><span class="pre">T.if_then_else(cond,</span> <span class="pre">a,</span> <span class="pre">b)</span></code>.</p>
+<p>For an expression-level choice (no branch), use <code class="docutils literal notranslate"><span class="pre">T.if_then_else(cond,</span> <span class="pre">a,</span> <span class="pre">b)</span></code>. It
+lowers to a ternary, so it introduces no control-flow divergence:</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">O_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span>
+</pre></div>
+</div>
+</section>
+<section id="uniform-vs-divergent-control-flow">
+<h2>Uniform vs. divergent control flow<a class="headerlink" href="#uniform-vs-divergent-control-flow" title="Link to this heading">#</a></h2>
+<p>Per-thread guards such as <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">tx</span> <span class="pre">&lt;</span> <span class="pre">128</span></code> are fine for ordinary work, but
+<strong>collective</strong> operations must be reached <em>uniformly</em> by every thread they
+synchronize.</p>
+<p>For example, <code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code> maps to <code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code>, which requires all
+threads in the thread block. It must never sit inside a thread- or
+warpgroup-divergent branch: if placed inside <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">wg_id</span> <span class="pre">==</span> <span class="pre">0:</span></code>, the other
+warpgroups will never arrive and the kernel will deadlock. When only one warpgroup
+needs to synchronize, use a warpgroup-scoped <code class="docutils literal notranslate"><span class="pre">T.cuda.warpgroup_sync(id)</span></code> (see
+<a class="reference internal" href="../../../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> and <a class="reference internal" href="threads_sync.html"><span class="doc">CUDA C++/PTX intrinsics</span></a>).</p>
+<p>The same caution applies to barrier setup. An <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> <code class="docutils literal notranslate"><span class="pre">.init()</span></code> lowers to a
+single-thread guard (<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code>). Nesting it inside another divergent
+branch can leave the barrier uninitialized, leading to unspecified launch failures.</p>
 </section>
 <section id="loop">
 <h2>loop<a class="headerlink" href="#loop" title="Link to this heading">#</a></h2>
@@ -408,6 +428,7 @@ one-element register buffer):</p>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#if">if</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#uniform-vs-divergent-control-flow">Uniform vs. divergent control flow</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#loop">loop</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#while">while</a></li>
 </ul>
