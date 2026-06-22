@@ -51,7 +51,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Tensor Cores: tcgen05" href="../chapter_tensor_cores/index.html" />
-    <link rel="prev" title="Data Layout Across GPU Generations" href="../chapter_layout_generations/index.html" />
+    <link rel="prev" title="Tensor Core Operand Layouts Across GPU Generations" href="../chapter_layout_generations/index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="" />
@@ -151,8 +151,8 @@
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Data Layout Across GPU Generations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout and Its Notation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core Operand Layouts Across GPU Generations</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Async Data Movement: TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Special Memory: TMEM</a></li>
@@ -321,7 +321,7 @@
 <p>Moving the tile is not enough. The tile also has to be placed in shared memory in a layout that the Tensor Core can read efficiently.</p>
 <p>This is where TMA swizzling is used. As TMA writes the tile into shared memory, it can permute the shared-memory address pattern. The global memory tile is still a logical rectangle, but the destination layout in shared memory can be swizzled.</p>
 <p>The swizzle mode is part of the TMA descriptor. Once the descriptor is set up, the issuing thread does not have to manually apply the swizzle. The engine applies it as the bytes land in shared memory.</p>
-<p>The important requirement is agreement. The TMA descriptor, the shared-memory tile layout, and the later MMA instruction must all describe the same layout (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a>). If TMA writes the tile with one swizzle but the MMA reads it as if it had another, the hardware will still do exactly what it was asked to do. The bytes will simply be arranged incorrectly for the computation.</p>
+<p>The important requirement is agreement. The TMA descriptor, the shared-memory tile layout, and the later MMA instruction must all describe the same layout (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a>). If TMA writes the tile with one swizzle but the MMA reads it as if it had another, the hardware will still do exactly what it was asked to do. The bytes will simply be arranged incorrectly for the computation.</p>
 <p>This is the point where the layout notation becomes more than a bookkeeping device. The layout used by the DSL has to match the hardware layout used by the TMA descriptor and the Tensor Core instruction. For example, if the kernel says an operand tile is stored in a 128-byte swizzled layout, the TMA descriptor has to use the matching swizzle mode, and the MMA dispatch has to expect that same shared-memory arrangement. The demo above lets you toggle between no swizzle and 128-byte swizzle; hover a source element to see where it lands once the swizzle is applied.</p>
 <p>A useful way to read the swizzle is that TMA is not changing the logical tile. It is changing where the logical elements land physically in shared memory. The later MMA still consumes the same logical A or B tile. The swizzle only decides how that tile is arranged across shared memory banks.</p>
 </section>
@@ -387,7 +387,7 @@ TMA store: wait through a commit group and wait group
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Data Layout Across GPU Generations</p>
+        <p class="prev-next-title">Tensor Core Operand Layouts Across GPU Generations</p>
       </div>
     </a>
     <a class="right-next"

@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Data Layout &#8212; Modern GPU Programming For MLSys</title>
+    <title>Data Layout and Its Notation &#8212; Modern GPU Programming For MLSys</title>
   
   
   
@@ -50,7 +50,7 @@
     <link rel="icon" href="../_static/mlc-favicon.ico"/>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Data Layout Across GPU Generations" href="../chapter_layout_generations/index.html" />
+    <link rel="next" title="Tensor Core Operand Layouts Across GPU Generations" href="../chapter_layout_generations/index.html" />
     <link rel="prev" title="What Makes a Kernel Fast" href="../chapter_performance/index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -151,8 +151,8 @@
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Data Layout</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Data Layout Across GPU Generations</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Data Layout and Its Notation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core Operand Layouts Across GPU Generations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Special Memory: TMEM</a></li>
@@ -260,7 +260,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>Data Layout</h1>
+    <h1>Data Layout and Its Notation</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -289,8 +289,8 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section class="tex2jax_ignore mathjax_ignore" id="data-layout">
-<span id="chap-data-layout"></span><h1>Data Layout<a class="headerlink" href="#data-layout" title="Link to this heading">#</a></h1>
+  <section class="tex2jax_ignore mathjax_ignore" id="data-layout-and-its-notation">
+<span id="chap-data-layout"></span><h1>Data Layout and Its Notation<a class="headerlink" href="#data-layout-and-its-notation" title="Link to this heading">#</a></h1>
 <div class="overview admonition">
 <p class="admonition-title">Overview</p>
 <ul class="simple">
@@ -392,7 +392,7 @@ the hardware resources that operate on it.</p>
 <p>The tags start to earn their keep when a layout describes data <em>spread across threads</em> rather than
 laid out in memory. Take <code class="docutils literal notranslate"><span class="pre">S[(8,</span> <span class="pre">4,</span> <span class="pre">2)</span> <span class="pre">:</span> <span class="pre">(4&#64;laneid,</span> <span class="pre">1&#64;laneid,</span> <span class="pre">1&#64;reg)]</span></code>: instead of pointing into
 linear memory, it maps rows and columns onto lane IDs and a per-lane register. This is exactly the
-tensor-core register fragment you will meet in <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>.</p>
+tensor-core register fragment you will meet in <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core Operand Layouts Across GPU Generations</span></a>.</p>
 <p>The interactive visualization below shows how a layout can distribute tensor elements across warp
 lanes and per-lane registers, rather than placing them in linear memory.</p>
 <iframe src="../demo/thread_register.html" title="Thread + register layout via named axes" loading="lazy"
@@ -423,7 +423,7 @@ offset layouts.</p>
 <p>The replication dimension <code class="docutils literal notranslate"><span class="pre">R[...]</span></code> we just introduced for the GPU mesh is not only about multiple
 devices. The same construct turns out to describe something that happens entirely inside a single
 kernel as well: data that the hardware <em>broadcasts across lanes</em>. Blackwell’s block-scaled MMA
-(<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>) is a good example. Its scale factors live in TMEM, where a 128-row
+(<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core Operand Layouts Across GPU Generations</span></a>) is a good example. Its scale factors live in TMEM, where a 128-row
 scale vector is stored in only <strong>32 TMEM lanes</strong>, where logical row <code class="docutils literal notranslate"><span class="pre">r</span></code> goes to TMEM lane <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">%</span> <span class="pre">32</span></code>, with
 <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">//</span> <span class="pre">32</span></code> running along the columns. Those 32 stored TMEM lanes are then <strong>replicated along the TMEM
 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> axis</strong>, from 32 up to 128 TMEM lanes, so that each of the four warps in the reading warpgroup
@@ -441,7 +441,7 @@ the GPU mesh a moment ago.</p>
 <iframe src="../demo/sf_tmem.html" title="Scale factors in TMEM: packing and warpx4 replication" loading="lazy"
         style="width:100%; min-width:1040px; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>Interactive: click a scale factor <code class="docutils literal notranslate"><span class="pre">SFA[m,</span> <span class="pre">sf]</span></code>; it packs into TMEM at lane <code class="docutils literal notranslate"><span class="pre">m</span> <span class="pre">mod</span> <span class="pre">32</span></code>, column <code class="docutils literal notranslate"><span class="pre">(m</span> <span class="pre">//</span> <span class="pre">32)·4</span> <span class="pre">+</span> <span class="pre">sf</span></code>, and is then broadcast <code class="docutils literal notranslate"><span class="pre">warpx4</span></code> across the <code class="docutils literal notranslate"><span class="pre">TLane</span></code> axis to the four lane copies (<code class="docutils literal notranslate"><span class="pre">l</span></code>, <code class="docutils literal notranslate"><span class="pre">l+32</span></code>, <code class="docutils literal notranslate"><span class="pre">l+64</span></code>, <code class="docutils literal notranslate"><span class="pre">l+96</span></code>), one per warp’s 32-lane window.</em></p>
 <p>The byte packing inside each column (the <code class="docutils literal notranslate"><span class="pre">scale_vec</span></code> 1X/2X/4X modes) and the <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> split are
-covered in <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>.</p>
+covered in <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core Operand Layouts Across GPU Generations</span></a>.</p>
 <p>Readers who already know CuTe can think of the notation in this chapter as a row-major variant of it,
 extended with explicit hardware-named axes and a dedicated replication structure.</p>
 </section>
@@ -536,7 +536,7 @@ of the next chapter.</p>
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Data Layout Across GPU Generations</p>
+        <p class="prev-next-title">Tensor Core Operand Layouts Across GPU Generations</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Data Layout Across GPU Generations &#8212; Modern GPU Programming For MLSys</title>
+    <title>Tensor Core Operand Layouts Across GPU Generations &#8212; Modern GPU Programming For MLSys</title>
   
   
   
@@ -51,7 +51,7 @@
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
     <link rel="next" title="Async Data Movement: TMA" href="../chapter_tma/index.html" />
-    <link rel="prev" title="Data Layout" href="../chapter_data_layout/index.html" />
+    <link rel="prev" title="Data Layout and Its Notation" href="../chapter_data_layout/index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="" />
@@ -151,8 +151,8 @@
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Data Layout Across GPU Generations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout and Its Notation</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Tensor Core Operand Layouts Across GPU Generations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Special Memory: TMEM</a></li>
@@ -260,7 +260,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>Data Layout Across GPU Generations</h1>
+    <h1>Tensor Core Operand Layouts Across GPU Generations</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -294,8 +294,8 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section class="tex2jax_ignore mathjax_ignore" id="data-layout-across-gpu-generations">
-<span id="chap-layout-generations"></span><h1>Data Layout Across GPU Generations<a class="headerlink" href="#data-layout-across-gpu-generations" title="Link to this heading">#</a></h1>
+  <section class="tex2jax_ignore mathjax_ignore" id="tensor-core-operand-layouts-across-gpu-generations">
+<span id="chap-layout-generations"></span><h1>Tensor Core Operand Layouts Across GPU Generations<a class="headerlink" href="#tensor-core-operand-layouts-across-gpu-generations" title="Link to this heading">#</a></h1>
 <div class="overview admonition">
 <p class="admonition-title">Overview</p>
 <ul class="simple">
@@ -310,7 +310,7 @@
 <p>The Tensor Core operation looks stable from far away. It multiplies tiles of A and B, adds an accumulator C, and produces D. That form has been the same since Volta.</p>
 <p>The details around that operation have not stayed fixed. A kernel that is fast on one generation may be slow on the next. A kernel that uses the wrong layout may also compute the wrong answer, even if the logical math still says <code class="docutils literal notranslate"><span class="pre">D</span> <span class="pre">=</span> <span class="pre">A</span> <span class="pre">B</span> <span class="pre">+</span> <span class="pre">C</span></code>. The reason is that the Tensor Core does not consume abstract matrices. It consumes operands in very specific hardware layouts.</p>
 <p>This chapter follows that layout contract across three generations. Ampere exposes the Tensor Core through warp-level register fragments. Hopper moves the input operands to shared memory descriptors. Blackwell keeps shared memory operands but moves the accumulator into TMEM. The operation is still matrix-multiply-accumulate, but the path into and out of the Tensor Core changes each time.</p>
-<p>The layout notation from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a> is the language we use to describe these contracts. The Blackwell TMEM details are covered separately in <a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a>.</p>
+<p>The layout notation from the <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a> chapter is the language we use to describe these contracts. The Blackwell TMEM details are covered separately in <a class="reference internal" href="../chapter_tmem/index.html#chap-tmem"><span class="std std-ref">Special Memory: TMEM</span></a>.</p>
 <section id="two-constraints-that-never-went-away">
 <h2>Two Constraints That Never Went Away<a class="headerlink" href="#two-constraints-that-never-went-away" title="Link to this heading">#</a></h2>
 <p>Before the Tensor Core is involved, two ordinary memory constraints already shape the layout of a GPU kernel.</p>
@@ -515,7 +515,7 @@ TCol  = s
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Data Layout</p>
+        <p class="prev-next-title">Data Layout and Its Notation</p>
       </div>
     </a>
     <a class="right-next"

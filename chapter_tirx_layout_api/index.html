@@ -151,8 +151,8 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Data Layout Across GPU Generations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout and Its Notation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core Operand Layouts Across GPU Generations</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Special Memory: TMEM</a></li>
@@ -308,14 +308,14 @@
 <div class="overview admonition">
 <p class="admonition-title">Overview</p>
 <ul class="simple">
-<li><p>The TIRx layout API turns the layout notation from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a> into compiler objects. The main objects are <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>, <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code>, and <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code>.</p></li>
+<li><p>The TIRx layout API turns the layout notation from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a> into compiler objects. The main objects are <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>, <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code>, and <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> describes affine placement over named hardware axes. It is built from shard specs <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>, replica specs <code class="docutils literal notranslate"><span class="pre">R[...]</span></code>, and optional offsets.</p></li>
 <li><p>A layout maps one logical coordinate to one or more physical coordinates. <code class="docutils literal notranslate"><span class="pre">layout.apply()</span></code> evaluates that mapping.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> describes the XOR-based shared-memory swizzles used to avoid bank conflicts. <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> stacks a swizzle on top of a tile layout.</p></li>
 <li><p>Ready-made constructors such as <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code>, <code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code>, and <code class="docutils literal notranslate"><span class="pre">wg_local_layout</span></code> cover the hardware layouts that appear repeatedly in kernels.</p></li>
 </ul>
 </div>
-<p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout</span></a> introduced the notation used throughout this book: a tile shape, a set of strides over named axes, and an optional replication term for values that are copied rather than partitioned. This chapter turns that notation into the API used by the compiler.</p>
+<p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a> introduced the notation used throughout this book: a tile shape, a set of strides over named axes, and an optional replication term for values that are copied rather than partitioned. This chapter turns that notation into the API used by the compiler.</p>
 <p>The goal is that the notation on the page and the code in the kernel look almost the same. When you write a layout such as:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]</span>
 </pre></div>
@@ -636,7 +636,7 @@ TCol  = s
 TCol  = s
 </pre></div>
 </div>
-<p>So the 32-row group is visible at TMEM lanes 0 through 31, 32 through 63, 64 through 95, and 96 through 127. This is the <code class="docutils literal notranslate"><span class="pre">warpx4</span></code> broadcast pattern (<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Data Layout Across GPU Generations</span></a>). Each of the four warp-sized TMEM lane windows sees the same scale-factor group.</p>
+<p>So the 32-row group is visible at TMEM lanes 0 through 31, 32 through 63, 64 through 95, and 96 through 127. This is the <code class="docutils literal notranslate"><span class="pre">warpx4</span></code> broadcast pattern (<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core Operand Layouts Across GPU Generations</span></a>). Each of the four warp-sized TMEM lane windows sees the same scale-factor group.</p>
 <p>In the full block-scaled MMA layout, this atom is combined with outer iters over M rows and K scale-factor groups. Several scale factors may also be packed into one 32-bit <code class="docutils literal notranslate"><span class="pre">TCol</span></code> cell, depending on the scale-factor dtype. For example, fp8 scale factors can pack four values into one 32-bit column cell. Optional stride-zero reuse and pipeline-depth iters can then describe scale reuse across multiple MMAs and double buffering.</p>
 <p>The important part is that the same <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> model describes both cases. The accumulator is a single placement in TMEM. The scale factors are a replicated placement in the same TMEM address space.</p>
 </section>
