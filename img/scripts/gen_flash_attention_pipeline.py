@@ -6,12 +6,10 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 
 COLORS = {
-    "load": "#f6c7c8",
-    "score": "#c7dbf4",
-    "softmax": "#ffe3a6",
-    "value": "#d8c3ef",
-    "corr": "#9fd8d6",
-    "store": "#c7ead2",
+    "tma": "#bfdbfe",
+    "mma": "#bbf7d0",
+    "softmax": "#ddd6fe",
+    "corr": "#ccfbf1",
     "label": "#f8fafc",
 }
 
@@ -89,18 +87,18 @@ def main():
         (9.2, "load K[n-3]"),
         (10.3, "load V[n-3]"),
     ]:
-        block(ax, x, 5.12, 0.88, 0.62, text, COLORS["load"], fs=8)
+        block(ax, x, 5.12, 0.88, 0.62, text, COLORS["tma"], fs=8)
     ax.text(11.45, 5.43, "...", fontsize=13, color="#6b7280")
 
     # MMA issue order: bootstrap scores, then interleave PV for current V with QK for next K.
     mma_blocks = [
-        (4.0, "score\nQ0*K[n-1]", COLORS["score"]),
-        (5.1, "score\nQ1*K[n-1]", COLORS["score"]),
-        (6.35, "value\nP0*V[n-1]", COLORS["value"]),
-        (7.45, "score\nQ0*K[n-2]", COLORS["score"]),
-        (8.55, "value\nP1*V[n-1]", COLORS["value"]),
-        (9.65, "score\nQ1*K[n-2]", COLORS["score"]),
-        (10.75, "value\nP0*V[n-2]", COLORS["value"]),
+        (4.0, "score\nQ0*K[n-1]", COLORS["mma"]),
+        (5.1, "score\nQ1*K[n-1]", COLORS["mma"]),
+        (6.35, "value\nP0*V[n-1]", COLORS["mma"]),
+        (7.45, "score\nQ0*K[n-2]", COLORS["mma"]),
+        (8.55, "value\nP1*V[n-1]", COLORS["mma"]),
+        (9.65, "score\nQ1*K[n-2]", COLORS["mma"]),
+        (10.75, "value\nP0*V[n-2]", COLORS["mma"]),
     ]
     for x, text, color in mma_blocks:
         block(ax, x, 4.12, 0.98, 0.66, text, color, fs=8)
@@ -114,7 +112,7 @@ def main():
     block(ax, 8.35, 3.12, 1.05, 0.66, "softmax S0\nwrite P0", COLORS["softmax"], fs=8)
     block(ax, 10.25, 2.12, 1.05, 0.66, "softmax S1\nwrite P1", COLORS["softmax"], fs=8)
     block(ax, 11.25, 1.12, 1.08, 0.66, "normalize\nO0/O1", COLORS["corr"], fs=8)
-    block(ax, 12.0, 0.12, 0.9, 0.62, "store O", COLORS["store"], fs=8)
+    block(ax, 12.0, 0.12, 0.9, 0.62, "store O", COLORS["tma"], fs=8)
 
     # Keep this as a timeline. Barrier-level dependencies are shown in
     # flash_attention_barrier_flow_v2.png; drawing them again here makes
@@ -122,12 +120,10 @@ def main():
 
     # Legend.
     legend = [
-        ("TMA load", COLORS["load"]),
-        ("score MMA", COLORS["score"]),
+        ("TMA load/store", COLORS["tma"]),
+        ("Tensor Core MMA", COLORS["mma"]),
         ("softmax", COLORS["softmax"]),
-        ("value MMA", COLORS["value"]),
         ("correction/epilogue", COLORS["corr"]),
-        ("TMA store", COLORS["store"]),
     ]
     lx = 2.0
     for name, color in legend:

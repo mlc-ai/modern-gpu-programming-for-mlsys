@@ -6,12 +6,13 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 
 COLORS = {
-    "tma": "#f6c7c8",
-    "mma": "#c7dbf4",
-    "softmax": "#ffe3a6",
-    "wg2": "#cfead0",
-    "store": "#c7ead2",
-    "bar": "#eef6ff",
+    "tma": "#bfdbfe",
+    "smem": "#e9d5ff",
+    "tmem": "#fed7aa",
+    "mma": "#bbf7d0",
+    "softmax": "#ddd6fe",
+    "wg2": "#ccfbf1",
+    "bar": "#fde68a",
     "merge": "#eee7fb",
 }
 
@@ -43,7 +44,9 @@ def arrow(ax, x1, y1, x2, y2, color="#4b5563", rad=0.0, lw=1.25):
     ax.add_patch(arr)
 
 
-def label(ax, x, y, text, fs=8.5, color="#374151"):
+def label(ax, x, y, text, fs=8.5, color="#374151", facecolor=None):
+    if facecolor is None:
+        facecolor = COLORS["bar"]
     ax.text(
         x,
         y,
@@ -52,7 +55,7 @@ def label(ax, x, y, text, fs=8.5, color="#374151"):
         va="center",
         fontsize=fs,
         color=color,
-        bbox=dict(boxstyle="round,pad=0.18", facecolor="white", edgecolor="#d1d5db"),
+        bbox=dict(boxstyle="round,pad=0.18", facecolor=facecolor, edgecolor="#d97706"),
     )
 
 
@@ -74,8 +77,8 @@ def gen_main_handoff():
 
     # ---- Score MMA gate (top): Q and K must be in SMEM. ----
     ax.text(0.5, 5.95, "Score MMA gate", fontsize=11.5, weight="bold", color="#1f2937")
-    box(ax, 0.6, 5.12, 1.95, 0.62, "Q tile\nin SMEM", COLORS["tma"], fs=8.8)
-    box(ax, 0.6, 4.30, 1.95, 0.62, "K tile\nin SMEM", COLORS["tma"], fs=8.8)
+    box(ax, 0.6, 5.12, 1.95, 0.62, "Q tile\nin SMEM", COLORS["smem"], fs=8.8)
+    box(ax, 0.6, 4.30, 1.95, 0.62, "K tile\nin SMEM", COLORS["smem"], fs=8.8)
     box(ax, 6.45, 4.55, 2.3, 0.95, "score MMA\nQ,K -> S", COLORS["mma"], fs=10.5)
     arrow(ax, 2.55, 5.43, 6.45, 5.18, rad=-0.04)
     arrow(ax, 2.55, 4.61, 6.45, 4.88, rad=0.04)
@@ -86,9 +89,9 @@ def gen_main_handoff():
 
     # ---- Value MMA gate (bottom): V in SMEM, P in TMEM (split), O slot safe. ----
     ax.text(0.5, 3.35, "Value MMA gate", fontsize=11.5, weight="bold", color="#1f2937")
-    box(ax, 0.6, 2.55, 1.95, 0.62, "V tile\nin SMEM", COLORS["tma"], fs=8.8)
-    box(ax, 0.6, 1.55, 3.15, 0.7, "P cols 0:96 in TMEM\n+ O-slot safe (WG2)", COLORS["softmax"], fs=8.2)
-    box(ax, 0.6, 0.55, 3.15, 0.62, "P cols 96:128\nin TMEM", COLORS["softmax"], fs=8.4)
+    box(ax, 0.6, 2.55, 1.95, 0.62, "V tile\nin SMEM", COLORS["smem"], fs=8.8)
+    box(ax, 0.6, 1.55, 3.15, 0.7, "P cols 0:96 in TMEM\n+ O-slot safe (WG2)", COLORS["tmem"], fs=8.2)
+    box(ax, 0.6, 0.55, 3.15, 0.62, "P cols 96:128\nin TMEM", COLORS["tmem"], fs=8.4)
     box(ax, 6.45, 1.35, 2.3, 0.95, "value MMA\nP,V -> O", COLORS["mma"], fs=10.5)
     arrow(ax, 2.55, 2.86, 6.45, 2.05, rad=-0.05)
     arrow(ax, 3.75, 1.90, 6.45, 1.83, rad=0.0)
@@ -107,8 +110,8 @@ def gen_main_handoff():
         box(ax, lx, y, 0.42, 0.34, "", color)
         ax.text(lx + 0.6, y + 0.17, text, ha="left", va="center", fontsize=8.7, color="#374151")
 
-    swatch(5.40, COLORS["tma"], "SMEM tile (TMA-loaded)")
-    swatch(4.86, COLORS["softmax"], "TMEM tile (softmax output)")
+    swatch(5.40, COLORS["smem"], "SMEM tile (TMA-loaded)")
+    swatch(4.86, COLORS["tmem"], "TMEM tile / O slot")
     swatch(4.32, COLORS["mma"], "MMA operation")
     label(ax, lx + 0.5, 3.66, "barrier", fs=8.0)
     ax.text(lx + 1.05, 3.66, "gate that must signal\nbefore the MMA may fire",

@@ -4,14 +4,25 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
+COLORS = {
+    "thread": "#f8fafc",
+    "tma": "#bfdbfe",
+    "tma_edge": "#2563eb",
+    "barrier": "#fde68a",
+    "barrier_edge": "#d97706",
+    "mma": "#bbf7d0",
+    "mma_edge": "#059669",
+    "neutral": "#475569",
+}
+
 fig, ax = plt.subplots(figsize=(14, 10))
 ax.axis('off')
 
 lanes = {
-    'Elected\nThread': (2.5, '#f0f0f0'),
-    'TMA\nHardware': (6.0, '#ffe0e0'),
-    'mbarrier': (9.5, '#fff3cd'),
-    'tcgen05\nMMA': (13.0, '#d5f5e3'),
+    'Elected\nThread': (2.5, COLORS["thread"]),
+    'TMA\nHardware': (6.0, COLORS["tma"]),
+    'mbarrier': (9.5, COLORS["barrier"]),
+    'tcgen05\nMMA': (13.0, COLORS["mma"]),
 }
 
 for label, (x, color) in lanes.items():
@@ -45,39 +56,39 @@ mma_x = 13.0
 
 y = 1.5
 step_label(y, 1, 'Issue TMA')
-action_arrow(y, et_x, tma_x, 'copy_async(A)', '#e74c3c')
+action_arrow(y, et_x, tma_x, 'copy_async(A)', COLORS["tma_edge"])
 
 y = 2.3
-action_arrow(y, et_x, tma_x, 'copy_async(B)', '#e74c3c')
+action_arrow(y, et_x, tma_x, 'copy_async(B)', COLORS["tma_edge"])
 
 y = 3.2
 step_label(y, 2, 'Set byte count')
-action_arrow(y, et_x, bar_x, 'arrive.expect_tx(bytes)', '#e67e22')
+action_arrow(y, et_x, bar_x, 'arrive.expect_tx(bytes)', COLORS["barrier_edge"])
 
 y = 4.3
 step_label(y, 3, 'HW transfer')
 ax.add_patch(mpatches.FancyBboxPatch((tma_x - 0.55, 3.6), 1.1, 1.0, boxstyle='round,pad=0.05',
-             fc='#ff6b6b', ec='black', lw=1.5, alpha=0.3))
-ax.text(tma_x, 4.1, 'TMA transfer\n(GMEM->SMEM)', ha='center', va='center', fontsize=7, color='#cc0000', style='italic')
+             fc=COLORS["tma"], ec=COLORS["tma_edge"], lw=1.5, alpha=0.75))
+ax.text(tma_x, 4.1, 'TMA transfer\n(GMEM->SMEM)', ha='center', va='center', fontsize=7, color=COLORS["tma_edge"], style='italic')
 
 y = 4.8
-action_arrow(y, tma_x, bar_x, 'arrive (auto)', '#27ae60')
+action_arrow(y, tma_x, bar_x, 'arrive (auto)', COLORS["barrier_edge"])
 
 y = 5.8
 step_label(y, 4, 'Wait for data')
-action_arrow(y, et_x, bar_x, 'try_wait(phase)', '#8e44ad')
-wait_bar(5.8, et_x, 'blocked', '#8e44ad')
+action_arrow(y, et_x, bar_x, 'try_wait(phase)', COLORS["barrier_edge"])
+wait_bar(5.8, et_x, 'blocked', COLORS["barrier_edge"])
 
 y = 6.6
-action_arrow(y, bar_x, et_x, 'phase complete!', '#27ae60')
+action_arrow(y, bar_x, et_x, 'phase complete!', COLORS["barrier_edge"])
 
 y = 7.8
 step_label(y, 5, 'Issue MMA')
-action_arrow(y, et_x, mma_x, 'gemm_async + commit', '#4a90d9')
+action_arrow(y, et_x, mma_x, 'gemm_async + commit', COLORS["mma_edge"])
 
 ax.add_patch(mpatches.FancyBboxPatch((mma_x - 0.55, 8.2), 1.1, 1.0, boxstyle='round,pad=0.05',
-             fc='#27ae60', ec='black', lw=1.5, alpha=0.3))
-ax.text(mma_x, 8.7, 'MMA compute\n(SMEM->TMEM)', ha='center', va='center', fontsize=7, color='#1a7a1a', style='italic')
+             fc=COLORS["mma"], ec=COLORS["mma_edge"], lw=1.5, alpha=0.75))
+ax.text(mma_x, 8.7, 'MMA compute\n(SMEM->TMEM)', ha='center', va='center', fontsize=7, color=COLORS["mma_edge"], style='italic')
 
 ax.text(et_x, 9.6,
         'The mbarrier try_wait\nalready carries the\nrelease->acquire edge:\nno extra fence needed\non this TMA->MMA path.',
