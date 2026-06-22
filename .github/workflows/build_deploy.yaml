@@ -27,8 +27,14 @@ jobs:
       - name: Install doc dependencies
         run: pip install -r requirements-docs.txt
 
-      - name: Build (Sphinx)
-        run: sphinx-build -b html . _build/html
+      - name: Build (Sphinx, warnings as errors)
+        run: sphinx-build -b html . _build/html -W --keep-going
+
+      - name: Upload built site
+        uses: actions/upload-artifact@v4
+        with:
+          name: html
+          path: _build/html
 
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main'

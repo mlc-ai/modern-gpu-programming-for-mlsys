@@ -7,7 +7,7 @@ author = "MLC Community"
 copyright = "2026, MLC Community"
 release = "0.0.1"
 
-extensions = ["myst_parser"]
+extensions = ["myst_parser", "sphinx_copybutton"]
 
 # Markdown (MyST) is the primary source format.
 source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
