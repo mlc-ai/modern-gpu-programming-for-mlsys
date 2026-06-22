@@ -32,13 +32,21 @@ EDGE_LABELS = [
     "TMA store",
 ]
 
-# Two colour families: GMEM/SMEM are "staging" (purple), TMEM/RF are
-# Tensor-Core-resident (amber), matching the original hand-drawn diagram.
+# Match the hardware color convention used by the interactive demos:
+# GMEM neutral, SMEM purple, TMEM orange, RF/register red.
 COLOURS = {
-    "gmem": ("#E7E3F5", "#8470B0"),  # (fill, edge)
-    "smem": ("#E7E3F5", "#8470B0"),
-    "tmem": ("#FBE9D2", "#C98A3E"),
-    "rf":   ("#FBE9D2", "#C98A3E"),
+    "gmem": ("#f8fafc", "#94a3b8"),  # (fill, edge)
+    "smem": ("#ede9fe", "#8b5cf6"),
+    "tmem": ("#fffbeb", "#f59e0b"),
+    "rf":   ("#fee2e2", "#dc2626"),
+}
+
+EDGE_COLOURS = {
+    "TMA load": "#3b82f6",
+    "tcgen05 MMA": "#059669",
+    "tcgen05.ld": "#f59e0b",
+    "thread write": "#dc2626",
+    "TMA store": "#3b82f6",
 }
 
 BOX_W = 1.6
@@ -62,13 +70,14 @@ def draw_box(ax, cx, cy, w, h, text, fill, edge):
 
 
 def draw_arrow(ax, x_from, x_to, y, label):
+    color = EDGE_COLOURS[label]
     arrow = FancyArrowPatch(
         (x_from, y),
         (x_to, y),
         arrowstyle="->",
         mutation_scale=16,
         linewidth=1.5,
-        color="#333333",
+        color=color,
     )
     ax.add_patch(arrow)
     ax.text(
@@ -78,6 +87,7 @@ def draw_arrow(ax, x_from, x_to, y, label):
         ha="center",
         va="bottom",
         fontsize=10,
+        color=color,
     )
 
 
