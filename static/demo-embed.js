@@ -97,21 +97,26 @@
       b.addEventListener("click", fn);
       return b;
     }
-    // The middle button expands the demo to full screen (the old fit-width button
-    // was redundant: fit-width is already the default and on every resize). On exit
-    // we recompute() to restore the column-fit, scaled view.
+    // The middle button toggles full screen (the old fit-width button was
+    // redundant: fit-width is already the default and reapplied on every resize).
     function goFullscreen() {
-      var req = embed.requestFullscreen || embed.webkitRequestFullscreen;
-      if (req) { try { req.call(embed); } catch (e) {} }
+      var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+      if (fsEl === embed) {                                  // already full screen: exit
+        var exit = document.exitFullscreen || document.webkitExitFullscreen;
+        if (exit) { try { exit.call(document); } catch (e) {} }
+      } else {
+        var req = embed.requestFullscreen || embed.webkitRequestFullscreen;
+        if (req) { try { req.call(embed); } catch (e) {} }
+      }
     }
     function onFsChange() {
       var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
-      if (fsEl === embed) {
-        embed.classList.add("demo-fs");
-      } else if (embed.classList.contains("demo-fs")) {
-        embed.classList.remove("demo-fs");
-        recompute(true);
-      }
+      var nowFs = (fsEl === embed), wasFs = embed.classList.contains("demo-fs");
+      if (nowFs === wasFs) return;                           // not a change for this embed
+      embed.classList.toggle("demo-fs", nowFs);
+      // Refit to the new viewport size (fills the screen on enter, the column on
+      // exit). recompute() drives the transform, so the zoom buttons still work.
+      requestAnimationFrame(function () { recompute(true); });
     }
     document.addEventListener("fullscreenchange", onFsChange);
     document.addEventListener("webkitfullscreenchange", onFsChange);
