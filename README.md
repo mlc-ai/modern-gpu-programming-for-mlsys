@@ -49,7 +49,7 @@ The kernels in this book target Blackwell (`sm_100a`), so running them needs a B
 **1. Install the TIRx compiler.** It ships as the `tvm.tirx` module of the Apache TVM wheel:
 
 ```bash
-pip install apache-tvm==0.25.0
+pip install apache-tvm
 ```
 
 Verify:
