@@ -413,7 +413,7 @@ R[2 : 4@warpid]
 
 ```text
 laneid = 4 * i + floor(j / 2) mod 4
-warpid = floor(j / 8) + 5 + 4 * r, where r in {0, 1}
+warpid = floor(j / 8) + 5 + 4 * r，其中 r ∈ {0, 1}
 m      = j mod 2
 ```
 
@@ -483,7 +483,7 @@ TCol  = s
 replica 项创建四个相隔 32 lane 的副本：
 
 ```text
-TLane = r + 32 * q, where q in {0, 1, 2, 3}
+TLane = r + 32 * q，其中 q ∈ {0, 1, 2, 3}
 TCol  = s
 ```
 

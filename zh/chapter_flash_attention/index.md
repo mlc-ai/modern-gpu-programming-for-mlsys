@@ -65,12 +65,12 @@ row_max = m_new
 有了运行状态及其位置之后，我们可以把算法展开成一串具体的 tile 移动。对于一个 K/V block，kernel 从上到下走过这条 tile 路径：
 
 ```text
-Q, K, V in GMEM
-  -> Q, K, V in SMEM        by TMA load
-  -> S in TMEM              by score MMA: QK^T
-  -> P in TMEM              by softmax numerator: TMEM -> RF -> TMEM
-  -> O in TMEM              by value MMA: P V
-  -> O in GMEM              by normalization, SMEM staging, and TMA store
+Q, K, V 位于 GMEM
+  -> Q, K, V 位于 SMEM        由 TMA 加载完成
+  -> S 位于 TMEM              由分数 MMA 完成：QK^T
+  -> P 位于 TMEM              由 softmax 分子计算完成：TMEM -> RF -> TMEM
+  -> O 位于 TMEM              由值 MMA 完成：P V
+  -> O 位于 GMEM              由归一化、SMEM 暂存和 TMA 存储完成
 ```
 
 它和 GEMM 的区别归结为一行。GEMM 是重复一条 MMA 链；FA4 有两个 MMA 阶段，中间坐着 softmax。后面几乎所有复杂度，都是这个额外阶段带来的后果。
@@ -150,9 +150,9 @@ warp_id = T.warp_id_in_wg([4])
 对每个流式 K/V tile，Flash Attention 都会运行两个 MMA 阶段，并由 softmax 把它们桥接起来：
 
 ```text
-Q, K -> score MMA -> S
+Q, K -> 分数 MMA -> S
 S    -> softmax   -> P
-P, V -> value MMA -> O
+P, V -> 值 MMA   -> O
 ```
 
 可以把它看成三个 producer 串成的一条 pipeline。第一个 MMA 产生 attention score `S`，softmax 把 `S` 转成 numerator `P`，第二个 MMA 消费 `P` 来更新输出 accumulator `O`。按 `row_sum` 归一化会一直推迟到 epilogue，等每个 K/V tile 都贡献完之后再做。
@@ -416,13 +416,13 @@ barrier 告诉我们某个角色消费 tile 之前什么必须 *就绪*。但它
 重要的是，MMA warp 不会先跑完所有 score MMA，再跑所有 value MMA。两个 Q stage 预热好之后，它会交错两种 MMA：当前 `V` block 的一次 value MMA，下一次 `K` block 的一次 score MMA，如此继续：
 
 ```text
-score Q0*K[n-1]
-score Q1*K[n-1]
-value P0*V[n-1]
-score Q0*K[n-2]
-value P1*V[n-1]
-score Q1*K[n-2]
-value P0*V[n-2]
+计算 Q0*K[n-1] 的分数
+计算 Q1*K[n-1] 的分数
+用 P0*V[n-1] 更新输出
+计算 Q0*K[n-2] 的分数
+用 P1*V[n-1] 更新输出
+计算 Q1*K[n-2] 的分数
+用 P0*V[n-2] 更新输出
 ...
 ```
 

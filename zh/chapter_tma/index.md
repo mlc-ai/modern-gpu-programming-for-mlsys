@@ -172,8 +172,8 @@ store 使用的 shared-memory region 可以安全复用。
 所以规则很简单：
 
 ```text
-TMA load:  wait through an mbarrier with byte-count tracking
-TMA store: wait through a commit group and wait group
+TMA 加载：通过带字节计数跟踪的 mbarrier 等待
+TMA 存储：通过 commit group 和 wait group 等待
 ```
 
 这两种机制在不同 handoff point 服务于同一个目的。load 需要让 shared-memory tile 对后续 consumer 可见。

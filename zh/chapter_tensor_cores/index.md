@@ -210,8 +210,8 @@ block-scaled `tcgen05.mma` 与 dense MMA 有一条重要 placement rule 不同�
 这给 scale factor 带来了不同于数据 operand 的移动路径：
 
 ```text
-A, B:     global memory to SMEM, then MMA reads SMEM
-SFA, SFB: global memory to SMEM, then tcgen05.cp copies SMEM to TMEM, then MMA reads TMEM
+A, B:     从全局内存到 SMEM，随后 MMA 读取 SMEM
+SFA, SFB: 从全局内存到 SMEM，随后 tcgen05.cp 将 SMEM 复制到 TMEM，最后 MMA 读取 TMEM
 ```
 
 scale factor 的 TMEM layout 很紧凑。一个 128-row scale vector 可以 pack 到 32 个 Lane row 中：
