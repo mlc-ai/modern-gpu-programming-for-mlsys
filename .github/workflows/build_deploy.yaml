@@ -27,8 +27,11 @@ jobs:
       - name: Install doc dependencies
         run: pip install -r requirements-docs.txt
 
-      - name: Build (Sphinx, warnings as errors)
+      - name: Build English (Sphinx, warnings as errors)
         run: sphinx-build -b html . _build/html -W --keep-going
+
+      - name: Build Chinese (Sphinx, warnings as errors)
+        run: rm -rf _build/html/zh && sphinx-build -b html zh _build/html/zh -W --keep-going
 
       - name: Upload built site
         uses: actions/upload-artifact@v4
