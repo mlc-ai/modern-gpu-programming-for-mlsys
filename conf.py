@@ -29,6 +29,7 @@ exclude_patterns = [
     ".DS_Store",
     "README.md",
     "**/README.md",
+    "zh",
     "_*.md",
     "**/_*.md",
     "setup.py",
@@ -63,4 +64,29 @@ html_theme_options = {
     "use_source_button": True,
     "use_download_button": False,
     "use_fullscreen_button": False,
+    "repository_url": "https://github.com/mlc-ai/modern-gpu-programming-for-mlsys",
+    "use_repository_button": True,
 }
+
+
+def add_language_switch_button(app, pagename, templatename, context, doctree):
+    """Add an English-to-Chinese switch to the article header."""
+    header_buttons = context.get("header_buttons")
+    if header_buttons is None:
+        return
+
+    zh_url = context["pathto"]("zh/index.html", 1)
+    header_buttons.append(
+        {
+            "type": "javascript",
+            "javascript": f"window.location.href='{zh_url}'",
+            "tooltip": "切换到中文版",
+            "icon": "fas fa-language",
+            "label": "language-switch-button",
+            "classes": "pst-navbar-icon",
+        }
+    )
+
+
+def setup(app):
+    app.connect("html-page-context", add_language_switch_button, priority=502)

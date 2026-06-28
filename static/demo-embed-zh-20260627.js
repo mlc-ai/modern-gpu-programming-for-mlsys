@@ -121,9 +121,9 @@
     document.addEventListener("fullscreenchange", onFsChange);
     document.addEventListener("webkitfullscreenchange", onFsChange);
 
-    bar.appendChild(btn("−", "Zoom out", function () { z = Math.max(0.2, z / 1.2); apply(); }));
-    bar.appendChild(btn("⛶", "Full screen", goFullscreen));
-    bar.appendChild(btn("+", "Zoom in", function () { z = Math.min(6, z * 1.2); apply(); }));
+    bar.appendChild(btn("−", "缩小", function () { z = Math.max(0.2, z / 1.2); apply(); }));
+    bar.appendChild(btn("⛶", "全屏", goFullscreen));
+    bar.appendChild(btn("+", "放大", function () { z = Math.min(6, z * 1.2); apply(); }));
 
     function init() { recompute(true); observe(); setTimeout(function () { recompute(true); observe(); }, 400); }
     iframe.addEventListener("load", init);
