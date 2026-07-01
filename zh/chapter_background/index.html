@@ -358,7 +358,7 @@
 <p>前面介绍的多数层级都限制在单个 SM 内，而 cluster 可以把多个 CTA 组织到不同 SM 上。这样一来，CTA 之间不仅可以同步，还可以跨 SM 访问彼此的 shared memory。这种跨 CTA 的 shared memory 访问能力称为分布式共享内存，也就是 distributed shared memory（DSMEM）。</p>
 <p>DSMEM 的作用是避免不必要的 global memory 往返。借助 DSMEM，一个 CTA 可以把自己 SMEM 中的 tile 直接拷贝到同一 cluster 内另一个 CTA 的 SMEM 中，而不需要先写回 GMEM、再由对方重新读取。拷贝完成后，硬件会触发 completion barrier，通知后续计算这份数据已经可用。</p>
 <p>第三部分的 2-CTA cluster GEMM 就建立在这个机制之上。两个 CTA 可以通过 DSMEM 共享 operand tile，从而减少 global memory 访问。这里的“共享”不是把两个 CTA 的 SMEM 合并成一块：Asmem 和 Bsmem 仍然分别属于各自的 CTA。DSMEM 提供的是跨 CTA 访问能力，使得 cluster 内的其他 CTA，或者 cta_group=2 的 cooperative MMA，能够读到对方 SMEM 中的数据。</p>
-<p>下图展示了一个 2-CTA cluster 中的 DSMEM 访问路径：每个 CTA 仍然拥有自己的 SMEM，但可以通过 DSMEM 读取另一个 CTA 的 SMEM</p>
+<p>下图展示了一个 2-CTA cluster 中的 DSMEM 访问路径：每个 CTA 仍然拥有自己的 SMEM，但可以通过 DSMEM 读取另一个 CTA 的 SMEM。</p>
 <div style="overflow-x:auto;">
 <iframe src="../demo_zh/cta_cluster.html" title="A 2-CTA cluster sharing distributed shared memory" loading="lazy"
         style="width:100%; height:580px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
