@@ -13,8 +13,8 @@ high-performance kernels are built. This book is about developing both.
 
 The book follows a simple progression: first understand the GPU hardware, then learn the
 programming model we will use, and finally build state-of-the-art kernels step by step. Our main
-target is the Blackwell generation, and our main running examples are fast matrix multiplication
-(GEMM) and FlashAttention. Along the way, we will also study the core ingredients behind GPU
+target is the Blackwell generation, and our main running examples are General Matrix-Matrix
+Multiplication (GEMM) and FlashAttention. Along the way, we will also study the core ingredients behind GPU
 optimization: data layout, asynchronous data movement, and asynchronous coordination.
 
 The material grows out of the [Machine Learning Systems](https://mlsyscourse.org/) course series

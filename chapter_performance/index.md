@@ -4,11 +4,9 @@
 :::{admonition} Overview
 :class: overview
 
-- The roofline model gives a kernel a performance ceiling. The ceiling is set by either memory bandwidth or compute throughput.
-- Arithmetic intensity decides which ceiling applies. It is the amount of useful arithmetic work done per byte moved.
-- Low arithmetic intensity means the kernel is memory-bound. The main ways out are to move fewer bytes, reuse data more, fuse operations, or use smaller dtypes.
-- High arithmetic intensity means the kernel can be compute-bound. The main task is then to keep the Tensor Cores busy.
-- In modern GPU kernels, the main lever is overlap. TMA, Tensor Cores, epilogues, and stores should run at the same time whenever the dependency graph allows it.
+- The roofline model gives a kernel a performance ceiling from memory bandwidth and compute throughput, while arithmetic intensity decides which ceiling applies.
+- Low arithmetic intensity usually means memory-bound: performance is mainly limited by memory bandwidth. The optimization focus is to reduce HBM traffic, improve reuse, fuse operations, and get as close as possible to the memory-bandwidth roof.
+- High arithmetic intensity usually means compute-bound: performance is mainly limited by compute throughput. The optimization focus is to keep Tensor Cores busy and reduce idle time on the compute path through overlap.
 :::
 
 A kernel is only fast relative to a ceiling. A number like 330 TFLOP/s may look large by itself, but it means something very different on a GPU that can sustain on the order of 2 PFLOP/s on dense fp16 or bf16 Tensor Core work. Without a ceiling, it is hard to tell whether a kernel is close to the hardware limit or still leaving most of the chip idle.

@@ -4,9 +4,9 @@
 :::{admonition} Overview
 :class: overview
 
-- A kernel runs over a thread hierarchy (thread → warp → warpgroup → CTA → cluster → grid) across distinct memory spaces (registers, SMEM, GMEM, TMEM).
-- Compute splits into CUDA cores and Tensor Cores; dedicated engines like TMA move the data that feeds them.
-- A kernel is a pipeline that stages data through these memory spaces and hands work between independent compute and data-movement engines; the recurring goal is to keep those engines busy at once.
+- GPU kernel execution is first shaped by the thread hierarchy: thread, warp, warpgroup, CTA, cluster, and grid each correspond to a different scale of cooperation. Many Blackwell operations have their own natural scope: a TMA copy is launched by a single thread, a TMEM load is carried out by a warpgroup, and a 2-CTA cooperative MMA spans two CTAs.
+- Data does not live in just one place. GMEM, SMEM, TMEM, and registers serve different capacity, latency, and access-scope needs; clusters also use DSMEM so one CTA can access another CTA's shared memory. One core task of a high-performance kernel is to move data efficiently between these spaces.
+- Compute and data movement are handled by different hardware engines. CUDA cores handle address calculation, control flow, and scalar logic; Tensor Cores perform the main matrix computation; TMA moves data asynchronously. We end the chapter with a GEMM data pipeline that shows how overlap keeps multiple engines busy at the same time.
 :::
 
 To write fast GPU programs, it is important to understand the hardware
@@ -51,8 +51,7 @@ highlight it.
   on its own, which is what lets the lanes of a single warp follow different branches.
 - **Warpgroup**: four consecutive warps, or 128 threads. Hopper introduced the warpgroup as the
   unit that issues warpgroup-level MMA (`wgmma`), and on Blackwell it takes on a second role: it is
-  the cooperation unit for Tensor Memory access, where the 128 threads together move a TMEM tile into
-  or out of registers.
+  also the cooperation unit for Tensor Memory access.
 - **CTA** (*Cooperative Thread Array*, what CUDA also calls a thread block): the basic unit the
   hardware schedules. A CTA runs on a single SM and owns a private shared-memory allocation inside
   it. Several CTAs can be resident on the same SM at once, and when they are, they divide up that
@@ -84,10 +83,6 @@ own capacity, its own latency, and its own rules for who may access it.
 | **Tensor Memory (TMEM)** | Per-CTA | MMA accumulator storage | New on Blackwell; used by `tcgen05` |
 | **Register File (RF)** | Per-thread | Scalars and per-thread tile fragments | Fast; holds epilogue/temp values |
 
-Read in order, these spaces describe a path. The data path of almost every kernel in this book is
-**GMEM → SMEM → (compute) → registers → SMEM → GMEM**, and for tensor-core kernels TMEM sits in the
-middle of that path, holding the accumulators while the math runs.
-
 Of the four, **Tensor Memory (TMEM)** is the only one with no analog on pre-Blackwell hardware, and
 its full details wait until {ref}`chap_tensor_cores`. The motivation for it is worth understanding
 now, though. Earlier GPUs kept large MMA accumulators in registers, where they competed for a scarce
@@ -100,23 +95,24 @@ The second is that TMEM, unlike registers, must be **explicitly allocated and fr
 
 ### Distributed Shared Memory Across a Cluster
 
-The cluster is the one level of the hierarchy whose members can span several SMs, and that reach buys
-a memory capability the other levels lack. A CTA runs on one SM and works out of that SM's shared
-memory, but a single CTA's SMEM budget is finite, and large tiles often demand more operand storage,
-or more reuse, than one block alone can supply. Hopper's answer was the **thread block cluster**: a
-group of CTAs that cooperate more tightly than independent blocks do, in that they can synchronize
-together and read and write each other's shared memory, a capability called **distributed shared
-memory (DSMEM)**. Blackwell keeps clusters and adds to them, with dynamic scheduling
-({ref}`chap_clc`) and 2-CTA cooperative MMA.
+Most of the levels introduced above are confined to a single SM, while a cluster can place multiple
+CTAs on different SMs. This means CTAs can not only synchronize with one another, but also access one
+another's shared memory across SMs. This cross-CTA shared-memory access capability is called
+**distributed shared memory (DSMEM)**.
 
-DSMEM lets a CTA address and access a peer CTA's shared memory directly. A thread can name a location
-in a peer's SMEM and bulk-copy a tile straight from its own SMEM into the peer's, raising a completion
-barrier ({ref}`chap_async_barriers`) once the bytes have landed. The 2-CTA cluster GEMM in Part III is
-built on exactly this mechanism, using it to share operand tiles across the pair of CTAs without ever
-routing them back through global memory.
+DSMEM helps avoid unnecessary round trips through global memory. With DSMEM, one CTA can copy a tile
+directly from its own SMEM to another CTA's SMEM in the same cluster, without first writing it back
+to GMEM and having the peer CTA read it again. Once the copy completes, hardware raises a completion
+barrier to tell later computation that the data is ready.
 
-The figure below shows the extra DSMEM hop that a CTA cluster makes possible; click a piece to see
-what each CTA owns and where the cross-CTA read happens.
+The 2-CTA cluster GEMM in Part III is built on this mechanism. The two CTAs can share operand tiles
+through DSMEM, reducing global memory accesses. Here, "share" does not mean merging the two CTAs'
+SMEM into one pool: Asmem and Bsmem still belong to their respective CTAs. DSMEM provides cross-CTA
+access, allowing other CTAs in the cluster, or a `cta_group=2` cooperative MMA, to read data from a
+peer CTA's SMEM.
+
+The figure below shows the DSMEM access path in a 2-CTA cluster: each CTA still owns its own SMEM,
+but it can read another CTA's SMEM through DSMEM.
 
 ```{raw} html
 <div style="overflow-x:auto;">
@@ -170,11 +166,11 @@ such as `tma load` to highlight the data path it takes across the hardware units
 
 A single GEMM tile flows through three stages.
 
-1. **Load.** A TMA copy ({ref}`chap_tma`) streams an A or B operand tile from GMEM into SMEM. One
+1. **Load.** A TMA copy streams an A or B operand tile from GMEM into SMEM. One
    thread issues the copy, recording up front how many bytes are expected to arrive. As the bytes
    land, the TMA engine reports their progress, and a completion barrier flips only once all the
    expected bytes have been delivered.
-2. **Compute.** A `tcgen05` MMA ({ref}`chap_tensor_cores`) reads the operand tiles out of SMEM and
+2. **Compute.** A `tcgen05` MMA reads the operand tiles out of SMEM and
    accumulates the product into a TMEM tile. One elected thread issues it, and it signals a barrier
    when the math is done.
 3. **Epilogue.** The warpgroup reads the TMEM accumulator back into registers, casts the result to
@@ -187,14 +183,5 @@ order (load, wait, compute, wait, store), and so leaves each engine sitting idle
 the one before it. A fast kernel pipelines them instead: while the Tensor Core is computing on tile
 `k`, the TMA engine is already fetching tile `k+1`, and the epilogue is busy draining tile `k-1`, so
 all three engines stay occupied at the same time. Getting three asynchronous engines to hand work off
-to one another safely is precisely the job of the barrier and phase model
-({ref}`chap_async_barriers`), and the GEMM ladder of Part III is built on top of it.
-
-## What to Read Next
-
-Now that we have seen the high-level picture, we can move on to the chapters that dive deeper into
-the main mechanisms:
-
-- {ref}`chap_tensor_cores` explains `tcgen05` compute and Tensor Memory in detail.
-- {ref}`chap_tma` covers TMA-based asynchronous data movement.
-- {ref}`chap_async_barriers` introduces the mbarrier and phase model that coordinates these engines.
+to one another safely is precisely the job of the barrier and phase model, and the GEMM ladder of
+Part III is built on top of it.
