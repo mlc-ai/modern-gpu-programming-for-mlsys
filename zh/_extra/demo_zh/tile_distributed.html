@@ -398,7 +398,11 @@ panels.addEventListener('click', e => {
   const cell = e.target.closest('.cell') || e.target.closest('.gcell');
   if (!cell || cell.dataset.r === undefined) return;
   const r = +cell.dataset.r, c = +cell.dataset.c;
-  if (hovCell && hovCell.r === r && hovCell.c === c) return;
+  if (hovCell && hovCell.r === r && hovCell.c === c) {
+    clearHov();
+    draw();
+    return;
+  }
   clearHov();
   hovCell = { r, c };
   draw();
