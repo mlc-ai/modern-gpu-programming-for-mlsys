@@ -403,11 +403,6 @@ panels.addEventListener('click', e => {
   hovCell = { r, c };
   draw();
 });
-panels.addEventListener('mouseout', e => {
-  if (drawing) return;
-  const next = e.relatedTarget;
-  if (hovCell && !(next?.closest('.cell') || next?.closest('.gcell'))) { clearHov(); draw(); }
-});
 
 // ── Legend ──────────────────────────────────────────────────────
 function drawLegend() {
