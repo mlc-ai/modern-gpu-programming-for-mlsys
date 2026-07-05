@@ -40,7 +40,7 @@ One path is a thread copy. Threads cooperate to load from global memory and stor
 
 The other path is a TMA copy. One thread issues the transfer, and the hardware copy engine performs the rectangular copy. This is the natural path for large regular tiles, especially the operand tiles used by Tensor Core kernels.
 
-These two paths have different synchronization rules and different performance behavior. Choosing between them is a dispatch decision. The layout tells the kernel what memory arrangement it wants. The scope tells it which threads or CTAs are participating. The dispatch decides whether the copy is implemented by ordinary thread code or by TMA.
+These two paths have different synchronization rules and different performance behavior. Choosing between them is a dispatch decision. The layout tells the kernel what memory arrangement it wants. The scope tells it which threads or CTAs are participating. The dispatch decides whether the copy is implemented by ordinary thread copy or by TMA.
 
 ## Swizzled Layouts
 
