@@ -415,7 +415,7 @@
 <p>This gives the kernel two different ways to express the same logical operation, “copy this tile.”</p>
 <p>One path is a thread copy. Threads cooperate to load from global memory and store into shared memory. This gives the kernel direct control over every access, but it consumes thread instructions and registers for address calculations.</p>
 <p>The other path is a TMA copy. One thread issues the transfer, and the hardware copy engine performs the rectangular copy. This is the natural path for large regular tiles, especially the operand tiles used by Tensor Core kernels.</p>
-<p>These two paths have different synchronization rules and different performance behavior. Choosing between them is a dispatch decision. The layout tells the kernel what memory arrangement it wants. The scope tells it which threads or CTAs are participating. The dispatch decides whether the copy is implemented by ordinary thread code or by TMA.</p>
+<p>These two paths have different synchronization rules and different performance behavior. Choosing between them is a dispatch decision. The layout tells the kernel what memory arrangement it wants. The scope tells it which threads or CTAs are participating. The dispatch decides whether the copy is implemented by ordinary thread copy or by TMA.</p>
 </section>
 <section id="swizzled-layouts">
 <h2>Swizzled Layouts<a class="headerlink" href="#swizzled-layouts" title="Link to this heading">#</a></h2>
