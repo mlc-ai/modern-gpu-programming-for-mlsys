@@ -84,11 +84,11 @@ So far we have described layouts for whole tensors. GPU kernels, however, rarely
 entire matrix at once; they work on smaller tiles, which are loaded, transformed, and computed on by
 different parts of the hardware. The good news is that tiling asks for nothing new. It is still
 just a layout, only now written with a few more dimensions. Cut an 8×8 matrix into 2×4 tiles and we
-get a 4-D layout, with coordinates `(tile_row, row_in_tile, tile_col, col_in_tile)` and strides
+get a 4-D layout, with coordinates `(tile_row, tile_col, row_in_tile, col_in_tile)` and strides
 chosen so that each tile stays contiguous:
 
 ```text
-S[(4, 2, 2, 4) : (16, 4, 8, 1)]
+S[(4, 2, 2, 4) : (16, 8, 4, 1)]
 ```
 
 A logical `(i, j)` first becomes `(i//2, j//4, i%2, j%4)` and then runs through the strides. What is
