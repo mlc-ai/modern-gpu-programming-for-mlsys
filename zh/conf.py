@@ -28,23 +28,6 @@ exclude_patterns = [
     "**/README.md",
     "_*.md",
     "**/_*.md",
-    # Release the Chinese edition chapter by chapter. Keep draft sources in
-    # zh/, but exclude unreleased pages so they are not published or searchable.
-    "appendix/**",
-    "chapter_async_barriers/**",
-    "chapter_clc/**",
-    "chapter_data_layout/**",
-    "chapter_flash_attention/**",
-    "chapter_gemm_advanced/**",
-    "chapter_gemm_async/**",
-    "chapter_gemm_basics/**",
-    "chapter_intro_tirx/**",
-    "chapter_layout_generations/**",
-    "chapter_tensor_cores/**",
-    "chapter_tirx_layout_api/**",
-    "chapter_tma/**",
-    "chapter_tmem/**",
-    "tirx_guide/**",
 ]
 
 html_theme = "sphinx_book_theme"
