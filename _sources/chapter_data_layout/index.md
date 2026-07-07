@@ -91,7 +91,7 @@ chosen so that each tile stays contiguous:
 S[(4, 2, 2, 4) : (16, 4, 8, 1)]
 ```
 
-A logical `(i, j)` first becomes `(i//2, i%2, j//4, j%4)` and then runs through the strides. What is
+A logical `(i, j)` first becomes `(i//2, j//4, i%2, j%4)` and then runs through the strides. What is
 worth noticing is that the notation expresses tiling without any special "tile" concept at all: it is
 the same shape–stride model as before, with the index merely split into outer and inner coordinates.
 

@@ -468,7 +468,7 @@ chosen so that each tile stays contiguous:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>S[(4, 2, 2, 4) : (16, 4, 8, 1)]
 </pre></div>
 </div>
-<p>A logical <code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">j)</span></code> first becomes <code class="docutils literal notranslate"><span class="pre">(i//2,</span> <span class="pre">i%2,</span> <span class="pre">j//4,</span> <span class="pre">j%4)</span></code> and then runs through the strides. What is
+<p>A logical <code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">j)</span></code> first becomes <code class="docutils literal notranslate"><span class="pre">(i//2,</span> <span class="pre">j//4,</span> <span class="pre">i%2,</span> <span class="pre">j%4)</span></code> and then runs through the strides. What is
 worth noticing is that the notation expresses tiling without any special “tile” concept at all: it is
 the same shape–stride model as before, with the index merely split into outer and inner coordinates.</p>
 <p>The interactive visualization below shows how a logical matrix index is decomposed into tile
