@@ -19,18 +19,51 @@
 - **第四部分：Flash Attention 4。** 这一部分基于第三部分的技术构建完整的 attention kernel：两个 MMA，中间插入 softmax，并包含 online-softmax rescaling、causal masking 和 GQA。
 - **附录。** TIRx API 和编译器内部机制说明。
 
-## 已发布章节
-
 ```{toctree}
 :caption: 第一部分：理解 GPU
 :maxdepth: 1
 
 chapter_background/index
 chapter_performance/index
+chapter_data_layout/index
+chapter_layout_generations/index
+chapter_tma/index
+chapter_tensor_cores/index
+chapter_tmem/index
+chapter_async_barriers/index
+chapter_clc/index
 ```
 
-<!--
-Release chapters one by one by adding them back to the visible toctree above.
-Keep unreleased placeholder pages marked with `orphan: true`, so Sphinx builds
-without warnings while the pages stay hidden from navigation.
--->
+```{toctree}
+:caption: 第二部分：TIRx 概览
+:maxdepth: 1
+
+chapter_intro_tirx/index
+chapter_tirx_layout_api/index
+```
+
+```{toctree}
+:caption: 第三部分：GEMM：从 Tiled 到 SOTA
+:maxdepth: 2
+
+chapter_gemm_basics/index
+chapter_gemm_async/index
+chapter_gemm_advanced/index
+```
+
+```{toctree}
+:caption: 第四部分：Flash Attention 4
+:maxdepth: 2
+
+chapter_flash_attention/index
+```
+
+```{toctree}
+:caption: 参考资料
+:maxdepth: 1
+
+appendix/index
+appendix/debugging_warp_specialized
+tirx_guide/arch/index
+tirx_guide/language_reference/index
+```
