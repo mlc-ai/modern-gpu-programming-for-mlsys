@@ -85,7 +85,7 @@ let drawing = false;
 // ── Mapping functions ──────────────────────────────────────────
 
 // Fully Sharded (S0S1):
-// S[(2, 4, 2, 4) : (1@gpuid_y, 4@m, 1@gpuid_x, 1@m)]
+// S[(2, 2, 4, 4) : (1@gpuid_y, 1@gpuid_x, 4@m, 1@m)]
 // rows split by 2 → gpuid_y, cols split by 2 → gpuid_x
 function shardGpus(r, c) {
   const gy = Math.floor(r / 4), gx = Math.floor(c / 4);
@@ -185,7 +185,7 @@ function draw() {
 
   // Layout notations
   const notations = {
-    shard:   'Layout: S[(2,4,2,4) : (1@gpuid_y, 4@m, 1@gpuid_x, 1@m)]',
+    shard:   'Layout: S[(2,2,4,4) : (1@gpuid_y, 1@gpuid_x, 4@m, 1@m)]',
     replica: 'Layout: S[(2,4,8) : (1@gpuid_y, 8@m, 1@m)] + R[2 : 1@gpuid_x]',
     offset:  'Layout: S[(2,4,8) : (1@gpuid_y, 8@m, 1@m)] + O[1@gpuid_x]',
   };
@@ -313,8 +313,8 @@ function draw() {
       const addr = localAddr(gpus[0], loc.lr, loc.lc);
       html = `<div class="ftitle">Element ${r*N+c} at (row=${r}, col=${c})</div>`;
       html += '<div class="fcontent">';
-      html += `addr = (row // 4) × 1@gpuid_y + (row % 4) × 4@m + (col // 4) × 1@gpuid_x + (col % 4) × 1@m<br>`;
-      html += `&nbsp;&nbsp;&nbsp;&nbsp; = (${r} // 4) × 1@gpuid_y + (${r} % 4) × 4@m + (${c} // 4) × 1@gpuid_x + (${c} % 4) × 1@m<br>`;
+      html += `addr = (row // 4) × 1@gpuid_y + (col // 4) × 1@gpuid_x + (row % 4) × 4@m + (col % 4) × 1@m<br>`;
+      html += `&nbsp;&nbsp;&nbsp;&nbsp; = (${r} // 4) × 1@gpuid_y + (${c} // 4) × 1@gpuid_x + (${r} % 4) × 4@m + (${c} % 4) × 1@m<br>`;
       html += `&nbsp;&nbsp;&nbsp;&nbsp; = <b>${gy}</b>@gpuid_y + <b>${gx}</b>@gpuid_x + <b>${addr}</b>@m`;
       html += '</div>';
     } else if (ST.mode === 'replica') {
