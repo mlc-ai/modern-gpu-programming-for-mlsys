@@ -57,8 +57,8 @@ Take `mma.m16n8k16` with fp16 or bf16 inputs and fp32 accumulation as the concre
 For the C or D accumulator, lane `l` holds rows:
 
 ```text
-l / 4
-l / 4 + 8
+l // 4
+l // 4 + 8
 ```
 
 and columns:
@@ -79,10 +79,10 @@ The exact details vary by instruction shape and dtype, but the principle is fixe
 In layout notation, the m8n8 fragment is the kind of pattern written with named lane axes, for example:
 
 ```text
-S[(8, 4, 2) : (4@laneid, 1@laneid, 1@m)]
+S[(8, 4, 2) : (4@laneid, 1@laneid, 1@reg)]
 ```
 
-The two `laneid` iters together describe how the row and column pieces are scattered across lanes, while the final `m` component describes the per-lane register slot.
+The two `laneid` iters together describe how the row and column pieces are scattered across lanes, while the final `reg` component describes the per-lane register slot.
 
 ## `ldmatrix`: Shared Memory to Register Fragment
 
