@@ -161,11 +161,11 @@ sfk = k // K_blk
 
 ```text
 A_real[m, k] = A_low[m, k] · SFA[m, k // K_blk]
-B_real[k, n] = B_low[k, n] · SFB[k // K_blk, n]
+B_real[k, n] = B_low[k, n] · SFB[n, k // K_blk]
 D = C + A_real × B_real
 ```
 
-`SFA[m, sfk]` 是 A 的第 `m` 行、第 `sfk` 个 K-scale block 对应的 scale factor；`SFB[sfk, n]` 是 B 一侧的对应 scale factor。`SF_K` 表示 K 维上 scale blocks 的数量。图中的示例取 `M = 128`、`SF_K = 4`，因此 A-side scale-factor tensor 的逻辑形状为 `128×4`。
+`SFA[m, sfk]` 是 A 的第 `m` 行、第 `sfk` 个 K-scale block 对应的 scale factor；`SFB[n, sfk]` 是 B 的第 `n` 列、第 `sfk` 个 K-scale block 对应的 scale factor。`SF_K` 表示 K 维上 scale blocks 的数量。图中的示例取 `M = 128`、`SF_K = 4`，因此 A-side scale-factor tensor 的逻辑形状为 `128×4`。
 
 为了说明这个布局，先固定一个 `sfk`，只考察 `SFA[m, sfk]` 在 `m = 0…127` 上的 128 个元素。这些元素并不会分别占用 128 条 TMEM lanes，而是先被紧凑地打包：
 
