@@ -183,8 +183,9 @@ kernel as well: data that the hardware broadcasts across lanes. Blackwell's bloc
 scale vector is stored in only **32 TMEM lanes**, where logical row `r` goes to TMEM lane `r % 32`, with
 `r // 32` running along the columns. Those 32 stored TMEM lanes are then **replicated along the TMEM
 `TLane` axis**, from 32 up to 128 TMEM lanes, so that each of the four warps in the reading warpgroup
-finds a copy in its own 32-lane TMEM window. This broadcasts the data to four warps, and we write it with a
-replication dimension. The reads themselves are carried out by those warps' threads:
+finds a copy in its own 32-lane TMEM window. The corresponding SMEM-to-TMEM copy uses the `.warpx4`
+multicast qualifier of `tcgen05.cp`, and we write it with a replication dimension. The reads themselves
+are carried out by those warps' threads:
 
 ```text
 S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
@@ -199,7 +200,7 @@ The interactive demo below shows both steps together: compact packing into 32 TM
 broadcast to four warps across the 128 reading lanes.
 
 ```{raw} html
-<iframe src="../demo/sf_tmem.html?v=mgroup-20260709" title="Scale factors in TMEM: packing and broadcast to 4 warps" loading="lazy"
+<iframe src="../demo/sf_tmem.html?v=warpx4-20260710" title="Scale factors in TMEM: packing and .warpx4 multicast" loading="lazy"
         style="width:100%; min-width:1040px; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 *Interactive: click a scale factor `SFA[m, sf]`; it packs into TMEM at lane `m mod 32`, column `(m // 32)·4 + sf`, and is then broadcast along the `TLane` axis to four warps: the four lane copies (`l`, `l+32`, `l+64`, `l+96`) occupy one 32-lane window per warp.*

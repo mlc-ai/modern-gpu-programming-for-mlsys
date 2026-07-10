@@ -176,7 +176,7 @@ TCol  = m // 32
 
 因此，`m = 0…31`、`32…63`、`64…95` 和 `96…127` 分别使用同样的 32 条 TMEM lanes，但位于四个不同的 columns。也就是说，128 个逻辑元素先被打包成一个 `32 lanes × 4 columns` 的基础布局。
 
-接下来才是 replication。为了让读取它的 warpgroup 中四个 warps 都能在自己的 32-lane TMEM window 中找到同一份 scale，硬件把这个 32-lane 基础布局沿 `TLane` 轴复制四份：
+接下来才是 replication。在实际的 SMEM-to-TMEM copy 中，这对应 `tcgen05.cp` 的 `.warpx4` multicast：为了让读取它的 warpgroup 中四个 warps 都能在自己的 32-lane TMEM window 中找到同一份 scale，硬件把这个 32-lane 基础布局沿 `TLane` 轴复制四份：
 
 ```text
 S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
@@ -187,7 +187,7 @@ S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
 扩展回完整的 `SFA[m, sfk]` 后，`m // 32` 决定落在哪一组四个 TMEM columns，`sfk` 决定组内的具体 column，因此 `TCol = (m // 32)·4 + sfk`。下图同时展示了这一打包过程和沿 `TLane` 轴的四份复制。
 
 ```{raw} html
-<iframe src="../demo_zh/sf_tmem.html?v=mgroup-20260709" title="Scale factors in TMEM: packing and broadcast to 4 warps" loading="lazy"
+<iframe src="../demo_zh/sf_tmem.html?v=warpx4-20260710" title="Scale factors in TMEM: packing and .warpx4 multicast" loading="lazy"
         style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 

@@ -33,7 +33,7 @@
 </head>
 <body>
 <h1>Scale Factors in TMEM (nvfp4)</h1>
-<div class="sub">M = 128, one MMA-K block (SF_K = 4) &nbsp;·&nbsp; broadcast to 4 warps: R[4 : 32@TLane]</div>
+<div class="sub">M = 128, one MMA-K block (SF_K = 4) &nbsp;·&nbsp; tcgen05.cp .warpx4 multicast (broadcast to 4 warps): R[4 : 32@TLane]</div>
 
 <div class="panels" id="panels">
   <svg class="arrow-svg" id="arrows"></svg>
@@ -56,7 +56,7 @@
     <span class="k">Mgroup</span> = m div 32 &nbsp;·&nbsp;
     <span class="k">byte</span> = sfk &nbsp;·&nbsp;
     <span class="k">TCol</span> = Mgroup·4 + byte &nbsp;·&nbsp;
-    <span class="k">broadcast to 4 warps</span> → lanes { TLane, +32, +64, +96 }
+    <span class="k">.warpx4 multicast (broadcast to 4 warps)</span> → lanes { TLane, +32, +64, +96 }
   </div>
   <div class="frow" id="calc">click a cell on the left…</div>
 </div>
