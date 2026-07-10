@@ -5,7 +5,7 @@
 :class: overview
 
 - **数据布局**将张量的逻辑索引映射到物理位置。它会影响访存能否合并、是否产生 bank conflict，以及 tile 是否符合特定硬件单元要求的格式。
-- 本章使用 `S[(shape) : (strides)]` 统一描述布局，并通过命名轴（`@laneid`、`@TLane` 等）描述数据在硬件资源上的分布，通过复制维度 `R[...]` 表示广播和复制。
+- 本章使用 `S[(shape) : (strides)]` 统一描述布局，通过命名轴（`@laneid`、`@TLane` 等）描述物理坐标，通过复制维度 `R[...]` 表示广播和复制，并用固定 offset 移动整个布局。
 - Swizzle 是一种基于 XOR 的地址重映射，可以在特定的元素宽度和访问模式下避免 shared memory bank conflict。
 :::
 
@@ -15,7 +15,7 @@
 
 机器学习程序通常用逻辑 shape 来描述张量。**数据布局**补上了缺失的物理部分：它说明带有逻辑索引 `(i, j, …)` 的元素实际存放在哪里，可以是在 memory 中、register 中，也可以是在其他硬件存储空间中。
 
-本章会介绍现代 GPU 编程中常见的主要布局。为了避免讨论变得过于复杂，我们会先引入一套**表示法**，用它统一描述机器学习系统中会遇到的各种布局形式。最后，我们会介绍 **swizzling**：它让同一个 tile 的按行访问和按列访问都能保持高效。
+本章会介绍现代 GPU 编程中常见的主要布局。我们先建立一套统一的**表示法**，再用它描述不同物理空间中的数据布局。最后介绍 **swizzling**：它通过重排地址映射，在匹配的访问模式下兼顾同一个 tile 的按行和按列访问。
 
 ## Shape-Stride 模型
 
@@ -27,9 +27,7 @@ S[(4, 4) : (4, 1)]
 addr(i, j) = i·4 + j·1
 ```
 
-这就是经典的 Shape-Stride 模型；熟悉 CUTLASS/CuTe 的读者可以把 `S[...]` 看作 CuTe layout 记号的一个 row-major 简化版。
-
-PyTorch 和 NumPy 中的 tensor 已经在使用这个模型：一块扁平的 storage buffer，加上描述如何解释这块 storage 的 `shape` 和 `strides`。
+这就是经典的 Shape-Stride 模型。PyTorch 和 NumPy 中的 tensor 已经在使用这个模型：一块扁平的 storage buffer，加上描述如何解释这块 storage 的 `shape` 和 `strides`。
 
 ```python
 import torch
@@ -61,21 +59,164 @@ GPU layout 同样描述逻辑坐标到物理位置的映射；这个位置既可
 
 ## Tile Layout
 
-到目前为止，我们描述的是整个 tensor 的布局。但 GPU kernel 很少一次处理完整矩阵；它们通常处理更小的 tiles，而这些 tiles 会由不同硬件单元加载、重排并参与计算。这里并不需要引入新的概念：tiling 仍然可以看作一种布局，只是把原来的索引拆成更多维度。
+GPU kernel 很少一次处理完整矩阵，通常会将矩阵划分成更小的 tiles。例如，可以把一个 `8×8` 矩阵划分成 `2×4` 的 tiles，并让这些 tiles 按 row-major 顺序存储、每个 tile 内部也保持 row-major contiguous。
 
-这里采用一种常见的 tiling 展开方式，把每个原始维度依次拆成 outer 坐标和 inner 坐标，然后再进入下一个原始维度：
+要准确描述这种排列，需要同时表示 tile 在矩阵中的位置和元素在 tile 内的位置。这里先给出本章使用的完整 layout 定义，再把它应用到这个例子。
+
+### Layout 函数
+
+设 $A$ 是命名轴的集合。不同轴上的整数坐标组成轴空间：
+
+$$
+\mathbb{Z}A=
+\left\{
+\sum_i z_i\mathbin{@}a_i
+\;\middle|\;
+z_i\in\mathbb{Z},\ a_i\in A
+\right\}.
+$$
+
+一个 iter 定义为三元组
+
+$$
+I=(e_I,s_I,a_I),
+\qquad
+e_I>0,\quad s_I\ne0,\quad a_I\in A,
+$$
+
+其中 $e_I$、$s_I$ 和 $a_I$ 分别是它的 extent、stride 和 axis。它对应的映射为
+
+$$
+f_I:[0,e_I)\longrightarrow\mathbb{Z}A,
+\qquad
+f_I(x)=(x s_I)\mathbin{@}a_I.
+$$
+
+一个完整的 layout 定义为：
+
+$$
+\begin{aligned}
+L&=(D,R,O),\\
+D&=(I_0,\ldots,I_{n_D-1}), & n_D&\ge1,\\
+R&=(J_0,\ldots,J_{n_R-1}), & n_R&\ge0,\\
+O&\in\mathbb{Z}A.
+\end{aligned}
+$$
+
+其中，$D$ 是由 sharded iters 组成的有序 tuple，$R$ 是由 replicated iters 组成的 multiset，$O$ 是固定 offset。
+
+令
+
+$$
+E_D=\prod_k e_{I_k}.
+$$
+
+对于扁平逻辑索引 $x\in[0,E_D)$，标准的 lexicographic unflatten
+
+$$
+\iota:[0,E_D)\longrightarrow
+\prod_k[0,e_{I_k})
+$$
+
+按照各个 sharded iter 的 extent 将 $x$ 展开为坐标 tuple。基础物理位置为
+
+$$
+f_D(x)=
+\sum_{k=0}^{n_D-1}
+\bigl(\iota(x)_k\,s_{I_k}\bigr)\mathbin{@}a_{I_k}.
+$$
+
+对于 replicated iters，令
+
+$$
+E_R=\prod_t e_{J_t},
+\qquad
+\text{并约定当 }R=\varnothing\text{ 时 }E_R=1.
+$$
+
+对于 replica coordinate tuple
+
+$$
+r\in\prod_t[0,e_{J_t}),
+$$
+
+对应的副本偏移为
+
+$$
+f_R(r)=
+\sum_{t=0}^{n_R-1}
+\bigl(r_t\,s_{J_t}\bigr)\mathbin{@}a_{J_t}.
+$$
+
+因此，完整 layout 是下面这个集合值映射：
+
+$$
+f_L(x)=
+\left\{
+f_D(x)+f_R(r)+O
+\;\middle|\;
+r\in\prod_t[0,e_{J_t})
+\right\}.
+$$
+
+如果 $R=\varnothing$，则 $f_L(x)=\{f_D(x)+O\}$；否则，一个逻辑元素可以对应多个物理位置。
+
+### 用 Layout 函数表示 Tiling
+
+回到前面的 `8×8` 矩阵。这个例子没有 replication 或 offset，因此只需要考虑 $f_D$。对于逻辑坐标 `(i, j)`，首先按原矩阵的 shape 得到扁平逻辑索引：
 
 ```text
-(outer_dim0, inner_dim0, outer_dim1, inner_dim1, ...)
+x = i·8 + j
 ```
 
-因此，把一个 8×8 矩阵切成 2×4 的 tiles 后，逻辑坐标 `(row, col)` 会变成 `(tile_row, row_in_tile, tile_col, col_in_tile)`。对应的 4-D layout 使用下面这组 strides，让每个 tile 保持 contiguous：
+将矩阵划分成 `2×4` 的 tiles 后，会得到 4 个 tile rows、每个 tile 内的 2 个 rows、2 个 tile columns，以及每个 tile 内的 4 个 columns。因此，选择下面这组 sharded iter extents：
+
+```text
+(4, 2, 2, 4)
+```
+
+$\iota$ 按照这些 extents 对 `x` 做 unflatten：
+
+```text
+(c0, c1, c2, c3) = unflatten(x; 4, 2, 2, 4)
+
+c0 = x // 16
+c1 = (x // 8) % 2
+c2 = (x // 4) % 2
+c3 = x % 4
+```
+
+代入 `x = i·8 + j` 后：
+
+```text
+c0 = i // 2    = tile_row
+c1 = i % 2     = row_in_tile
+c2 = j // 4    = tile_col
+c3 = j % 4     = col_in_tile
+```
+
+因此，tile 坐标分解就是 layout 函数对扁平逻辑索引 `x` 做 unflatten 的结果，不需要额外定义一个 tiling 函数。
+
+Sharded iter extents 确定逻辑坐标如何分解，strides 则确定这些坐标如何映射到物理位置。对于前面指定的 tile-major 排列，对应的 shard mapping 是：
+
+```text
+f_D(x) = c0·16 + c1·4 + c2·8 + c3·1
+```
+
+所以这个 layout 可以写成：
 
 ```text
 S[(4, 2, 2, 4) : (16, 4, 8, 1)]
 ```
 
-逻辑索引 `(i, j)` 会先拆成 `(i//2, i%2, j//4, j%4)`，再带入 strides 计算地址。
+对于原始矩阵坐标 `(i, j)`，最终地址为：
+
+```text
+f_D(i·8 + j)
+    = (i//2)·16 + (i%2)·4 + (j//4)·8 + (j%4)·1
+```
+
+这里的 shard iter 顺序是 `(tile_row, row_in_tile, tile_col, col_in_tile)`，物理嵌套顺序则是 `tile_row → tile_col → row_in_tile → col_in_tile`，所以 strides 不一定从左到右递减。
 
 下图展示了这一索引分解和地址计算过程。
 
@@ -86,30 +227,57 @@ S[(4, 2, 2, 4) : (16, 4, 8, 1)]
 
 *点击一个 cell，查看它的 tiled index 和地址。*
 
-## 命名轴
+## 命名轴：从线性地址到物理坐标
 
-到目前为止，`S[...]` 里的每个 stride 都表示线性 memory 中的偏移，我们也一直把 address 当成这个空间里的位置。但在 GPU 上，数据并不一定只位于一个空间中：除了 memory，一个 tile 还可能分布在 warp lanes、thread registers，或者 TMEM lanes 和 columns 中。为了统一描述这些情况，我们把前面的记号推广到带命名轴的形式。基本思想是让每个 stride 系数都带一个 axis tag，用来说明这个坐标沿着哪个空间移动：`@m` 表示普通 memory，`@laneid` 表示 warp lanes，`@reg` 表示 registers，`@warpid` 表示 warps，`@TLane` 和 `@TCol` 分别表示 TMEM 的 lane 坐标（可以把它看作行）和 column 坐标（列）。有了这些 tag，同一个布局不仅能描述数据放在 memory 的哪里，也能描述数据如何分布到负责处理它的硬件资源上。
+到目前为止，`S[...]` 中的 strides 都是普通整数，映射函数返回的是线性 memory 中的一个地址。GPU 上的物理位置却不一定能用一个整数表示：TMEM 使用 lane 和 column 两个坐标，register fragment 需要同时说明 lane 和 register，分布式布局还可能需要 GPU mesh 坐标。
 
-当 memory tag 被显式写出来后，一个 row-major 的 8×16 memory tile 就是：
+命名轴把 Shape-Stride 模型推广到了这些情况。每个 stride 系数都可以带一个 axis tag，用来说明这一项沿哪个物理轴移动；映射函数的结果也从一个整数，推广为一组带名称的物理坐标。
+
+### 多维物理空间
+
+`@m` 表示普通的线性 memory。显式写出这个 tag 后，一个 row-major 的 `8×16` memory tile 是：
 
 ```text
 S[(8, 16) : (16@m, 1@m)]
+
+(row, col) = unflatten(x; 8, 16)
+f_D(x) = (row·16 + col)@m
 ```
 
-当布局描述的是分散到 threads 上的数据，而不是线性 memory 中的数据时，这些 tag 就开始发挥作用了。例如，考虑下面这个布局：
+TMEM 则是一个二维物理空间，`@TLane` 和 `@TCol` 分别表示 TMEM 的 lane 坐标（可以看作行）和 column 坐标（列）。例如：
+
+```text
+S[(128, 256) : (1@TLane, 1@TCol)]
+
+(row, col) = unflatten(x; 128, 256)
+f_D(x) = row@TLane + col@TCol
+```
+
+### 数据在 Lane 和 Register 中的分布
+
+命名轴不只表示 memory 或 device 坐标，也可以表示数据由哪些执行资源持有。`@laneid` 表示一个 warp 内的 lanes，`@reg` 表示每个 thread 的 registers，`@warpid` 表示 warps。例如，考虑下面这个布局：
 
 ```text
 S[(8, 4, 2) : (4@laneid, 1@laneid, 1@reg)]
 ```
 
-它描述了一个分布在 32 个 warp lanes 上的逻辑 `8×8` tile。逻辑坐标 `(row, col)` 首先被拆成 `(row, col//2, col%2)`，因此三个维度的 shape 分别是 `(8, 4, 2)`。带 tag 的 strides 进一步说明了这三个坐标如何映射到硬件资源：
+它描述了一个分布在 32 个 warp lanes 上的逻辑 `8×8` tile。对于逻辑坐标 `(row, col)`，扁平索引是 `x = row·8 + col`。layout 按照 shard extents `(8, 4, 2)` 对 `x` 做 unflatten：
 
 ```text
-laneid = row·4 + (col//2)·1
+(c0, c1, c2) = unflatten(x; 8, 4, 2)
+             = (row, col//2, col%2)
+
+f_D(x) = (c0·4 + c1·1)@laneid + c2·1@reg
+```
+
+因此：
+
+```text
+laneid = row·4 + col//2
 reg    = col%2
 ```
 
-也就是说，每个 lane 持有同一行中相邻的两个元素，它们分别放在该 lane 的 register 0 和 register 1 中。例如，逻辑坐标 `(5, 3)` 会被拆成 `(5, 1, 1)`，因此它位于 lane 21 的 register 1。这里的 `laneid` 指的是一个 warp 内的 warp lane index，也就是 `thread_index % warp_size`。这正是后续 layout generation 章节会介绍的 tensor-core register fragment。
+也就是说，每个 lane 持有同一行中相邻的两个元素，它们分别放在该 lane 的 register 0 和 register 1 中。例如，逻辑坐标 `(5, 3)` 对应 `x = 43`，unflatten 后得到 `(5, 1, 1)`，因此它位于 lane 21 的 register 1。这里的 `laneid` 指的是一个 warp 内的 warp lane index，也就是 `thread_index % warp_size`。这类布局可以用于描述后续 layout generation 章节中的 tensor-core register fragments。
 
 下图展示了这个 `8×8` tile 在 warp lanes 和 registers 上的分布。
 
@@ -120,36 +288,11 @@ reg    = col%2
 
 *一个使用 `@laneid` 和 `@reg` 的布局；点击一个 cell，查看它由哪个 lane/register 持有。*
 
-## 分布式布局
+## Replication 与 Offset
 
-前面我们用命名轴描述单个 GPU 内的 lanes 和 registers；同样的记号也可以扩展到多张 GPU。GPU mesh 是把多张 GPU 按一个或多个逻辑轴组织起来的设备网格；例如，`2×2` GPU mesh 包含四张 GPU，每张 GPU 都有一个由 `@gpuid_x` 和 `@gpuid_y` 组成的坐标。因此，`@gpuid_x` 和 `@gpuid_y` 这样的轴可以表示数据落在 GPU mesh 的哪个坐标上。借助这些轴，同一套记号也可以描述分布式训练和推理中常见的 sharding 模式。
+### TMEM 中 Scale Factors 的跨 Warp 广播
 
-不过，仅靠这些轴还不能表达复制，也就是同一份数据被放到多个位置。因此，我们引入记号 `R[n : stride]`，其中 `R` 表示一个复制维度。例如：
-
-```text
-R[2 : 1@gpuid_x]
-```
-
-表示沿着 `@gpuid_x` 轴复制 2 份。
-
-把 sharding 和 replication 结合起来，一个表达式就可以同时描述张量在 2×2 GPU mesh 上的分片方式，以及沿某个轴的复制方式：
-
-```text
-S[(2, 4, 8) : (1@gpuid_y, 8@m, 1@m)] + R[2 : 1@gpuid_x]
-```
-
-下图展示了一个小型 GPU mesh 上同时包含 sharding 和 replication 的布局，并支持在 fully-sharded、shard + replica 和 shard + offset 三种模式之间切换。
-
-```{raw} html
-<iframe src="../demo_zh/tile_distributed.html" title="Distributed layout across a GPU mesh" loading="lazy"
-        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-```
-
-*一个分布在 2×2 GPU mesh 上的布局；点击一个 cell，查看哪些 device 持有它。*
-
-## TMEM 中 Scale Factors 的跨 Warp 广播
-
-前面为了描述 GPU mesh，我们引入了 replication dimension `R[...]`。这个记号不仅适用于多设备场景，也可以描述单个 kernel 内部的数据广播。Blackwell 的 block-scaled MMA 就是一个例子。
+先看一个发生在单个 kernel 内部的例子。Blackwell block-scaled MMA 会把 scale factors 存放在 TMEM 中，并通过 `.warpx4` broadcast 让读取它的四个 warps 都能访问同一份数据。
 
 Block-scaled MMA 面向低精度输入。它沿 K 维将 A、B 划分为若干 scale blocks，并为每个 block 配置一个 scale factor，用来恢复该块的数值尺度。设每个 scale block 包含 `K_blk` 个 K 元素，那么元素 `k` 所属 block 的索引为：
 
@@ -170,21 +313,30 @@ D = C + A_real × B_real
 为了说明这个布局，先固定一个 `sfk`，只考察 `SFA[m, sfk]` 在 `m = 0…127` 上的 128 个元素。这些元素并不会分别占用 128 条 TMEM lanes，而是先被紧凑地打包：
 
 ```text
-TLane = m % 32
-TCol  = m // 32
+TLane  = m % 32
+Mgroup = m // 32
+TCol   = Mgroup·4 + sfk
 ```
 
-因此，`m = 0…31`、`32…63`、`64…95` 和 `96…127` 分别使用同样的 32 条 TMEM lanes，但位于四个不同的 columns。也就是说，128 个逻辑元素先被打包成一个 `32 lanes × 4 columns` 的基础布局。
+因此，`m = 0…31`、`32…63`、`64…95` 和 `96…127` 分别使用同样的 32 条 TMEM lanes。对于固定的 `sfk`，四个 `Mgroup` 对应的 TCol 分别是 `sfk`、`4+sfk`、`8+sfk` 和 `12+sfk`。这样，128 个逻辑元素先被打包到 32 条 lanes 和 4 个 TCol 位置中。
 
-接下来才是 replication。为了让读取它的 warpgroup 中四个 warps 都能在自己的 32-lane TMEM window 中找到同一份 scale，硬件把这个 32-lane 基础布局沿 `TLane` 轴复制四份。这就是 `.warpx4` broadcast，可以写成：
+随后，为了让读取它的 warpgroup 中四个 warps 都能在自己的 32-lane TMEM window 中找到同一份 scale，硬件通过 `.warpx4` broadcast，把这个 32-lane 基础布局沿 `TLane` 轴复制四份。对于基础 lane `l`，同一个值会出现在 lanes `l`、`l+32`、`l+64` 和 `l+96` 中，而 column 保持不变。
+
+这个例子的关键特征是：一个逻辑 scale factor 同时对应四个物理位置。前面的 shard mapping $f_D(x)$ 只能为逻辑元素 $x$ 给出一个基础位置，因此还需要一种方式表示这些与 $x$ 无关的额外副本。
+
+### 用 Replication 捕获多个物理位置
+
+Tile Layout 小节中的完整 layout 定义已经包含 replicated iters $R$。与由逻辑索引 $x$ 决定的 $D$ 不同，$R$ 使用独立的 replica coordinates 枚举额外偏移，因此 $f_L(x)$ 可以为同一个逻辑元素返回多个物理位置。记号 `R[shape : strides]` 用来书写这些 replicated iters；固定 offset $O$ 则只平移所有结果，不会增加位置的数量。
+
+回到前面的 TMEM 例子，沿 `TLane` 轴的四份复制可以写成：
 
 ```text
 S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
 ```
 
-这意味着对基础 lane `l`，同一个值会出现在 lanes `l`、`l+32`、`l+64` 和 `l+96` 中，而 column 保持不变。`R[4 : 32@TLane]` 不产生新的逻辑数据；它只是说明同一个值在四个 warp 的 TMEM window 中各出现一次。
+这里的 `R[4 : 32@TLane]` 让 replica coordinate 依次取 `0`、`1`、`2` 和 `3`，产生 `0`、`32`、`64` 和 `96` 四个 `TLane` 偏移。它不产生新的逻辑数据，只说明同一个值在四个 warp 的 TMEM window 中各出现一次。
 
-扩展回完整的 `SFA[m, sfk]` 后，`m // 32` 决定落在哪一组四个 TMEM columns，`sfk` 决定组内的具体 column，因此 `TCol = (m // 32)·4 + sfk`。下图同时展示了这一打包过程和沿 `TLane` 轴的四份复制。
+下图同时展示了这套打包映射，以及随后沿 `TLane` 轴的四份复制。
 
 ```{raw} html
 <iframe src="../demo_zh/sf_tmem.html?v=warpx4-broadcast-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
@@ -192,6 +344,41 @@ S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
 ```
 
 *点击一个 scale factor，查看它的 TMEM 坐标以及分布在四个 warp window 中的副本。*
+
+### GPU Mesh 中的 Replication 与 Offset
+
+同一个 replication 结构也可以描述多设备布局。GPU mesh 是把多张 GPU 按一个或多个逻辑轴组织起来的设备网格；例如，一个 `2×2` GPU mesh 包含四张 GPU，每张 GPU 都有一个由 `@gpuid_x` 和 `@gpuid_y` 组成的坐标。
+
+先定义一个沿 `@gpuid_y` 分片的基础布局：
+
+```text
+base = S[(2, 4, 8) : (1@gpuid_y, 8@m, 1@m)]
+```
+
+在这个基础上加入 replication：
+
+```text
+base + R[2 : 1@gpuid_x]
+
+一个逻辑元素 → {gpuid_x = 0, gpuid_x = 1}
+```
+
+`R[2 : 1@gpuid_x]` 沿 `@gpuid_x` 轴生成两个相距 1 的位置。相比之下，加入固定 offset：
+
+```text
+base + 1@gpuid_x
+
+一个逻辑元素 → gpuid_x = 1
+```
+
+只会把基础位置沿 `@gpuid_x` 平移 1，不会产生副本。下图将它们与 fully-sharded 布局放在一起比较，并支持在 fully-sharded、shard + replica 和 shard + offset 三种模式之间切换。
+
+```{raw} html
+<iframe src="../demo_zh/tile_distributed.html?v=offset-labels-20260710" title="Distributed layout across a GPU mesh" loading="lazy"
+        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+```
+
+*一个分布在 `2×2` GPU mesh 上的布局；点击一个 cell，查看哪些 device 持有它。*
 
 ## Swizzle Layout
 
