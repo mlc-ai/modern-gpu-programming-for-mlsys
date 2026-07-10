@@ -18,7 +18,7 @@
             height:9px; line-height:9px; }
   .sfcell { height:9px; border-radius:2px; cursor:pointer; opacity:.9; transition:opacity .08s; }
   .sfcell.ge { margin-bottom:2px; }          /* group edge every 32 rows (left) */
-  .sfcell.we { margin-right:3px; }           /* word edge every 4 bytes (right) */
+  .sfcell.we { margin-right:3px; }           /* Mgroup boundary every 4 bytes (right) */
   #panels.focus .sfcell { opacity:.12; }
   #panels.focus .sfcell.src, #panels.focus .sfcell.hl { opacity:1; }
   .sfcell.src { outline:2px solid #111; outline-offset:-1px; }
@@ -33,18 +33,18 @@
 </head>
 <body>
 <h1>TMEM 中的 Scale Factor（nvfp4）</h1>
-<div class="sub">M = 128，一个 MMA-K block（SF_K = 4）&nbsp;·&nbsp; warpx4 broadcast R[4 : 32@TLane]</div>
+<div class="sub">M = 128，一个 MMA-K block（SF_K = 4）&nbsp;·&nbsp; 向 4 个 warp 广播：R[4 : 32@TLane]</div>
 
 <div class="panels" id="panels">
   <svg class="arrow-svg" id="arrows"></svg>
   <div class="panel">
     <h2>Logical SFA &nbsp;(M × SF_K)</h2>
-    <div class="nota">点击 cell = SFA[m, sfk] &nbsp;·&nbsp; 颜色 = m // 32 group</div>
+    <div class="nota">点击 cell = SFA[m, sfk] &nbsp;·&nbsp; 颜色 = Mgroup（m // 32）</div>
     <div id="gridA" class="sfgrid gA"></div>
   </div>
   <div class="panel">
     <h2>TMEM &nbsp;(128 lanes × 16 bytes)</h2>
-    <div class="nota">w0: m 0–31 · w1: m 32–63 · w2: m 64–95 · w3: m 96–127 &nbsp;·&nbsp; byte = sfk</div>
+    <div class="nota">Mgroup 0: m 0–31 · Mgroup 1: m 32–63 · Mgroup 2: m 64–95 · Mgroup 3: m 96–127 &nbsp;·&nbsp; byte = sfk</div>
     <div id="gridB" class="sfgrid gB"></div>
   </div>
 </div>
@@ -53,24 +53,24 @@
   <div class="ftitle">Layout &nbsp;SFA[m, sfk] → TMEM</div>
   <div class="frow">
     <span class="k">TLane</span> = m mod 32 &nbsp;·&nbsp;
-    <span class="k">word</span> = m div 32 &nbsp;·&nbsp;
+    <span class="k">Mgroup</span> = m div 32 &nbsp;·&nbsp;
     <span class="k">byte</span> = sfk &nbsp;·&nbsp;
-    <span class="k">TCol</span> = word·4 + byte &nbsp;·&nbsp;
-    <span class="k">warpx4</span> → lanes { TLane, +32, +64, +96 }
+    <span class="k">TCol</span> = Mgroup·4 + byte &nbsp;·&nbsp;
+    <span class="k">向 4 个 warp 广播</span> → lanes { TLane, +32, +64, +96 }
   </div>
   <div class="frow" id="calc">点击左侧的一个 cell…</div>
 </div>
 
 <script>
 (function () {
-  var G = ['#5b9bd5', '#ed9a3c', '#d95555', '#45b5a5'];   // color = m//32 group / word
+  var G = ['#5b9bd5', '#ed9a3c', '#d95555', '#45b5a5'];   // color = Mgroup (m//32)
   var M = 128, SFK = 4, BYTES = 16;
   var panels = document.getElementById('panels');
   var gridA = document.getElementById('gridA'), gridB = document.getElementById('gridB');
   var svg = document.getElementById('arrows');
   var calc = document.getElementById('calc');
 
-  // left: logical SFA (rows m, cols sfk); color by m//32 group, gap every 32 rows
+  // left: logical SFA (rows m, cols sfk); color by Mgroup, gap every 32 rows
   var a = '<div></div>';
   for (var s = 0; s < SFK; s++) a += '<div class="colhdr">sf' + s + '</div>';
   for (var m = 0; m < M; m++) {
@@ -82,7 +82,7 @@
   }
   gridA.innerHTML = a;
 
-  // right: TMEM, rows lane 0..127, cols = 16 bytes; color by word (=TCol//4), gap between words
+  // right: TMEM, rows lane 0..127, cols = 16 bytes; color by Mgroup (=TCol//4)
   var b = '<div></div>';
   for (var t = 0; t < BYTES; t++) b += '<div class="colhdr">' + (t % 4) + '</div>';
   for (var lane = 0; lane < 128; lane++) {
@@ -121,7 +121,7 @@
   }
   function show(cell) {
     var m = +cell.dataset.m, sfk = +cell.dataset.sfk;
-    var lane = m % 32, word = (m / 32) | 0, tcol = word * 4 + sfk;
+    var lane = m % 32, mGroup = (m / 32) | 0, tcol = mGroup * 4 + sfk;
     clearAll();
     panels.classList.add('focus');
     cell.classList.add('src');
@@ -131,9 +131,9 @@
     calc.innerHTML =
       'SFA[m=' + m + ', sf' + sfk + ']: &nbsp;' +
       'TLane = ' + m + ' mod 32 = <b>' + lane + '</b> &nbsp;·&nbsp; ' +
-      'word = ' + m + ' div 32 = <b>' + word + '</b> &nbsp;·&nbsp; ' +
+      'Mgroup = ' + m + ' div 32 = <b>' + mGroup + '</b> &nbsp;·&nbsp; ' +
       'byte = <b>' + sfk + '</b> &nbsp;·&nbsp; ' +
-      'TCol = ' + word + '·4 + ' + sfk + ' = <b>' + tcol + '</b> &nbsp;→&nbsp; ' +
+      'TCol = ' + mGroup + '·4 + ' + sfk + ' = <b>' + tcol + '</b> &nbsp;→&nbsp; ' +
       'lanes { <b>' + lanes.join(', ') + '</b> }';
   }
   gridA.addEventListener('click', function (e) {
@@ -141,7 +141,7 @@
     if (c) show(c);                       // click to select (pinned until the next click)
   });
   window.addEventListener('resize', function () { var s = gridA.querySelector('.src'); if (s) show(s); });
-  show(gridA.querySelector('[data-m="64"][data-sfk="2"]'));   // default: m=64,sf2 → lane 0, word 2, byte 2, TCol 10
+  show(gridA.querySelector('[data-m="64"][data-sfk="2"]'));   // default: m=64,sf2 → lane 0, Mgroup 2, byte 2, TCol 10
 })();
 </script>
 </body>

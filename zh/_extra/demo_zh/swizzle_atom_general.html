@@ -91,7 +91,7 @@
       <button class="btn on" data-v="128">128B</button>
       <button class="btn" data-v="64">64B</button>
       <button class="btn" data-v="32">32B</button>
-      <button class="btn" data-v="16">16B（interleaved）</button>
+      <button class="btn" data-v="16">16B interleaved（无 XOR swizzle）</button>
     </span>
   </div>
   <span id="annos-tags"></span>
@@ -154,7 +154,7 @@ const FMTS = {
            rowTile: '2\u00d74', bytes: 512 },
   '32':  { ac: 2, div: 4, formula: 'swizzled_col = logical_col XOR (row // 4)',
            rowTile: '4\u00d72', bytes: 256 },
-  '16':  { ac: 1, div: 8, formula: '不需要 swizzle（天然无 conflict）',
+  '16':  { ac: 1, div: 8, formula: '16B interleaved（无 XOR swizzle）',
            rowTile: '8\u00d71', bytes: 128 },
 };
 

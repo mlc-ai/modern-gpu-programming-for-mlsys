@@ -247,7 +247,7 @@ TLane = r + 32 * q, where q in {0, 1, 2, 3}
 TCol  = s
 ```
 
-This is the `warpx4` broadcast pattern. The same compact scale-factor group becomes visible across the full 128-lane TMEM space.
+This broadcasts the compact scale-factor group to four warps, making it visible across the full 128-lane TMEM space.
 
 There is also byte packing inside the 32-bit `TCol` cells. The packing depends on the `scale_vec` mode:
 

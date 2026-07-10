@@ -83,9 +83,18 @@ transposes.
 So far we have described layouts for whole tensors. GPU kernels, however, rarely operate on an
 entire matrix at once; they work on smaller tiles, which are loaded, transformed, and computed on by
 different parts of the hardware. The good news is that tiling asks for nothing new. It is still
-just a layout, only now written with a few more dimensions. Cut an 8×8 matrix into 2×4 tiles and we
-get a 4-D layout, with coordinates `(tile_row, row_in_tile, tile_col, col_in_tile)` and strides
-chosen so that each tile stays contiguous:
+just a layout, only now written with a few more dimensions.
+
+Here we use a common tiling convention: split each original dimension into an outer coordinate and
+an inner coordinate before moving to the next original dimension:
+
+```text
+(outer_dim0, inner_dim0, outer_dim1, inner_dim1, ...)
+```
+
+Cut an 8×8 matrix into 2×4 tiles, and the logical coordinate `(row, col)` becomes
+`(tile_row, row_in_tile, tile_col, col_in_tile)`. The corresponding 4-D layout uses strides chosen
+so that each tile stays contiguous:
 
 ```text
 S[(4, 2, 2, 4) : (16, 4, 8, 1)]
@@ -94,12 +103,14 @@ S[(4, 2, 2, 4) : (16, 4, 8, 1)]
 A logical `(i, j)` first becomes `(i//2, i%2, j//4, j%4)` and then runs through the strides. What is
 worth noticing is that the notation expresses tiling without any special "tile" concept at all: it is
 the same shape–stride model as before, with the index merely split into outer and inner coordinates.
+The order is not "all outer coordinates, then all inner coordinates"; `tile_col` is the third
+dimension because it is the outer coordinate of the original `col` dimension.
 
 The interactive visualization below shows how a logical matrix index is decomposed into tile
 coordinates and then mapped to a physical address.
 
 ```{raw} html
-<iframe src="../demo/tiled_layout.html" title="Tile layout: interactive address computation" loading="lazy"
+<iframe src="../demo/tiled_layout.html?v=tile-order-20260709" title="Tile layout: interactive address computation" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 *Interactive: click a cell to see its tiled index and address.*
@@ -167,12 +178,12 @@ offset layouts.
 
 The replication dimension `R[...]` we just introduced for the GPU mesh is not only about multiple
 devices. The same construct turns out to describe something that happens entirely inside a single
-kernel as well: data that the hardware *broadcasts across lanes*. Blackwell's block-scaled MMA
+kernel as well: data that the hardware broadcasts across lanes. Blackwell's block-scaled MMA
 ({ref}`chap_layout_generations`) is a good example. Its scale factors live in TMEM, where a 128-row
 scale vector is stored in only **32 TMEM lanes**, where logical row `r` goes to TMEM lane `r % 32`, with
 `r // 32` running along the columns. Those 32 stored TMEM lanes are then **replicated along the TMEM
 `TLane` axis**, from 32 up to 128 TMEM lanes, so that each of the four warps in the reading warpgroup
-finds a copy in its own 32-lane TMEM window. This is a `warpx4` broadcast, and we write it with a
+finds a copy in its own 32-lane TMEM window. This broadcasts the data to four warps, and we write it with a
 replication dimension. The reads themselves are carried out by those warps' threads:
 
 ```text
@@ -184,14 +195,14 @@ hold the same scale. As before, the replication dimension carries no new data; i
 same value, sitting in four TMEM-lane positions," in just the way `@gpuid_x` broadcast a row across
 the GPU mesh a moment ago.
 
-The interactive demo below shows both steps together: compact packing into 32 TMEM lanes, then the
-`warpx4` broadcast out to the 128 reading lanes.
+The interactive demo below shows both steps together: compact packing into 32 TMEM lanes, then a
+broadcast to four warps across the 128 reading lanes.
 
 ```{raw} html
-<iframe src="../demo/sf_tmem.html" title="Scale factors in TMEM: packing and warpx4 replication" loading="lazy"
+<iframe src="../demo/sf_tmem.html?v=mgroup-20260709" title="Scale factors in TMEM: packing and broadcast to 4 warps" loading="lazy"
         style="width:100%; min-width:1040px; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
-*Interactive: click a scale factor `SFA[m, sf]`; it packs into TMEM at lane `m mod 32`, column `(m // 32)·4 + sf`, and is then broadcast `warpx4` across the `TLane` axis to the four lane copies (`l`, `l+32`, `l+64`, `l+96`), one per warp's 32-lane window.*
+*Interactive: click a scale factor `SFA[m, sf]`; it packs into TMEM at lane `m mod 32`, column `(m // 32)·4 + sf`, and is then broadcast along the `TLane` axis to four warps: the four lane copies (`l`, `l+32`, `l+64`, `l+96`) occupy one 32-lane window per warp.*
 
 The byte packing inside each column (the `scale_vec` 1X/2X/4X modes) and the `cta_group::2` split are
 covered in {ref}`chap_layout_generations`.
@@ -251,12 +262,12 @@ swizzle modes choose different atom sizes. `SWIZZLE_128B` uses an 8 × 128 B ato
 is in use.
 
 The final interactive demo lets you switch between these formats (including a 16 B interleaved
-mode), pick a data type, and hover any cell to inspect the element arrangement inside one atom
+mode with no XOR swizzle), pick a data type, and hover any cell to inspect the element arrangement inside one atom
 directly, which is the right level of detail for reasoning about which swizzle a load/store
 instruction expects.
 
 ```{raw} html
-<iframe src="../demo/swizzle_atom_general.html" title="Swizzle atom layout per format (128B/64B/32B)" loading="lazy"
+<iframe src="../demo/swizzle_atom_general.html?v=interleaved-note-20260709" title="Swizzle atom layout per format (128B/64B/32B)" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 *Interactive: pick a swizzle format (and data type) to see its atom shape (8 × N B); hover a cell to see how its elements are permuted.*
