@@ -4,9 +4,9 @@
 :::{admonition} 概览
 :class: overview
 
-- **数据布局**将张量的逻辑索引映射到物理位置。它会影响访存能否合并、是否产生 bank conflict，以及 tile 是否符合特定硬件单元要求的格式。
-- 本章使用 `S[(shape) : (strides)]` 统一描述布局，通过命名轴（`@laneid`、`@TLane` 等）描述物理坐标，通过复制维度 `R[...]` 表示广播和复制，并用固定 offset 移动整个布局。
-- Swizzle 是一种基于 XOR 的地址重映射，可以在特定的元素宽度和访问模式下避免 shared memory bank conflict。
+- **数据布局**描述张量的逻辑索引如何映射到物理位置。这个映射既影响程序是否读取正确的数据，也决定 global memory 访问能否合并、shared memory 是否产生 bank conflict，以及 tile 是否符合特定硬件单元要求的格式。
+- Shape-Stride 模型通过 shape 和 strides 定义这一映射；tiling 仍然使用同一个模型，只是把原始索引拆成更多坐标。命名轴进一步把物理位置扩展到 TMEM、warp lanes 和 registers，replication 与 offset 则分别表示数据复制和位置平移。
+- Swizzle 在保持 tile 逻辑结构不变的情况下重排 shared memory 地址。对于匹配的元素宽度、对齐方式和访问模式，XOR swizzle 可以将访问分散到不同 memory banks，从而避免 bank conflict。
 :::
 
 同一组数字，如果以不同的物理排列方式写入内存，在同一块 GPU 上的运行速度可能相差一个数量级。
