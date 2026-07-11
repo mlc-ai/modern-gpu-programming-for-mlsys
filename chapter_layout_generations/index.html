@@ -569,7 +569,7 @@ TCol  = s
 TCol  = s
 </pre></div>
 </div>
-<p>This is the <code class="docutils literal notranslate"><span class="pre">warpx4</span></code> broadcast pattern. The same compact scale-factor group becomes visible across the full 128-lane TMEM space.</p>
+<p>This broadcasts the compact scale-factor group to four warps, making it visible across the full 128-lane TMEM space.</p>
 <p>There is also byte packing inside the 32-bit <code class="docutils literal notranslate"><span class="pre">TCol</span></code> cells. The packing depends on the <code class="docutils literal notranslate"><span class="pre">scale_vec</span></code> mode:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>1X: one scale value is broadcast across the 32-bit cell
 2X: two scale values are packed, each duplicated

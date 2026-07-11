@@ -27,6 +27,7 @@
 
 chapter_background/index
 chapter_performance/index
+chapter_data_layout/index
 ```
 
 <!--

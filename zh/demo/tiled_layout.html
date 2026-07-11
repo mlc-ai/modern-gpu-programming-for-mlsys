@@ -60,7 +60,7 @@ function addrFlat(r, c) { return r * N + c; }
 function addrTiled(r, c) {
   const ro = Math.floor(r / TILE_R), ri = r % TILE_R;
   const co = Math.floor(c / TILE_C), ci = c % TILE_C;
-  return ro * (TILE_SZ * N_TILE_C) + co * TILE_SZ + ri * TILE_C + ci;
+  return ro * (TILE_SZ * N_TILE_C) + ri * TILE_C + co * TILE_SZ + ci;
 }
 
 function invTiled(addr) {
@@ -215,9 +215,10 @@ function drawFormula() {
   const co = Math.floor(c / TILE_C), ci = c % TILE_C;
   let html = `<div class="ftitle">Element ${logVal} at (row=${r}, col=${c})</div>`;
   html += '<div class="fcontent">';
-  html += `addr = (row // 2) × 16 + (col // 4) × 8 + (row % 2) × 4 + (col % 4)<br>`;
-  html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= (${r} // 2) × 16 + (${c} // 4) × 8 + (${r} % 2) × 4 + (${c} % 4)<br>`;
-  html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= ${ro} × 16 + ${co} × 8 + ${ri} × 4 + ${ci} = <b>${at}</b>`;
+  html += `coord = (row // 2, row % 2, col // 4, col % 4) = (${ro}, ${ri}, ${co}, ${ci})<br>`;
+  html += `addr = (row // 2) × 16 + (row % 2) × 4 + (col // 4) × 8 + (col % 4)<br>`;
+  html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= (${r} // 2) × 16 + (${r} % 2) × 4 + (${c} // 4) × 8 + (${c} % 4)<br>`;
+  html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;= ${ro} × 16 + ${ri} × 4 + ${co} × 8 + ${ci} = <b>${at}</b>`;
   html += '</div>';
   fb.innerHTML = html;
 }
