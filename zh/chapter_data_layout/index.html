@@ -386,7 +386,7 @@ f_D(x)
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>S[(4, 2, 2, 4) : (16, 4, 8, 1)]
 </pre></div>
 </div>
-<p>回到上面的交互图，点击任意 cell，可以将图中显示的 tile 坐标和物理地址与上面的 unflatten 过程及 <span class="math notranslate nohighlight">\(f_D(x)\)</span> 对照。</p>
+<p><em>回到上面的交互图，点击任意 cell，可以将图中显示的 tile 坐标和物理地址与上面的 unflatten 过程及 <span class="math notranslate nohighlight">\(f_D(x)\)</span> 对照。</em></p>
 </section>
 <section id="layout">
 <h3>一般的 Layout 函数<a class="headerlink" href="#layout" title="Link to this heading">#</a></h3>
@@ -440,7 +440,7 @@ reg    = col%2
 </div>
 <p>下图展示了这个 <code class="docutils literal notranslate"><span class="pre">8×8</span></code> tile 在 warp lanes 和 registers 上的分布。</p>
 <iframe src="../demo_zh/thread_register.html" title="Thread + register layout via named axes" loading="lazy"
-        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p>例如，点击上图左侧 <code class="docutils literal notranslate"><span class="pre">Logical</span> <span class="pre">8×8</span> <span class="pre">Matrix</span></code> 中第 <code class="docutils literal notranslate"><span class="pre">r5</span></code> 行、第 <code class="docutils literal notranslate"><span class="pre">c3</span></code> 列的 cell 43，可以看到逻辑元素 <code class="docutils literal notranslate"><span class="pre">(5,</span> <span class="pre">3)</span></code> 由 lane 21 持有，并位于该 lane 的 fragment slot 1。</p>
+        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>例如，点击上图左侧 <code class="docutils literal notranslate"><span class="pre">Logical</span> <span class="pre">8×8</span> <span class="pre">Matrix</span></code> 中第 <code class="docutils literal notranslate"><span class="pre">r5</span></code> 行、第 <code class="docutils literal notranslate"><span class="pre">c3</span></code> 列的 cell 43，可以看到逻辑元素 <code class="docutils literal notranslate"><span class="pre">(5,</span> <span class="pre">3)</span></code> 由 lane 21 持有，并位于该 lane 的 fragment slot 1。</em></p>
 <p>这两个位置分别用 <code class="docutils literal notranslate"><span class="pre">&#64;laneid</span></code> 和 <code class="docutils literal notranslate"><span class="pre">&#64;reg</span></code> 表示：<code class="docutils literal notranslate"><span class="pre">&#64;laneid</span></code> 是一个 warp 内的 lane ID，<code class="docutils literal notranslate"><span class="pre">&#64;reg</span></code> 是该 lane 内的 fragment slot。这里的 <code class="docutils literal notranslate"><span class="pre">&#64;reg</span></code> 表示 layout 中的 lane-local 坐标；具体指令仍可能把多个低精度元素打包到同一个 32-bit hardware register 中。</p>
 <p>这个 <code class="docutils literal notranslate"><span class="pre">8×8</span></code> tile 可以写成：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>S[(8, 4, 2) : (4@laneid, 1@laneid, 1@reg)]
@@ -491,7 +491,7 @@ byte_offset = TCol·4 + byte
 <p>这里的 <code class="docutils literal notranslate"><span class="pre">R[4</span> <span class="pre">:</span> <span class="pre">32&#64;TLane]</span></code> 让 <code class="docutils literal notranslate"><span class="pre">r</span></code> 依次取 <code class="docutils literal notranslate"><span class="pre">0</span></code>、<code class="docutils literal notranslate"><span class="pre">1</span></code>、<code class="docutils literal notranslate"><span class="pre">2</span></code> 和 <code class="docutils literal notranslate"><span class="pre">3</span></code>，产生 <code class="docutils literal notranslate"><span class="pre">0</span></code>、<code class="docutils literal notranslate"><span class="pre">32</span></code>、<code class="docutils literal notranslate"><span class="pre">64</span></code> 和 <code class="docutils literal notranslate"><span class="pre">96</span></code> 四个 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 偏移。<code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 不增加新的逻辑数据，只记录这些副本所在的位置。</p>
 <p>下图同时展示了这套打包映射，以及随后沿 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 轴的四份复制。</p>
 <iframe src="../demo_zh/sf_tmem.html?v=tcol-subcolumn-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
-        style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p>点击图中的任意 scale factor，可以查看它的 TMEM 坐标以及在四个 warp window 中的位置。</p>
+        style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>点击图中的任意 scale factor，可以查看它的 TMEM 坐标以及在四个 warp window 中的位置。</em></p>
 </section>
 <section id="gpu-mesh-replication-offset">
 <h3>GPU Mesh 中的 Replication 与 Offset<a class="headerlink" href="#gpu-mesh-replication-offset" title="Link to this heading">#</a></h3>
@@ -519,7 +519,7 @@ Element (1, 2, 3) → device (1, 1), local offset = 19
 </div>
 <p>这个固定 offset 只会把基础位置沿 <code class="docutils literal notranslate"><span class="pre">&#64;gpuid_x</span></code> 平移 1，不会产生副本。下图将这两种情况与 fully-sharded 布局放在一起比较，可以在 fully-sharded、shard + replica 和 shard + offset 三种模式之间切换。</p>
 <iframe src="../demo_zh/tile_distributed.html?v=offset-o-20260710" title="Distributed layout across a GPU mesh" loading="lazy"
-        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p>点击图中的任意 cell，可以查看哪些设备持有对应的逻辑元素。</p>
+        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>点击图中的任意 cell，可以查看哪些设备持有对应的逻辑元素。</em></p>
 </section>
 </section>
 <section id="swizzle-layout">
@@ -535,20 +535,18 @@ physical_addr = row·8 + mapped_col
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">XOR</span></code> 是按位异或。例如，当读取逻辑列 <code class="docutils literal notranslate"><span class="pre">logical_col</span> <span class="pre">=</span> <span class="pre">0</span></code> 时，第 <code class="docutils literal notranslate"><span class="pre">0…7</span></code> 行会分别得到 <code class="docutils literal notranslate"><span class="pre">mapped_col</span> <span class="pre">=</span> <span class="pre">0</span> <span class="pre">XOR</span> <span class="pre">row</span> <span class="pre">=</span> <span class="pre">0…7</span></code>。这样，同一逻辑列的元素在各行中会落到不同的物理列，从而分散到不同 bank。</p>
 <iframe src="../demo_zh/swizzle_8x8.html" title="8x8 XOR swizzle" loading="lazy"
-        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p>点击图中的任意 column index，可以比较普通 row-major layout 和 XOR swizzle 的 bank 映射：前者需要 8 个 cycles，后者只需要 1 个 cycle。</p>
+        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>点击图中的任意 column index，可以比较普通 row-major layout 和 XOR swizzle 的 bank 映射：前者需要 8 个 cycles，后者只需要 1 个 cycle。</em></p>
 <p>上图用 8 个 bank 说明了 XOR 的基本思想。实际硬件使用更大的重复单元：我们把连续的 16 B 数据称为一个 sector，并用一个色块表示。对于 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>，atom 的每一行包含 8 个 sector，共 128 B；在常见的 4-byte bank 粒度下，这一行覆盖 32 个 bank slot。swizzle 根据行坐标对这 8 个 sector 的位置做 XOR 重排。</p>
 <p>一个 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> atom 包含 8 行，因此大小为 <code class="docutils literal notranslate"><span class="pre">8</span> <span class="pre">×</span> <span class="pre">128</span> <span class="pre">B</span> <span class="pre">=</span> <span class="pre">1024</span> <span class="pre">B</span></code>。这里的 <code class="docutils literal notranslate"><span class="pre">128</span> <span class="pre">B</span></code> 指 atom 每一行在连续维度上的宽度，而不是 atom 的总大小。atom 是地址重排的最小重复块，更大的 tile 由多个 atom 平铺而成。</p>
 <iframe src="../demo_zh/swizzle_128B.html" title="SWIZZLE_128B layout" loading="lazy"
-        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p>图中的每个 cell 表示一个 16 B sector。逐步查看 read cycles，可以观察 XOR 如何把一列访问分散到不同 bank。</p>
+        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>图中的每个 cell 表示一个 16 B sector。逐步查看 read cycles，可以观察 XOR 如何把一列访问分散到不同 bank。</em></p>
 <p>其他 swizzle mode 使用相同的层级，只是 atom 的每行宽度不同：<code class="docutils literal notranslate"><span class="pre">SWIZZLE_64B</span></code> 和 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_32B</span></code> 的 atom 分别为 <code class="docutils literal notranslate"><span class="pre">8</span> <span class="pre">×</span> <span class="pre">64</span> <span class="pre">B</span></code> 和 <code class="docutils literal notranslate"><span class="pre">8</span> <span class="pre">×</span> <span class="pre">32</span> <span class="pre">B</span></code>。</p>
 <p>下图可以直接比较这些 atom，其中还包括 16 B interleaved mode（无 XOR swizzle）。</p>
 <iframe src="../demo_zh/swizzle_atom_general.html?v=interleaved-note-20260709" title="Swizzle atom layout per format (128B/64B/32B)" loading="lazy"
-        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p>选择一种 swizzle 格式和数据类型，可以查看对应 atom 的形状（8 × N B）。将鼠标悬停在任意单元格上，可以看到该元素在 atom 内被重新映射到的位置。</p>
+        style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>选择一种 swizzle 格式和数据类型，可以查看对应 atom 的形状（8 × N B）。将鼠标悬停在任意单元格上，可以看到该元素在 atom 内被重新映射到的位置。</em></p>
 <p>应该选择哪一种 swizzle mode？一个实用的原则是：<strong>在 tile 尺寸允许的情况下，优先选择每行宽度最大的 atom。</strong> 每行宽度为 <code class="docutils literal notranslate"><span class="pre">N</span></code> bytes 的 atom 要求 tile 的连续维度至少达到 <code class="docutils literal notranslate"><span class="pre">N</span></code> bytes，最好还能被 <code class="docutils literal notranslate"><span class="pre">N</span></code> 整除。</p>
-<p>因此，一行至少包含 128 bytes，也就是 64 个 <code class="docutils literal notranslate"><span class="pre">float16</span></code> 元素时，通常优先使用 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>。如果连续维度不足 128 bytes，则选择能够容纳的 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_64B</span></code> 或 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_32B</span></code>。</p>
-<p>对于图中使用 <code class="docutils literal notranslate"><span class="pre">fp16</span></code> 的访问方式，<code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> 可以让连续的行读取和跨 8 行的列读取都避免 bank conflict。不过，这一保证只适用于与硬件 descriptor 匹配的元素宽度、swizzle mode 和访问模式；元素宽度、对齐方式或访问模式改变后，仍可能产生冲突。</p>
-<p>实际编程时，不需要手工计算 swizzle 后的地址。可以把完整映射理解成两步：<code class="docutils literal notranslate"><span class="pre">S[...]</span></code> 先把逻辑元素映射到线性的 memory 地址 <code class="docutils literal notranslate"><span class="pre">&#64;m</span></code>，swizzle 再重排这个地址。由于 XOR 重排不是仿射变换，swizzle 不属于 affine layout 本身，而是与它组合使用的另一层地址变换。</p>
-<p>所有访问同一个 tile 的操作必须使用一致的 swizzle mode，具体的地址变换由组合后的 layout 统一处理。不同硬件单元对 swizzle mode 的要求会随 GPU 架构代际变化，下一章会进一步介绍这些约束。</p>
+<p>因此，一行至少包含 128 bytes，也就是 64 个 <code class="docutils literal notranslate"><span class="pre">float16</span></code> 元素时，通常优先使用 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>。如果连续维度不足 128 bytes，则选择能够容纳的 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_64B</span></code> 或 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_32B</span></code>。对于图中使用 <code class="docutils literal notranslate"><span class="pre">fp16</span></code> 的访问方式，<code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> 可以让连续的行读取和跨 8 行的列读取都避免 bank conflict。不过，这一保证只适用于与硬件 descriptor 匹配的元素宽度、swizzle mode 和访问模式；元素宽度、对齐方式或访问模式改变后，仍可能产生冲突。</p>
+<p>实际编程时，不需要手工计算 swizzle 后的地址。可以把完整映射理解成两步：<code class="docutils literal notranslate"><span class="pre">S[...]</span></code> 先把逻辑元素映射到线性的 memory 地址 <code class="docutils literal notranslate"><span class="pre">&#64;m</span></code>，swizzle 再重排这个地址。由于 XOR 重排不是仿射变换，swizzle 不属于 affine layout 本身，而是与它组合使用的另一层地址变换。所有访问同一个 tile 的操作必须使用一致的 swizzle mode，具体的地址变换由组合后的 layout 统一处理。不同硬件单元对 swizzle mode 的要求会随 GPU 架构代际变化，下一章会进一步介绍这些约束。</p>
 </section>
 </section>
 
