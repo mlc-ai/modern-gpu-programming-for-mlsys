@@ -7,11 +7,12 @@
 <link rel="stylesheet" href="../viz-base.css">
 <script src="../viz-base.js"></script>
 <style>
-  body { padding: 14px 24px; max-width: 1300px; margin: 0 auto; }
+  html { overflow-x: hidden; }
+  body { padding: 14px 18px; max-width: 1300px; width: 100%; box-sizing: border-box; margin: 0 auto; overflow-x: hidden; }
   h1 { font-size: 28px; line-height: 1.1; margin-bottom: 12px; }
 
   .diagram-wrap {
-    max-width: 1000px; margin: 0 auto; position: relative;
+    max-width: min(1000px, 100%); margin: 0 auto; position: relative;
   }
   .gpu-row {
     display: grid; grid-template-columns: 1fr auto; gap: 14px;
@@ -100,7 +101,7 @@
 
   /* ── Detail panel ──────────────────────────────────────── */
   .detail-panel {
-    max-width: 1000px; margin: 10px auto 0;
+    max-width: min(1000px, 100%); margin: 10px auto 0;
     border: 1px solid var(--border); border-radius: 10px;
     background: var(--surface); padding: 10px 16px;
     min-height: 110px; transition: border-color .3s;

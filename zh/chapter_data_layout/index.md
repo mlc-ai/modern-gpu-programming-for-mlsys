@@ -229,10 +229,13 @@ D = C + A_real × B_real
 ```text
 TLane  = m % 32
 Mgroup = m // 32
-TCol   = Mgroup·4 + sfk
+TCol   = Mgroup
+byte   = sfk
+
+byte_offset = TCol·4 + byte
 ```
 
-`m = 0…31`、`32…63`、`64…95` 和 `96…127` 分别使用同样的 32 条 TMEM lanes。对于固定的 `sfk`，四个 `Mgroup` 对应的 TCol 分别是 `sfk`、`4+sfk`、`8+sfk` 和 `12+sfk`。这样，128 个逻辑元素就被放进 32 条 lanes，并沿 4 个 TCol 位置展开。
+`m = 0…31`、`32…63`、`64…95` 和 `96…127` 分别使用同样的 32 条 TMEM lanes。四个 `Mgroup` 对应 TCol `0`、`1`、`2` 和 `3`；每个 TCol 是一个 32-bit cell，`sfk = 0…3` 分别选择其中的四个 byte sub-columns。图中把这四个 TCol cells 展开成 16 个 byte 位置，因此 `byte_offset = TCol·4 + sfk`。
 
 随后，`.warpx4` broadcast 沿 `TLane` 轴复制这个 32-lane 布局。对于基础 lane `l`，同一个值会出现在 lanes `l`、`l+32`、`l+64` 和 `l+96` 中，TCol 保持不变。这样，warpgroup 中的四个 warps 都能在自己的 32-lane TMEM window 中读到它。
 
@@ -251,7 +254,7 @@ S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
 下图同时展示了这套打包映射，以及随后沿 `TLane` 轴的四份复制。
 
 ```{raw} html
-<iframe src="../demo_zh/sf_tmem.html?v=warpx4-broadcast-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
+<iframe src="../demo_zh/sf_tmem.html?v=tcol-subcolumn-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
         style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 

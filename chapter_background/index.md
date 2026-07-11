@@ -4,7 +4,7 @@
 :::{admonition} Overview
 :class: overview
 
-- A GPU kernel's execution is shaped first by its thread hierarchy: thread, warp, warpgroup, CTA, cluster, and grid each correspond to a different scale of cooperation. Many Blackwell operations have their own natural scope: a TMA copy is launched by a single thread, a TMEM load is carried out by a warpgroup, and a 2-CTA cooperative MMA spans two CTAs.
+- A GPU kernel's execution is shaped first by its thread hierarchy: thread, warp, warpgroup, CTA, cluster, and grid each correspond to a different scale of cooperation. Many Blackwell operations have their own natural scope: a TMA copy is launched by a single thread, a full TMEM accumulator is read back by four warps working on separate 32-lane windows, and a 2-CTA cooperative MMA spans two CTAs.
 - Data does not live in a single place. GMEM, SMEM, TMEM, and registers offer different tradeoffs in capacity, latency, and access scope; clusters also use DSMEM so one CTA can access another CTA's shared memory. A core task of a high-performance kernel is to move data efficiently between these spaces.
 - Compute and data movement are handled by different hardware engines. CUDA cores handle address calculation, control flow, and scalar logic; Tensor Cores perform the main matrix computation; TMA moves data asynchronously. We end the chapter with a GEMM data pipeline that shows how overlap keeps multiple engines busy at the same time.
 :::
@@ -46,8 +46,8 @@ hierarchy on Blackwell.
   a warp issue the same instruction together, yet each keeps its own registers and can be masked off
   on its own, which is what lets the lanes of a single warp follow different branches.
 - **Warpgroup**: four consecutive warps, or 128 threads. Hopper introduced the warpgroup as the
-  unit that issues warpgroup-level MMA (`wgmma`), and on Blackwell it takes on a second role: it is
-  also the cooperation unit for Tensor Memory access.
+  unit that issues warpgroup-level MMA (`wgmma`). On Blackwell, its four warps can also cover the
+  four 32-lane windows of Tensor Memory.
 - **CTA** (*Cooperative Thread Array*, what CUDA also calls a thread block): the basic unit the
   hardware schedules. A CTA runs on a single SM and owns a private shared-memory allocation inside
   it. Several CTAs can be resident on the same SM at once, and when they are, they divide up that
@@ -57,8 +57,9 @@ hierarchy on Blackwell.
   known as distributed shared memory.
 
 Blackwell's key operations are not all issued by the same group of threads. A single thread launches
-a TMA copy, which the hardware then executes. The four warps in a warpgroup cooperate on a TMEM
-load. One designated thread commits a `tcgen05` MMA, while a 2-CTA cooperative MMA spans two CTAs.
+a TMA copy, which the hardware then executes. Each warp issues warp-level TMEM loads for its own
+32-lane window. One designated thread commits a `tcgen05` MMA, while a 2-CTA cooperative MMA spans
+two CTAs.
 
 We call the set of threads involved in an operation its **scope**. Analyzing a kernel requires
 considering the operation's scope together with its data layout and dispatch mechanism.
@@ -86,8 +87,8 @@ corresponding to 128 TMEM lanes, and up to 512 columns, each 32 bits wide. Logic
 belongs to the CTA; physically, it remains on the SM.
 
 Programs manage TMEM explicitly. A kernel must allocate and free it, and the epilogue must explicitly
-read MMA accumulators from TMEM back into registers. A TMEM load is typically carried out
-cooperatively by the four warps in a warpgroup.
+read MMA accumulators from TMEM back into registers. To read a full 128-lane accumulator, the four
+warps in a warpgroup each load their own 32-lane TMEM window.
 
 ### Distributed Shared Memory Across a Cluster
 

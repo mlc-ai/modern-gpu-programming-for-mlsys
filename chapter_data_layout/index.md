@@ -279,12 +279,16 @@ occupy 128 distinct TMEM lanes. Instead, they are first packed as:
 ```text
 TLane  = m % 32
 Mgroup = m // 32
-TCol   = Mgroup·4 + sfk
+TCol   = Mgroup
+byte   = sfk
+
+byte_offset = TCol·4 + byte
 ```
 
 The ranges `m = 0…31`, `32…63`, `64…95`, and `96…127` reuse the same 32 TMEM lanes. For a fixed
-`sfk`, the four `Mgroup` values map to TCols `sfk`, `4+sfk`, `8+sfk`, and `12+sfk`. The 128 logical
-elements are thus packed into 32 lanes and spread across four TCol positions.
+`sfk`, the four `Mgroup` values map to TCols `0`, `1`, `2`, and `3`. Within each 32-bit TCol cell,
+`sfk = 0…3` selects one of its four byte sub-columns. The figure displays those cells as 16 byte
+positions, with `byte_offset = TCol·4 + sfk`.
 
 The `.warpx4` broadcast then replicates this 32-lane layout along the `TLane` axis. For a base lane
 `l`, the same value appears in lanes `l`, `l+32`, `l+64`, and `l+96`, while TCol remains unchanged.
@@ -310,7 +314,7 @@ physical locations of the copies.
 The figure below shows both the packing rule and the four replicas along the `TLane` axis.
 
 ```{raw} html
-<iframe src="../demo/sf_tmem.html?v=warpx4-broadcast-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
+<iframe src="../demo/sf_tmem.html?v=tcol-subcolumn-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
         style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 

@@ -43,8 +43,8 @@
     <div id="gridA" class="sfgrid gA"></div>
   </div>
   <div class="panel">
-    <h2>TMEM &nbsp;(128 lanes × 16 bytes)</h2>
-    <div class="nota">Mgroup 0: m 0–31 · Mgroup 1: m 32–63 · Mgroup 2: m 64–95 · Mgroup 3: m 96–127 &nbsp;·&nbsp; byte = sfk</div>
+    <h2>TMEM &nbsp;(128 lanes × 4 TCols × 4 bytes)</h2>
+    <div class="nota">TCol 0: m 0–31 · TCol 1: m 32–63 · TCol 2: m 64–95 · TCol 3: m 96–127 &nbsp;·&nbsp; byte in TCol = sfk</div>
     <div id="gridB" class="sfgrid gB"></div>
   </div>
 </div>
@@ -54,8 +54,9 @@
   <div class="frow">
     <span class="k">TLane</span> = m mod 32 &nbsp;·&nbsp;
     <span class="k">Mgroup</span> = m div 32 &nbsp;·&nbsp;
+    <span class="k">TCol</span> = Mgroup &nbsp;·&nbsp;
     <span class="k">byte</span> = sfk &nbsp;·&nbsp;
-    <span class="k">TCol</span> = Mgroup·4 + byte &nbsp;·&nbsp;
+    <span class="k">byte offset</span> = TCol·4 + byte &nbsp;·&nbsp;
     <span class="k">.warpx4 broadcast</span> → lanes { TLane, +32, +64, +96 }
   </div>
   <div class="frow" id="calc">click a cell on the left…</div>
@@ -82,21 +83,21 @@
   }
   gridA.innerHTML = a;
 
-  // right: TMEM, rows lane 0..127, cols = 16 bytes; color by Mgroup (=TCol//4)
+  // right: TMEM, rows lane 0..127, cols = 16 bytes; four bytes per 32-bit TCol
   var b = '<div></div>';
   for (var t = 0; t < BYTES; t++) b += '<div class="colhdr">' + (t % 4) + '</div>';
   for (var lane = 0; lane < 128; lane++) {
     b += '<div class="rowlab">' + (lane % 32 === 0 ? ('L' + lane) : '') + '</div>';
     for (var t2 = 0; t2 < BYTES; t2++) {
       var we = (t2 % 4 === 3 && t2 !== BYTES - 1) ? ' we' : '';
-      b += '<div class="sfcell' + we + '" data-lane="' + lane + '" data-tcol="' + t2 +
+      b += '<div class="sfcell' + we + '" data-lane="' + lane + '" data-byteoff="' + t2 +
            '" style="background:' + G[(t2 / 4) | 0] + '"></div>';
     }
   }
   gridB.innerHTML = b;
 
   var rc = {};
-  gridB.querySelectorAll('.sfcell').forEach(function (el) { rc[el.dataset.lane + ',' + el.dataset.tcol] = el; });
+  gridB.querySelectorAll('.sfcell').forEach(function (el) { rc[el.dataset.lane + ',' + el.dataset.byteoff] = el; });
 
   function ctr(el) {
     var r = el.getBoundingClientRect(), p = panels.getBoundingClientRect();
@@ -121,19 +122,20 @@
   }
   function show(cell) {
     var m = +cell.dataset.m, sfk = +cell.dataset.sfk;
-    var lane = m % 32, mGroup = (m / 32) | 0, tcol = mGroup * 4 + sfk;
+    var lane = m % 32, mGroup = (m / 32) | 0, tcol = mGroup, byteOffset = tcol * 4 + sfk;
     clearAll();
     panels.classList.add('focus');
     cell.classList.add('src');
     var lanes = [lane, lane + 32, lane + 64, lane + 96], targets = [];
-    lanes.forEach(function (L) { var t = rc[L + ',' + tcol]; if (t) { t.classList.add('hl'); targets.push(t); } });
+    lanes.forEach(function (L) { var t = rc[L + ',' + byteOffset]; if (t) { t.classList.add('hl'); targets.push(t); } });
     arrows(cell, targets);
     calc.innerHTML =
       'SFA[m=' + m + ', sf' + sfk + ']: &nbsp;' +
       'TLane = ' + m + ' mod 32 = <b>' + lane + '</b> &nbsp;·&nbsp; ' +
       'Mgroup = ' + m + ' div 32 = <b>' + mGroup + '</b> &nbsp;·&nbsp; ' +
+      'TCol = <b>' + tcol + '</b> &nbsp;·&nbsp; ' +
       'byte = <b>' + sfk + '</b> &nbsp;·&nbsp; ' +
-      'TCol = ' + mGroup + '·4 + ' + sfk + ' = <b>' + tcol + '</b> &nbsp;→&nbsp; ' +
+      'byte offset = ' + tcol + '·4 + ' + sfk + ' = <b>' + byteOffset + '</b> &nbsp;→&nbsp; ' +
       'lanes { <b>' + lanes.join(', ') + '</b> }';
   }
   gridA.addEventListener('click', function (e) {
@@ -141,7 +143,7 @@
     if (c) show(c);                       // click to select (pinned until the next click)
   });
   window.addEventListener('resize', function () { var s = gridA.querySelector('.src'); if (s) show(s); });
-  show(gridA.querySelector('[data-m="64"][data-sfk="2"]'));   // default: m=64,sf2 → lane 0, Mgroup 2, byte 2, TCol 10
+  show(gridA.querySelector('[data-m="64"][data-sfk="2"]'));   // default: m=64,sf2 → lane 0, TCol 2, byte 2, byte offset 10
 })();
 </script>
 </body>
