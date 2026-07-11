@@ -279,7 +279,7 @@ m = 2·8 + 3 = 19
 ```text
 base + R[2 : 1@gpuid_x]
 
-元素 (1, 2, 3) → 设备 {(0, 1), (1, 1)}，本地偏移 = 19
+Element (1, 2, 3) → devices {(0, 1), (1, 1)}, local offset = 19
 ```
 
 `R[2 : 1@gpuid_x]` 让这个元素同时出现在 `gpuid_x = 0` 和 `gpuid_x = 1` 上。相比之下，加入固定 offset：
@@ -287,7 +287,7 @@ base + R[2 : 1@gpuid_x]
 ```text
 base + O[1@gpuid_x]
 
-元素 (1, 2, 3) → 设备 (1, 1)，本地偏移 = 19
+Element (1, 2, 3) → device (1, 1), local offset = 19
 ```
 
 这个固定 offset 只会把基础位置沿 `@gpuid_x` 平移 1，不会产生副本。下图将这两种情况与 fully-sharded 布局放在一起比较，可以在 fully-sharded、shard + replica 和 shard + offset 三种模式之间切换。
