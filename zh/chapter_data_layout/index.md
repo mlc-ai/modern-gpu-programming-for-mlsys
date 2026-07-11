@@ -285,7 +285,7 @@ base + R[2 : 1@gpuid_x]
 `R[2 : 1@gpuid_x]` 让这个元素同时出现在 `gpuid_x = 0` 和 `gpuid_x = 1` 上。相比之下，加入固定 offset：
 
 ```text
-base + 1@gpuid_x
+base + O[1@gpuid_x]
 
 元素 (1, 2, 3) → 设备 (1, 1)，本地偏移 = 19
 ```
@@ -293,7 +293,7 @@ base + 1@gpuid_x
 这个固定 offset 只会把基础位置沿 `@gpuid_x` 平移 1，不会产生副本。下图将这两种情况与 fully-sharded 布局放在一起比较，可以在 fully-sharded、shard + replica 和 shard + offset 三种模式之间切换。
 
 ```{raw} html
-<iframe src="../demo_zh/tile_distributed.html?v=offset-labels-20260710" title="Distributed layout across a GPU mesh" loading="lazy"
+<iframe src="../demo_zh/tile_distributed.html?v=offset-o-20260710" title="Distributed layout across a GPU mesh" loading="lazy"
         style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
