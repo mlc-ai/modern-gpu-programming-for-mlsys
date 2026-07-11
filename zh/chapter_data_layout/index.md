@@ -116,7 +116,7 @@ $$
 S[(4, 2, 2, 4) : (16, 4, 8, 1)]
 ```
 
-回到上面的交互图，点击任意 cell，可以将图中显示的 tile 坐标和物理地址与上面的 unflatten 过程及 $f_D(x)$ 对照。
+*回到上面的交互图，点击任意 cell，可以将图中显示的 tile 坐标和物理地址与上面的 unflatten 过程及 $f_D(x)$ 对照。*
 
 ### 一般的 Layout 函数
 
@@ -187,7 +187,7 @@ reg    = col%2
         style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
-例如，点击上图左侧 `Logical 8×8 Matrix` 中第 `r5` 行、第 `c3` 列的 cell 43，可以看到逻辑元素 `(5, 3)` 由 lane 21 持有，并位于该 lane 的 fragment slot 1。
+*例如，点击上图左侧 `Logical 8×8 Matrix` 中第 `r5` 行、第 `c3` 列的 cell 43，可以看到逻辑元素 `(5, 3)` 由 lane 21 持有，并位于该 lane 的 fragment slot 1。*
 
 这两个位置分别用 `@laneid` 和 `@reg` 表示：`@laneid` 是一个 warp 内的 lane ID，`@reg` 是该 lane 内的 fragment slot。这里的 `@reg` 表示 layout 中的 lane-local 坐标；具体指令仍可能把多个低精度元素打包到同一个 32-bit hardware register 中。
 
@@ -258,7 +258,7 @@ S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
         style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
-点击图中的任意 scale factor，可以查看它的 TMEM 坐标以及在四个 warp window 中的位置。
+*点击图中的任意 scale factor，可以查看它的 TMEM 坐标以及在四个 warp window 中的位置。*
 
 ### GPU Mesh 中的 Replication 与 Offset
 
@@ -300,7 +300,7 @@ Element (1, 2, 3) → device (1, 1), local offset = 19
         style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
-点击图中的任意 cell，可以查看哪些设备持有对应的逻辑元素。
+*点击图中的任意 cell，可以查看哪些设备持有对应的逻辑元素。*
 
 ## Swizzle Layout
 
@@ -326,7 +326,7 @@ physical_addr = row·8 + mapped_col
         style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
-点击图中的任意 column index，可以比较普通 row-major layout 和 XOR swizzle 的 bank 映射：前者需要 8 个 cycles，后者只需要 1 个 cycle。
+*点击图中的任意 column index，可以比较普通 row-major layout 和 XOR swizzle 的 bank 映射：前者需要 8 个 cycles，后者只需要 1 个 cycle。*
 
 上图用 8 个 bank 说明了 XOR 的基本思想。实际硬件使用更大的重复单元：我们把连续的 16 B 数据称为一个 sector，并用一个色块表示。对于 `SWIZZLE_128B`，atom 的每一行包含 8 个 sector，共 128 B；在常见的 4-byte bank 粒度下，这一行覆盖 32 个 bank slot。swizzle 根据行坐标对这 8 个 sector 的位置做 XOR 重排。
 
@@ -337,7 +337,7 @@ physical_addr = row·8 + mapped_col
         style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
-图中的每个 cell 表示一个 16 B sector。逐步查看 read cycles，可以观察 XOR 如何把一列访问分散到不同 bank。
+*图中的每个 cell 表示一个 16 B sector。逐步查看 read cycles，可以观察 XOR 如何把一列访问分散到不同 bank。*
 
 其他 swizzle mode 使用相同的层级，只是 atom 的每行宽度不同：`SWIZZLE_64B` 和 `SWIZZLE_32B` 的 atom 分别为 `8 × 64 B` 和 `8 × 32 B`。
 
@@ -348,14 +348,10 @@ physical_addr = row·8 + mapped_col
         style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
-选择一种 swizzle 格式和数据类型，可以查看对应 atom 的形状（8 × N B）。将鼠标悬停在任意单元格上，可以看到该元素在 atom 内被重新映射到的位置。
+*选择一种 swizzle 格式和数据类型，可以查看对应 atom 的形状（8 × N B）。将鼠标悬停在任意单元格上，可以看到该元素在 atom 内被重新映射到的位置。*
 
 应该选择哪一种 swizzle mode？一个实用的原则是：**在 tile 尺寸允许的情况下，优先选择每行宽度最大的 atom。** 每行宽度为 `N` bytes 的 atom 要求 tile 的连续维度至少达到 `N` bytes，最好还能被 `N` 整除。
 
-因此，一行至少包含 128 bytes，也就是 64 个 `float16` 元素时，通常优先使用 `SWIZZLE_128B`。如果连续维度不足 128 bytes，则选择能够容纳的 `SWIZZLE_64B` 或 `SWIZZLE_32B`。
+因此，一行至少包含 128 bytes，也就是 64 个 `float16` 元素时，通常优先使用 `SWIZZLE_128B`。如果连续维度不足 128 bytes，则选择能够容纳的 `SWIZZLE_64B` 或 `SWIZZLE_32B`。对于图中使用 `fp16` 的访问方式，`SWIZZLE_128B` 可以让连续的行读取和跨 8 行的列读取都避免 bank conflict。不过，这一保证只适用于与硬件 descriptor 匹配的元素宽度、swizzle mode 和访问模式；元素宽度、对齐方式或访问模式改变后，仍可能产生冲突。
 
-对于图中使用 `fp16` 的访问方式，`SWIZZLE_128B` 可以让连续的行读取和跨 8 行的列读取都避免 bank conflict。不过，这一保证只适用于与硬件 descriptor 匹配的元素宽度、swizzle mode 和访问模式；元素宽度、对齐方式或访问模式改变后，仍可能产生冲突。
-
-实际编程时，不需要手工计算 swizzle 后的地址。可以把完整映射理解成两步：`S[...]` 先把逻辑元素映射到线性的 memory 地址 `@m`，swizzle 再重排这个地址。由于 XOR 重排不是仿射变换，swizzle 不属于 affine layout 本身，而是与它组合使用的另一层地址变换。
-
-所有访问同一个 tile 的操作必须使用一致的 swizzle mode，具体的地址变换由组合后的 layout 统一处理。不同硬件单元对 swizzle mode 的要求会随 GPU 架构代际变化，下一章会进一步介绍这些约束。
+实际编程时，不需要手工计算 swizzle 后的地址。可以把完整映射理解成两步：`S[...]` 先把逻辑元素映射到线性的 memory 地址 `@m`，swizzle 再重排这个地址。由于 XOR 重排不是仿射变换，swizzle 不属于 affine layout 本身，而是与它组合使用的另一层地址变换。所有访问同一个 tile 的操作必须使用一致的 swizzle mode，具体的地址变换由组合后的 layout 统一处理。不同硬件单元对 swizzle mode 的要求会随 GPU 架构代际变化，下一章会进一步介绍这些约束。
