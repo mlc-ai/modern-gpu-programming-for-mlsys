@@ -33,7 +33,6 @@ exclude_patterns = [
     "appendix/**",
     "chapter_async_barriers/**",
     "chapter_clc/**",
-    "chapter_data_layout/**",
     "chapter_flash_attention/**",
     "chapter_gemm_advanced/**",
     "chapter_gemm_async/**",

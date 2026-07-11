@@ -448,7 +448,7 @@ TLane = r + 32 * q, where q in {0, 1, 2, 3}
 TCol  = s
 ```
 
-So the 32-row group is visible at TMEM lanes 0 through 31, 32 through 63, 64 through 95, and 96 through 127. This is the `warpx4` broadcast pattern ({ref}`chap_layout_generations`). Each of the four warp-sized TMEM lane windows sees the same scale-factor group.
+So the 32-row group is visible at TMEM lanes 0 through 31, 32 through 63, 64 through 95, and 96 through 127. This broadcasts the scale-factor group to four warps ({ref}`chap_layout_generations`). Each of the four warp-sized TMEM lane windows sees the same scale-factor group.
 
 In the full block-scaled MMA layout, this atom is combined with outer iters over M rows and K scale-factor groups. Several scale factors may also be packed into one 32-bit `TCol` cell, depending on the scale-factor dtype. For example, fp8 scale factors can pack four values into one 32-bit column cell. Optional stride-zero reuse and pipeline-depth iters can then describe scale reuse across multiple MMAs and double buffering.
 

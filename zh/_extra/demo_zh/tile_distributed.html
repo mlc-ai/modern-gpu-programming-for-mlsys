@@ -42,9 +42,9 @@
 <div class="controls">
   <div><span class="lbl">Layout</span>
     <div class="bg" id="mode">
-      <button class="btn on" data-v="shard">Fully Sharded (S0S1)</button>
-      <button class="btn" data-v="replica">Shard + Replica (S0R)</button>
-      <button class="btn" data-v="offset">Shard + Offset (S0+O)</button>
+      <button class="btn on" data-v="shard">Fully Sharded</button>
+      <button class="btn" data-v="replica">Shard + Replica</button>
+      <button class="btn" data-v="offset">Shard + Offset</button>
     </div>
   </div>
 </div>
@@ -84,7 +84,7 @@ let drawing = false;
 
 // ── Mapping functions ──────────────────────────────────────────
 
-// Fully Sharded (S0S1):
+// Fully Sharded:
 // S[(2, 4, 2, 4) : (1@gpuid_y, 4@m, 1@gpuid_x, 1@m)]
 // rows split by 2 → gpuid_y, cols split by 2 → gpuid_x
 function shardGpus(r, c) {
@@ -105,7 +105,7 @@ function shardGpuData(gpuId) {
 }
 function shardGpuShape() { return { rows: 4, cols: 4 }; }
 
-// Shard + Replica (S0R):
+// Shard + Replica:
 // S[(2, 4, 8) : (1@gpuid_y, 8@m, 1@m)] + R[2 : 1@gpuid_x]
 // rows split by 2 → gpuid_y; all cols on each GPU; replicated across gpuid_x
 function replicaGpus(r, c) {
@@ -332,8 +332,8 @@ function draw() {
       const addr = localAddr(gpus[0], loc.lr, loc.lc);
       html = `<div class="ftitle">Element ${r*N+c} 位于 (row=${r}, col=${c})</div>`;
       html += '<div class="fcontent">';
-      html += `addr = (row // 4) × 1@gpuid_y + (row % 4) × 8@m + col × 1@m<br>`;
-      html += `&nbsp;&nbsp;&nbsp;&nbsp; = (${r} // 4) × 1@gpuid_y + (${r} % 4) × 8@m + ${c} × 1@m<br>`;
+      html += `addr = (row // 4) × 1@gpuid_y + (row % 4) × 8@m + col × 1@m + O[1@gpuid_x]<br>`;
+      html += `&nbsp;&nbsp;&nbsp;&nbsp; = (${r} // 4) × 1@gpuid_y + (${r} % 4) × 8@m + ${c} × 1@m + O[1@gpuid_x]<br>`;
       html += `&nbsp;&nbsp;&nbsp;&nbsp; = <b>${gy}</b>@gpuid_y + <b>1</b>@gpuid_x + <b>${addr}</b>@m`;
       html += '</div>';
     }

@@ -1,12 +1,12 @@
 """Block-scaled MMA scale factors (SFA, SFB) in TMEM. Ground truth: nymph-rust +
 tvm sf_tmem_layout (backend/cuda/.../gemm_async/tcgen05.py): rows must be a
 multiple of 32; M = rows // 32; epc = 4 (four 8-bit SFs per 32-bit TMEM column);
-the atom is one 32-row chunk with R[4 : 32@TLane] (a warpx4 broadcast).
+the atom is one 32-row chunk with R[4 : 32@TLane] (a broadcast to 4 warps).
 
 Two distinct mappings, drawn as two panels:
   (1) Packing  — 128 M-rows occupy only 32 TMEM lanes (TLane = m % 32; the m // 32
       group runs along TCol).
-  (2) Replication — those 32 stored lanes are broadcast (warpx4, R[4 : 32@TLane])
+  (2) Replication — those 32 stored lanes are broadcast to 4 warps (R[4 : 32@TLane])
       to all 128 lanes of the reading warpgroup: lane l reads TLane (l mod 32).
 Outputs SVG (and a PNG for inspection).
 """
@@ -24,7 +24,7 @@ fig.patch.set_facecolor("white")
 ax.set_xlim(0, 100)
 ax.set_ylim(0, 100)
 ax.axis("off")
-ax.text(50, 98.5, "Scale factors in TMEM — packed into 32 lanes, then warpx4-broadcast to 128",
+ax.text(50, 98.5, "Scale factors in TMEM — packed into 32 lanes, then broadcast to 4 warps",
         ha="center", va="top", fontsize=12.8, fontweight="bold", color=TXT)
 
 # ----------------------------------------------------------------------------
@@ -58,11 +58,11 @@ ax.text(X0 + 2 * CW, YT + 4.6, "TCol →  (m // 32 group, then K)", ha="center",
 ax.text(22, 16, "Only 32 lanes hold all 128 M-rows.", ha="center", fontsize=7.6, color=TXT, style="italic")
 
 # ----------------------------------------------------------------------------
-# Bridge arrow — the warpx4 broadcast
+# Bridge arrow — broadcast to 4 warps
 # ----------------------------------------------------------------------------
 ax.annotate("", xy=(50.5, 52), xytext=(43.5, 52),
             arrowprops=dict(arrowstyle="-|>", color="#7c3aed", lw=2.4))
-ax.text(47, 56, "warpx4\nbroadcast", ha="center", va="bottom", fontsize=7.6,
+ax.text(47, 56, "broadcast to\n4 warps", ha="center", va="bottom", fontsize=7.6,
         fontweight="bold", color="#7c3aed")
 
 # ----------------------------------------------------------------------------
