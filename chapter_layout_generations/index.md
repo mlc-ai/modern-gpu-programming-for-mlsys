@@ -240,15 +240,15 @@ TCol  = s
 
 This broadcasts the compact scale-factor group to four warps, making it visible across the full 128-lane TMEM space. Outer coordinates then place additional 32-row groups and K-scale groups along `TCol`. For 8-bit scales, four adjacent `TCol` slots pack into one 32-bit hardware cell.
 
-The `scale_vec` mode determines which bytes an MMA selects from that 32-bit cell:
+The `scale_vec` qualifier sets the logical scale-factor width: one, two, or four scales per row of SFA (or per column of SFB). `SFA_ID` or `SFB_ID` then selects the aligned sub-column where that vector begins within the 32-bit TMEM word:
 
 ```text
-1X: select one byte; byte-id can be 0, 1, 2, or 3
-2X: select the low or high byte pair; byte-id is 0 or 2
-4X: select all four bytes; byte-id must be 0
+1X: one scale; ID can select byte offset 0, 1, 2, or 3
+2X: two scales; ID selects byte offset 0 or 2
+4X: four scales; ID must be 0
 ```
 
-![scale_vec byte selection: 1X selects one byte, 2X selects one byte pair, and 4X selects all four K-block scales](../img/sf_scale_vec.svg)
+![scale_vec sets the number of scales, while SFA_ID or SFB_ID selects the aligned sub-column within a 32-bit TMEM word](../img/sf_scale_vec.svg)
 
 This packing has no direct Ampere or Hopper analogue because those generations do not have TMEM scale-factor operands for `tcgen05` block-scaled MMA.
 
