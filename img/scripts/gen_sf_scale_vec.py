@@ -59,6 +59,5 @@ ax.text(50, 4, "The modes consume 1 (fp8), 2 (mxfp4), or 4 (nvfp4) K-block scale
         ha="center", fontsize=7.6, color=TXT, style="italic")
 
 fig.savefig(f"{OUT}/sf_scale_vec.svg", facecolor="white", bbox_inches="tight")
-fig.savefig("/tmp/sf_scale_vec_preview.png", dpi=150, facecolor="white", bbox_inches="tight")
 plt.close(fig)
 print("wrote sf_scale_vec.svg")
