@@ -275,7 +275,7 @@ scale_vec::4X: [SF0, SF1, SF2, SF3]
 
 ![scale_vec packing：1X 在四个 bytes 中重复同一个 scale，2X 重复一对 scales，4X 存放四个不同 K-block 的 scales](../../img/sf_scale_vec.svg)
 
-### 反复出现的 Register Fragment
+## 反复出现的 Register Fragment
 
 把三代架构放在一起看，会发现一种反复出现的结构：m8n8-style register fragment。
 
