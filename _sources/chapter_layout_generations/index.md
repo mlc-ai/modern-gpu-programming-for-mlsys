@@ -57,8 +57,8 @@ Take `mma.m16n8k16` with fp16 or bf16 inputs and fp32 accumulation as the concre
 For the C or D accumulator, lane `l` holds rows:
 
 ```text
-l / 4
-l / 4 + 8
+l // 4
+l // 4 + 8
 ```
 
 and columns:
@@ -79,10 +79,10 @@ The exact details vary by instruction shape and dtype, but the principle is fixe
 In layout notation, the m8n8 fragment is the kind of pattern written with named lane axes, for example:
 
 ```text
-S[(8, 4, 2) : (4@laneid, 1@laneid, 1@m)]
+S[(8, 4, 2) : (4@laneid, 1@laneid, 1@reg)]
 ```
 
-The two `laneid` iters together describe how the row and column pieces are scattered across lanes, while the final `m` component describes the per-lane register slot.
+The two `laneid` iters together describe how the row and column pieces are scattered across lanes, while the final `reg` component describes the per-lane register slot.
 
 ## `ldmatrix`: Shared Memory to Register Fragment
 
@@ -104,13 +104,13 @@ The result lands directly in the MMA fragment. For the basic 8 by 8 case, lane `
 
 The `.trans` form transposes each 8 by 8 matrix as it loads. This is used when the operand is stored in the opposite orientation from the one the MMA instruction expects.
 
-![ldmatrix loads an 8x8 shared memory tile into the warp register fragment; the reverse direction on Ampere uses ordinary stores, and a dedicated stmatrix instruction appears later on Hopper](../img/ldstmatrix.svg)
+![ldmatrix loads an 8x8 shared memory tile into the warp register fragment; the reverse stmatrix path is available only on Hopper (sm_90) and later architectures](../img/ldstmatrix.svg)
 
 ## Writing the Ampere Fragment Back
 
 After `mma.sync` finishes, the accumulator is still a register fragment. The epilogue has to move that fragment out.
 
-On Ampere, there is no dedicated reverse of `ldmatrix`. The kernel uses ordinary per-thread stores, sometimes with warp shuffles or local rearrangement before the store, to write the accumulator into shared memory or global memory in a useful layout.
+On Ampere, there is no dedicated reverse of `ldmatrix`; `stmatrix` first becomes available on Hopper (`sm_90`). Ampere kernels therefore use ordinary per-thread stores, sometimes with warp shuffles or local rearrangement before the store, to write the accumulator into shared memory or global memory in a useful layout.
 
 This keeps the Ampere model simple but also exposes a lot of layout work to the kernel. The input side uses `ldmatrix` to create the fragment. The compute instruction reads and writes register fragments. The output side is handled by ordinary stores from those fragments.
 
@@ -152,36 +152,27 @@ This removes the explicit `ldmatrix` step for SMEM-sourced operands. It does not
 
 ## What the Hopper Tensor Core Expects
 
-A Hopper shared memory matrix descriptor is a compact description of a matrix tile in shared memory. It tells `wgmma` how to turn logical operand coordinates into shared memory addresses.
+A Hopper shared memory matrix descriptor is a 64-bit register value. The matrix data resides in shared memory, while the descriptor carries the address parameters that `wgmma` needs to locate and traverse the tile:
 
-The descriptor includes fields such as:
+| Field | What the descriptor records |
+|---|---|
+| `matrix start address` | Locates the matrix in shared memory |
+| `leading dimension byte offset` (`ldo`) | Byte offset for one class of movement between data groups |
+| `stride dimension byte offset` (`sdo`) | Byte offset for the other class of movement between data groups |
+| `matrix base offset` | Locates the matrix start within the repeating swizzle pattern |
+| `swizzle mode` | Selects no swizzle, 32-byte, 64-byte, or 128-byte swizzling |
 
-```text
-start address
-leading dimension offset
-stride dimension offset
-swizzle mode
-base offset
-```
+The matrix start address, `ldo`, and `sdo` are encoded in 16-byte units. WGMMA begins at the start address and uses the two offsets to move between repeating data groups; the major mode and swizzle mode determine which row or column groups each movement connects. In a swizzled K-major layout, `ldo` uses the fixed encoding 1, while `sdo` advances from one eight-row group to the next. MN-major layouts use the offsets to move between their corresponding row and column groups.
 
-The exact interpretation depends on the operand major mode. For a K-major tile, one stride advances along K and the other advances along M. For an MN-major tile, the roles are swapped.
+Together with the major mode, the swizzle mode determines the atom shape and the XOR permutation inside each atom. The matrix base offset further locates the matrix start within the repeating swizzle pattern; it is zero when the start aligns with the pattern boundary.
 
-The swizzle mode is one of the shared memory descriptor formats, such as:
+The figure below shows a K-major A operand with 128-byte swizzling. K runs horizontally and M vertically. Each colored block is an 8-by-128-byte atom whose eight rows occupy one contiguous 1 KB region in shared memory. The black dot at the upper left marks `start_address`. K follows the fixed K-major atom layout, with the leading-dimension byte offset encoded as 1; `sdo` advances between successive eight-row groups along M. After the descriptor identifies the target atom, the swizzle mode determines the byte position inside it through the XOR permutation.
 
-```text
-SWIZZLE_NONE
-SWIZZLE_32B
-SWIZZLE_64B
-SWIZZLE_128B
-```
-
-The swizzle mode determines two things. It determines the atom shape used by the descriptor, and it determines the XOR permutation applied inside that atom. For example, the 128-byte swizzle mode treats the operand as a grid of 8-row by 128-byte atoms, with the swizzle applied inside each atom.
+![In a K-major 128-byte swizzle, the matrix descriptor uses the start address and sdo to locate an eight-row group, then the fixed atom layout and XOR swizzle determine the byte position](../img/wgmma_descriptor_kmajor.svg)
 
 The kernel still has to place the bytes correctly. TMA usually fills the shared memory tile, and the TMA descriptor must use the same swizzle format that the `wgmma` descriptor later names. If TMA writes a 128-byte swizzled tile, the `wgmma` descriptor must read it as a 128-byte swizzled tile. If the descriptor and the data disagree, the Tensor Core will read scrambled operands.
 
 This is the main shift from Ampere. The swizzle is no longer only hidden inside hand-written shared memory indexing. Hopper makes it a first-class descriptor format. The TMA load that writes the tile and the `wgmma` instruction that reads the tile can both name the same format.
-
-![A Hopper shared memory matrix descriptor maps operand coordinates into swizzled shared memory atoms: the descriptor strides choose the atom, and the swizzle chooses the byte position inside the atom](../img/smem_descriptor.svg)
 
 ## Hopper Output Still Uses Registers
 
@@ -227,7 +218,7 @@ Only after that copy are the scale factors in the memory space where `tcgen05.mm
 
 The TMEM scale-factor layout uses the TMEM hardware coordinates Lane and Col. In the TIRx layout notation, those axes are written as `TLane` and `TCol`.
 
-A 128-row scale vector is compacted into a 32-lane group and then replicated across the four 32-lane windows of TMEM. In layout notation, the core pattern is:
+A full scale-factor layout is built from a reusable 32-lane atom. In layout notation, that atom is:
 
 ```text
 S[(32, sf_per_mma) : (1@TLane, 1@TCol)] + R[4 : 32@TLane]
@@ -247,17 +238,19 @@ TLane = r + 32 * q, where q in {0, 1, 2, 3}
 TCol  = s
 ```
 
-This broadcasts the compact scale-factor group to four warps, making it visible across the full 128-lane TMEM space.
+This broadcasts the compact scale-factor group to four warps, making it visible across the full 128-lane TMEM space. Outer coordinates then place additional 32-row groups and K-scale groups along `TCol`. For 8-bit scales, four adjacent `TCol` slots pack into one 32-bit hardware cell.
 
-There is also byte packing inside the 32-bit `TCol` cells. The packing depends on the `scale_vec` mode:
+The `scale_vec` qualifier sets the logical scale-factor width: one, two, or four scales per row of SFA (or per column of SFB). The shorter vectors are repeated to fill a 32-bit TMEM word, and `SFA_ID` or `SFB_ID` selects one of the equivalent byte or half-word positions:
 
 ```text
-1X: one scale value is broadcast across the 32-bit cell
-2X: two scale values are packed, each duplicated
-4X: four K-block scale values are packed
+1X: [SF0, SF0, SF0, SF0]; ID can select byte offset 0, 1, 2, or 3
+2X: [SF0, SF1, SF0, SF1]; ID selects byte offset 0 or 2
+4X: [SF0, SF1, SF2, SF3]; ID must be 0
 ```
 
-![scale_vec byte packing: 1X broadcasts one scale across the 4-byte cell; 2X packs two scales, each duplicated; 4X packs four K-block scales](../img/sf_scale_vec.svg)
+This byte-level repetition is separate from the `R[4 : 32@TLane]` replication across four TMEM lane windows. It is also separate from the mathematical reuse of each scale across the K elements in its block.
+
+![scale_vec packing: 1X repeats one scale across four bytes, 2X repeats one two-scale pair, and 4X stores four distinct K-block scales](../img/sf_scale_vec.svg)
 
 This packing has no direct Ampere or Hopper analogue because those generations do not have TMEM scale-factor operands for `tcgen05` block-scaled MMA.
 

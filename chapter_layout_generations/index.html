@@ -437,8 +437,8 @@ registers back to SMEM with ordinary stores
 <p>The Ampere Tensor Core reads register fragments built from 8 by 8 subtile units. These are the units that <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> loads and that the MMA consumes.</p>
 <p>Take <code class="docutils literal notranslate"><span class="pre">mma.m16n8k16</span></code> with fp16 or bf16 inputs and fp32 accumulation as the concrete case. The accumulator tile has shape <code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">by</span> <span class="pre">8</span></code>. It is distributed across the 32 lanes in a fixed pattern.</p>
 <p>For the C or D accumulator, lane <code class="docutils literal notranslate"><span class="pre">l</span></code> holds rows:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>l / 4
-l / 4 + 8
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>l // 4
+l // 4 + 8
 </pre></div>
 </div>
 <p>and columns:</p>
@@ -451,10 +451,10 @@ l / 4 + 8
 <p>The B operand uses a matching K placement and spreads the N side across the lane group and registers.</p>
 <p>The exact details vary by instruction shape and dtype, but the principle is fixed. The Tensor Core expects a particular per-lane register fragment. If the values are not in those registers in that pattern, the instruction will multiply the wrong elements.</p>
 <p>In layout notation, the m8n8 fragment is the kind of pattern written with named lane axes, for example:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>S[(8, 4, 2) : (4@laneid, 1@laneid, 1@m)]
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>S[(8, 4, 2) : (4@laneid, 1@laneid, 1@reg)]
 </pre></div>
 </div>
-<p>The two <code class="docutils literal notranslate"><span class="pre">laneid</span></code> iters together describe how the row and column pieces are scattered across lanes, while the final <code class="docutils literal notranslate"><span class="pre">m</span></code> component describes the per-lane register slot.</p>
+<p>The two <code class="docutils literal notranslate"><span class="pre">laneid</span></code> iters together describe how the row and column pieces are scattered across lanes, while the final <code class="docutils literal notranslate"><span class="pre">reg</span></code> component describes the per-lane register slot.</p>
 </section>
 <section id="ldmatrix-shared-memory-to-register-fragment">
 <h2><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>: Shared Memory to Register Fragment<a class="headerlink" href="#ldmatrix-shared-memory-to-register-fragment" title="Link to this heading">#</a></h2>
@@ -469,12 +469,12 @@ ldmatrix.sync.aligned.m8n8.x4.shared.b16
 <p>The <code class="docutils literal notranslate"><span class="pre">.x1</span></code>, <code class="docutils literal notranslate"><span class="pre">.x2</span></code>, and <code class="docutils literal notranslate"><span class="pre">.x4</span></code> forms load one, two, or four 8 by 8 matrices. The row base addresses are supplied by lanes. For matrix <code class="docutils literal notranslate"><span class="pre">m</span></code> and row <code class="docutils literal notranslate"><span class="pre">r</span></code>, the base address comes from lane <code class="docutils literal notranslate"><span class="pre">m</span> <span class="pre">*</span> <span class="pre">8</span> <span class="pre">+</span> <span class="pre">r</span></code>. That means <code class="docutils literal notranslate"><span class="pre">.x1</span></code> uses lanes 0 through 7 for row addresses, <code class="docutils literal notranslate"><span class="pre">.x2</span></code> uses lanes 0 through 15, and <code class="docutils literal notranslate"><span class="pre">.x4</span></code> uses lanes 0 through 31.</p>
 <p>The result lands directly in the MMA fragment. For the basic 8 by 8 case, lane <code class="docutils literal notranslate"><span class="pre">l</span></code> receives the row and column pair that the Tensor Core expects. A plain loop of per-lane <code class="docutils literal notranslate"><span class="pre">ld.shared</span></code> instructions would have to reproduce that scatter manually. <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> performs the shared-memory-to-fragment rearrangement as one warp-collective instruction.</p>
 <p>The <code class="docutils literal notranslate"><span class="pre">.trans</span></code> form transposes each 8 by 8 matrix as it loads. This is used when the operand is stored in the opposite orientation from the one the MMA instruction expects.</p>
-<p><img alt="ldmatrix loads an 8x8 shared memory tile into the warp register fragment; the reverse direction on Ampere uses ordinary stores, and a dedicated stmatrix instruction appears later on Hopper" src="../_images/ldstmatrix.svg" /></p>
+<p><img alt="ldmatrix loads an 8x8 shared memory tile into the warp register fragment; the reverse stmatrix path is available only on Hopper (sm_90) and later architectures" src="../_images/ldstmatrix.svg" /></p>
 </section>
 <section id="writing-the-ampere-fragment-back">
 <h2>Writing the Ampere Fragment Back<a class="headerlink" href="#writing-the-ampere-fragment-back" title="Link to this heading">#</a></h2>
 <p>After <code class="docutils literal notranslate"><span class="pre">mma.sync</span></code> finishes, the accumulator is still a register fragment. The epilogue has to move that fragment out.</p>
-<p>On Ampere, there is no dedicated reverse of <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>. The kernel uses ordinary per-thread stores, sometimes with warp shuffles or local rearrangement before the store, to write the accumulator into shared memory or global memory in a useful layout.</p>
+<p>On Ampere, there is no dedicated reverse of <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>; <code class="docutils literal notranslate"><span class="pre">stmatrix</span></code> first becomes available on Hopper (<code class="docutils literal notranslate"><span class="pre">sm_90</span></code>). Ampere kernels therefore use ordinary per-thread stores, sometimes with warp shuffles or local rearrangement before the store, to write the accumulator into shared memory or global memory in a useful layout.</p>
 <p>This keeps the Ampere model simple but also exposes a lot of layout work to the kernel. The input side uses <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> to create the fragment. The compute instruction reads and writes register fragments. The output side is handled by ordinary stores from those fragments.</p>
 </section>
 <section id="swizzle-on-ampere">
@@ -503,27 +503,38 @@ ldmatrix.sync.aligned.m8n8.x4.shared.b16
 </section>
 <section id="what-the-hopper-tensor-core-expects">
 <h2>What the Hopper Tensor Core Expects<a class="headerlink" href="#what-the-hopper-tensor-core-expects" title="Link to this heading">#</a></h2>
-<p>A Hopper shared memory matrix descriptor is a compact description of a matrix tile in shared memory. It tells <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> how to turn logical operand coordinates into shared memory addresses.</p>
-<p>The descriptor includes fields such as:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>start address
-leading dimension offset
-stride dimension offset
-swizzle mode
-base offset
-</pre></div>
+<p>A Hopper shared memory matrix descriptor is a 64-bit register value. The matrix data resides in shared memory, while the descriptor carries the address parameters that <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> needs to locate and traverse the tile:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>What the descriptor records</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">matrix</span> <span class="pre">start</span> <span class="pre">address</span></code></p></td>
+<td><p>Locates the matrix in shared memory</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">leading</span> <span class="pre">dimension</span> <span class="pre">byte</span> <span class="pre">offset</span></code> (<code class="docutils literal notranslate"><span class="pre">ldo</span></code>)</p></td>
+<td><p>Byte offset for one class of movement between data groups</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">stride</span> <span class="pre">dimension</span> <span class="pre">byte</span> <span class="pre">offset</span></code> (<code class="docutils literal notranslate"><span class="pre">sdo</span></code>)</p></td>
+<td><p>Byte offset for the other class of movement between data groups</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">matrix</span> <span class="pre">base</span> <span class="pre">offset</span></code></p></td>
+<td><p>Locates the matrix start within the repeating swizzle pattern</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">swizzle</span> <span class="pre">mode</span></code></p></td>
+<td><p>Selects no swizzle, 32-byte, 64-byte, or 128-byte swizzling</p></td>
+</tr>
+</tbody>
+</table>
 </div>
-<p>The exact interpretation depends on the operand major mode. For a K-major tile, one stride advances along K and the other advances along M. For an MN-major tile, the roles are swapped.</p>
-<p>The swizzle mode is one of the shared memory descriptor formats, such as:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>SWIZZLE_NONE
-SWIZZLE_32B
-SWIZZLE_64B
-SWIZZLE_128B
-</pre></div>
-</div>
-<p>The swizzle mode determines two things. It determines the atom shape used by the descriptor, and it determines the XOR permutation applied inside that atom. For example, the 128-byte swizzle mode treats the operand as a grid of 8-row by 128-byte atoms, with the swizzle applied inside each atom.</p>
+<p>The matrix start address, <code class="docutils literal notranslate"><span class="pre">ldo</span></code>, and <code class="docutils literal notranslate"><span class="pre">sdo</span></code> are encoded in 16-byte units. WGMMA begins at the start address and uses the two offsets to move between repeating data groups; the major mode and swizzle mode determine which row or column groups each movement connects. In a swizzled K-major layout, <code class="docutils literal notranslate"><span class="pre">ldo</span></code> uses the fixed encoding 1, while <code class="docutils literal notranslate"><span class="pre">sdo</span></code> advances from one eight-row group to the next. MN-major layouts use the offsets to move between their corresponding row and column groups.</p>
+<p>Together with the major mode, the swizzle mode determines the atom shape and the XOR permutation inside each atom. The matrix base offset further locates the matrix start within the repeating swizzle pattern; it is zero when the start aligns with the pattern boundary.</p>
+<p>The figure below shows a K-major A operand with 128-byte swizzling. K runs horizontally and M vertically. Each colored block is an 8-by-128-byte atom whose eight rows occupy one contiguous 1 KB region in shared memory. The black dot at the upper left marks <code class="docutils literal notranslate"><span class="pre">start_address</span></code>. K follows the fixed K-major atom layout, with the leading-dimension byte offset encoded as 1; <code class="docutils literal notranslate"><span class="pre">sdo</span></code> advances between successive eight-row groups along M. After the descriptor identifies the target atom, the swizzle mode determines the byte position inside it through the XOR permutation.</p>
+<p><img alt="In a K-major 128-byte swizzle, the matrix descriptor uses the start address and sdo to locate an eight-row group, then the fixed atom layout and XOR swizzle determine the byte position" src="../_images/wgmma_descriptor_kmajor.svg" /></p>
 <p>The kernel still has to place the bytes correctly. TMA usually fills the shared memory tile, and the TMA descriptor must use the same swizzle format that the <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> descriptor later names. If TMA writes a 128-byte swizzled tile, the <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> descriptor must read it as a 128-byte swizzled tile. If the descriptor and the data disagree, the Tensor Core will read scrambled operands.</p>
 <p>This is the main shift from Ampere. The swizzle is no longer only hidden inside hand-written shared memory indexing. Hopper makes it a first-class descriptor format. The TMA load that writes the tile and the <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> instruction that reads the tile can both name the same format.</p>
-<p><img alt="A Hopper shared memory matrix descriptor maps operand coordinates into swizzled shared memory atoms: the descriptor strides choose the atom, and the swizzle chooses the byte position inside the atom" src="../_images/smem_descriptor.svg" /></p>
 </section>
 <section id="hopper-output-still-uses-registers">
 <h2>Hopper Output Still Uses Registers<a class="headerlink" href="#hopper-output-still-uses-registers" title="Link to this heading">#</a></h2>
@@ -555,7 +566,7 @@ shared memory to TMEM with tcgen05.cp
 </div>
 <p>Only after that copy are the scale factors in the memory space where <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> expects to read them.</p>
 <p>The TMEM scale-factor layout uses the TMEM hardware coordinates Lane and Col. In the TIRx layout notation, those axes are written as <code class="docutils literal notranslate"><span class="pre">TLane</span></code> and <code class="docutils literal notranslate"><span class="pre">TCol</span></code>.</p>
-<p>A 128-row scale vector is compacted into a 32-lane group and then replicated across the four 32-lane windows of TMEM. In layout notation, the core pattern is:</p>
+<p>A full scale-factor layout is built from a reusable 32-lane atom. In layout notation, that atom is:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>S[(32, sf_per_mma) : (1@TLane, 1@TCol)] + R[4 : 32@TLane]
 </pre></div>
 </div>
@@ -569,14 +580,15 @@ TCol  = s
 TCol  = s
 </pre></div>
 </div>
-<p>This broadcasts the compact scale-factor group to four warps, making it visible across the full 128-lane TMEM space.</p>
-<p>There is also byte packing inside the 32-bit <code class="docutils literal notranslate"><span class="pre">TCol</span></code> cells. The packing depends on the <code class="docutils literal notranslate"><span class="pre">scale_vec</span></code> mode:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>1X: one scale value is broadcast across the 32-bit cell
-2X: two scale values are packed, each duplicated
-4X: four K-block scale values are packed
+<p>This broadcasts the compact scale-factor group to four warps, making it visible across the full 128-lane TMEM space. Outer coordinates then place additional 32-row groups and K-scale groups along <code class="docutils literal notranslate"><span class="pre">TCol</span></code>. For 8-bit scales, four adjacent <code class="docutils literal notranslate"><span class="pre">TCol</span></code> slots pack into one 32-bit hardware cell.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">scale_vec</span></code> qualifier sets the logical scale-factor width: one, two, or four scales per row of SFA (or per column of SFB). The shorter vectors are repeated to fill a 32-bit TMEM word, and <code class="docutils literal notranslate"><span class="pre">SFA_ID</span></code> or <code class="docutils literal notranslate"><span class="pre">SFB_ID</span></code> selects one of the equivalent byte or half-word positions:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>1X: [SF0, SF0, SF0, SF0]; ID can select byte offset 0, 1, 2, or 3
+2X: [SF0, SF1, SF0, SF1]; ID selects byte offset 0 or 2
+4X: [SF0, SF1, SF2, SF3]; ID must be 0
 </pre></div>
 </div>
-<p><img alt="scale_vec byte packing: 1X broadcasts one scale across the 4-byte cell; 2X packs two scales, each duplicated; 4X packs four K-block scales" src="../_images/sf_scale_vec.svg" /></p>
+<p>This byte-level repetition is separate from the <code class="docutils literal notranslate"><span class="pre">R[4</span> <span class="pre">:</span> <span class="pre">32&#64;TLane]</span></code> replication across four TMEM lane windows. It is also separate from the mathematical reuse of each scale across the K elements in its block.</p>
+<p><img alt="scale_vec packing: 1X repeats one scale across four bytes, 2X repeats one two-scale pair, and 4X stores four distinct K-block scales" src="../_images/sf_scale_vec.svg" /></p>
 <p>This packing has no direct Ampere or Hopper analogue because those generations do not have TMEM scale-factor operands for <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> block-scaled MMA.</p>
 <p>In <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>, scale factors follow the data they scale. SFA scales A, so it is split by M across the two CTAs, matching the A rows owned by each CTA. SFB scales B, which is shared by the two CTA halves of the computation, so SFB is multicast to both CTAs (<a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Tensor Cores: tcgen05</span></a>).</p>
 </section>
