@@ -230,7 +230,7 @@ C/D in TMEM --tcgen05.ld--> register fragment --store--> GMEM
 
 ### Block-Scaled MMA 的 Scale Factors
 
-上一章的 {ref}`TMEM 中 Scale Factors 的跨 Warp 广播 <sec_tmem_scale_factor_replication>` 已经用 `M=128`、`SFK=4` 的例子，推导了 scale factors 在 TMEM 中的打包和 `.warpx4` replication。现在沿着数据路径继续往下看：这些值怎样进入 TMEM，MMA 又怎样选中当前需要的几个 bytes。
+上一章的 <a href="../chapter_data_layout/index.html#tmem-scale-factors-warp">TMEM 中 Scale Factors 的跨 Warp 广播</a> 已经用 `M=128`、`SFK=4` 的例子，推导了 scale factors 在 TMEM 中的打包和 `.warpx4` replication。现在沿着数据路径继续往下看：这些值怎样进入 TMEM，MMA 又怎样选中当前需要的几个 bytes。
 
 Block-scaled MMA 需要两组 scale factors：
 

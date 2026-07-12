@@ -246,7 +246,6 @@ f_D(x) = (c0·4 + c1)@laneid + c2@reg
 
 ## Replication and Offset
 
-(sec_tmem_scale_factor_replication)=
 ### Broadcasting Scale Factors Across Warps in TMEM
 
 We begin with an example that occurs entirely within one kernel. Blackwell block-scaled MMA stores
