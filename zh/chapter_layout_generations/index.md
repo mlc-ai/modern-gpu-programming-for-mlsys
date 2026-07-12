@@ -1,130 +1,143 @@
 (chap_layout_generations)=
-# 不同 GPU 架构代际的 Tensor Core 操作数布局
+# Tensor Core 数据布局的演进
 
 :::{admonition} 概览
 :class: overview
 
-- 从 Ampere、Hopper 到 Blackwell，Tensor Core 执行的高层操作始终相同：`D = A B + C`。
-- 不同代际之间的变化主要在于：操作数如何送入 Tensor Core、支持哪些 tile shape 和 data type，以及累加器存放在哪里。
-- Ampere 使用 warp-level register fragments。Shared memory 中的 tile 通过 `ldmatrix` 加载到 fragment 中，累加器也保存在 registers 中。
-- Hopper 允许 `wgmma` 通过 matrix descriptor 直接从 shared memory 读取操作数。Descriptor 会指定 Tensor Core 所要求的 shared-memory swizzle format。
-- Blackwell 保留了从 shared memory 读取操作数的路径，但把累加器移到 TMEM。Block-scaled MMA 的 scale factors 也会通过 TMEM 暂存。
-- 两个访存约束贯穿所有架构代际：global memory coalescing 和 shared memory bank conflict。
+- Ampere 的 `mma.sync` 从 warp 内各 thread 的寄存器中读取 A、B 和 C，计算结果 D 也保存在寄存器中。
+- Hopper 的 `wgmma.mma_async` 可以通过 matrix descriptor 直接读取 shared memory 中的输入，累加器仍由各 thread 的寄存器持有。
+- Blackwell 的 `tcgen05.mma` 将累加器移入 TMEM；block-scaled MMA 使用的 scale factors 也存放在 TMEM 中。
 :::
 
-从抽象层面看，Tensor Core 所执行的核心运算自 Volta 以来一直没有改变：读取 A、B 和 C，计算矩阵乘加，并得到结果 D：
+从数学上看，三代 Tensor Core 做的事情没有改变，都是矩阵乘加：
 
 $$
 D = AB + C
 $$
 
-但这项运算背后的硬件接口却在不断演进。一个在某代 GPU 上表现出色的 kernel，迁移到下一代架构后未必仍然高效。更重要的是，如果操作数没有按照硬件要求的 layout 排列，即使程序所表达的数学公式仍然是 $D = AB + C$，Tensor Core 也可能读取到错误的数据，从而产生错误结果。因为 Tensor Core 直接处理的并不是抽象意义上的矩阵，而是按照特定硬件布局组织的数据。
+其中，A 和 B 是乘法的输入，C 是已有的累加值，D 是计算结果。公式没有告诉我们这些矩阵存放在哪里，也没有说明 Tensor Core 按什么顺序读取它们。
 
-本章将沿着三个 GPU 架构代际，介绍 Tensor Core 对操作数布局和数据供给方式的要求。Ampere 使用由一个 warp 持有的 register fragments 提供操作数和累加器；Hopper 改为从 shared memory 中读取输入操作数，并通过 descriptor 描述它们的布局；Blackwell 延续了 shared memory 操作数的设计，同时将累加器迁移到 TMEM 中。
+这正是本章要讨论的问题。Tensor Core 指令会按照固定规则读取 lane 中的寄存器、shared memory 地址或 TMEM 坐标。某个元素一旦放错位置，指令就会把它当成另一个矩阵元素参与计算，最后得到错误结果。
 
-三个架构执行的仍然是同一种矩阵乘加运算，但操作数存放在哪里、如何送入 Tensor Core，以及累加结果存放在哪里，都在持续发生变化。
+下面沿着 Ampere、Hopper 和 Blackwell 的顺序，依次看清三个问题：MMA 从哪里读取输入，累加结果放在哪里，以及 kernel 怎样描述指令要求的 layout。描述具体映射时，我们会继续使用“{ref}`数据布局 <chap_data_layout>`”一章引入的记号。
 
-我们将使用“{ref}`数据布局 <chap_data_layout>`”一章中介绍的 layout 记号，准确描述这些硬件接口所要求的布局。
+## 先记住两项访存要求
 
-## 两项始终存在的访存约束
+在看具体指令之前，先回顾 layout 设计还要满足的两项要求。数据从 global memory 搬运时，一个 warp 访问的地址应尽量合并成少量连续且对齐的 memory transactions。访问 shared memory 时，地址还要尽量分散到不同 banks，避免 bank conflict。
 
-在讨论 Tensor Core 对 layout 的要求之前，GPU kernel 的 layout 设计已经受到两项基本访存约束：global memory coalescing 和 shared memory bank conflict。
+加上 Tensor Core 自身的布局要求，一个 kernel 的 layout 实际上要同时通过三项检查：global memory 访问是否合并、shared memory 访问是否产生 bank conflict，以及每个元素是否位于 MMA 指令规定的位置。前两项已经在前文介绍，下面集中讨论第三项。
 
-第一项约束是 global memory coalescing。当一个 warp 的 32 个 lanes 发起 global memory load 时，硬件会将它们访问的地址合并为尽可能少的、连续且对齐的 memory transactions。如果这些地址彼此分散，一次 warp load 就可能被拆成多次 transactions。即使搬运的数据量相同，也会消耗更多内存带宽，并带来更高的访问延迟。
+## Ampere：寄存器中的操作数与累加器
 
-第二项约束是 shared memory bank conflict。上一章已经介绍了 bank conflict 及 swizzling；这里需要记住的是，Tensor Core operands 的布局不仅要符合指令要求，还要让数据写入和读取 shared memory 时避免严重的 bank conflict。
+先看 Ampere。它常用 `mma.sync.aligned.m16n8k*` 系列指令执行 Tensor Core 矩阵乘加。`mma.sync` 从寄存器中取得 A、B 和 C，计算得到的 D 也写回寄存器。
 
-无论是否使用 Tensor Core，kernel 都会受到这两项访存约束。Tensor Core kernel 还需要满足第三项要求：操作数必须按照具体 Tensor Core 指令所规定的 layout 排列。本章接下来将介绍这项要求如何随 Ampere、Hopper 和 Blackwell 三代架构不断演进。
+一条 `mma.sync` 由整个 warp 协同执行。A、B 和 C/D 矩阵 tile 会按照 PTX 规定的方式，分散到 warp 中 32 个 threads 的寄存器里。每个 thread 只持有 tile 的一部分，这一部分称为该 thread 的 register fragment；把 32 个 threads 持有的部分合在一起，才得到完整的矩阵 tile。
 
-## Ampere：分布在 warp 各 lane 中的寄存器 fragment
-
-在 Ampere 架构上，Tensor Core 主要通过 warp-level 的 `mma.sync.aligned.m16n8k*` 系列指令完成矩阵乘加。与后续架构不同，`mma.sync` 的输入操作数和累加结果都保存在寄存器中。
-
-A、B 操作数以及 C/D 累加器会按照 `mma.sync` 规定的布局，分散存放在一个 warp 的 32 个 threads 各自的寄存器中。每个 thread 只持有矩阵 tile 的一部分；它在 warp 中的 lane ID 决定了自己持有哪些元素。32 个 threads 中的这些寄存器合在一起，才表示一个完整的操作数或累加器 tile。这种分布在整个 warp 寄存器中的矩阵表示，称为 register fragment。
-
-Shared memory 在这里主要充当中间暂存区。执行 MMA 之前，A 和 B 的 tile 必须先从 shared memory 加载到寄存器中，并按照 `mma.sync` 规定的 fragment layout 分配到各个 lanes。
-
-数据路径可以概括为：
+因此，Ampere kernel 在执行 MMA 前，通常先把 A 和 B 暂存到 shared memory，再用 `ldmatrix` 把它们装入正确的 thread 寄存器，组成 `mma.sync` 需要的 fragments：
 
 ```text
 SMEM --ldmatrix--> registers
 registers --mma.sync--> registers
-registers --常规 store--> SMEM
+registers --普通 store--> SMEM 或 GMEM
 ```
 
-Ampere 上的大部分 layout 问题都围绕这条数据路径展开。这里的 `ldmatrix` 是一条由整个 warp 协同执行的 load 指令，专门负责把 shared memory 中的矩阵块加载到各个 thread 的寄存器中。在执行 `ldmatrix` 之前，A、B tile 必须先按照适合该指令读取的布局写入 shared memory。随后，`ldmatrix` 根据固定的 lane 和 register 映射，将数据组织成 `mma.sync` 所需的 register fragment。后文会进一步介绍它的具体加载形式和地址映射规则。
+`mma.sync` 真正关心的是发出指令时各个寄存器里有什么。上面是高性能 kernel 最常见的数据路径；其他 load 或寄存器操作也可以准备这些值。
 
-## Ampere Tensor Core 的操作数布局要求
+### 一个具体的 fragment 映射
 
-在 Ampere 上，`mma.sync` 使用的 register fragment 可以进一步拆分为若干 `8×8` 子块。`ldmatrix` 以这样的 `8×8` 矩阵块为基本单位，从 shared memory 中加载数据，并将其分布到各个 lane 的寄存器中，形成 `mma.sync` 所要求的 operand fragment。
+register fragment 到底怎样分布在 32 个 threads 中？下面用 shape 为 `m16n8k16` 的 `mma.sync` 具体看一次。这里令 A 为 row-major、B 为 column-major，A/B 使用 `fp16` 或 `bf16`，C/D 使用 `fp32`。整个 warp 共同计算：
 
-以输入类型为 `fp16` 或 `bf16`、累加类型为 `fp32` 的 `mma.m16n8k16` 为例。该指令计算一个 `16×8` 的输出 tile，其 C/D 累加器会按照固定模式分布在一个 warp 的 32 个 lanes 中。
+$$
+D_{16\times8}=A_{16\times16}B_{16\times8}+C_{16\times8}.
+$$
 
-对于 C/D 累加器，lane `l` 对应两行：
+每个 thread 的 lane ID 决定它持有 A、B、C 和 D 中的哪些元素。先从最容易观察的 C/D 累加器开始。
 
-```text
-l // 4
-l // 4 + 8
-```
+观察 PTX 规定的映射，可以发现它每 4 个 lanes 重复一次：lanes 0–3 负责第 0 行和第 8 行，lanes 4–7 负责第 1 行和第 9 行，后面的 lanes 依次类推。因此，可以把 32 个 lanes 分成 8 个连续的 4-lane groups。记当前 lane 的 ID 为 $l$，并定义：
 
-以及相邻的两列：
+$$
+g=l\mathbin{//}4,\qquad t=l\bmod 4.
+$$
 
-```text
-2 * (l % 4)
-2 * (l % 4) + 1
-```
+整数除法得到 group 编号 $g$，取余得到 lane 在 group 内的位置 $t$。
 
-因此，每个 lane 持有四个 `fp32` 累加值。令
+第 $g$ 个 group 共同负责输出 tile 的第 $g$ 行和第 $g+8$ 行。group 内第 $t$ 个 lane 负责这两行中的第 $2t$ 列和第 $2t+1$ 列。因此，每个 lane 持有四个 `fp32` 累加值，其逻辑坐标为：
 
-```text
-g = l // 4
-t = l % 4
-```
+$$
+(g,2t),\qquad
+(g,2t+1),\qquad
+(g+8,2t),\qquad
+(g+8,2t+1).
+$$
 
-则这四个值对应的 `(m, n)` 坐标为：
+例如，lane 5 对应：
 
-```text
-(g,     2t)
-(g,     2t + 1)
-(g + 8, 2t)
-(g + 8, 2t + 1)
-```
+$$
+g=5\mathbin{//}4=1,\qquad t=5\bmod4=1,
+$$
 
-连续四个 lanes 共同覆盖第 `g` 行和第 `g+8` 行中的全部八列。
+所以它持有 C/D 中的四个元素：
 
-对于 A operand，每个 lane 持有 8 个 `fp16` 或 `bf16` 元素。相邻两个元素被打包到一个 32-bit register 中，因此总共占用 4 个 registers。它们对应的 `(m, k)` 坐标为：
+$$
+(1,2),\quad(1,3),\quad(9,2),\quad(9,3).
+$$
 
-```text
-(a0, a1): (g,     2t + {0, 1})
-(a2, a3): (g + 8, 2t + {0, 1})
-(a4, a5): (g,     2t + {8, 9})
-(a6, a7): (g + 8, 2t + {8, 9})
-```
+A fragment 使用相同的 $g$ 和 $t$，但此时坐标表示的是 $(m,k)$。每个 lane 持有 8 个 `fp16` 或 `bf16` 元素，每两个元素打包在一个 32-bit register 中：
 
-对于 B operand，每个 lane 持有 4 个元素，并将相邻两个元素打包到一个 32-bit register 中，因此共占用 2 个 registers。它们对应的 `(k, n)` 坐标为：
+$$
+\begin{aligned}
+\text{register 0}:&\ (g,\ 2t+\{0,1\}),\\
+\text{register 1}:&\ (g+8,\ 2t+\{0,1\}),\\
+\text{register 2}:&\ (g,\ 2t+\{8,9\}),\\
+\text{register 3}:&\ (g+8,\ 2t+\{8,9\}).
+\end{aligned}
+$$
 
-```text
-(b0, b1): (2t + {0, 1}, g)
-(b2, b3): (2t + {8, 9}, g)
-```
+换成矩阵坐标来看，该 lane 在 $m=g$ 和 $m=g+8$ 两行中，各持有 K 低半区和高半区的一对相邻元素。
 
-从这些映射可以看出，`g` 决定 A 的 M 坐标和 B 的 N 坐标，而 `t` 与 lane 内不同的 register slot 一起覆盖 K 维。
+B fragment 的坐标表示为 $(k,n)$。每个 lane 持有 4 个 `fp16` 或 `bf16` 元素，同样每两个元素打包在一个 32-bit register 中：
 
-具体的坐标映射会随 instruction shape 和 data type 而变化，但基本原则始终相同：Tensor Core 指令要求操作数按照特定的 per-lane register fragment layout 排列。如果元素没有被放入正确 lane 的正确 register slot 中，指令仍然会正常执行，但会把错误的元素组合起来进行乘加。
+$$
+\begin{aligned}
+\text{register 0}:&\ (2t+\{0,1\},\ g),\\
+\text{register 1}:&\ (2t+\{8,9\},\ g).
+\end{aligned}
+$$
 
-使用本书的 layout 记号，一个 `8×8` fragment 可以写成带有命名 lane axis 的形式，例如：
+到了 B fragment，$g$ 决定 $n$ 坐标，$t$ 与 register 编号共同决定 $k$ 坐标。
+
+现在把这组坐标换成前一章的 layout 记号。C/D 前 8 行形成一个 `8×8` 的局部模式，可以写成：
 
 ```text
 S[(8, 4, 2) : (4@laneid, 1@laneid, 1@reg)]
 ```
 
-前两个分量共同描述 fragment 中不同位置如何分布到各个 lanes，最后一个 `reg` 分量则描述同一 lane 内不同的 register slot。
+三个维度依次表示：
 
-## `ldmatrix`：从 shared memory 到寄存器 fragment
+```text
+(row, column_pair, element_in_pair)
+```
 
-`ldmatrix` 负责将数据从 shared memory 加载到 Tensor Core 所使用的 register fragment 中。它是一条由整个 warp 协同执行的 load 指令，一次可以读取一个或多个 `8×8` 的 16-bit 矩阵块，并按照 `mma.sync` 所要求的方式，将数据分布到各个 lane 的寄存器中。
+其中，相邻两列组成一个 `column_pair`，`element_in_pair` 表示元素在这一列对中的位置。因此，矩阵坐标 `(row, col)` 对应的 atom 坐标是：
 
-这条指令有以下几种形式：
+```text
+(row, col // 2, col % 2)
+```
+
+前两个坐标确定 lane ID，最后一个坐标确定该 lane 内的 fragment slot：
+
+```text
+lane_id = row·4 + col // 2
+slot    = col % 2
+```
+
+以刚才 lane 5 持有的 `(1,2)` 和 `(1,3)` 为例，它们的 atom 坐标分别是 `(1,1,0)` 和 `(1,1,1)`，因此都映射到 lane `1·4+1=5`，并分别存放在 slot 0 和 slot 1 中。
+
+完整的 C/D fragment 在 M 方向上包含两个这样的局部模式。这里抽出 `8×8` atom 是为了方便描述布局，硬件执行的仍然是一条完整的 `mma.m16n8k16` 指令。
+
+### `ldmatrix`：从 shared memory 构造 fragment
+
+上面已经知道 `mma.sync` 需要什么样的 register fragment。接下来的问题是：A、B 已经放在 shared memory 中，怎样一次把它们送到正确的 thread 寄存器？Ampere 为此提供了 `ldmatrix`。下面讨论它的 `.m8n8.b16` 形式：
 
 ```text
 ldmatrix.sync.aligned.m8n8.x1.shared.b16
@@ -132,197 +145,142 @@ ldmatrix.sync.aligned.m8n8.x2.shared.b16
 ldmatrix.sync.aligned.m8n8.x4.shared.b16
 ```
 
-此外，这些形式还可以带有可选的 `.trans` qualifier。
+这组指令由整个 warp 协同执行。`.x1`、`.x2` 和 `.x4` 分别加载 1、2 和 4 个 `8×8` 矩阵块。对于第 `m` 个矩阵块的第 `r` 行，起始地址由 lane `m·8+r` 提供。因此，`.x1` 使用 lanes 0–7 提供地址，`.x2` 使用 lanes 0–15，`.x4` 使用全部 32 个 lanes。
 
-`.x1`、`.x2` 和 `.x4` 分别加载一个、两个或四个 `8×8` 矩阵块。每一行的起始地址由不同的 lane 提供：对于第 `m` 个矩阵块的第 `r` 行，其起始地址由 lane
-
-```text
-m * 8 + r
-```
-
-提供。因此，`.x1` 使用 lanes 0–7 提供八行的地址，`.x2` 使用 lanes 0–15，`.x4` 则使用全部 32 个 lanes。
-
-加载得到的数据会被直接写入各个 lane 的寄存器，并共同构成 MMA 指令所需的 register fragment。对于基本的 `8×8` 情况，每个 lane 都会获得 fragment 中分配给自己的那部分元素。
-
-如果改用逐 lane 的 `ld.shared` 指令完成同样的加载，kernel 就需要手动实现这套跨 lane 的数据分布和重排。`ldmatrix` 则通过一条 warp-collective 指令，直接完成从 shared memory 到 register fragment 的加载。
-
-带有 `.trans` 的形式会在加载过程中转置每个 `8×8` 矩阵块。当操作数在 shared memory 中的存放方向与 MMA 指令所要求的方向不一致时，可以使用这一形式。
-
-![`ldmatrix` 将一个 8×8 shared memory tile 加载到 warp register fragment；Ampere 使用普通 stores 完成反向写回，而专用的 `stmatrix` 指令要到 Hopper 才出现](../../img/ldstmatrix.svg)
-
-## Ampere Fragment 的写回
-
-`mma.sync` 完成后，累加器仍然是一个 register fragment，epilogue 必须将这个 fragment 写出。
-
-Ampere 没有与 `ldmatrix` 反向对应的专用指令。Kernel 使用普通的 per-thread stores 将累加器写入 shared memory 或 global memory；写入前有时还需要进行 warp shuffles 或局部重排，才能得到合适的 layout。
-
-这种模型相对直接，但也把大量 layout 处理暴露给了 kernel。输入侧由 `ldmatrix` 构造 fragment，计算指令读取并写入 register fragments，输出侧则通过这些 fragments 上的普通 stores 完成。
-
-## Ampere 上的 Swizzle
-
-Ampere kernel 已经需要对 shared memory 使用 swizzle，因为同一个 shared memory tile 往往以一种访问模式写入，再以另一种访问模式读取。
-
-假设一个 tile 沿行方向从 global memory 写入。Row-major layout 可以让写入保持 coalesced，并且对 bank 访问友好。但随后，`ldmatrix` 可能以一种近似沿列方向、或跨越多个 `8×8` subtiles 的模式读取这个 tile。对于普通 row-major layout，这些读取可能集中到同一个 shared memory bank。
-
-以一个简单的 `(8, 64)` float16 tile 为例，一行占用：
+下图展示的是 `.x1`。图左侧的 T0–T7 分别提供八行的起始地址，但“提供地址”和“接收数据”是两回事：加载得到的 64 个元素会分发给全部 32 个 threads。lane $l$ 接收：
 
 ```text
-64 * 2 bytes = 128 bytes
+row  = l // 4
+cols = 2·(l % 4), 2·(l % 4) + 1
 ```
 
-Shared memory 的每个 bank 对应 4 bytes，32 个 banks 的地址映射每 128 bytes 重复一次。这个 tile 的 row stride 恰好也是 128 bytes，因此沿固定列向下移动时，每一行都会映射到相同的 bank。八行可能全部集中到一个 bank 上，形成 8-way conflict。
+例如，第 0 行的八个元素会分配给 lanes 0–3：lane 0 接收 columns 0–1，lane 1 接收 columns 2–3，以此类推。每个 lane 接收的两个 `fp16` 元素会打包到一个 32-bit register 中。图左侧画的是地址由谁提供，图右侧画的是数据最终由谁持有。反向箭头表示 Hopper（`sm_90`）加入的 `stmatrix`，它把 register fragment 写回 shared memory。
 
-改成普通的 column-major layout 也不能解决全部问题，它通常只是把 conflict 转移到另一种访问上：列方向读取变得更好，但行方向写入变得更差。
+可选的 `.trans` 修饰符会在加载时转置每个 `8×8` 矩阵块。如果不使用 `ldmatrix`，kernel 也可以通过普通 loads 和寄存器操作构造 fragment，但需要自己完成这套跨 lane 的数据分发。
 
-XOR swizzle 通过让物理列位置依赖于行坐标来解决这个问题。一个简单形式是：
+![`ldmatrix` 将一个 8×8 shared memory tile 加载到 warp register fragment；图中的反向 `stmatrix` 路径仅适用于 Hopper（`sm_90`）及后续架构](../../img/ldmatrix_stmatrix.svg)
 
-```text
-physical_col = logical_col xor row
-```
+### 写回与 shared memory swizzle
 
-逻辑 tile 保持不变，但 shared memory 中的物理位置被重新排列，使行方向写入和 Tensor Core 的读取模式都能避免 bank conflict。
+`mma.sync` 完成后，C/D 仍然保存在 register fragment 中。在 Ampere 上，epilogue 通常由各 thread 执行普通 stores，将结果写入 shared memory 或 global memory，必要时再配合 warp shuffles 或局部重排。
 
-在 Ampere 上，这种 swizzle 通常通过手写的 shared memory index 计算实现。后续架构则会把它放进硬件 engine 使用的 descriptor format 中。
+再看输入侧。普通 store 希望连续写入一行，`ldmatrix` 却会跨行读取；同一个 shared-memory layout 要同时照顾这两种访问。以一个 `(8,64)` 的 `float16` tile 为例，每行恰好占 128 bytes。在常见的 4-byte bank 粒度下，固定列的 8 个元素可能因为 128-byte row stride 而落到同一 bank，形成 8-way conflict。
+
+Ampere kernel 通常手写 XOR 地址计算来改变 shared memory 中的物理排列。这样既能保留连续的行访问，又能把跨行读取分散到不同 banks。上一章已经详细介绍了这个过程，下面的图再次给出直观对比。
 
 ![在普通 row-major tile 中，行方向写入会分散到不同 banks，而列方向读取会集中到同一个 bank；XOR swizzle 在不破坏 coalesced row write 的前提下，将列方向读取分散到不同 banks](../../img/swizzle_conflict.svg)
 
-## Hopper：`wgmma`、Shared Memory Descriptor 与 Swizzle Format
+## Hopper：从 Shared Memory 直接读取
 
-Hopper 改变了 Tensor Core 输入侧的数据路径。对于来自 shared memory 的 operands，不再要求先通过 `ldmatrix` 将它们全部加载到 registers 中；Hopper 的 `wgmma` 可以直接从 shared memory 读取。
+### WGMMA：由四个 warp 协同计算
 
-B operand 通过 shared memory matrix descriptor 读取。A operand 既可以通过 shared memory descriptor 读取，也可以来自 registers，分别对应 `.ss` 和 `.rs` 两种形式。
+到了 Hopper，MMA 的协作范围从一个 warp 扩大到一个 warpgroup。一个 warpgroup 由 4 个连续的 warps 组成，也就是 128 个 threads；它们共同执行 `wgmma.mma_async`。
 
-对于来自 SMEM 的 operands，这样就不再需要显式执行 `ldmatrix`。但 layout 要求并没有消失：Tensor Core 仍然要求 operand 按照精确的 shared memory format 存放。变化在于，这个 format 现在通过 matrix descriptor 告诉硬件。
-
-## Hopper Tensor Core 所需的操作数布局
-
-Hopper shared memory matrix descriptor 是一份对 shared memory matrix tile 的紧凑描述，它告诉 `wgmma` 如何将逻辑 operand coordinates 转换成 shared memory addresses。
-
-Descriptor 包含以下字段：
+更重要的变化发生在输入路径上。B 通过 matrix descriptor 从 shared memory 读取；A 既可以同样来自 shared memory，也可以来自寄存器。这两种形式通常简称为 SS 和 RS：
 
 ```text
-start address
-leading dimension offset
-stride dimension offset
-swizzle mode
-base offset
+SS: A from SMEM, B from SMEM -> wgmma -> register accumulator
+RS: A from registers, B from SMEM -> wgmma -> register accumulator
 ```
 
-这些字段的具体含义取决于 operand major mode。对于 K-major tile，其中一个 stride 沿 K 维移动，另一个沿 M 维移动；对于 MN-major tile，两者的作用会交换。
+当输入来自 shared memory 时，kernel 无需再用 `ldmatrix` 构造 A/B register fragment。WGMMA 会直接读取数据，但它仍然需要知道矩阵从哪里开始、跨到下一组数据时移动多少字节，以及 shared memory 使用了哪种 swizzle。这些信息都放在 matrix descriptor 中。
 
-Swizzle mode 是 shared memory descriptor format 的一部分，例如：
+### matrix descriptor 怎样找到一个 tile
+
+matrix descriptor 是一个保存在寄存器中的 64-bit 值。可以把它看成 WGMMA 读取 shared memory 的“寻址说明”：矩阵数据仍然留在 shared memory 中，descriptor 只记录怎样找到并遍历这个 tile。
+
+| 字段 | descriptor 记录的内容 |
+|---|---|
+| `matrix start address` | shared memory 中的矩阵起点 |
+| `leading dimension byte offset`（`ldo`） | 沿 leading dimension 跨到下一组数据时使用的 byte offset |
+| `stride dimension byte offset`（`sdo`） | 沿 stride dimension 跨到下一组数据时使用的 byte offset |
+| `matrix base offset` | 矩阵起点在 swizzle 重复模式中的位置 |
+| `swizzle mode` | no swizzle、32 B、64 B 或 128 B swizzle |
+
+WGMMA 先从 `matrix start address` 找到 tile 的起点，再用 `ldo` 和 `sdo` 跨到后续的数据组。这三个地址字段都以 16 bytes 为单位编码。leading dimension 和 stride dimension 对应到矩阵的哪个方向，由 major mode 和 swizzle mode 决定。
+
+以 K-major 的 swizzled layout 为例，`ldo` 使用固定编码值 1，`sdo` 表示从前 8 行跨到后 8 行的 byte offset。`swizzle mode` 决定 atom 的形状和 atom 内部的 XOR 地址重排；`matrix base offset` 则指出矩阵起点位于这套重复模式中的什么位置。起点恰好对齐到模式边界时，base offset 为 0。
+
+下图把这个过程画了出来。例子中的 A 使用 K-major 和 128 B swizzle：横向是 K 维，纵向是 M 维，每个色块是一个 `8×128 B` atom。左上角的黑点给出 `start_address`；K 方向按固定的 atom layout 展开，所以 `ldo` 编码为 1；向下跨过 8 行时，则使用 `sdo` 到达下一组。找到目标 atom 后，swizzle mode 再确定元素在 atom 内的 byte position。
+
+![K-major 128 B swizzle 中，matrix descriptor 使用 start address 和 sdo 定位 8-row group，并通过固定的 atom layout 与 XOR swizzle 确定 byte position](../../img/wgmma_descriptor_kmajor.svg)
+
+现在就能看出 descriptor 为什么必须和真实字节排列一致。假设 TMA 按 128 B swizzle 把数据写入 shared memory，WGMMA descriptor 也要按 128 B swizzle 解释这块数据。TMA 和 WGMMA 各有一份 descriptor，它们服务于不同指令，却要描述同一种物理排列。
+
+### 累加器仍在寄存器中
+
+WGMMA 直接读取 shared memory 中的输入，计算得到的 C/D 仍然分散在 warpgroup 内各 thread 的寄存器中。Epilogue 随后处理这些 register fragments。每个 thread 持有多少个累加值，由 WGMMA 的 instruction shape 和累加类型决定。
+
+于是，Hopper kernel 中会同时看到两种布局表示：shared memory 中的 A/B 用 matrix descriptor 描述，寄存器中的 A 和 C/D 则采用 per-thread register fragment。B 一直来自 shared memory，A 可以选择其中一条路径。
+
+## Blackwell：累加器进入 TMEM
+
+### TMEM 中的累加器
+
+到了 Blackwell，输入侧延续了 Hopper 的做法：`tcgen05.mma` 通过 descriptor 找到 shared memory 中的 A、B，并按照 descriptor 指定的布局读取它们。某些模式也允许 A 来自 TMEM。
+
+输入路径说完，再看累加器。Hopper 将 C/D 保存在各 thread 的寄存器中；Blackwell 把它们放进 Tensor Memory，也就是 TMEM。等到 epilogue 需要处理结果时，再通过 `tcgen05.ld` 将数据加载到寄存器中：
 
 ```text
-SWIZZLE_NONE
-SWIZZLE_32B
-SWIZZLE_64B
-SWIZZLE_128B
+A/B in SMEM --tcgen05.mma--> C/D in TMEM
+C/D in TMEM --tcgen05.ld--> register fragment --store--> GMEM
 ```
 
-Swizzle mode 决定两件事：descriptor 使用的 atom shape，以及 atom 内部应用的 XOR permutation。例如，128-byte swizzle mode 会把 operand 看成由 `8 rows × 128 bytes` atoms 组成的网格，并在每个 atom 内应用 swizzle。
+`tcgen05.mma` 会异步执行。发出指令后，kernel 要先等待 MMA 完成，epilogue 才能通过 `tcgen05.ld` 读取结果。这里的读写布局必须相互匹配：`tcgen05.mma` 把结果写到哪些 TMEM lane/column，`tcgen05.ld` 就要从对应位置取出数据，并将它们分配到各 thread 的寄存器中。
 
-Kernel 仍然必须把字节放在正确位置。Shared memory tile 通常由 TMA 填充，而 TMA descriptor 必须使用与随后 `wgmma` descriptor 指定的相同 swizzle format。如果 TMA 写入的是 128-byte swizzled tile，`wgmma` descriptor 也必须按 128-byte swizzled tile 读取。只要 descriptor 与实际数据不一致，Tensor Core 就会读到被打乱的 operands。
+### Block-Scaled MMA 的 Scale Factors
 
-这就是 Hopper 相比 Ampere 的主要变化。Swizzle 不再只体现在手写的 shared memory index 计算中，而是由 descriptor 直接编码。负责写入 tile 的 TMA load 和负责读取 tile 的 `wgmma` 指令，可以在各自的 descriptor 中指定相同的 swizzle format。
+上一章的 {ref}`TMEM 中 Scale Factors 的跨 Warp 广播 <sec_tmem_scale_factor_replication>` 已经用 `M=128`、`SFK=4` 的例子，推导了 scale factors 在 TMEM 中的打包和 `.warpx4` replication。现在沿着数据路径继续往下看：这些值怎样进入 TMEM，MMA 又怎样选中当前需要的几个 bytes。
 
-![Hopper shared memory matrix descriptor 将 operand coordinates 映射到经过 swizzle 的 shared memory atoms：descriptor strides 选择 atom，swizzle 决定 atom 内的 byte position](../../img/smem_descriptor.svg)
-
-## Hopper 输出仍然使用寄存器
-
-Hopper 改变了输入路径，但累加器仍然位于 registers 中。
-
-`wgmma` 指令会把累加器写入 per-thread register fragment。具体 fragment size 和 register count 取决于 instruction shape，例如 `m64nNk16` 中的 N 会决定 accumulator registers 的数量。但基本思路与 Ampere 相同：epilogue 处理的是 register fragment。
-
-因此，Hopper 的输入和输出采用两套不同的 layout 机制：输入 operands 通过 shared memory descriptor 提供，swizzle 也编码在 descriptor 中；输出 accumulator 则仍然分布在各个 threads 的 registers 中。
-
-Blackwell 会进一步改变输出侧。
-
-## Blackwell：`tcgen05` 和 TMEM
-
-Blackwell 为 data operands 保留了 shared memory descriptor 这一思路。A 和 B 仍然会按照 Tensor Core 要求的 layout 准备在 shared memory 中；某些 mode 也允许从 TMEM 读取 A operand。
-
-最大的变化是累加器。`tcgen05.mma` 不再把累加器作为长期存活的 register fragment，而是将其写入 Tensor Memory，也就是 TMEM。在计算阶段，累加器会一直留在 TMEM 中；随后，epilogue 使用 `tcgen05.ld` 将它加载回 registers。
-
-这样，输出 layout 问题就从 registers 转移到了 TMEM。Kernel 必须分配 TMEM、选择正确的 TMEM layout、等待 MMA 完成，再通过匹配的 `tcgen05.ld` 路径取回 accumulator fragment，供 epilogue 使用。
-
-与前代差异最大的 layout，是 block-scaled MMA 使用的 scale-factor layout。
-
-## TMEM 中的 Scale-Factor Layout
-
-`mxfp8`、`nvfp4` 等 block-scaled MMA mode 会增加 scale-factor operands。除 A 和 B 外，MMA 还会读取：
+Block-scaled MMA 需要两组 scale factors：
 
 ```text
 SFA(M, SFK)
 SFB(N, SFK)
 ```
 
-其中，`SFK` 表示 K 维上的 scale blocks 数量。
+`SFA[m,sfk]` 对应 A 的第 `m` 行、第 `sfk` 个 K-scale block；`SFB[n,sfk]` 对应 B 的第 `n` 列、第 `sfk` 个 K-scale block。
 
-Data operands A 和 B 位于 shared memory，而 scale factors 位于 TMEM，因此二者的数据搬运路径不同。
-
-TMA 可以从 global memory 加载到 shared memory，但不能直接加载到 TMEM。因此，scale factors 通常需要经过两步搬运：
+A 和 B 通常由 TMA 加载到 shared memory，再由 MMA 直接读取。Scale factors 需要进入 TMEM，而 TMA 的搬运路径只到 shared memory，所以中间还要经过一次 `tcgen05.cp`：
 
 ```text
-global memory --TMA--> shared memory
-shared memory --tcgen05.cp--> TMEM
+A, B:     GMEM --TMA--> SMEM --tcgen05.mma--> Tensor Core
+SFA, SFB: GMEM --TMA--> SMEM --tcgen05.cp--> TMEM --tcgen05.mma--> Tensor Core
 ```
 
-完成这次复制后，scale factors 才会进入 `tcgen05.mma` 所要求的 memory space。
+### `tcgen05.cp` 如何写入 TMEM
 
-TMEM scale-factor layout 使用 TMEM 的硬件坐标 Lane 和 Col。在 TIRx layout 记号中，这两个 axes 分别写作 `TLane` 和 `TCol`。
-
-一个 128-row scale vector 会先被压缩到一组 32 lanes 中，再复制到 TMEM 的四个 32-lane windows。在 layout 记号中，核心模式是：
+先回忆上一章得到的完整 layout：
 
 ```text
-S[(32, sf_per_mma) : (1@TLane, 1@TCol)] + R[4 : 32@TLane]
+S[(4, 32, 4) : (4@TCol, 1@TLane, 1@TCol)]
++ R[4 : 32@TLane]
 ```
 
-其中，shard 放置基础的 32-row group：
+其中，`S[...]` 把 `(Mgroup, lane, sfk)` 映射到 TMEM 中的 byte 位置，`R[...]` 表示沿 `TLane` 轴复制四份。`tcgen05.cp` 的 `.32x128b.warpx4` 形式正好完成这件事：先写入一个 32-lane window，再把同一份数据广播到另外三个 warp windows。
+
+### `scale_vec` 决定读取哪些 bytes
+
+数据已经放进 TMEM，接下来还要告诉 MMA 从哪个位置取几个 scale。在这里，一个硬件 TCol cell 宽 32 bits，可以容纳 4 个 scale bytes。`scale_vec::1X`、`2X` 和 `4X` 分别选择：
 
 ```text
-TLane = r
-TCol  = s
+scale_vec::1X: 选取 1 个 byte，byte-id 可为 0、1、2 或 3
+scale_vec::2X: 选取低 2 bytes 或高 2 bytes，byte-id 为 0 或 2
+scale_vec::4X: 选取全部 4 bytes，byte-id 必须为 0
 ```
 
-replica term 会在 lane offsets 0、32、64 和 96 处添加副本：
+`mxfp8` 通常每次 MMA 读取 1 个 scale，`mxfp4` 读取 2 个，`nvfp4` 读取 4 个。这样，不同 K-block 的 scales 可以紧凑地放进同一个 TCol cell，每次 MMA 再通过 byte-id 选出当前计算需要的部分。下图用颜色标出了三种选择方式。
 
-```text
-TLane = r + 32 * q, q ∈ {0, 1, 2, 3}
-TCol  = s
-```
+![scale_vec byte selection：1X 选取一个 byte，2X 选取一个 2-byte pair，4X 选取全部四个 K-block scales](../../img/sf_scale_vec.svg)
 
-这对应向四个 warp 广播的模式。同一组紧凑排列的 scale factors 会出现在完整的 128-lane TMEM space 中。
+## 三种数据路径的对比
 
-32-bit `TCol` cell 内部还会进行 byte packing。具体打包方式取决于 `scale_vec` mode：
+| 架构 | 主要 MMA 指令 | A/B 主要来源 | 累加器位置 | Shared-memory layout 如何表达 |
+| --- | --- | --- | --- | --- |
+| Ampere | `mma.sync` | registers | registers | kernel 通常手写地址计算和 swizzle |
+| Hopper | `wgmma.mma_async` | A 可来自 registers 或 SMEM；B 来自 SMEM | registers | matrix descriptor 记录 strides 和 swizzle mode |
+| Blackwell | `tcgen05.mma` | 主要来自 SMEM；某些 A 模式可来自 TMEM | TMEM | descriptor 描述 SMEM 输入，TMEM layout 另行描述累加器和 scale factors |
 
-```text
-1X：一个 scale value 广播到整个 32-bit cell
-2X：打包两个 scale values，并分别复制一次
-4X：打包四个 K-block scale values
-```
+把三代架构放在一起看，变化过程就很清楚了：Ampere 先把输入整理成 per-lane register fragments；Hopper 让 Tensor Core 通过 descriptor 直接读取 shared memory；Blackwell 再把累加器和 scale factors 移入 TMEM。
 
-![`scale_vec` byte packing：1X 将一个 scale 广播到 4-byte cell；2X 打包两个 scale，并分别复制一次；4X 打包四个 K-block scales](../../img/sf_scale_vec.svg)
-
-## 一个反复出现的 Fragment
-
-虽然周围的数据搬运路径不断变化，但有一种结构反复出现：m8n8-style register fragment。
-
-在 Ampere 上，`ldmatrix` 构造这一 fragment，供 `mma.sync` 读取。
-
-在 Hopper 上，`wgmma` 将累加器写成 register fragment，供 epilogue 使用。
-
-在 Blackwell 上，累加器在计算阶段位于 TMEM，但 `tcgen05.ld` 会在 epilogue 处理和存储结果前，将其重新加载为 register fragment。
-
-因此，fragment 并没有消失，只是作用发生了变化。早期架构会在整个计算阶段将累加器保存在 fragment 中；Blackwell 则主要在 TMEM 与 epilogue 的边界上使用它。
-
-## 主线
-
-在 Ampere 上，kernel 会显式构造 Tensor Core register fragments。Shared memory swizzle 主要由 kernel 通过 index 计算负责。
-
-在 Hopper 上，Tensor Core 可以通过 matrix descriptor 直接从 shared memory 读取 operands。Swizzle 成为 TMA 和 `wgmma` 共同使用的命名 descriptor format。
-
-在 Blackwell 上，输入侧仍然使用 shared memory operands，但累加器被移到 TMEM。Block-scaled MMA 还增加了必须暂存到 TMEM 中的 scale-factor operands。
-
-Descriptor 并不会消除 layout 工作，而是将 layout contract 显式化。Kernel 仍然必须保证数据搬运路径、memory layout 和 Tensor Core 指令彼此一致：写入 swizzled SMEM tile 的 TMA descriptor、读取该 tile 的 MMA descriptor，以及附着在 buffer 上的 layout，都必须描述相同的物理排列。
-
-只要其中任何一项不一致，硬件仍然会执行，但它读取的字节可能是错误的，访问也可能很慢。因此，layout 并不是 Tensor Core kernel 外围的装饰，而是指令接口的一部分。
+写 kernel 时，可以顺着数据流逐段检查：上一条指令把数据写成什么排列，下一条指令就要用什么 layout 或 descriptor 去读。只要中间有一处解释不一致，Tensor Core 就可能读错元素；即使结果仍然正确，也可能因为访存方式不合适而损失性能。

@@ -204,6 +204,7 @@ f_D(x) = (c0·4 + c1)@laneid + c2@reg
 
 ## Replication 与 Offset
 
+(sec_tmem_scale_factor_replication)=
 ### TMEM 中 Scale Factors 的跨 Warp 广播
 
 先看一个发生在单个 kernel 内部的例子。Blackwell block-scaled MMA 会把 scale factors 存放在 TMEM 中，再通过 `.warpx4` broadcast 把它们提供给读取数据的四个 warps。结果是，同一个逻辑 scale factor 会出现在四个不同的 TMEM lane 位置。

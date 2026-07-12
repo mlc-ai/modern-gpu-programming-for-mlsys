@@ -2,11 +2,10 @@
 shared memory. Params (ptx_*_encode_matrix_descriptor): start_address, ldo
 (leading byte offset), sdo (stride byte offset), swizzle (layout_type).
 
-The operand is a 2-D grid of swizzle ATOMS. The swizzle format sets the atom
-shape (8 x 128 B for SWIZZLE_128B; 64/32/16 B otherwise) and the XOR pattern
-inside it. Each atom is ONE CONTIGUOUS 8 x 128 B (1 KB) block: its 8 rows are
-back-to-back in memory. ldo/sdo are the strides BETWEEN atoms: ldo along the
-MAJOR dim, sdo along the OTHER. (K-major shown; MN-major swaps them.) Output SVG.
+The operand is a 2-D grid of swizzle ATOMS. The swizzle format and major mode
+set the atom shape and the XOR pattern inside it. Each atom is one contiguous
+8 x 128 B (1 KB) block. For the K-major swizzled layout shown here, ldo uses
+the fixed encoding 1 and sdo advances between eight-row groups. Output SVG.
 """
 import matplotlib
 matplotlib.use("Agg")
@@ -58,35 +57,32 @@ ax.text(fx + bw / 2, fy + bh + 1.8, "contiguous 1 KB", ha="center", fontsize=7,
 
 # axes
 ax.text((X0 + X1) / 2, YB - 8.5, "K  (bytes) →", ha="center", fontsize=9.5, color=TXT)
-ax.annotate("", xy=(X1 + 1.5, YT), xytext=(X1 + 1.5, YB), arrowprops=dict(arrowstyle="-|>", color=TXT, lw=1.3))
+ax.annotate("", xy=(X1 + 1.5, YB), xytext=(X1 + 1.5, YT), arrowprops=dict(arrowstyle="-|>", color=TXT, lw=1.3))
 ax.text(X1 + 4, (YB + YT) / 2, "M ↓", ha="left", va="center", fontsize=9.5, color=TXT)
 
 # start_address marker
 ax.plot(X0, YT, marker="o", color="#111827", markersize=6)
 ax.text(X0 - 2.5, YT + 6, "start_address (addr ≫ 4)", ha="left", va="bottom", fontsize=9, color="#111827")
 
-# ldo: stride between atoms along the MAJOR dim (K here)
-ax.annotate("", xy=(X0 + 2.5 * bw, YT - 3.2), xytext=(X0 + 1.5 * bw, YT - 3.2),
-            arrowprops=dict(arrowstyle="<|-|>", color="#111827", lw=1.6))
-ax.text(X0 + 2 * bw, YT - 7.5, "ldo  (major dim, K here)", ha="center", fontsize=8.5,
-        fontweight="bold", color="#111827")
+# K-major swizzled layouts use the fixed ldo encoding 1.
+ax.text(X0 + 2 * bw, YT + 2.5, "ldo = 1  (fixed for K-major swizzle)",
+        ha="center", va="bottom", fontsize=8.2, fontweight="bold", color="#111827")
 
-# sdo: stride between atoms along the OTHER dim (M here)
+# sdo: offset from the first eight rows to the next eight rows
 ax.annotate("", xy=(X0 - 9.5, YT - 1.5 * bh), xytext=(X0 - 9.5, YT - 0.5 * bh),
             arrowprops=dict(arrowstyle="<|-|>", color="#111827", lw=1.6))
-ax.text(X0 - 12, YT - bh, "sdo\n(other\ndim, M)", ha="right", va="center", fontsize=8,
+ax.text(X0 - 12, YT - bh, "sdo\n(next 8 rows,\nM direction)", ha="right", va="center", fontsize=8,
         fontweight="bold", color="#111827")
 
 # swizzle-format note
 ax.text((X0 + X1) / 2, YB - 4.0, "swizzle format sets the atom shape (8 × 128 B here; 64 / 32 / 16 B "
         "otherwise) and the XOR pattern inside it", ha="center", fontsize=8, color="#7c3aed")
 
-ax.text(50, 7, "Each atom is one contiguous 8 × 128 B block — its 8 rows are back-to-back in memory; "
-        "ldo / sdo jump between atoms.", ha="center", fontsize=8.2, color=TXT, style="italic")
-ax.text(50, 3, "ldo = stride along the major dim, sdo = along the other.  K-major shown "
-        "(major = K); an MN-major operand swaps ldo and sdo.", ha="center", fontsize=8.2,
-        color=TXT, style="italic")
+ax.text(50, 7, "Each atom is one contiguous 8 × 128 B block; K follows the fixed K-major atom layout.",
+        ha="center", fontsize=8.2, color=TXT, style="italic")
+ax.text(50, 3, "sdo advances to the next 8-row group; XOR swizzle selects the byte position inside each atom.",
+        ha="center", fontsize=8.2, color=TXT, style="italic")
 
-fig.savefig(f"{OUT}/smem_descriptor.svg", facecolor="white", bbox_inches="tight")
+fig.savefig(f"{OUT}/wgmma_descriptor_kmajor.svg", facecolor="white", bbox_inches="tight")
 plt.close(fig)
-print("wrote smem_descriptor.svg")
+print("wrote wgmma_descriptor_kmajor.svg")
