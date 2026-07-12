@@ -375,6 +375,10 @@ function recompute() {
   ST.yVals = [...yset].sort((a, b) => a - b);
   ST.xVals = [...xset].sort((a, b) => a - b);
   ST.colorVals = [...cset].sort((a, b) => a - b);
+  // worst-case occupancy of a physical cell (in swizzle mode: one bank word);
+  // used to warn when a layout over-subscribes bank words.
+  ST.maxPerCell = 0;
+  for (const arr of ST.byCell.values()) ST.maxPerCell = Math.max(ST.maxPerCell, arr.length);
 }
 
 // ── Display geometry for the logical grid ──────────────────────────────────--
@@ -442,6 +446,15 @@ function draw() {
     const label = s.mode ? (s.mode === 'none' ? 'no swizzle' : s.mode + 'B swizzle') : 'swizzle';
     status.innerHTML += ` &nbsp;<span style="color:var(--dim)">` +
       `${label}${s.bits ? ', ' + s.bits + '-bit' : ''} → Swizzle(${s.per_element},${s.swizzle_len},${s.atom_len})</span>`;
+    if (ST.maxPerCell > ST.elemsPerBank) {
+      const usesM = ST.layout.shard.some((it) => it.axis === 'm' && it.stride !== 0)
+        || ST.layout.replica.some((it) => it.axis === 'm' && it.stride !== 0);
+      status.innerHTML += `<br><span style="color:#b45309;font-weight:600">` +
+        `⚠ ${ST.maxPerCell} elements map to the same 4-byte bank word (it holds ${ST.elemsPerBank}) — ` +
+        (usesM ? 'the layout assigns overlapping @m addresses'
+               : 'no stride uses the memory axis @m, so every element gets address 0') +
+        `; the swizzle view expects a memory layout such as S[(8,64):(64@m,1@m)]</span>`;
+    }
   }
   document.getElementById('n0').textContent = `logical shape (${ST.shape.join(', ')})`;
   document.getElementById('nphys').textContent =

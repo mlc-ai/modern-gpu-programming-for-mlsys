@@ -69,9 +69,12 @@
   #status { font-size:13px; font-family:'SF Mono','Fira Code',monospace; color:var(--dim);
     text-align:center; margin-bottom:14px; }
 
-  /* Stack the two panels vertically (logical on top, physical below) */
-  .panels { grid-template-columns:1fr; max-width:1280px; align-items:start; }
+  /* Stack the two panels vertically (logical on top, physical below).
+     minmax(0,1fr) keeps a wide table from inflating the panel past the page
+     width (grid items default to min-width:auto); the panes below scroll. */
+  .panels { grid-template-columns:minmax(0,1fr); max-width:1280px; align-items:start; }
   .grid { gap:2px; }
+  #g0 { overflow-x:auto; padding-bottom:4px; }
   .cell { aspect-ratio:1; font-size:15px; border-radius:5px; border-width:2px; }
   .cell.dm { opacity:.18; }
 
@@ -86,8 +89,10 @@
   .pcell.hov-cell { border-color:#222; box-shadow:0 0 7px rgba(59,130,246,.4); }
   .pcell.dm-cell { opacity:.16; }
   /* bank mode: pack the elements of one bank word side by side (same size as
-     the logical-tensor cells), not stacked */
-  .phys-table.bank-mode .pcell { flex-wrap:nowrap; gap:2px; padding:2px; }
+     the logical-tensor cells). Keep flex-wrap on: if a layout maps more
+     elements to one bank word than it holds (e.g. no stride on @m), the
+     extras wrap into more rows instead of overflowing out of reach. */
+  .phys-table.bank-mode .pcell { gap:2px; padding:2px; }
 
   .phys-1d { display:flex; flex-wrap:wrap; gap:8px; }
   .thread-tile { border:2px solid var(--border); border-radius:8px; padding:5px 6px 6px;
