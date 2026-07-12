@@ -45,7 +45,7 @@ registers --普通 store--> SMEM 或 GMEM
 
 ### 一个具体的 fragment 映射
 
-register fragment 到底怎样分布在 32 个 threads 中？下面用 shape 为 `m16n8k16` 的 `mma.sync` 具体看一次。这里令 A 为 row-major、B 为 column-major，A/B 使用 `fp16` 或 `bf16`，C/D 使用 `fp32`。整个 warp 共同计算：
+接下来以 `mma.sync.aligned.m16n8k16` 为例，看看一个矩阵 tile 的元素如何分配到 warp 中 32 个 threads 的寄存器里。这里令 A 为 row-major、B 为 column-major，A/B 使用 `fp16` 或 `bf16`，C/D 使用 `fp32`。整个 warp 共同计算：
 
 $$
 D_{16\times8}=A_{16\times16}B_{16\times8}+C_{16\times8}.
