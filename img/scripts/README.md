@@ -15,7 +15,7 @@ python gen_roofline.py                       # -> ../roofline.png
 python gen_sf_scale_vec.py                   # -> ../sf_scale_vec.svg
 python gen_sf_tmem.py                        # -> ../sf_tmem.svg
 python gen_shuffle_reduce.py                 # -> ../shuffle_reduce.png
-python gen_smem_descriptor.py                # -> ../smem_descriptor.svg
+python gen_smem_descriptor.py                # -> ../wgmma_descriptor_kmajor.svg
 python gen_swizzle_conflict.py               # -> ../swizzle_conflict.svg
 python gen_tcgen05_ldst.py                   # -> ../tcgen05_ldst.svg
 python gen_tma_sync_flow.py                  # -> ../tma_sync_flow.png
