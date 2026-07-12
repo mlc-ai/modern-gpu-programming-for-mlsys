@@ -75,6 +75,6 @@ ax.text(50, 6, ".x1 loads one 8×8 (addresses from T0–T7); .x2 / .x4 load 2 / 
         "(T0–T15 / T0–T31).  .trans reads each 8×8 column-major.",
         ha="center", fontsize=6.8, color=TXT, style="italic")
 
-fig.savefig(f"{OUT}/ldmatrix_stmatrix.svg", facecolor="white", bbox_inches="tight")
+fig.savefig(f"{OUT}/ldstmatrix.svg", facecolor="white", bbox_inches="tight")
 plt.close(fig)
-print("wrote ldmatrix_stmatrix.svg")
+print("wrote ldstmatrix.svg")

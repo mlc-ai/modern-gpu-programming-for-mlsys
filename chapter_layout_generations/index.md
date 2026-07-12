@@ -104,7 +104,7 @@ The result lands directly in the MMA fragment. For the basic 8 by 8 case, lane `
 
 The `.trans` form transposes each 8 by 8 matrix as it loads. This is used when the operand is stored in the opposite orientation from the one the MMA instruction expects.
 
-![ldmatrix loads an 8x8 shared memory tile into the warp register fragment; the reverse stmatrix path is available only on Hopper (sm_90) and later architectures](../img/ldmatrix_stmatrix.svg)
+![ldmatrix loads an 8x8 shared memory tile into the warp register fragment; the reverse stmatrix path is available only on Hopper (sm_90) and later architectures](../img/ldstmatrix.svg)
 
 ## Writing the Ampere Fragment Back
 

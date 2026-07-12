@@ -158,7 +158,7 @@ cols = 2·(l % 4), 2·(l % 4) + 1
 
 可选的 `.trans` 修饰符会在加载时转置每个 `8×8` 矩阵块。如果不使用 `ldmatrix`，kernel 也可以通过普通 loads 和寄存器操作构造 fragment，但需要自己完成这套跨 lane 的数据分发。
 
-![`ldmatrix` 将一个 8×8 shared memory tile 加载到 warp register fragment；图中的反向 `stmatrix` 路径仅适用于 Hopper（`sm_90`）及后续架构](../../img/ldmatrix_stmatrix.svg)
+![`ldmatrix` 将一个 8×8 shared memory tile 加载到 warp register fragment；图中的反向 `stmatrix` 路径仅适用于 Hopper（`sm_90`）及后续架构](../../img/ldstmatrix.svg)
 
 ### 写回与 shared memory swizzle
 
