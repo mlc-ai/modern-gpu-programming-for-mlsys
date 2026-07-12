@@ -156,9 +156,9 @@ cols = 2·(l % 4), 2·(l % 4) + 1
 
 例如，第 0 行的八个元素会分配给 lanes 0–3：lane 0 接收 columns 0–1，lane 1 接收 columns 2–3，以此类推。每个 lane 接收的两个 `fp16` 元素会打包到一个 32-bit register 中。图左侧画的是地址由谁提供，图右侧画的是数据最终由谁持有。反向箭头表示 Hopper（`sm_90`）加入的 `stmatrix`，它把 register fragment 写回 shared memory。
 
-可选的 `.trans` 修饰符会在加载时转置每个 `8×8` 矩阵块。如果不使用 `ldmatrix`，kernel 也可以通过普通 loads 和寄存器操作构造 fragment，但需要自己完成这套跨 lane 的数据分发。
+可选的 `.trans` 修饰符会以 column-major 方式加载每个 `8×8` 矩阵块。如果不使用 `ldmatrix`，kernel 也可以通过普通 loads 和寄存器操作构造 fragment，但需要自己完成这套跨 lane 的数据分发。
 
-![`ldmatrix` 将一个 8×8 shared memory tile 加载到 warp register fragment；图中的反向 `stmatrix` 路径仅适用于 Hopper（`sm_90`）及后续架构](../../img/ldstmatrix.svg)
+![ldmatrix 将一个 8×8 shared memory tile 加载到 warp register fragment；图中的反向 stmatrix 路径仅适用于 Hopper sm_90 及后续架构](../../img/ldstmatrix.svg)
 
 ### 写回与 shared memory swizzle
 
@@ -226,7 +226,7 @@ A/B in SMEM --tcgen05.mma--> C/D in TMEM
 C/D in TMEM --tcgen05.ld--> register fragment --store--> GMEM
 ```
 
-`tcgen05.mma` 会异步执行。发出指令后，kernel 要先等待 MMA 完成，epilogue 才能通过 `tcgen05.ld` 读取结果。这里的读写布局必须相互匹配：`tcgen05.mma` 把结果写到哪些 TMEM lane/column，`tcgen05.ld` 就要从对应位置取出数据，并将它们分配到各 thread 的寄存器中。
+`tcgen05.mma` 会异步执行。发出指令后，kernel 要先等待 MMA 完成，epilogue 才能通过 `tcgen05.ld` 读取结果。`tcgen05.ld` 本身也是异步的；在使用目标寄存器前，还需要执行 `tcgen05.wait::ld`。这里的读写布局必须相互匹配：`tcgen05.mma` 把结果写到哪些 TMEM lane/column，`tcgen05.ld` 就要从对应位置取出数据，并将它们分配到各 thread 的寄存器中。
 
 ### Block-Scaled MMA 的 Scale Factors
 
@@ -239,7 +239,7 @@ SFA(M, SFK)
 SFB(N, SFK)
 ```
 
-`SFA[m,sfk]` 对应 A 的第 `m` 行、第 `sfk` 个 K-scale block；`SFB[n,sfk]` 对应 B 的第 `n` 列、第 `sfk` 个 K-scale block。
+`SFA[m,sfk]` 对应 A 的第 `m` 行、第 `sfk` 个 K-scale block；`SFB[n,sfk]` 对应 B 的第 `n` 列、第 `sfk` 个 K-scale block。这里沿用上一章的逻辑索引顺序；PTX 表格把同一个 B 侧矩阵写成 `SFB[sfk,n]`，shape 为 `SFB_M x N`。
 
 A 和 B 通常由 TMA 加载到 shared memory，再由 MMA 直接读取。Scale factors 需要进入 TMEM，而 TMA 的搬运路径只到 shared memory，所以中间还要经过一次 `tcgen05.cp`：
 
@@ -257,7 +257,9 @@ S[(4, 32, 4) : (4@TCol, 1@TLane, 1@TCol)]
 + R[4 : 32@TLane]
 ```
 
-其中，`S[...]` 把 `(Mgroup, lane, sfk)` 映射到 TMEM 中的 byte 位置，`R[...]` 表示沿 `TLane` 轴复制四份。`tcgen05.cp` 的 `.32x128b.warpx4` 形式正好完成这件事：先写入一个 32-lane window，再把同一份数据广播到另外三个 warp windows。
+其中，`S[...]` 把 `(Mgroup, lane, sfk)` 映射到 TMEM 中的 byte 位置。在带有数据类型的 TIRx layout 中，`@TCol` stride 以 buffer element 为单位。这里每个 scale factor 占 8 bits，因此逻辑 TCol 位置为 `4*Mgroup+sfk`；每四个连续位置打包进一个 32-bit hardware TCol cell。等价地，`hardware_TCol=(4*Mgroup+sfk)//4`，`byte_in_word=(4*Mgroup+sfk)%4`。
+
+`R[...]` 表示沿 `TLane` 轴复制四份。`tcgen05.cp` 的 `.32x128b.warpx4` 形式正好完成这件事：先写入一个 32-lane window，再把同一份数据广播到另外三个 warp windows。
 
 ### `scale_vec` 的 Word 内复制
 
@@ -275,9 +277,9 @@ scale_vec::4X: [SF0, SF1, SF2, SF3]
 
 ![scale_vec packing：1X 在四个 bytes 中重复同一个 scale，2X 重复一对 scales，4X 存放四个不同 K-block 的 scales](../../img/sf_scale_vec.svg)
 
-## 反复出现的 Register Fragment
+## 三代架构中的 Per-Thread Register Fragment
 
-把三代架构放在一起看，会发现一种反复出现的结构：m8n8-style register fragment。
+把三代架构放在一起看，矩阵数据都会在某些阶段以 register fragment 的形式分布到各 thread 的寄存器中。Fragment 的具体 shape 和映射由相应指令决定。
 
 在 Ampere 上，`ldmatrix` 从 shared memory 加载数据，并构造 `mma.sync` 读取的 register fragment。
 
@@ -285,7 +287,7 @@ scale_vec::4X: [SF0, SF1, SF2, SF3]
 
 到了 Blackwell，计算期间的累加器存放在 TMEM 中；epilogue 开始前，`tcgen05.ld` 再把结果加载成 register fragment。
 
-因此，register fragment 在三代架构中承担着不同角色。Ampere 和 Hopper 在计算期间用它保存累加器；Blackwell 则主要在 TMEM 与 epilogue 的交界处使用它。
+因此，register fragment 在三代架构中承担着不同角色。Ampere 和 Hopper 在计算期间用它保存累加器；Blackwell 则主要在 TMEM 与 epilogue 的交界处使用它。前面介绍的 m8n8-style atom 是一个常见例子；`tcgen05.ld` 和 `tcgen05.st` 还支持其他 data-movement shapes。
 
 ## 三种数据路径的对比
 

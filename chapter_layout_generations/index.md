@@ -156,9 +156,9 @@ cols = 2 * (l % 4), 2 * (l % 4) + 1
 
 For example, the eight elements in row 0 go to lanes 0-3. Lane 0 receives columns 0-1, lane 1 receives columns 2-3, and so on. The two `fp16` elements received by each lane are packed into one 32-bit register. The left side of the figure shows which lanes supply addresses; the right side shows which lanes hold the data after the load. The reverse arrow is `stmatrix`, introduced on Hopper (`sm_90`) to store a register fragment back to shared memory.
 
-The optional `.trans` qualifier transposes each `8x8` matrix during the load. A kernel can also build a fragment with ordinary loads and register operations, but then it must implement this cross-lane distribution itself.
+The optional `.trans` qualifier loads each `8x8` matrix in column-major format. A kernel can also build a fragment with ordinary loads and register operations, but then it must implement this cross-lane distribution itself.
 
-![`ldmatrix` loads an 8x8 shared memory tile into a warp register fragment; the reverse `stmatrix` path is available on Hopper (`sm_90`) and later architectures](../img/ldstmatrix.svg)
+![ldmatrix loads an 8x8 shared memory tile into a warp register fragment; the reverse stmatrix path is available on Hopper sm_90 and later architectures](../img/ldstmatrix.svg)
 
 ### Writing Back and Swizzling Shared Memory
 
@@ -226,7 +226,7 @@ A/B in SMEM --tcgen05.mma--> C/D in TMEM
 C/D in TMEM --tcgen05.ld--> register fragment --store--> GMEM
 ```
 
-`tcgen05.mma` executes asynchronously. After issuing the instruction, the kernel must wait for the MMA to complete before the epilogue reads the result with `tcgen05.ld`. The write and read layouts have to match: whatever TMEM lane and column coordinates receive an element from `tcgen05.mma` must provide that element to the corresponding thread register during `tcgen05.ld`.
+`tcgen05.mma` executes asynchronously. After issuing the instruction, the kernel must wait for the MMA to complete before the epilogue reads the result with `tcgen05.ld`. The load is asynchronous as well, so the epilogue must execute `tcgen05.wait::ld` before using the destination registers. The write and read layouts have to match: whatever TMEM lane and column coordinates receive an element from `tcgen05.mma` must provide that element to the corresponding thread register during `tcgen05.ld`.
 
 ### Scale Factors for Block-Scaled MMA
 
@@ -239,7 +239,7 @@ SFA(M, SFK)
 SFB(N, SFK)
 ```
 
-`SFA[m,sfk]` scales row `m` of A for K-scale block `sfk`. `SFB[n,sfk]` does the same for column `n` of B.
+`SFA[m,sfk]` scales row `m` of A for K-scale block `sfk`. `SFB[n,sfk]` does the same for column `n` of B. We keep the logical index order introduced in the previous chapter; PTX tables write the same B-side matrix as `SFB[sfk,n]`, with shape `SFB_M x N`.
 
 TMA usually loads A and B into shared memory, where the MMA reads them directly. Scale factors need to reach TMEM, while TMA stops at shared memory, so they take one additional step through `tcgen05.cp`:
 
@@ -257,7 +257,9 @@ S[(4, 32, 4) : (4@TCol, 1@TLane, 1@TCol)]
 + R[4 : 32@TLane]
 ```
 
-`S[...]` maps `(Mgroup, lane, sfk)` to byte positions in TMEM. `R[...]` adds four replicas along `TLane`. The `.32x128b.warpx4` form of `tcgen05.cp` creates this layout: it writes one 32-lane window, then broadcasts the same data into the other three warp windows.
+`S[...]` maps `(Mgroup, lane, sfk)` to byte positions in TMEM. In a typed TIRx layout, `@TCol` strides are measured in buffer elements. A scale factor is 8 bits here, so the logical TCol position is `4*Mgroup+sfk`; every four consecutive positions pack into one 32-bit hardware TCol cell. Equivalently, `hardware_TCol=(4*Mgroup+sfk)//4` and `byte_in_word=(4*Mgroup+sfk)%4`.
+
+`R[...]` adds four replicas along `TLane`. The `.32x128b.warpx4` form of `tcgen05.cp` creates this layout: it writes one 32-lane window, then broadcasts the same data into the other three warp windows.
 
 ### Word-Level Replication for `scale_vec`
 
@@ -275,9 +277,9 @@ This repetition within a word is separate from `R[4 : 32@TLane]`: the former rep
 
 ![`scale_vec` packing: 1X repeats one scale across four bytes, 2X repeats a pair of scales, and 4X stores four distinct K-block scales](../img/sf_scale_vec.svg)
 
-## A Recurring Register Fragment
+## Per-Thread Register Fragments Across Generations
 
-Across all three generations, one structure keeps reappearing: the m8n8-style register fragment.
+Across all three generations, matrix data passes through register fragments distributed across threads. The exact fragment shape and mapping depend on the instruction.
 
 On Ampere, `ldmatrix` loads shared-memory data and builds the register fragment consumed by `mma.sync`.
 
@@ -285,7 +287,7 @@ On Hopper, `wgmma` writes its accumulator into register fragments for the epilog
 
 On Blackwell, the accumulator stays in TMEM during the compute phase. Before the epilogue begins, `tcgen05.ld` loads the result into register fragments.
 
-The role of the register fragment therefore changes across generations. Ampere and Hopper use it to hold the accumulator during computation. Blackwell uses it mainly at the boundary between TMEM and the epilogue.
+The role of the register fragment therefore changes across generations. Ampere and Hopper use it to hold the accumulator during computation. Blackwell uses it mainly at the boundary between TMEM and the epilogue. The m8n8-style atom shown earlier is one common example; `tcgen05.ld` and `tcgen05.st` also provide several other data-movement shapes.
 
 ## Comparing the Three Data Paths
 
