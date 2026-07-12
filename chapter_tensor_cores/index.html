@@ -155,7 +155,7 @@
 <li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout and Its Notation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core Operand Layouts Across GPU Generations</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">The Evolution of Tensor Core Data Layouts</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Tensor Cores: <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Special Memory: TMEM</a></li>
@@ -506,7 +506,7 @@ SFB(N, SFK)
 SFA, SFB: global memory to SMEM, then tcgen05.cp copies SMEM to TMEM, then MMA reads TMEM
 </pre></div>
 </div>
-<p>The TMEM layout for scale factors is compact. A 128-row scale vector can pack into 32 Lane rows, using a mapping based on <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">%</span> <span class="pre">32</span></code> for the lane position and <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">/</span> <span class="pre">32</span></code> along columns. The data can then be broadcast across the four warps that read the full 128 Lane space (<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core Operand Layouts Across GPU Generations</span></a>).</p>
+<p>The TMEM layout for scale factors is compact. A 128-row scale vector can pack into 32 Lane rows, using a mapping based on <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">%</span> <span class="pre">32</span></code> for the lane position and <code class="docutils literal notranslate"><span class="pre">r</span> <span class="pre">/</span> <span class="pre">32</span></code> along columns. The data can then be broadcast across the four warps that read the full 128 Lane space (<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">The Evolution of Tensor Core Data Layouts</span></a>).</p>
 <p>This is a good example of why TMEM layout has to be explicit. The accumulator layout and the scale-factor layout are both in TMEM, but they are not the same layout. The accumulator uses the MMA output mapping. The scale factors use the compact layout expected by the block-scaled MMA.</p>
 </section>
 <section id="scale-factors-in-cta-group-2">
