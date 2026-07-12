@@ -275,6 +275,18 @@ scale_vec::4X: [SF0, SF1, SF2, SF3]
 
 ![scale_vec packing：1X 在四个 bytes 中重复同一个 scale，2X 重复一对 scales，4X 存放四个不同 K-block 的 scales](../../img/sf_scale_vec.svg)
 
+### 反复出现的 Register Fragment
+
+把三代架构放在一起看，会发现一种反复出现的结构：m8n8-style register fragment。
+
+在 Ampere 上，`ldmatrix` 从 shared memory 加载数据，并构造 `mma.sync` 读取的 register fragment。
+
+在 Hopper 上，`wgmma` 将累加结果写入 register fragment，交给 epilogue 继续处理。
+
+到了 Blackwell，计算期间的累加器存放在 TMEM 中；epilogue 开始前，`tcgen05.ld` 再把结果加载成 register fragment。
+
+因此，register fragment 在三代架构中承担着不同角色。Ampere 和 Hopper 在计算期间用它保存累加器；Blackwell 则主要在 TMEM 与 epilogue 的交界处使用它。
+
 ## 三种数据路径的对比
 
 | 架构 | 主要 MMA 指令 | A/B 主要来源 | 累加器位置 | Shared-memory layout 如何表达 |
