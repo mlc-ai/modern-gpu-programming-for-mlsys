@@ -1,94 +1,143 @@
 (chap_layout_generations)=
-# Tensor Core Operand Layouts Across GPU Generations
+# The Evolution of Tensor Core Data Layouts
 
 :::{admonition} Overview
 :class: overview
 
-- Across Ampere, Hopper, and Blackwell, the Tensor Core still performs the same high-level operation: `D = A B + C`.
-- What changes from one generation to the next is how operands reach the Tensor Core, which tile shapes and dtypes are supported, and where the accumulator lives.
-- Ampere uses warp-level register fragments. Shared memory tiles are loaded into the fragment with `ldmatrix`, and the accumulator stays in registers.
-- Hopper lets `wgmma` read operands directly from shared memory through matrix descriptors. The descriptor names the shared-memory swizzle format that the Tensor Core expects.
-- Blackwell keeps the shared-memory operand path but moves the accumulator into TMEM. Block-scaled MMA also stages its scale factors through TMEM.
-- Two memory constraints remain present across all generations: global memory coalescing and shared memory bank conflicts.
+- On Ampere, `mma.sync` reads A, B, and C from registers distributed across the threads in a warp, and D remains in registers.
+- On Hopper, `wgmma.mma_async` can read inputs directly from shared memory through matrix descriptors. The accumulator, however, remains distributed across per-thread registers.
+- On Blackwell, `tcgen05.mma` moves the accumulator into TMEM. The scale factors used by block-scaled MMA also live in TMEM.
 :::
 
-The Tensor Core operation looks stable from far away. It multiplies tiles of A and B, adds an accumulator C, and produces D. That form has been the same since Volta.
+Mathematically, all three generations perform the same matrix multiply-accumulate:
 
-The details around that operation have not stayed fixed. A kernel that is fast on one generation may be slow on the next. A kernel that uses the wrong layout may also compute the wrong answer, even if the logical math still says `D = A B + C`. The reason is that the Tensor Core does not consume abstract matrices. It consumes operands in very specific hardware layouts.
+$$
+D = AB + C
+$$
 
-This chapter follows that layout contract across three generations. Ampere exposes the Tensor Core through warp-level register fragments. Hopper moves the input operands to shared memory descriptors. Blackwell keeps shared memory operands but moves the accumulator into TMEM. The operation is still matrix-multiply-accumulate, but the path into and out of the Tensor Core changes each time.
+A and B are the multiplicands, C is the incoming accumulator, and D is the result. The equation says nothing about where these matrices live or in what order the Tensor Core reads their elements.
 
-The layout notation from the {ref}`Data Layout <chap_data_layout>` chapter is the language we use to describe these contracts. The Blackwell TMEM details are covered separately in {ref}`chap_tmem`.
+This chapter fills in that missing physical picture. Tensor Core instructions interpret registers, shared memory addresses, and TMEM coordinates according to fixed hardware rules. Put one element in the wrong place, and the instruction will treat it as a different matrix element and produce the wrong result.
 
-## Two Constraints That Never Went Away
+We will follow the data path through Ampere, Hopper, and Blackwell, asking the same three questions each time: Where does the MMA read its inputs? Where does it keep the accumulator? How does the kernel describe the layout expected by the instruction? We will use the notation introduced in {ref}`Data Layout <chap_data_layout>` to write the concrete mappings.
 
-Before the Tensor Core is involved, two ordinary memory constraints already shape the layout of a GPU kernel.
+## Two Memory-Access Requirements to Keep in Mind
 
-The first is global memory coalescing. When the 32 lanes of a warp issue a global memory load, the memory system wants the addresses to fall into a small number of contiguous, aligned memory segments. If the addresses are scattered, the warp load becomes several memory transactions. The same logical data movement takes more bandwidth and more time.
+Before looking at Tensor Core instructions, recall two other requirements that already constrain a GPU layout. Global memory addresses issued by a warp should combine into a small number of contiguous, aligned memory transactions. Shared memory addresses should spread across banks to avoid bank conflicts.
 
-The second is shared memory bank conflicts. Shared memory is divided into 32 banks. If lanes in a warp access different addresses that map to the same bank, those accesses cannot all be served at once. The hardware serializes them. A layout that looks harmless as a flat shared memory array can therefore be slow because of its bank pattern.
+A practical Tensor Core layout must satisfy all three constraints: global memory accesses should coalesce, shared memory accesses should avoid conflicts, and every matrix element should occupy the position required by the MMA instruction. The first two were covered earlier. This chapter focuses on the third.
 
-Swizzling is the usual way to fix the shared memory side. The logical tile stays the same, but the physical address mapping is permuted so that the access pattern spreads across banks instead of stacking onto one bank.
+## Ampere: Operands and Accumulators in Registers
 
-These two constraints apply even to kernels that never use Tensor Cores. Tensor Core kernels add a third constraint: the operands must be arranged in the layout expected by the Tensor Core instruction itself. The rest of this chapter is about how that third constraint changes across Ampere, Hopper, and Blackwell.
+Start with Ampere. Its main Tensor Core interface is the `mma.sync.aligned.m16n8k*` family. `mma.sync` takes A, B, and C from registers and writes D back to registers.
 
-## Ampere: Register Fragments over Warp Lanes
+A warp executes `mma.sync` collectively. PTX specifies how the A, B, and C/D tiles are distributed across the registers of its 32 threads. Each thread holds only part of a tile; that thread-local portion is its register fragment. Taken together, the 32 fragments represent the complete matrix tile.
 
-On Ampere-class GPUs, the main Tensor Core instruction is the warp-level `mma.sync.aligned.m16n8k*` family. The important fact is where the instruction reads and writes data: registers.
-
-A, B, and the C or D accumulator are all per-thread register fragments distributed across the 32 lanes of a warp. Shared memory is only the staging area. Before the MMA can run, the operand tile must be moved from shared memory into the exact register fragment layout expected by the instruction.
-
-The data path looks like this:
+Before issuing the MMA, an Ampere kernel will usually stage A and B in shared memory and then use `ldmatrix` to place the elements in the correct thread registers:
 
 ```text
-SMEM to registers with ldmatrix
-registers to registers with mma.sync
-registers back to SMEM with ordinary stores
+SMEM --ldmatrix--> registers
+registers --mma.sync--> registers
+registers --ordinary store--> SMEM or GMEM
 ```
 
-Most of the Ampere layout story follows from this path. The kernel must store the tile in shared memory in a form that can be loaded efficiently, then use `ldmatrix` to produce the register fragment required by `mma.sync`.
+At the moment `mma.sync` executes, only the register contents matter. The path above is the common high-performance route, but ordinary loads and register operations can prepare the same fragments.
 
-## What the Ampere Tensor Core Expects
+### A Concrete Fragment Mapping
 
-The Ampere Tensor Core reads register fragments built from 8 by 8 subtile units. These are the units that `ldmatrix` loads and that the MMA consumes.
+Consider `mma.sync.aligned.m16n8k16`. Let A be row-major and B be column-major, with `fp16` or `bf16` inputs and `fp32` accumulation. The warp computes:
 
-Take `mma.m16n8k16` with fp16 or bf16 inputs and fp32 accumulation as the concrete case. The accumulator tile has shape `16 by 8`. It is distributed across the 32 lanes in a fixed pattern.
+$$
+D_{16\times8}=A_{16\times16}B_{16\times8}+C_{16\times8}.
+$$
 
-For the C or D accumulator, lane `l` holds rows:
+A thread's lane ID determines which elements of A, B, C, and D it holds. We will begin with the C/D accumulator, where the pattern is easiest to see.
 
-```text
-l // 4
-l // 4 + 8
-```
+The PTX mapping repeats in groups of four lanes: lanes 0-3 cover rows 0 and 8, lanes 4-7 cover rows 1 and 9, and the remaining groups continue in the same way. For lane ID $l$, define:
 
-and columns:
+$$
+g=l\mathbin{//}4,\qquad t=l\bmod 4.
+$$
 
-```text
-2 * (l % 4)
-2 * (l % 4) + 1
-```
+Here, $g$ is the four-lane group index, and $t$ is the lane's position within that group.
 
-So each lane owns four fp32 accumulator values: two rows from the two 8-row halves, crossed with two adjacent columns. Four consecutive lanes cover the eight columns of one row.
+Group $g$ covers rows $g$ and $g+8$ of the output tile. Lane $t$ within the group covers columns $2t$ and $2t+1$ in both rows. Each lane therefore holds four `fp32` accumulator values at:
 
-The A operand uses the same M-side row carve. The K dimension is spread across `l % 4` and across the registers held by the lane. For fp16 or bf16, each 32-bit register packs two K values.
+$$
+(g,2t),\qquad
+(g,2t+1),\qquad
+(g+8,2t),\qquad
+(g+8,2t+1).
+$$
 
-The B operand uses a matching K placement and spreads the N side across the lane group and registers.
+For example, lane 5 has:
 
-The exact details vary by instruction shape and dtype, but the principle is fixed. The Tensor Core expects a particular per-lane register fragment. If the values are not in those registers in that pattern, the instruction will multiply the wrong elements.
+$$
+g=5\mathbin{//}4=1,\qquad t=5\bmod4=1,
+$$
 
-In layout notation, the m8n8 fragment is the kind of pattern written with named lane axes, for example:
+so it holds the following four C/D elements:
+
+$$
+(1,2),\quad(1,3),\quad(9,2),\quad(9,3).
+$$
+
+The A fragment uses the same $g$ and $t$, but its coordinates are $(m,k)$. Each lane holds eight `fp16` or `bf16` elements, with two adjacent elements packed into each 32-bit register:
+
+$$
+\begin{aligned}
+\text{register 0}:&\ (g,\ 2t+\{0,1\}),\\
+\text{register 1}:&\ (g+8,\ 2t+\{0,1\}),\\
+\text{register 2}:&\ (g,\ 2t+\{8,9\}),\\
+\text{register 3}:&\ (g+8,\ 2t+\{8,9\}).
+\end{aligned}
+$$
+
+At each of the two M coordinates, $m=g$ and $m=g+8$, the lane owns one adjacent pair in the lower half of K and another in the upper half.
+
+The B fragment uses $(k,n)$ coordinates. Each lane holds four `fp16` or `bf16` elements, again with two elements packed into each 32-bit register:
+
+$$
+\begin{aligned}
+\text{register 0}:&\ (2t+\{0,1\},\ g),\\
+\text{register 1}:&\ (2t+\{8,9\},\ g).
+\end{aligned}
+$$
+
+For B, $g$ determines the $n$ coordinate, while $t$ and the register number together determine $k$.
+
+We can now express the same mapping with the layout notation from the previous chapter. The first eight rows of C/D form an `8x8` local pattern:
 
 ```text
 S[(8, 4, 2) : (4@laneid, 1@laneid, 1@reg)]
 ```
 
-The two `laneid` iters together describe how the row and column pieces are scattered across lanes, while the final `reg` component describes the per-lane register slot.
+The three coordinates are:
 
-## `ldmatrix`: Shared Memory to Register Fragment
+```text
+(row, column_pair, element_in_pair)
+```
 
-`ldmatrix` is the Ampere instruction that bridges shared memory and the Tensor Core register fragment. It is a warp-collective load. One instruction moves one or more 8 by 8 16-bit matrices from shared memory into the distributed register layout expected by `mma.sync`.
+Adjacent columns form one `column_pair`, and `element_in_pair` selects one of the two columns. A matrix coordinate `(row, col)` therefore becomes:
 
-The instruction forms are:
+```text
+(row, col // 2, col % 2)
+```
+
+The first two coordinates determine the lane ID, and the last determines the fragment slot within that lane:
+
+```text
+lane_id = row * 4 + col // 2
+slot    = col % 2
+```
+
+Return to the two elements `(1,2)` and `(1,3)` held by lane 5. Their atom coordinates are `(1,1,0)` and `(1,1,1)`. Both map to lane `1*4+1=5`; the final coordinate selects slot 0 or slot 1.
+
+The complete C/D fragment contains two of these local patterns along M. The `8x8` atom is a convenient way to describe the layout; the hardware still executes one full `mma.m16n8k16` instruction.
+
+### `ldmatrix`: Building a Fragment from Shared Memory
+
+We now know the register fragment expected by `mma.sync`. How do we move an A or B tile from shared memory into exactly those thread registers? Ampere provides `ldmatrix` for that job. Here are its `.m8n8.b16` forms:
 
 ```text
 ldmatrix.sync.aligned.m8n8.x1.shared.b16
@@ -96,186 +145,156 @@ ldmatrix.sync.aligned.m8n8.x2.shared.b16
 ldmatrix.sync.aligned.m8n8.x4.shared.b16
 ```
 
-with an optional `.trans` qualifier.
+The whole warp executes the instruction together. The `.x1`, `.x2`, and `.x4` variants load one, two, or four `8x8` matrices. For row `r` of matrix `m`, lane `m*8+r` supplies the row's base address. Thus `.x1` takes addresses from lanes 0-7, `.x2` from lanes 0-15, and `.x4` from all 32 lanes.
 
-The `.x1`, `.x2`, and `.x4` forms load one, two, or four 8 by 8 matrices. The row base addresses are supplied by lanes. For matrix `m` and row `r`, the base address comes from lane `m * 8 + r`. That means `.x1` uses lanes 0 through 7 for row addresses, `.x2` uses lanes 0 through 15, and `.x4` uses lanes 0 through 31.
-
-The result lands directly in the MMA fragment. For the basic 8 by 8 case, lane `l` receives the row and column pair that the Tensor Core expects. A plain loop of per-lane `ld.shared` instructions would have to reproduce that scatter manually. `ldmatrix` performs the shared-memory-to-fragment rearrangement as one warp-collective instruction.
-
-The `.trans` form transposes each 8 by 8 matrix as it loads. This is used when the operand is stored in the opposite orientation from the one the MMA instruction expects.
-
-![ldmatrix loads an 8x8 shared memory tile into the warp register fragment; the reverse stmatrix path is available only on Hopper (sm_90) and later architectures](../img/ldstmatrix.svg)
-
-## Writing the Ampere Fragment Back
-
-After `mma.sync` finishes, the accumulator is still a register fragment. The epilogue has to move that fragment out.
-
-On Ampere, there is no dedicated reverse of `ldmatrix`; `stmatrix` first becomes available on Hopper (`sm_90`). Ampere kernels therefore use ordinary per-thread stores, sometimes with warp shuffles or local rearrangement before the store, to write the accumulator into shared memory or global memory in a useful layout.
-
-This keeps the Ampere model simple but also exposes a lot of layout work to the kernel. The input side uses `ldmatrix` to create the fragment. The compute instruction reads and writes register fragments. The output side is handled by ordinary stores from those fragments.
-
-## Swizzle on Ampere
-
-Ampere kernels already need shared memory swizzles. The reason is that the shared memory tile is usually written in one access pattern and read in another.
-
-Suppose a tile is filled from global memory along rows. A row-major layout makes that write coalesced and bank friendly. But `ldmatrix` may later read the tile in a pattern that effectively walks down columns or across 8 by 8 subtiles. With a plain row-major layout, those reads can stack onto the same shared memory bank.
-
-For a simple `(8, 64)` float16 tile, one row is:
+The figure below shows `.x1`. Threads T0-T7 on the left supply the eight row addresses, but supplying an address and receiving data are separate roles: the 64 loaded elements are distributed across all 32 threads. Lane $l$ receives:
 
 ```text
-64 * 2 bytes = 128 bytes
+row  = l // 4
+cols = 2 * (l % 4), 2 * (l % 4) + 1
 ```
 
-which is exactly one full shared memory bank line. Walking down a fixed column advances by 128 bytes each row, so the bank index repeats. Eight rows can collapse onto the same bank, creating an 8-way conflict.
+For example, the eight elements in row 0 go to lanes 0-3. Lane 0 receives columns 0-1, lane 1 receives columns 2-3, and so on. The two `fp16` elements received by each lane are packed into one 32-bit register. The left side of the figure shows which lanes supply addresses; the right side shows which lanes hold the data after the load. The reverse arrow is `stmatrix`, introduced on Hopper (`sm_90`) to store a register fragment back to shared memory.
 
-Changing to a plain column-major layout does not solve the whole problem. It usually moves the conflict to the other access. The row write becomes worse while the column-style read becomes better.
+The optional `.trans` qualifier transposes each `8x8` matrix during the load. A kernel can also build a fragment with ordinary loads and register operations, but then it must implement this cross-lane distribution itself.
 
-The XOR swizzle fixes this by making the physical column depend on the row. A simple version is:
+![`ldmatrix` loads an 8x8 shared memory tile into a warp register fragment; the reverse `stmatrix` path is available on Hopper (`sm_90`) and later architectures](../img/ldstmatrix.svg)
+
+### Writing Back and Swizzling Shared Memory
+
+After `mma.sync`, C/D remains a register fragment. On Ampere, the epilogue normally uses ordinary per-thread stores to write the result to shared memory or global memory, with warp shuffles or local rearrangement when needed.
+
+The input path presents another layout problem: ordinary stores favor consecutive elements along a row, while `ldmatrix` later reads across rows. One shared-memory layout has to serve both patterns. For an `(8,64)` `float16` tile, each row occupies exactly 128 bytes. With the usual 4-byte bank granularity, eight elements in a fixed column can all map to the same bank because the row stride is 128 bytes, producing an eight-way conflict.
+
+Ampere kernels commonly change the physical shared-memory placement with hand-written XOR address calculations. This preserves efficient contiguous row accesses while spreading cross-row reads across banks. The previous chapter developed this idea in detail; the figure below shows the contrast again.
+
+![In a plain row-major tile, row writes spread across banks while a column read collides on one bank; XOR swizzling scatters the column read without giving up coalesced row writes](../img/swizzle_conflict.svg)
+
+## Hopper: Reading Directly from Shared Memory
+
+### WGMMA: Four Warps Cooperate on One MMA
+
+Hopper widens the MMA from one warp to one warpgroup. A warpgroup consists of four consecutive warps, or 128 threads, that execute `wgmma.mma_async` together.
+
+The more important change is the input path. B comes from shared memory through a matrix descriptor. A may also come from shared memory, or it may come from registers. These two forms are commonly called SS and RS:
 
 ```text
-physical_col = logical_col xor row
+SS: A from SMEM, B from SMEM -> wgmma -> register accumulator
+RS: A from registers, B from SMEM -> wgmma -> register accumulator
 ```
 
-The logical tile is unchanged. The physical placement in shared memory is permuted so that both the row-style write and the Tensor Core read pattern can avoid bank conflicts.
+For a shared-memory operand, the kernel no longer uses `ldmatrix` to build an A or B register fragment. WGMMA reads the data directly, but it still needs to know where the matrix begins, how far to move between data groups, and which shared-memory swizzle is in use. A matrix descriptor carries that information.
 
-On Ampere, this swizzle is usually expressed through hand-written shared memory index math. Later generations make it part of the descriptor format used by the hardware engines.
+### How a Matrix Descriptor Locates a Tile
 
-![On a plain row-major tile a row write spreads across banks while a column read collides on one bank; the XOR swizzle scatters the column read across banks without giving up the coalesced row write](../img/swizzle_conflict.svg)
+A matrix descriptor is a 64-bit value held in a register. Think of it as an addressing recipe for WGMMA: the matrix data remains in shared memory, while the descriptor tells the instruction how to find and traverse the tile.
 
-## Hopper: `wgmma`, Shared Memory Descriptors, and Swizzle Formats
-
-Hopper changes the input side of the Tensor Core path. Instead of requiring every operand to be loaded into registers with `ldmatrix`, Hopper `wgmma` can read operands directly from shared memory.
-
-The B operand is read from a shared memory matrix descriptor. The A operand can be read either from a shared memory descriptor or from registers, giving the `.ss` and `.rs` forms.
-
-This removes the explicit `ldmatrix` step for SMEM-sourced operands. It does not remove the layout requirement. The Tensor Core still expects the operand to be stored in a precise shared memory format. The difference is that the format is now described to the hardware through a matrix descriptor.
-
-## What the Hopper Tensor Core Expects
-
-A Hopper shared memory matrix descriptor is a 64-bit register value. The matrix data resides in shared memory, while the descriptor carries the address parameters that `wgmma` needs to locate and traverse the tile:
-
-| Field | What the descriptor records |
+| Field | What it describes |
 |---|---|
-| `matrix start address` | Locates the matrix in shared memory |
-| `leading dimension byte offset` (`ldo`) | Byte offset for one class of movement between data groups |
-| `stride dimension byte offset` (`sdo`) | Byte offset for the other class of movement between data groups |
-| `matrix base offset` | Locates the matrix start within the repeating swizzle pattern |
-| `swizzle mode` | Selects no swizzle, 32-byte, 64-byte, or 128-byte swizzling |
+| `matrix start address` | The beginning of the matrix in shared memory |
+| `leading dimension byte offset` (`ldo`) | The byte offset used to reach the next group along the leading dimension |
+| `stride dimension byte offset` (`sdo`) | The byte offset used to reach the next group along the stride dimension |
+| `matrix base offset` | The matrix start within the repeating swizzle pattern |
+| `swizzle mode` | No swizzle, or 32-byte, 64-byte, or 128-byte swizzling |
 
-The matrix start address, `ldo`, and `sdo` are encoded in 16-byte units. WGMMA begins at the start address and uses the two offsets to move between repeating data groups; the major mode and swizzle mode determine which row or column groups each movement connects. In a swizzled K-major layout, `ldo` uses the fixed encoding 1, while `sdo` advances from one eight-row group to the next. MN-major layouts use the offsets to move between their corresponding row and column groups.
+WGMMA starts at `matrix start address`, then uses `ldo` and `sdo` to reach later data groups. All three address fields are encoded in units of 16 bytes. The major mode and swizzle mode determine which matrix direction corresponds to the leading and stride dimensions.
 
-Together with the major mode, the swizzle mode determines the atom shape and the XOR permutation inside each atom. The matrix base offset further locates the matrix start within the repeating swizzle pattern; it is zero when the start aligns with the pattern boundary.
+For a swizzled K-major layout, `ldo` uses the fixed encoding 1, while `sdo` gives the byte offset from one eight-row group to the next. The `swizzle mode` determines the atom shape and the XOR permutation within each atom. `matrix base offset` locates the matrix start within that repeating pattern; it is zero when the start is aligned to the pattern boundary.
 
-The figure below shows a K-major A operand with 128-byte swizzling. K runs horizontally and M vertically. Each colored block is an 8-by-128-byte atom whose eight rows occupy one contiguous 1 KB region in shared memory. The black dot at the upper left marks `start_address`. K follows the fixed K-major atom layout, with the leading-dimension byte offset encoded as 1; `sdo` advances between successive eight-row groups along M. After the descriptor identifies the target atom, the swizzle mode determines the byte position inside it through the XOR permutation.
+The figure makes this concrete. The A operand uses a K-major layout with 128-byte swizzling. K runs horizontally, M runs vertically, and each colored block is an atom with eight 128-byte rows. The black dot at the upper left marks `start_address`. K follows the fixed atom layout, so `ldo` is encoded as 1. Moving down by eight rows uses `sdo` to reach the next group. Once the descriptor identifies the target atom, the swizzle mode determines the byte position within it.
 
-![In a K-major 128-byte swizzle, the matrix descriptor uses the start address and sdo to locate an eight-row group, then the fixed atom layout and XOR swizzle determine the byte position](../img/wgmma_descriptor_kmajor.svg)
+![For a K-major 128-byte swizzle, the matrix descriptor uses the start address and `sdo` to locate an eight-row group; the fixed atom layout and XOR swizzle then determine the byte position](../img/wgmma_descriptor_kmajor.svg)
 
-The kernel still has to place the bytes correctly. TMA usually fills the shared memory tile, and the TMA descriptor must use the same swizzle format that the `wgmma` descriptor later names. If TMA writes a 128-byte swizzled tile, the `wgmma` descriptor must read it as a 128-byte swizzled tile. If the descriptor and the data disagree, the Tensor Core will read scrambled operands.
+This is why the descriptor must agree with the bytes in shared memory. If TMA writes a tile with 128-byte swizzling, the WGMMA descriptor must interpret the tile with the same 128-byte swizzle. TMA and WGMMA use separate descriptors for separate instructions, but both must describe the same physical arrangement.
 
-This is the main shift from Ampere. The swizzle is no longer only hidden inside hand-written shared memory indexing. Hopper makes it a first-class descriptor format. The TMA load that writes the tile and the `wgmma` instruction that reads the tile can both name the same format.
+### Accumulators Remain in Registers
 
-## Hopper Output Still Uses Registers
+WGMMA reads shared-memory inputs directly, but C/D is still distributed across the registers of the threads in the warpgroup. The epilogue consumes these register fragments. The instruction shape and accumulation type determine how many accumulator values each thread holds.
 
-Hopper changes the input path, but the accumulator still lives in registers.
+A Hopper kernel therefore works with two layout representations at once. Matrix descriptors describe A and B in shared memory; per-thread register fragments describe register-sourced A and the C/D accumulator. B always uses the shared-memory path, while A may use either path.
 
-A `wgmma` instruction writes the accumulator into a per-thread register fragment. The exact fragment size and register count depend on the instruction shape, such as `m64nNk16`, where N changes the number of accumulator registers. But the basic idea is the same as Ampere: the epilogue consumes a register fragment.
+## Blackwell: Moving Accumulators into TMEM
 
-So Hopper has a mixed layout model. The input operands can come directly from shared memory descriptors, with swizzle described by the hardware. The output accumulator remains a register layout problem.
+### Accumulators in TMEM
 
-Blackwell changes that output side.
+Blackwell keeps Hopper's descriptor-based input path. `tcgen05.mma` uses descriptors to find A and B in shared memory and read them in the required layout. Some modes also allow A to come from TMEM.
 
-## Blackwell: `tcgen05` and TMEM
+The major change is where the accumulator lives. Hopper keeps C/D in the registers of the participating threads; Blackwell places it in Tensor Memory, or TMEM. When the epilogue needs the result, `tcgen05.ld` loads the data into registers:
 
-Blackwell keeps the shared memory descriptor idea for the data operands. A and B are still prepared in shared memory in the layout the Tensor Core expects. Some modes can also read an A operand from TMEM.
+```text
+A/B in SMEM --tcgen05.mma--> C/D in TMEM
+C/D in TMEM --tcgen05.ld--> register fragment --store--> GMEM
+```
 
-The major change is the accumulator. `tcgen05.mma` writes its accumulator into Tensor Memory, or TMEM, instead of keeping it as a long-lived register fragment. During the compute phase, the accumulator stays in TMEM. The epilogue later uses `tcgen05.ld` to load it back into registers.
+`tcgen05.mma` executes asynchronously. After issuing the instruction, the kernel must wait for the MMA to complete before the epilogue reads the result with `tcgen05.ld`. The write and read layouts have to match: whatever TMEM lane and column coordinates receive an element from `tcgen05.mma` must provide that element to the corresponding thread register during `tcgen05.ld`.
 
-This moves the output layout problem from registers to TMEM. The kernel must allocate TMEM, choose the right TMEM layout, wait for MMA completion, and then use the matching `tcgen05.ld` path to recover the accumulator fragment for the epilogue.
+### Scale Factors for Block-Scaled MMA
 
-The details of how `cta_group::1` and `cta_group::2` split the accumulator across one or two CTAs are covered in {ref}`chap_tensor_cores`. The layout that is most different from earlier generations is the block-scaled scale-factor layout.
+The <a href="../chapter_data_layout/index.html#broadcasting-scale-factors-across-warps-in-tmem">Broadcasting Scale Factors Across Warps in TMEM</a> section in the previous chapter used `M=128` and `SFK=4` to derive the TMEM packing and `.warpx4` replication of scale factors. We now pick up that data path where it left off: how do those values enter TMEM, and how does the MMA select the bytes needed for one operation?
 
-## Scale Factor Layout in TMEM
-
-Block-scaled MMA modes, such as `mxfp8` and `nvfp4`, add scale-factor operands. In addition to A and B, the MMA reads:
+Block-scaled MMA uses two scale-factor matrices:
 
 ```text
 SFA(M, SFK)
 SFB(N, SFK)
 ```
 
-where `SFK` is the number of K scale blocks.
+`SFA[m,sfk]` scales row `m` of A for K-scale block `sfk`. `SFB[n,sfk]` does the same for column `n` of B.
 
-The data operands A and B live in shared memory. The scale factors live in TMEM. That gives them a different movement path.
-
-TMA loads from global memory into shared memory. It does not load directly into TMEM. So scale factors usually move in two steps:
+TMA usually loads A and B into shared memory, where the MMA reads them directly. Scale factors need to reach TMEM, while TMA stops at shared memory, so they take one additional step through `tcgen05.cp`:
 
 ```text
-global memory to shared memory with TMA
-shared memory to TMEM with tcgen05.cp
+A, B:     GMEM --TMA--> SMEM --tcgen05.mma--> Tensor Core
+SFA, SFB: GMEM --TMA--> SMEM --tcgen05.cp--> TMEM --tcgen05.mma--> Tensor Core
 ```
 
-Only after that copy are the scale factors in the memory space where `tcgen05.mma` expects to read them.
+### How `tcgen05.cp` Writes TMEM
 
-The TMEM scale-factor layout uses the TMEM hardware coordinates Lane and Col. In the TIRx layout notation, those axes are written as `TLane` and `TCol`.
-
-A full scale-factor layout is built from a reusable 32-lane atom. In layout notation, that atom is:
+Recall the complete layout derived in the previous chapter:
 
 ```text
-S[(32, sf_per_mma) : (1@TLane, 1@TCol)] + R[4 : 32@TLane]
+S[(4, 32, 4) : (4@TCol, 1@TLane, 1@TCol)]
++ R[4 : 32@TLane]
 ```
 
-The shard places the base 32-row group:
+`S[...]` maps `(Mgroup, lane, sfk)` to byte positions in TMEM. `R[...]` adds four replicas along `TLane`. The `.32x128b.warpx4` form of `tcgen05.cp` creates this layout: it writes one 32-lane window, then broadcasts the same data into the other three warp windows.
+
+### Word-Level Replication for `scale_vec`
+
+Once the values are in TMEM, one more layout rule applies inside each 32-bit TMEM word. `scale_vec` determines whether each row of SFA, or each column of SFB, contains one, two, or four logical scales. Shorter scale vectors repeat within the four-byte word:
 
 ```text
-TLane = r
-TCol  = s
+scale_vec::1X: [SF0, SF0, SF0, SF0]
+scale_vec::2X: [SF0, SF1, SF0, SF1]
+scale_vec::4X: [SF0, SF1, SF2, SF3]
 ```
 
-The replica term adds copies at lane offsets 0, 32, 64, and 96:
+`SFA_ID` or `SFB_ID` tells the MMA which copy to read. With 1X, the byte offset may be 0, 1, 2, or 3. With 2X, offset 0 selects the low half-word and offset 2 selects the high half-word. With 4X, all four bytes are used, so the ID must be 0.
 
-```text
-TLane = r + 32 * q, where q in {0, 1, 2, 3}
-TCol  = s
-```
+This repetition within a word is separate from `R[4 : 32@TLane]`: the former repeats bytes inside a 32-bit word, while the latter replicates data across four TMEM lane windows. A scale's mathematical reuse across every K element in its block is a third, separate idea.
 
-This broadcasts the compact scale-factor group to four warps, making it visible across the full 128-lane TMEM space. Outer coordinates then place additional 32-row groups and K-scale groups along `TCol`. For 8-bit scales, four adjacent `TCol` slots pack into one 32-bit hardware cell.
+![`scale_vec` packing: 1X repeats one scale across four bytes, 2X repeats a pair of scales, and 4X stores four distinct K-block scales](../img/sf_scale_vec.svg)
 
-The `scale_vec` qualifier sets the logical scale-factor width: one, two, or four scales per row of SFA (or per column of SFB). The shorter vectors are repeated to fill a 32-bit TMEM word, and `SFA_ID` or `SFB_ID` selects one of the equivalent byte or half-word positions:
+## A Recurring Register Fragment
 
-```text
-1X: [SF0, SF0, SF0, SF0]; ID can select byte offset 0, 1, 2, or 3
-2X: [SF0, SF1, SF0, SF1]; ID selects byte offset 0 or 2
-4X: [SF0, SF1, SF2, SF3]; ID must be 0
-```
+Across all three generations, one structure keeps reappearing: the m8n8-style register fragment.
 
-This byte-level repetition is separate from the `R[4 : 32@TLane]` replication across four TMEM lane windows. It is also separate from the mathematical reuse of each scale across the K elements in its block.
+On Ampere, `ldmatrix` loads shared-memory data and builds the register fragment consumed by `mma.sync`.
 
-![scale_vec packing: 1X repeats one scale across four bytes, 2X repeats one two-scale pair, and 4X stores four distinct K-block scales](../img/sf_scale_vec.svg)
+On Hopper, `wgmma` writes its accumulator into register fragments for the epilogue.
 
-This packing has no direct Ampere or Hopper analogue because those generations do not have TMEM scale-factor operands for `tcgen05` block-scaled MMA.
+On Blackwell, the accumulator stays in TMEM during the compute phase. Before the epilogue begins, `tcgen05.ld` loads the result into register fragments.
 
-In `cta_group::2`, scale factors follow the data they scale. SFA scales A, so it is split by M across the two CTAs, matching the A rows owned by each CTA. SFB scales B, which is shared by the two CTA halves of the computation, so SFB is multicast to both CTAs ({ref}`chap_tensor_cores`).
+The role of the register fragment therefore changes across generations. Ampere and Hopper use it to hold the accumulator during computation. Blackwell uses it mainly at the boundary between TMEM and the epilogue.
 
-## A Recurring Fragment
+## Comparing the Three Data Paths
 
-Even though the surrounding memory path changes, one structure keeps returning: the m8n8-style register fragment.
+| Architecture | Main MMA instruction | Main source of A/B | Accumulator location | How the shared-memory layout is expressed |
+|---|---|---|---|---|
+| Ampere | `mma.sync` | Registers | Registers | The kernel usually computes addresses and swizzles explicitly |
+| Hopper | `wgmma.mma_async` | A may come from registers or SMEM; B comes from SMEM | Registers | A matrix descriptor records strides and the swizzle mode |
+| Blackwell | `tcgen05.mma` | Primarily SMEM; some modes take A from TMEM | TMEM | Descriptors cover SMEM inputs; TMEM layouts describe accumulators and scale factors |
 
-On Ampere, `ldmatrix` builds that fragment so `mma.sync` can read it.
+Side by side, the progression is clear. Ampere arranges inputs as per-lane register fragments. Hopper lets the Tensor Core consume shared memory directly through descriptors. Blackwell then moves the accumulator and scale factors into TMEM.
 
-On Hopper, `wgmma` writes its accumulator as a register fragment for the epilogue.
-
-On Blackwell, the accumulator lives in TMEM during compute, but `tcgen05.ld` loads it back into a register fragment before the epilogue processes and stores it ({ref}`chap_tmem`).
-
-So the fragment does not disappear. Its role changes. Earlier generations keep the accumulator there for the whole compute phase. Blackwell uses it mostly at the boundary between TMEM and the epilogue.
-
-## The Throughline
-
-On Ampere, the kernel explicitly builds Tensor Core register fragments. Shared memory swizzle is mostly the kernel's responsibility through index math.
-
-On Hopper, the Tensor Core can read operands directly from shared memory through matrix descriptors. Swizzle becomes a named descriptor format shared by TMA and `wgmma`.
-
-On Blackwell, the input side still uses shared memory operands, but the accumulator moves to TMEM. Block-scaled MMA also adds scale-factor operands that must be staged into TMEM.
-
-The descriptors do not remove layout work. They make the contract explicit. The kernel still has to ensure that the data movement path, the memory layout, and the Tensor Core instruction all agree. A TMA descriptor that writes a swizzled SMEM tile, an MMA descriptor that reads that tile, and the layout attached to the buffer must all describe the same physical arrangement.
-
-If any one of those pieces disagrees, the hardware will still run. It will just read the wrong bytes or read them slowly. That is why layout is not decoration around a Tensor Core kernel. It is part of the instruction interface.
+When implementing a kernel, trace the data flow one step at a time: the layout written by one instruction must be the layout read by the next. If any step interprets the physical arrangement differently, the Tensor Core may consume the wrong elements. Even when the result remains correct, a mismatched access pattern can still waste performance.
