@@ -393,7 +393,7 @@
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#word-level-replication-for-scale-vec">Word-Level Replication for <code class="docutils literal notranslate"><span class="pre">scale_vec</span></code></a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-recurring-register-fragment">A Recurring Register Fragment</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#per-thread-register-fragments-across-generations">Per-Thread Register Fragments Across Generations</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#comparing-the-three-data-paths">Comparing the Three Data Paths</a></li>
 </ul>
             </nav>
@@ -527,8 +527,8 @@ cols = 2 * (l % 4), 2 * (l % 4) + 1
 </pre></div>
 </div>
 <p>For example, the eight elements in row 0 go to lanes 0-3. Lane 0 receives columns 0-1, lane 1 receives columns 2-3, and so on. The two <code class="docutils literal notranslate"><span class="pre">fp16</span></code> elements received by each lane are packed into one 32-bit register. The left side of the figure shows which lanes supply addresses; the right side shows which lanes hold the data after the load. The reverse arrow is <code class="docutils literal notranslate"><span class="pre">stmatrix</span></code>, introduced on Hopper (<code class="docutils literal notranslate"><span class="pre">sm_90</span></code>) to store a register fragment back to shared memory.</p>
-<p>The optional <code class="docutils literal notranslate"><span class="pre">.trans</span></code> qualifier transposes each <code class="docutils literal notranslate"><span class="pre">8x8</span></code> matrix during the load. A kernel can also build a fragment with ordinary loads and register operations, but then it must implement this cross-lane distribution itself.</p>
-<p><img alt=" loads an 8x8 shared memory tile into a warp register fragment; the reverse  path is available on Hopper () and later architectures" src="../_images/ldstmatrix.svg" /></p>
+<p>The optional <code class="docutils literal notranslate"><span class="pre">.trans</span></code> qualifier loads each <code class="docutils literal notranslate"><span class="pre">8x8</span></code> matrix in column-major format. A kernel can also build a fragment with ordinary loads and register operations, but then it must implement this cross-lane distribution itself.</p>
+<p><img alt="ldmatrix loads an 8x8 shared memory tile into a warp register fragment; the reverse stmatrix path is available on Hopper sm_90 and later architectures" src="../_images/ldstmatrix.svg" /></p>
 </section>
 <section id="writing-back-and-swizzling-shared-memory">
 <h3>Writing Back and Swizzling Shared Memory<a class="headerlink" href="#writing-back-and-swizzling-shared-memory" title="Link to this heading">#</a></h3>
@@ -600,7 +600,7 @@ RS: A from registers, B from SMEM -&gt; wgmma -&gt; register accumulator
 C/D in TMEM --tcgen05.ld--&gt; register fragment --store--&gt; GMEM
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> executes asynchronously. After issuing the instruction, the kernel must wait for the MMA to complete before the epilogue reads the result with <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. The write and read layouts have to match: whatever TMEM lane and column coordinates receive an element from <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> must provide that element to the corresponding thread register during <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> executes asynchronously. After issuing the instruction, the kernel must wait for the MMA to complete before the epilogue reads the result with <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. The load is asynchronous as well, so the epilogue must execute <code class="docutils literal notranslate"><span class="pre">tcgen05.wait::ld</span></code> before using the destination registers. The write and read layouts have to match: whatever TMEM lane and column coordinates receive an element from <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> must provide that element to the corresponding thread register during <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>.</p>
 </section>
 <section id="scale-factors-for-block-scaled-mma">
 <h3>Scale Factors for Block-Scaled MMA<a class="headerlink" href="#scale-factors-for-block-scaled-mma" title="Link to this heading">#</a></h3>
@@ -610,7 +610,7 @@ C/D in TMEM --tcgen05.ld--&gt; register fragment --store--&gt; GMEM
 SFB(N, SFK)
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">SFA[m,sfk]</span></code> scales row <code class="docutils literal notranslate"><span class="pre">m</span></code> of A for K-scale block <code class="docutils literal notranslate"><span class="pre">sfk</span></code>. <code class="docutils literal notranslate"><span class="pre">SFB[n,sfk]</span></code> does the same for column <code class="docutils literal notranslate"><span class="pre">n</span></code> of B.</p>
+<p><code class="docutils literal notranslate"><span class="pre">SFA[m,sfk]</span></code> scales row <code class="docutils literal notranslate"><span class="pre">m</span></code> of A for K-scale block <code class="docutils literal notranslate"><span class="pre">sfk</span></code>. <code class="docutils literal notranslate"><span class="pre">SFB[n,sfk]</span></code> does the same for column <code class="docutils literal notranslate"><span class="pre">n</span></code> of B. We keep the logical index order introduced in the previous chapter; PTX tables write the same B-side matrix as <code class="docutils literal notranslate"><span class="pre">SFB[sfk,n]</span></code>, with shape <code class="docutils literal notranslate"><span class="pre">SFB_M</span> <span class="pre">x</span> <span class="pre">N</span></code>.</p>
 <p>TMA usually loads A and B into shared memory, where the MMA reads them directly. Scale factors need to reach TMEM, while TMA stops at shared memory, so they take one additional step through <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code>:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A, B:     GMEM --TMA--&gt; SMEM --tcgen05.mma--&gt; Tensor Core
 SFA, SFB: GMEM --TMA--&gt; SMEM --tcgen05.cp--&gt; TMEM --tcgen05.mma--&gt; Tensor Core
@@ -624,7 +624,8 @@ SFA, SFB: GMEM --TMA--&gt; SMEM --tcgen05.cp--&gt; TMEM --tcgen05.mma--&gt; Tens
 + R[4 : 32@TLane]
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">S[...]</span></code> maps <code class="docutils literal notranslate"><span class="pre">(Mgroup,</span> <span class="pre">lane,</span> <span class="pre">sfk)</span></code> to byte positions in TMEM. <code class="docutils literal notranslate"><span class="pre">R[...]</span></code> adds four replicas along <code class="docutils literal notranslate"><span class="pre">TLane</span></code>. The <code class="docutils literal notranslate"><span class="pre">.32x128b.warpx4</span></code> form of <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> creates this layout: it writes one 32-lane window, then broadcasts the same data into the other three warp windows.</p>
+<p><code class="docutils literal notranslate"><span class="pre">S[...]</span></code> maps <code class="docutils literal notranslate"><span class="pre">(Mgroup,</span> <span class="pre">lane,</span> <span class="pre">sfk)</span></code> to byte positions in TMEM. In a typed TIRx layout, <code class="docutils literal notranslate"><span class="pre">&#64;TCol</span></code> strides are measured in buffer elements. A scale factor is 8 bits here, so the logical TCol position is <code class="docutils literal notranslate"><span class="pre">4*Mgroup+sfk</span></code>; every four consecutive positions pack into one 32-bit hardware TCol cell. Equivalently, <code class="docutils literal notranslate"><span class="pre">hardware_TCol=(4*Mgroup+sfk)//4</span></code> and <code class="docutils literal notranslate"><span class="pre">byte_in_word=(4*Mgroup+sfk)%4</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">R[...]</span></code> adds four replicas along <code class="docutils literal notranslate"><span class="pre">TLane</span></code>. The <code class="docutils literal notranslate"><span class="pre">.32x128b.warpx4</span></code> form of <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> creates this layout: it writes one 32-lane window, then broadcasts the same data into the other three warp windows.</p>
 </section>
 <section id="word-level-replication-for-scale-vec">
 <h3>Word-Level Replication for <code class="docutils literal notranslate"><span class="pre">scale_vec</span></code><a class="headerlink" href="#word-level-replication-for-scale-vec" title="Link to this heading">#</a></h3>
@@ -639,13 +640,13 @@ scale_vec::4X: [SF0, SF1, SF2, SF3]
 <p><img alt=" packing: 1X repeats one scale across four bytes, 2X repeats a pair of scales, and 4X stores four distinct K-block scales" src="../_images/sf_scale_vec.svg" /></p>
 </section>
 </section>
-<section id="a-recurring-register-fragment">
-<h2>A Recurring Register Fragment<a class="headerlink" href="#a-recurring-register-fragment" title="Link to this heading">#</a></h2>
-<p>Across all three generations, one structure keeps reappearing: the m8n8-style register fragment.</p>
+<section id="per-thread-register-fragments-across-generations">
+<h2>Per-Thread Register Fragments Across Generations<a class="headerlink" href="#per-thread-register-fragments-across-generations" title="Link to this heading">#</a></h2>
+<p>Across all three generations, matrix data passes through register fragments distributed across threads. The exact fragment shape and mapping depend on the instruction.</p>
 <p>On Ampere, <code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> loads shared-memory data and builds the register fragment consumed by <code class="docutils literal notranslate"><span class="pre">mma.sync</span></code>.</p>
 <p>On Hopper, <code class="docutils literal notranslate"><span class="pre">wgmma</span></code> writes its accumulator into register fragments for the epilogue.</p>
 <p>On Blackwell, the accumulator stays in TMEM during the compute phase. Before the epilogue begins, <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> loads the result into register fragments.</p>
-<p>The role of the register fragment therefore changes across generations. Ampere and Hopper use it to hold the accumulator during computation. Blackwell uses it mainly at the boundary between TMEM and the epilogue.</p>
+<p>The role of the register fragment therefore changes across generations. Ampere and Hopper use it to hold the accumulator during computation. Blackwell uses it mainly at the boundary between TMEM and the epilogue. The m8n8-style atom shown earlier is one common example; <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> and <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> also provide several other data-movement shapes.</p>
 </section>
 <section id="comparing-the-three-data-paths">
 <h2>Comparing the Three Data Paths<a class="headerlink" href="#comparing-the-three-data-paths" title="Link to this heading">#</a></h2>
@@ -752,7 +753,7 @@ scale_vec::4X: [SF0, SF1, SF2, SF3]
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#word-level-replication-for-scale-vec">Word-Level Replication for <code class="docutils literal notranslate"><span class="pre">scale_vec</span></code></a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-recurring-register-fragment">A Recurring Register Fragment</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#per-thread-register-fragments-across-generations">Per-Thread Register Fragments Across Generations</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#comparing-the-three-data-paths">Comparing the Three Data Paths</a></li>
 </ul>
   </nav></div>
