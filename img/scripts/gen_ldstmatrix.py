@@ -1,4 +1,4 @@
-"""Schematic of ldmatrix/stmatrix data movement: an 8x8 b16 SMEM tile and the
+"""Schematic of ldmatrix/stmatrix data movement: an 8x8 b16 SMEM tile <-> the
 warp register fragment. Ground truth: nymph-rust values/ldstmatrix.rs
 (element_coord: lane l holds row l/4, cols 2*(l%4) and +1; row r address comes
 from lane r). Outputs SVG into ../ (the img/ dir).
