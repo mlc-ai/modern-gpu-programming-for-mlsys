@@ -240,15 +240,17 @@ TCol  = s
 
 This broadcasts the compact scale-factor group to four warps, making it visible across the full 128-lane TMEM space. Outer coordinates then place additional 32-row groups and K-scale groups along `TCol`. For 8-bit scales, four adjacent `TCol` slots pack into one 32-bit hardware cell.
 
-The `scale_vec` qualifier sets the logical scale-factor width: one, two, or four scales per row of SFA (or per column of SFB). `SFA_ID` or `SFB_ID` then selects the aligned sub-column where that vector begins within the 32-bit TMEM word:
+The `scale_vec` qualifier sets the logical scale-factor width: one, two, or four scales per row of SFA (or per column of SFB). The shorter vectors are repeated to fill a 32-bit TMEM word, and `SFA_ID` or `SFB_ID` selects one of the equivalent byte or half-word positions:
 
 ```text
-1X: one scale; ID can select byte offset 0, 1, 2, or 3
-2X: two scales; ID selects byte offset 0 or 2
-4X: four scales; ID must be 0
+1X: [SF0, SF0, SF0, SF0]; ID can select byte offset 0, 1, 2, or 3
+2X: [SF0, SF1, SF0, SF1]; ID selects byte offset 0 or 2
+4X: [SF0, SF1, SF2, SF3]; ID must be 0
 ```
 
-![scale_vec sets the number of scales, while SFA_ID or SFB_ID selects the aligned sub-column within a 32-bit TMEM word](../img/sf_scale_vec.svg)
+This byte-level repetition is separate from the `R[4 : 32@TLane]` replication across four TMEM lane windows. It is also separate from the mathematical reuse of each scale across the K elements in its block.
+
+![scale_vec packing: 1X repeats one scale across four bytes, 2X repeats one two-scale pair, and 4X stores four distinct K-block scales](../img/sf_scale_vec.svg)
 
 This packing has no direct Ampere or Hopper analogue because those generations do not have TMEM scale-factor operands for `tcgen05` block-scaled MMA.
 

@@ -259,19 +259,21 @@ S[(4, 32, 4) : (4@TCol, 1@TLane, 1@TCol)]
 
 其中，`S[...]` 把 `(Mgroup, lane, sfk)` 映射到 TMEM 中的 byte 位置，`R[...]` 表示沿 `TLane` 轴复制四份。`tcgen05.cp` 的 `.32x128b.warpx4` 形式正好完成这件事：先写入一个 32-lane window，再把同一份数据广播到另外三个 warp windows。
 
-### `scale_vec` 与 Scale-Factor ID
+### `scale_vec` 的 Word 内复制
 
-数据已经放进 TMEM，接下来还要告诉 MMA 读取几个 scales，以及从哪里开始读取。一个 32-bit TMEM word 包含 4 个 byte sub-columns。`scale_vec` 决定 SFA 每行或 SFB 每列包含 1、2 还是 4 个 scales；`SFA_ID` 或 `SFB_ID` 再指定这个 scale vector 从 word 中哪个对齐的 byte offset 开始：
+数据已经放进 TMEM，接下来还要看一个 32-bit TMEM word 内部如何排列 scales。`scale_vec` 决定 SFA 每行或 SFB 每列包含 1、2 还是 4 个逻辑 scales。为了填满 4-byte word，较短的 scale vector 会在 word 内重复：
 
 ```text
-scale_vec::1X: 1 个 scale，ID 可选择 byte offset 0、1、2 或 3
-scale_vec::2X: 2 个 scales，ID 可选择 byte offset 0 或 2
-scale_vec::4X: 4 个 scales，ID 必须为 0
+scale_vec::1X: [SF0, SF0, SF0, SF0]
+scale_vec::2X: [SF0, SF1, SF0, SF1]
+scale_vec::4X: [SF0, SF1, SF2, SF3]
 ```
 
-`mxfp8` 通常每次 MMA 使用 1 个 scale，`mxfp4` 使用 2 个，`nvfp4` 使用 4 个。这样，不同 K-block 的 scales 可以紧凑地放进同一个 TMEM word，再由 scale-factor ID 选择当前 MMA 使用的 sub-column。下图以 ID=0 为例，画出了三种 vector size。
+`SFA_ID` 或 `SFB_ID` 再选择 MMA 从哪个副本开始读取。1X 可以选择 byte offset 0、1、2 或 3；2X 可以选择 offset 0 或 2，也就是低 half-word 或高 half-word；4X 使用全部 4 bytes，因此 ID 必须为 0。
 
-![scale_vec 决定 scale 数量，SFA_ID 或 SFB_ID 决定 scale vector 在 32-bit TMEM word 中使用的对齐 sub-column](../../img/sf_scale_vec.svg)
+这里的 word 内复制与前面的 `R[4 : 32@TLane]` 是两件事：前者复制 32-bit word 中的 bytes，后者把数据复制到四个 TMEM lane windows。一个 scale 在数学上供整个 K-block 共用，则是第三层含义。
+
+![scale_vec packing：1X 在四个 bytes 中重复同一个 scale，2X 重复一对 scales，4X 存放四个不同 K-block 的 scales](../../img/sf_scale_vec.svg)
 
 ## 三种数据路径的对比
 
