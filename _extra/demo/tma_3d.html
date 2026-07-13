@@ -141,7 +141,7 @@ function draw() {
   // Info box
   var swName = useSw ? 'CU_TENSOR_MAP_SWIZZLE_128B' : 'CU_TENSOR_MAP_SWIZZLE_NONE';
   document.getElementById('infobox').innerHTML =
-    '<b>CUtensorMap</b>: <span class="formula">' +
+    '<b>Tensor Map</b>: <span class="formula">' +
     'dtype = f16, globalDim = [64, 16, ' + TOTAL_GROUPS + '], globalStrides = [512B, 128B], ' +
     'boxDim = [64, 16, 2], swizzle = ' + swName + '</span><br>' +
     '<b>Instruction</b>: <span class="formula">cp.async.bulk.tensor.3d.shared::cta.global.mbarrier::complete_tx::bytes [smem], [tensormap, {' +
@@ -149,7 +149,7 @@ function draw() {
     '<b>Coordinate split</b>: <span class="formula">16\u00d7128 fp16 slice \u2192 ' +
         'reshape(16, 2, 64).transpose(1, 0, 2)' +
         ' \u2192 (group=2, row=16, col=64)</span><br>' +
-    '<b>Note</b>: The tensor map descriptor and PTX list dimensions from innermost to outermost, so the instruction order is the reverse of the (group, row, col) order shown in the diagram.';
+    '<b>Note</b>: Tensor map fields and PTX instruction operands list dimensions from innermost to outermost, so the instruction order is the reverse of the (group, row, col) order shown in the diagram.';
 
   // Global memory: single contiguous grid
   var gg = document.getElementById('gg');

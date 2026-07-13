@@ -49,7 +49,7 @@ Notice that the load is gated on `tid == 0`, not on `elect_sync()`, and the dist
 It is important to be honest about where the speedup comes from. Step 4 still waits after every TMA load, so we are not yet overlapping the load with the compute; that is the work of Step 5. The win here comes purely from the change of data-movement path:
 
 - `Tx.copy` uses CTA threads to compute addresses and issue load/store instructions.
-- TMA uses one issued command to start a hardware tile transfer. Address generation, coalescing, and swizzling are described by the tensor map descriptor and carried out by the TMA engine.
+- TMA uses one issued command to start a hardware tile transfer. Address generation, coalescing, and swizzling are described by the tensor map and carried out by the TMA engine.
 
 So even though Step 4 still blocks on each load, it ends up faster anyway. TMA absorbs the bulk transfer, which frees the CTA threads from spending instruction bandwidth shuffling tiles around, and that saving alone is enough to move the needle.
 

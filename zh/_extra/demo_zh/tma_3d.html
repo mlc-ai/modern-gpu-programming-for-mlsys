@@ -142,7 +142,7 @@ function draw() {
   // Info box
   var swName = useSw ? 'CU_TENSOR_MAP_SWIZZLE_128B' : 'CU_TENSOR_MAP_SWIZZLE_NONE';
   document.getElementById('infobox').innerHTML =
-    '<b>CUtensorMap</b>: <span class="formula">' +
+    '<b>Tensor Map</b>: <span class="formula">' +
     'dtype = f16, globalDim = [64, 16, ' + TOTAL_GROUPS + '], globalStrides = [512B, 128B], ' +
     'boxDim = [64, 16, 2], swizzle = ' + swName + '</span><br>' +
     '<b>Instruction</b>: <span class="formula">cp.async.bulk.tensor.3d.shared::cta.global.mbarrier::complete_tx::bytes [smem], [tensormap, {' +
@@ -150,7 +150,7 @@ function draw() {
     '<b>坐标分解</b>：<span class="formula">16\u00d7128 fp16 slice \u2192 ' +
         'reshape(16, 2, 64).transpose(1, 0, 2)' +
         ' \u2192 (group=2, row=16, col=64)</span><br>' +
-    '<b>注意</b>：tensor map descriptor 和 PTX 从最内层维度开始列出 dimensions 与 coordinates，所以指令中的顺序与图上标出的 (group, row, col) 相反。';
+    '<b>注意</b>：tensor map 的字段和 PTX 指令参数都从最内层维度开始列出 dimensions 与 coordinates，所以指令中的顺序与图上标出的 (group, row, col) 相反。';
 
   // Global memory: single contiguous grid
   var gg = document.getElementById('gg');
