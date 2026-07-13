@@ -150,15 +150,15 @@ function draw() {
   document.getElementById('sdims').textContent =
     BOX_R + '\u00d7' + BOX_C + ' sectors (' + (useSw ? 'swizzled' : 'linear') + ')';
 
-  // Info box with tensor map fields (concrete strides)
+  // Info box with CUtensorMap descriptor fields (concrete strides)
   var swName = useSw ? 'CU_TENSOR_MAP_SWIZZLE_128B' : 'CU_TENSOR_MAP_SWIZZLE_NONE';
   document.getElementById('infobox').innerHTML =
-    '<b>Tensor Map</b>: <span class="formula">' +
+    '<b>CUtensorMap</b>: <span class="formula">' +
     'dtype = f16, globalDim = [128, 16], globalStrides = [256B], ' +
     'boxDim = [64, 8], swizzle = ' + swName + '</span><br>' +
     '<b>Instruction</b>: <span class="formula">cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes [smem], [tensormap, {' +
     colCoord + ', ' + rowCoord + '}], [mbar]</span><br>' +
-    '<b>Note</b>: Tensor map fields and PTX instruction operands list dimensions from innermost to outermost. For the row-major matrix shown here, the order is therefore (col, row).';
+    '<b>Note</b>: The tensor map descriptor and PTX list dimensions from innermost to outermost. For the row-major matrix shown here, the order is therefore (col, row).';
 
   // Global memory: 16 rows x 16 cells
   var gg = document.getElementById('gg');
