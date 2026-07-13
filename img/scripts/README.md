@@ -18,7 +18,6 @@ python gen_shuffle_reduce.py                 # -> ../shuffle_reduce.png
 python gen_smem_descriptor.py                # -> ../wgmma_descriptor_kmajor.svg
 python gen_swizzle_conflict.py               # -> ../swizzle_conflict.svg
 python gen_tcgen05_ldst.py                   # -> ../tcgen05_ldst.svg
-python gen_tma_sync_flow.py                  # -> ../tma_sync_flow.png
 python gen_tmem_grid.py                      # -> ../tmem_grid.png
 python gen_tmem_layout.py                    # -> ../tmem_layout_v3.png
 python gen_warp_specialization_timeline.py   # -> ../warp_specialization_timeline.png
