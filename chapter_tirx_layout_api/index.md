@@ -572,7 +572,7 @@ SwizzleLayout(per_element=3, swizzle_len=3, atom_len=3)
 
 This keeps the 16-byte vector group intact while still permuting the larger shared-memory address pattern enough to break the column bank conflict.
 
-Most code should not derive these parameters by hand. The dtype and descriptor mode usually determine them. What matters for the programmer is that the swizzle in the TIRx layout, the tensor map descriptor, and the MMA expectation all match.
+Most code should not derive these parameters by hand. The dtype and descriptor mode usually determine them. What matters for the programmer is that the swizzle in the TIRx layout, the TMA descriptor, and the MMA expectation all match.
 
 A swizzled shared memory allocation therefore looks like:
 

@@ -5,7 +5,7 @@
 :class: overview
 
 - TMA is a hardware engine for asynchronous tile copies between global memory and shared memory. One thread issues the copy, and the engine moves the bytes.
-- A TMA copy uses a `CUtensorMap`, which the CUDA Driver API calls a tensor map descriptor. It records the global tensor dimensions and strides, the bounding-box dimensions, and the shared-memory swizzle mode. The TMA instruction supplies the coordinates for the current copy.
+- A TMA copy is described by a tensor-map descriptor. The descriptor tells the engine the global tensor shape, strides, tile coordinates, and shared-memory swizzle mode.
 - On the load path, TMA can swizzle the tile as it writes shared memory, so the tile lands in the layout expected by the Tensor Core.
 - TMA loads complete through an `mbarrier` with byte-count tracking. TMA stores use a commit group and wait group.
 :::
@@ -30,7 +30,7 @@ TMA also handles part of the layout problem. A Tensor Core does not just need th
 
 A TMA copy starts with one issuing thread. That thread does not loop over all elements in the tile. It gives the hardware a description of the copy, then the TMA engine performs the transfer.
 
-The main input is a `CUtensorMap`, which the CUDA Driver API calls a tensor map descriptor. It describes the global tensor and how a tile should be read from it, including the element type, global dimensions and strides, bounding-box dimensions, and swizzle mode. The TMA instruction then supplies the tensor coordinates for this copy and the shared-memory address where the tile should land.
+The main input is a tensor-map descriptor. The descriptor describes the global tensor and how a tile should be read from it. It records information such as the tensor shape, strides, element size, tile shape, and swizzle mode. The issuing thread also provides the shared-memory address where the tile should land.
 
 After the instruction is issued, the copy runs asynchronously. The issuing thread can continue. Other threads in the CTA can also continue. The transfer is now the responsibility of the TMA engine, not a loop of ordinary load and store instructions.
 
@@ -48,11 +48,11 @@ Moving the tile is not enough. The tile also has to be placed in shared memory i
 
 This is where TMA swizzling is used. As TMA writes the tile into shared memory, it can permute the shared-memory address pattern. The global memory tile is still a logical rectangle, but the destination layout in shared memory can be swizzled.
 
-The swizzle mode is part of the tensor map descriptor. Once the descriptor is set up, the issuing thread does not have to manually apply the swizzle. The engine applies it as the bytes land in shared memory.
+The swizzle mode is part of the TMA descriptor. Once the descriptor is set up, the issuing thread does not have to manually apply the swizzle. The engine applies it as the bytes land in shared memory.
 
-The important requirement is agreement. The tensor map descriptor, the shared-memory tile layout, and the later MMA instruction must all describe the same layout ({ref}`chap_data_layout`). If TMA writes the tile with one swizzle but the MMA reads it as if it had another, the hardware will still do exactly what it was asked to do. The bytes will simply be arranged incorrectly for the computation.
+The important requirement is agreement. The TMA descriptor, the shared-memory tile layout, and the later MMA instruction must all describe the same layout ({ref}`chap_data_layout`). If TMA writes the tile with one swizzle but the MMA reads it as if it had another, the hardware will still do exactly what it was asked to do. The bytes will simply be arranged incorrectly for the computation.
 
-This is the point where the layout notation becomes more than a bookkeeping device. The layout used by the DSL has to match the hardware layout used by the tensor map descriptor and the Tensor Core instruction. For example, if the kernel says an operand tile is stored in a 128-byte swizzled layout, the tensor map descriptor has to use the matching swizzle mode, and the MMA dispatch has to expect that same shared-memory arrangement. The demo above lets you toggle between no swizzle and 128-byte swizzle; hover a source element to see where it lands once the swizzle is applied.
+This is the point where the layout notation becomes more than a bookkeeping device. The layout used by the DSL has to match the hardware layout used by the TMA descriptor and the Tensor Core instruction. For example, if the kernel says an operand tile is stored in a 128-byte swizzled layout, the TMA descriptor has to use the matching swizzle mode, and the MMA dispatch has to expect that same shared-memory arrangement. The demo above lets you toggle between no swizzle and 128-byte swizzle; hover a source element to see where it lands once the swizzle is applied.
 
 A useful way to read the swizzle is that TMA is not changing the logical tile. It is changing where the logical elements land physically in shared memory. The later MMA still consumes the same logical A or B tile. The swizzle only decides how that tile is arranged across shared memory banks.
 
