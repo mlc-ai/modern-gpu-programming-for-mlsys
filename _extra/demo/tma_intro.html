@@ -150,7 +150,7 @@ function draw() {
   document.getElementById('sdims').textContent =
     BOX_R + '\u00d7' + BOX_C + ' sectors (' + (useSw ? 'swizzled' : 'linear') + ')';
 
-  // Info box with Tensor Map descriptor (concrete strides)
+  // Info box with tensor map descriptor (concrete strides)
   var swName = useSw ? 'CU_TENSOR_MAP_SWIZZLE_128B' : 'CU_TENSOR_MAP_SWIZZLE_NONE';
   document.getElementById('infobox').innerHTML =
     '<b>TensorMap</b>: <span class="formula">' +
