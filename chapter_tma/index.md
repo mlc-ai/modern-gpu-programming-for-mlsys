@@ -5,7 +5,7 @@
 :class: overview
 
 - TMA is a hardware engine for asynchronous tile copies between global memory and shared memory. One thread issues the copy, and the engine moves the bytes.
-- A TMA copy is described by a tensor-map descriptor. The descriptor tells the engine the global tensor shape, strides, tile coordinates, and shared-memory swizzle mode.
+- A TMA copy is described by a tensor map descriptor. The descriptor tells the engine the global tensor shape, strides, tile coordinates, and shared-memory swizzle mode.
 - On the load path, TMA can swizzle the tile as it writes shared memory, so the tile lands in the layout expected by the Tensor Core.
 - TMA loads complete through an `mbarrier` with byte-count tracking. TMA stores use a commit group and wait group.
 :::
@@ -20,7 +20,7 @@ TMA also handles part of the layout problem. A Tensor Core does not just need th
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe src="../demo/tma_intro.html" title="TMA: the Tensor Memory Accelerator" loading="lazy"
+<iframe src="../demo/tma_intro.html?v=tutorial-review-20260713" title="TMA: the Tensor Memory Accelerator" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 ```
@@ -30,7 +30,7 @@ TMA also handles part of the layout problem. A Tensor Core does not just need th
 
 A TMA copy starts with one issuing thread. That thread does not loop over all elements in the tile. It gives the hardware a description of the copy, then the TMA engine performs the transfer.
 
-The main input is a tensor-map descriptor. The descriptor describes the global tensor and how a tile should be read from it. It records information such as the tensor shape, strides, element size, tile shape, and swizzle mode. The issuing thread also provides the shared-memory address where the tile should land.
+The main input is a tensor map descriptor. The descriptor describes the global tensor and how a tile should be read from it. It records information such as the tensor shape, strides, element size, tile shape, and swizzle mode. The issuing thread also provides the shared-memory address where the tile should land.
 
 After the instruction is issued, the copy runs asynchronously. The issuing thread can continue. Other threads in the CTA can also continue. The transfer is now the responsibility of the TMA engine, not a loop of ordinary load and store instructions.
 
@@ -62,7 +62,7 @@ A plain TMA copy moves a flat 2D tile, but the shared-memory layout the Tensor C
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe class="demo-tma3d" src="../demo/tma_3d.html" title="Tiling and swizzling with 3D TMA" loading="lazy"
+<iframe class="demo-tma3d" src="../demo/tma_3d.html?v=tutorial-review-20260713" title="Tiling and swizzling with 3D TMA" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 ```
@@ -72,7 +72,7 @@ Choosing the swizzle *format* is tied to this tiling. A wider swizzle scatters a
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe class="demo-tma3d" src="../demo/tiling_constraint.html" title="Swizzle imposes a tiling constraint" loading="lazy"
+<iframe class="demo-tma3d" src="../demo/tiling_constraint.html?v=tutorial-review-20260713" title="Swizzle imposes a tiling constraint" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 <script>
@@ -115,7 +115,7 @@ As the transfer progresses, the engine performs complete-tx updates against the 
 
 The consumer then waits on that barrier. Once the wait completes for the expected phase, the shared-memory tile is ready. At that point the MMA path can safely read it.
 
-![TMA load synchronization flow](../img/tma_sync_flow.png)
+![TMA load synchronization flow](../img/tma_sync_flow.svg)
 
 This is the same barrier model used by other asynchronous producer-consumer handoffs. The producer is the TMA engine. The consumer is the MMA path or any other code that reads the shared-memory tile. The barrier is the explicit handoff between them.
 
