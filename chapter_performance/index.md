@@ -12,8 +12,8 @@
 A kernel is only fast relative to a ceiling. A number like 330 TFLOP/s may look large by itself, but it means something very different on a GPU that can sustain on the order of 2 PFLOP/s on dense fp16 or bf16 Tensor Core work. Without a ceiling, it is hard to tell whether a kernel is close to the hardware limit or still leaving most of the chip idle.
 
 This chapter uses the roofline model to establish that reference point, with NVIDIA B200 as a
-concrete example. Following the convention in {ref}`chap_background`, we use two rounded values for
-calculation: roughly 2 PFLOP/s of dense fp16 or bf16 Tensor Core throughput and 8 TB/s of HBM3e
+concrete example. We use two rounded values for calculation: roughly 2 PFLOP/s of dense fp16 or
+bf16 Tensor Core throughput and 8 TB/s of HBM3e
 bandwidth. Actual performance also depends on the device configuration, clock rate, power limit, and
 measurement environment, so these numbers are convenient approximations rather than exact
 specification limits.
