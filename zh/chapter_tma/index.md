@@ -5,7 +5,7 @@
 :class: overview
 
 - TMA 负责在 global memory 和 shared memory 之间异步搬运 tile。一个 warp 中只需一个 thread 发起操作，后续的地址计算和数据传输由硬件完成。
-- Tensor map descriptor 说明 global tensor 如何组织，包括 shape、strides、tile shape 和 swizzle mode；TMA 指令再给出当前 tile 的坐标和 shared-memory 地址。执行 load 时，TMA 可以在写入 shared memory 的同时应用 swizzle，使 tile 直接采用后续 MMA 所需的布局。
+- tensor map descriptor 说明 global tensor 如何组织，包括 shape、strides、tile shape 和 swizzle mode；TMA 指令再给出当前 tile 的坐标和 shared-memory 地址。执行 load 时，TMA 可以在写入 shared memory 的同时应用 swizzle，使 tile 直接采用后续 MMA 所需的布局。
 - TMA load 和 store 使用不同的完成通知。Load 通过 `mbarrier` 按已传输的字节数判断数据是否就绪；store 通过 commit group 和 wait group 确认 source buffer 可以复用。
 :::
 
