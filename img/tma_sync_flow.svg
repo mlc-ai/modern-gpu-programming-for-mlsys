@@ -60,7 +60,8 @@
   <g>
     <circle cx="64" cy="365" r="24" fill="#4a90d9" stroke="#111827" stroke-width="2"/>
     <text x="64" y="372" text-anchor="middle" fill="#ffffff" class="step">2</text>
-    <text x="102" y="371" class="step">Register byte count</text>
+    <text x="102" y="357" class="step">Register</text>
+    <text x="102" y="381" class="step">byte count</text>
     <line x1="265" y1="365" x2="965" y2="365" stroke="#d97706" stroke-width="4" marker-end="url(#arrow-orange)"/>
     <text x="615" y="350" text-anchor="middle" class="label mono" fill="#d97706">arrive.expect_tx(4096)</text>
     <text x="965" y="398" text-anchor="middle" class="detail">arrival = 0, pending bytes = 4096</text>
