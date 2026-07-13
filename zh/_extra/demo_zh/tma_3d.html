@@ -111,7 +111,7 @@ var GDC = 32;          // global sector columns (256 fp16 / 8 per sector)
 var NGROUPS = 2;       // groups per TMA load
 var TOTAL_GROUPS = 4;  // total groups across full row (256 fp16 / 64)
 var GSECS = 8;         // sectors per group (64 fp16 = 128B = one swizzle atom width)
-var BOX_R = 8;         // TMA box rows
+var BOX_R = 8;         // Tensor map bounding-box rows
 var ROW_BYTES = 512;   // 256 fp16 × 2B
 var GRP_BYTES = 128;   // 64 fp16 × 2B per group
 var GCSZ = 10;         // global cell size
@@ -142,7 +142,7 @@ function draw() {
   // Info box
   var swName = useSw ? 'CU_TENSOR_MAP_SWIZZLE_128B' : 'CU_TENSOR_MAP_SWIZZLE_NONE';
   document.getElementById('infobox').innerHTML =
-    '<b>TensorMap</b>: <span class="formula">' +
+    '<b>CUtensorMap</b>: <span class="formula">' +
     'dtype = f16, globalDim = [64, 16, ' + TOTAL_GROUPS + '], globalStrides = [512B, 128B], ' +
     'boxDim = [64, 16, 2], swizzle = ' + swName + '</span><br>' +
     '<b>Instruction</b>: <span class="formula">cp.async.bulk.tensor.3d.shared::cta.global.mbarrier::complete_tx::bytes [smem], [tensormap, {' +
@@ -150,7 +150,7 @@ function draw() {
     '<b>坐标分解</b>：<span class="formula">16\u00d7128 fp16 slice \u2192 ' +
         'reshape(16, 2, 64).transpose(1, 0, 2)' +
         ' \u2192 (group=2, row=16, col=64)</span><br>' +
-    '<b>注意</b>：TensorMap 和 PTX 从最内层维度开始列出 shape 与 coordinates，所以指令中的顺序与图上标出的 (group, row, col) 相反。';
+    '<b>注意</b>：tensor map descriptor 和 PTX 从最内层维度开始列出 dimensions 与 coordinates，所以指令中的顺序与图上标出的 (group, row, col) 相反。';
 
   // Global memory: single contiguous grid
   var gg = document.getElementById('gg');
@@ -216,7 +216,7 @@ function draw() {
         d.textContent = logCol;
         if (r === 8) d.classList.add('atom-start');
 
-        // Is this cell in the TMA box?
+        // Is this cell in the tensor map bounding box?
         var inBox = true;  // always all groups, all rows
         if (inBox) {
           d.classList.add('rd');
