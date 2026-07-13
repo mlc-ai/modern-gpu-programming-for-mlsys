@@ -1,0 +1,530 @@
+
+<!DOCTYPE html>
+
+
+<html lang="zh-CN" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>异步数据搬运：TMA &#8212; 面向 MLSys 的现代 GPU 编程</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=654c0d46" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../_static/documentation_options.js?v=eb1cd0b9"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'chapter_tma/index';</script>
+    <script src="../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <link rel="icon" href="../_static/mlc-favicon.ico"/>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="搜索" href="../search.html" />
+    <link rel="prev" title="Tensor Core 数据布局的演进" href="../chapter_layout_generations/index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="zh-CN"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">跳转至主要内容</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>回到顶部</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="版本警告"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">异步数据搬运：TMA</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+<a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button"
+   title="源码库"
+   data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+
+</a>
+
+
+
+
+<button onclick="window.location.href='../../index.html'"
+  class="btn btn-sm btn-language-switch-button pst-navbar-icon"
+  title="Switch to English"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-language"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="亮色"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="暗色"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>异步数据搬运：TMA</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> 目录 </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#thread-tile">一个 thread 如何描述整个 tile</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-swizzled-layout">TMA 如何写入 swizzled layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#d-tma-swizzle-atoms">用 3D TMA 搬运多个 swizzle atoms</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#byte-swizzle">128-byte swizzle 的分组要求</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-load">如何等待 TMA load 完成</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-store">如何等待 TMA store 完成</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-pipeline">把 TMA 放进 pipeline</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="tma">
+<span id="chap-tma"></span><h1>异步数据搬运：TMA<a class="headerlink" href="#tma" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">概览</p>
+<ul class="simple">
+<li><p>TMA 负责在 global memory 和 shared memory 之间异步搬运 tile。一个 warp 中只需一个 thread 发起操作，后续的地址计算和数据传输由硬件完成。</p></li>
+<li><p>tensor map descriptor 说明 global tensor 如何组织，包括 shape、strides、tile shape 和 swizzle mode；TMA 指令再给出当前 tile 的坐标和 shared-memory 地址。执行 load 时，TMA 可以在写入 shared memory 的同时应用 swizzle，使 tile 直接采用后续 MMA 所需的布局。</p></li>
+<li><p>TMA load 和 store 使用不同的完成通知。Load 通过 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 按已传输的字节数判断数据是否就绪；store 通过 commit group 和 wait group 确认 source buffer 可以复用。</p></li>
+</ul>
+</div>
+<p>先看 GEMM mainloop 中最常见的场景。Tensor Core 正在计算第 <span class="math notranslate nohighlight">\(k\)</span> 个 tile 时，下一组 A、B tiles 必须在当前计算结束前搬入 shared memory。数据如果没有按时到达，Tensor Core 就只能停下来等待，pipeline 中也会出现气泡（pipeline bubble），也就是计算单元因等待数据而空闲的周期。</p>
+<p>一种搬运方法是让多个 threads 合作：每个 thread 计算自己负责的 global memory 和 shared memory 地址，再执行 load 和 store。Tensor Memory Accelerator，也就是 TMA，提供了另一种方法。一个 thread 只负责提交 tile copy，后续的地址计算和数据传输由专用的 TMA engine 完成。</p>
+<p>TMA 在写入 shared memory 时还可以应用 swizzle，让 tile 直接采用后续 MMA 所需的物理排列。下面的交互图展示了这条路径。左侧的 global tensor 包含 <code class="docutils literal notranslate"><span class="pre">16×128</span></code> 个 <code class="docutils literal notranslate"><span class="pre">fp16</span></code> 元素，蓝色方框选中一个 <code class="docutils literal notranslate"><span class="pre">8×64</span></code> tile；右侧显示这个 tile 写入 shared memory 后的排列。图中每个 cell 表示连续的 8 个 <code class="docutils literal notranslate"><span class="pre">fp16</span></code>，也就是 16 bytes。切换 swizzle mode，可以比较 linear layout 和 128-byte swizzled layout。</p>
+<div style="overflow-x:auto;">
+<iframe src="../demo_zh/tma_intro.html?v=tutorial-review-20260713" title="TMA：Tensor Memory Accelerator" loading="lazy"
+        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+</div><p><em>将鼠标悬停在左侧任意 source cell 上，可以查看它写入 shared memory 后的物理位置。</em></p>
+<section id="thread-tile">
+<h2>一个 thread 如何描述整个 tile<a class="headerlink" href="#thread-tile" title="Link to this heading">#</a></h2>
+<p>发起 TMA copy 的 thread 不会遍历 tile 中的元素。它只需要向硬件提供两类信息。</p>
+<p>第一类是 tensor map descriptor。它描述 global tensor 的数据类型、各维 shape 和 strides、一次 copy 的 tile shape，以及写入 shared memory 时使用的 swizzle mode。同一个 descriptor 通常可以供多次 tile copies 复用。</p>
+<p>第二类是本次 copy 的参数，包括 tile 在 global tensor 中的起始坐标，以及 shared memory 中的目标地址。可以把两者的分工理解为：descriptor 说明“整个 tensor 怎样组织”，指令参数说明“这一次从哪里开始搬、搬到哪里”。</p>
+<p>发出 TMA 指令时，warp 仍然按照 SIMT 模型执行，只有被选中的 thread 参与这条指令，同一 warp 中的其他 threads 会被屏蔽。这个状态只持续到请求提交完成。随后，TMA engine 异步搬运数据，发起操作的 warp 和 CTA 中的其他 warps 都可以继续执行；真正使用这块数据前，再等待搬运完成。</p>
+</section>
+<section id="tma-swizzled-layout">
+<h2>TMA 如何写入 swizzled layout<a class="headerlink" href="#tma-swizzled-layout" title="Link to this heading">#</a></h2>
+<p>回到上面的交互图，先选择 <code class="docutils literal notranslate"><span class="pre">None</span></code>。此时 tile 的每一行都按原来的顺序写入 shared memory，逻辑 sector <code class="docutils literal notranslate"><span class="pre">c</span></code> 仍然落在物理 sector <code class="docutils literal notranslate"><span class="pre">c</span></code>。</p>
+<p>再切换到 <code class="docutils literal notranslate"><span class="pre">128B</span></code>。图中一行包含 8 个 16-byte sectors，正好是 128 bytes。对于这个简化且对齐的例子，第 <code class="docutils literal notranslate"><span class="pre">row</span></code> 行的逻辑 sector <code class="docutils literal notranslate"><span class="pre">col</span></code> 会写到：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>physical_sector = col XOR row
+</pre></div>
+</div>
+<p>这样，同一逻辑列在不同行中的 sectors 会落到不同的物理位置，跨行访问也就不容易集中到同一组 shared-memory banks。这个地址重排由 TMA engine 在写入时完成，发起 copy 的 thread 不需要逐个计算 swizzled address。</p>
+<p>Swizzle 只改变 tile 的物理排列，不改变它的逻辑内容。TMA descriptor、shared-memory tile layout 和后续 MMA 指令必须描述同一种物理排列（<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局及其记号</span></a>）。如果 TMA 按 128-byte swizzle 写入，而 MMA 按 linear layout 读取，数据虽然已经到达 shared memory，Tensor Core 仍会把这些字节解释成错误的矩阵元素。</p>
+</section>
+<section id="d-tma-swizzle-atoms">
+<h2>用 3D TMA 搬运多个 swizzle atoms<a class="headerlink" href="#d-tma-swizzle-atoms" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> 以 <code class="docutils literal notranslate"><span class="pre">8</span> <span class="pre">rows</span> <span class="pre">×</span> <span class="pre">128</span> <span class="pre">bytes</span></code> 为一个重复单元，也就是一个 swizzle atom。地址重排只在 atom 内进行，因此 TMA box 的最内层连续维度不能超过 128 bytes。对于 <code class="docutils literal notranslate"><span class="pre">fp16</span></code>，这段空间正好容纳 64 个元素。</p>
+<p>现在考虑一个 <code class="docutils literal notranslate"><span class="pre">16×128</span></code> 的 <code class="docutils literal notranslate"><span class="pre">fp16</span></code> matrix slice。它的每一行有 128 个 <code class="docutils literal notranslate"><span class="pre">fp16</span></code>，共 256 bytes，无法直接作为一个 128-byte swizzle atom 的行。要使用 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>，必须先把每一行拆成两个 groups，每组 64 个 <code class="docutils literal notranslate"><span class="pre">fp16</span></code>：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>group 0: columns 0–63    = 128 bytes
+group 1: columns 64–127  = 128 bytes
+</pre></div>
+</div>
+<p>设 slice 中的列坐标为 <code class="docutils literal notranslate"><span class="pre">j</span></code>，可以将它拆成：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>group = j // 64
+col   = j % 64
+
+global[row, j] = global3[group, row, col]
+</pre></div>
+</div>
+<p>这样，同一块数据就有了一个 <code class="docutils literal notranslate"><span class="pre">(group=2,</span> <span class="pre">row=16,</span> <span class="pre">col=64)</span></code> 的三维视图。这个 reshape 只改变 tensor map 解释坐标的方式，不会预先移动 global memory 中的数据。增加 <code class="docutils literal notranslate"><span class="pre">group</span></code> 维度后，最内层的 <code class="docutils literal notranslate"><span class="pre">col</span></code> 维只有 64 个 <code class="docutils literal notranslate"><span class="pre">fp16</span></code>，恰好符合 128-byte 限制。</p>
+<p>下面的交互图把这个过程画了出来。左侧是完整的 <code class="docutils literal notranslate"><span class="pre">16×256</span></code> global matrix，每个 cell 表示一个 16-byte sector，也就是 8 个 <code class="docutils literal notranslate"><span class="pre">fp16</span></code>。蓝色区域选中其中一个 <code class="docutils literal notranslate"><span class="pre">16×128</span></code> slice。一次 3D TMA copy 会把这个 slice 的两个 groups 分别写入右侧的 <code class="docutils literal notranslate"><span class="pre">g0</span></code> 和 <code class="docutils literal notranslate"><span class="pre">g1</span></code>。</p>
+<p>每个 group 有 16 行，而一个 swizzle atom 只有 8 行，所以 <code class="docutils literal notranslate"><span class="pre">g0</span></code> 和 <code class="docutils literal notranslate"><span class="pre">g1</span></code> 又各自包含两个 atoms：rows 0–7 属于第一个 atom，rows 8–15 属于第二个。整个 slice 最终对应四个 atoms。开启 <code class="docutils literal notranslate"><span class="pre">128B</span></code> 后，TMA 会在每个 atom 内按照 <code class="docutils literal notranslate"><span class="pre">physical_sector</span> <span class="pre">=</span> <span class="pre">logical_sector</span> <span class="pre">XOR</span> <span class="pre">(row</span> <span class="pre">%</span> <span class="pre">8)</span></code> 重排 sectors。</p>
+<div style="overflow-x:auto;">
+<iframe class="demo-tma3d" src="../demo_zh/tma_3d.html?v=tutorial-review-20260713" title="使用 3D TMA 搬运多个 swizzle atoms" loading="lazy"
+        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+</div><p><em>切换 <code class="docutils literal notranslate"><span class="pre">Col</span> <span class="pre">offset</span></code> 可以选择原矩阵的前 128 列或后 128 列；将鼠标悬停在蓝色区域的任意 cell 上，可以查看对应的 16-byte sector 写入 shared memory 后的位置。</em></p>
+<section id="byte-swizzle">
+<h3>128-byte swizzle 的分组要求<a class="headerlink" href="#byte-swizzle" title="Link to this heading">#</a></h3>
+<p>为什么要把 256-byte 的一行拆成两个 128-byte groups？除了满足 TMA box 的宽度限制，分组还会改变跨行访问落到哪些 shared-memory banks。</p>
+<p>考虑一个 <code class="docutils literal notranslate"><span class="pre">16×16</span></code> sector grid。每个 sector 是 16 bytes，因此一行共 256 bytes。现在从连续 8 行中各读取同一个 sector column，一共会发出 8 次并行的 16-byte 访问。</p>
+<p>一次 16-byte 访问会覆盖 4 个相邻的 shared-memory banks。为了便于观察，下面把 32 个 banks 按每 4 个相邻 banks 分成 8 个 bank sectors，记为 <code class="docutils literal notranslate"><span class="pre">S0</span></code> 到 <code class="docutils literal notranslate"><span class="pre">S7</span></code>。不同访问如果落到同一个 bank sector，就会争用同一组 banks。</p>
+<p>先把每行拆成两个 128-byte groups。设完整 grid 中的列号为 <code class="docutils literal notranslate"><span class="pre">col</span></code>，那么 <code class="docutils literal notranslate"><span class="pre">col</span> <span class="pre">//</span> <span class="pre">8</span></code> 选择左、右两个 groups，<code class="docutils literal notranslate"><span class="pre">local_col</span> <span class="pre">=</span> <span class="pre">col</span> <span class="pre">%</span> <span class="pre">8</span></code> 表示组内列号。对于 rows 0–7，swizzle 后的 bank sector 是：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank_sector = local_col XOR (row % 8)
+</pre></div>
+</div>
+<p>连续 8 行会得到 8 个不同的结果，因此这些访问可以并行完成。</p>
+<p>如果不分组，仍然保留 256-byte row stride，那么每跨过一行就相当于跨过两个 128-byte 单元。用于 XOR 的编号也会每行前进 2：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank_sector = local_col XOR ((2·row + col // 8) % 8)
+</pre></div>
+</div>
+<p>这时只有 4 个不同的结果，每个 bank sector 被访问两次，形成 2-way conflict。这里的未分组状态只是一个对照，它并不是合法的 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> TMA box。</p>
+<p>下面的交互图展示了这两种情况。左侧选择原始 grid 中的一个 <code class="docutils literal notranslate"><span class="pre">Column</span></code> 和连续 8 行，右侧带黑色边框的 cells 显示这些访问在 swizzled layout 中的位置。<code class="docutils literal notranslate"><span class="pre">Tiling</span></code> 选择“是”时，每行先拆成 <code class="docutils literal notranslate"><span class="pre">g0</span></code> 和 <code class="docutils literal notranslate"><span class="pre">g1</span></code> 两个 128-byte groups；选择“否”时，则保留 256-byte row stride 作为对照。底部的 <code class="docutils literal notranslate"><span class="pre">S0</span></code> 到 <code class="docutils literal notranslate"><span class="pre">S7</span></code> 汇总各次访问使用的 bank sectors。<code class="docutils literal notranslate"><span class="pre">dtype</span></code> 只改变一个 sector 中包含多少个元素，不影响这里的地址映射。</p>
+<div style="overflow-x:auto;">
+<iframe class="demo-tma3d" src="../demo_zh/tiling_constraint.html?v=tutorial-review-20260713" title="128-byte 分组对 bank conflict 的影响" loading="lazy"
+        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+</div>
+<script>
+(function () {
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'demoHeight' || !d.height) return;
+    document.querySelectorAll('iframe.demo-tma3d').forEach(function (f) {
+      if (e.source === f.contentWindow) f.style.height = d.height + 'px';
+    });
+  });
+})();
+</script><p><em>切换是否进行 tiling，再选择 column 和连续的 8 行，可以比较分组前后两种 layout 的 bank-sector 使用情况。</em></p>
+<p>在 tile 尺寸和目标访问模式允许时，通常选择能够容纳的最宽 swizzle，使访问分散到更多 banks。宽度为 <code class="docutils literal notranslate"><span class="pre">N</span></code> bytes 的 swizzle atom 要求连续维度至少能够容纳 <code class="docutils literal notranslate"><span class="pre">N</span></code> bytes；如果放不下 128-byte atom，就要改用 64-byte 或 32-byte swizzle（<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局及其记号</span></a>）。</p>
+</section>
+</section>
+<section id="tma-load">
+<h2>如何等待 TMA load 完成<a class="headerlink" href="#tma-load" title="Link to this heading">#</a></h2>
+<p>TMA load 是异步操作。发出指令只表示搬运已经开始，consumer 还不能读取目标 tile。TMA 使用 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 完成这次交接：producer 告诉 barrier 本轮预计传输多少字节，TMA engine 在实际写完这些字节后更新 barrier，consumer 则等待当前 barrier phase 完成。</p>
+<p><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 的一个 phase 同时记录 arrival count 和 pending transaction bytes。只有 arrival count 与 pending bytes 都归零，这个 phase 才算完成。</p>
+<p>具体看一个例子。假设 kernel 同时加载 A、B 两个 operand tiles，每块 <code class="docutils literal notranslate"><span class="pre">2048</span> <span class="pre">bytes</span></code>，并让它们通过同一个 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 通知完成，那么本轮一共要等待：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>2048 + 2048 = 4096 bytes
+</pre></div>
+</div>
+<p>假设初始化 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 时将 expected arrival count 设为 1。发起 copy 的 thread 把 A、B 两次 TMA load 关联到这个 barrier，并执行 <code class="docutils literal notranslate"><span class="pre">mbarrier.arrive.expect_tx(4096)</span></code>。这一步既完成该 thread 的一次 arrival，也把 pending bytes 设为 4096：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>发出 expect_tx 后: arrival count = 0, pending bytes = 4096
+TMA 完成搬运后:   arrival count = 0, pending bytes = 0
+</pre></div>
+</div>
+<p>此后，每次 TMA copy 完成时，engine 都会通过 complete-tx 扣减相应的 byte count。consumer 使用 <code class="docutils literal notranslate"><span class="pre">try_wait(phase)</span></code> 等待；两次 copy 共完成 4096 bytes 后，pending bytes 才会归零，consumer 也才能安全读取 A、B tiles。下图按时间顺序画出了这次交接。</p>
+<p><img alt="TMA load 的同步流程：thread 发起 copy 并登记 byte count，TMA engine 完成搬运后更新 mbarrier，consumer 等待 phase 完成" src="../_images/tma_sync_flow_zh.svg" /></p>
+</section>
+<section id="tma-store">
+<h2>如何等待 TMA store 完成<a class="headerlink" href="#tma-store" title="Link to this heading">#</a></h2>
+<p>TMA store 沿相反方向把数据从 shared memory 写回 global memory。这里需要解决的问题也随之改变：load 的 consumer 要知道目标 tile 何时可以读取，store 的 producer 则要知道 source buffer 何时可以复用。</p>
+<p>例如，epilogue 已经把输出 tile 写入 <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code>，接下来通过 TMA store 将它写回 <code class="docutils literal notranslate"><span class="pre">D</span></code>。发出 store 后，kernel 不能立刻覆盖 <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code>，否则 TMA engine 可能读到下一轮写入的数据。store 路径使用 bulk async group 来等待：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>发起一个或多个 TMA stores
+cp.async.bulk.commit_group
+cp.async.bulk.wait_group 0
+复用 Dsmem
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">commit_group</span></code> 把此前尚未提交的 stores 组成一个 bulk async group。<code class="docutils literal notranslate"><span class="pre">wait_group</span> <span class="pre">0</span></code> 等到先前提交的 groups 全部完成；它返回之后，<code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> 才能安全复用。</p>
+<p>因此，两条路径可以这样区分：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TMA load:  consumer 通过带 byte count 的 mbarrier 等待数据到达
+TMA store: producer 通过 commit group 和 wait group 等待 source 可复用
+</pre></div>
+</div>
+</section>
+<section id="tma-pipeline">
+<h2>把 TMA 放进 pipeline<a class="headerlink" href="#tma-pipeline" title="Link to this heading">#</a></h2>
+<p>TMA 可以减少 copy 指令，更重要的是让数据搬运与计算重叠。以两个 shared-memory stages 为例：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>时间 t:    MMA 读取 stage 0    TMA 填充 stage 1
+时间 t+1:  MMA 读取 stage 1    TMA 填充 stage 0
+</pre></div>
+</div>
+<p>Tensor Core 读取 stage 0 时，TMA 把下一块 tile 写入 stage 1；下一轮再交换两个 stages 的角色。MMA 读取一个 stage 前，要等待对应的 TMA load 完成；TMA 覆盖一个 stage 前，也要确认上一轮计算已经不再使用其中的数据。</p>
+<p>因此，TMA 负责异步搬运，barrier 负责在 producer 和 consumer 之间交接每个 stage。两者配合后，等待数据的时间才有机会被当前 tile 的计算隐藏起来。</p>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../chapter_layout_generations/index.html"
+       title="上一页">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">Tensor Core 数据布局的演进</p>
+      </div>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> 目录
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#thread-tile">一个 thread 如何描述整个 tile</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-swizzled-layout">TMA 如何写入 swizzled layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#d-tma-swizzle-atoms">用 3D TMA 搬运多个 swizzle atoms</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#byte-swizzle">128-byte swizzle 的分组要求</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-load">如何等待 TMA load 完成</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-store">如何等待 TMA store 完成</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-pipeline">把 TMA 放进 pipeline</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+作者： MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

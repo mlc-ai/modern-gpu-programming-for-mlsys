@@ -59,7 +59,7 @@ We have seen how a TMA copy is issued; the other half of the story is knowing wh
 
 This is exactly why `cta_sync()` is no longer sufficient. `cta_sync()` waits only for the CTA's own threads and orders only their shared-memory writes; it knows nothing about an in-flight TMA transfer, so it happily returns while the tile is still arriving. The fix is to make completion explicit: for a TMA load, the selected thread first tells the mbarrier how many bytes to expect, and the CTA then waits on *that* mbarrier before any MMA touches the SMEM tile. The figure below traces that handshake end to end.
 
-![TMA Async Load: Synchronization Flow](../img/tma_sync_flow.png)
+![TMA Async Load: Synchronization Flow](../img/tma_sync_flow.svg)
 
 The figure above isolates the load-side handshake: one selected thread launches TMA, the mbarrier
 counts the expected bytes, and MMA waits on the release before reading SMEM. Where it says

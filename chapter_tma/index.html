@@ -394,7 +394,7 @@
 <p class="admonition-title">Overview</p>
 <ul class="simple">
 <li><p>TMA is a hardware engine for asynchronous tile copies between global memory and shared memory. One thread issues the copy, and the engine moves the bytes.</p></li>
-<li><p>A TMA copy is described by a tensor-map descriptor. The descriptor tells the engine the global tensor shape, strides, tile coordinates, and shared-memory swizzle mode.</p></li>
+<li><p>A TMA copy is described by a tensor map descriptor. The descriptor tells the engine the global tensor shape, strides, tile coordinates, and shared-memory swizzle mode.</p></li>
 <li><p>On the load path, TMA can swizzle the tile as it writes shared memory, so the tile lands in the layout expected by the Tensor Core.</p></li>
 <li><p>TMA loads complete through an <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> with byte-count tracking. TMA stores use a commit group and wait group.</p></li>
 </ul>
@@ -404,13 +404,13 @@
 <p>The Tensor Memory Accelerator, or TMA, moves this work into a hardware copy engine. One thread issues a tile copy. The copy engine then moves a rectangular tile between global memory and shared memory asynchronously. While the engine is moving bytes, the rest of the CTA can continue with other work.</p>
 <p>TMA also handles part of the layout problem. A Tensor Core does not just need the right values in shared memory. It needs them in the right shared-memory layout. On the load path, TMA can apply a shared-memory swizzle as it writes the tile. That lets the tile land directly in the layout the later MMA expects.</p>
 <div style="overflow-x:auto;">
-<iframe src="../demo/tma_intro.html" title="TMA: the Tensor Memory Accelerator" loading="lazy"
+<iframe src="../demo/tma_intro.html?v=tutorial-review-20260713" title="TMA: the Tensor Memory Accelerator" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div><p><em>Interactive: TMA copying a tile from global memory to shared memory. Toggle the swizzle mode and hover a source cell to see where it lands in shared memory.</em></p>
 <section id="one-thread-issues-hardware-moves-the-tile">
 <h2>One Thread Issues, Hardware Moves the Tile<a class="headerlink" href="#one-thread-issues-hardware-moves-the-tile" title="Link to this heading">#</a></h2>
 <p>A TMA copy starts with one issuing thread. That thread does not loop over all elements in the tile. It gives the hardware a description of the copy, then the TMA engine performs the transfer.</p>
-<p>The main input is a tensor-map descriptor. The descriptor describes the global tensor and how a tile should be read from it. It records information such as the tensor shape, strides, element size, tile shape, and swizzle mode. The issuing thread also provides the shared-memory address where the tile should land.</p>
+<p>The main input is a tensor map descriptor. The descriptor describes the global tensor and how a tile should be read from it. It records information such as the tensor shape, strides, element size, tile shape, and swizzle mode. The issuing thread also provides the shared-memory address where the tile should land.</p>
 <p>After the instruction is issued, the copy runs asynchronously. The issuing thread can continue. Other threads in the CTA can also continue. The transfer is now the responsibility of the TMA engine, not a loop of ordinary load and store instructions.</p>
 <p>This gives the kernel two different ways to express the same logical operation, “copy this tile.”</p>
 <p>One path is a thread copy. Threads cooperate to load from global memory and store into shared memory. This gives the kernel direct control over every access, but it consumes thread instructions and registers for address calculations.</p>
@@ -430,12 +430,12 @@
 <h2>3D TMA for Tiling and Swizzling<a class="headerlink" href="#d-tma-for-tiling-and-swizzling" title="Link to this heading">#</a></h2>
 <p>A plain TMA copy moves a flat 2D tile, but the shared-memory layout the Tensor Core wants is usually <em>tiled</em> into swizzle atoms (the 8 x 128-byte atoms from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a>). TMA handles that with an extra descriptor dimension. A <strong>3D TMA</strong> describes the shared-memory box as <code class="docutils literal notranslate"><span class="pre">(group,</span> <span class="pre">row,</span> <span class="pre">col)</span></code>, where the group dimension walks across atoms and the inner two address within one atom. A single 3D copy then both lays the tile out atom by atom (tiling) and applies the swizzle inside each atom, so the data arrives already in the layout the MMA expects, with no separate tiling or swizzling pass.</p>
 <div style="overflow-x:auto;">
-<iframe class="demo-tma3d" src="../demo/tma_3d.html" title="Tiling and swizzling with 3D TMA" loading="lazy"
+<iframe class="demo-tma3d" src="../demo/tma_3d.html?v=tutorial-review-20260713" title="Tiling and swizzling with 3D TMA" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div><p><em>Interactive: a 3D TMA copy, addressed as (group, row, col), tiling into swizzled shared memory.</em></p>
 <p>Choosing the swizzle <em>format</em> is tied to this tiling. A wider swizzle scatters a column across more banks, so 128-byte swizzle is the default when it fits, but an N-byte atom needs the tile’s contiguous dimension to fill it. A tile that is small because of a shape constraint therefore cannot use 128-byte swizzle and must step down to 64-byte or 32-byte: the rule of thumb is to pick the largest swizzle the tile can fill (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a>). The demo below shows the constraint directly: a 128-byte swizzle on a 16 x 16 tile becomes conflict-free only once the tile is split into 16 x 8 groups that match the atom.</p>
 <div style="overflow-x:auto;">
-<iframe class="demo-tma3d" src="../demo/tiling_constraint.html" title="Swizzle imposes a tiling constraint" loading="lazy"
+<iframe class="demo-tma3d" src="../demo/tiling_constraint.html?v=tutorial-review-20260713" title="Swizzle imposes a tiling constraint" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 <script>
@@ -469,7 +469,7 @@
 <p>This does two jobs. It records the expected transfer size, and it also performs the issuing thread’s arrival on the barrier. The barrier is not complete merely because this call happened. It still waits for the TMA engine to report that the expected bytes have arrived.</p>
 <p>As the transfer progresses, the engine performs complete-tx updates against the barrier. The barrier phase flips only after both conditions are met: the arrival count is satisfied, and the pending byte count reaches zero.</p>
 <p>The consumer then waits on that barrier. Once the wait completes for the expected phase, the shared-memory tile is ready. At that point the MMA path can safely read it.</p>
-<p><img alt="TMA load synchronization flow" src="../_images/tma_sync_flow.png" /></p>
+<p><img alt="TMA load synchronization flow" src="../_images/tma_sync_flow.svg" /></p>
 <p>This is the same barrier model used by other asynchronous producer-consumer handoffs. The producer is the TMA engine. The consumer is the MMA path or any other code that reads the shared-memory tile. The barrier is the explicit handoff between them.</p>
 </section>
 <section id="completion-stores">
