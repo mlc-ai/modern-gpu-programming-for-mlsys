@@ -42,6 +42,7 @@
   /* Group labels */
   .groups { display:flex; gap:8px; justify-content:center; }
   .group-label { text-align:center; font-size:11px; font-weight:700; color:var(--accent); margin-bottom:4px; }
+  .atom-start { border-top:3px solid #273142 !important; }
 
   .arrow-box { display:flex; flex-direction:column; align-items:center; gap:4px; padding:0 10px; }
   .arrow-box .arrow { font-size:32px; color:var(--accent); }
@@ -62,8 +63,8 @@
 </head>
 <body>
 
-<h1>用 3D TMA 表达 Tiling 和 Swizzling</h1>
-<div class="sub">用 3D TMA 直接搬到 tiled shared memory 视图中</div>
+<h1>用 3D TMA 搬运多个 Swizzle Atoms</h1>
+<div class="sub">把 256-byte row 拆成两个 128-byte groups，再在每个 group 内应用 swizzle</div>
 
 <div class="controls">
   <div><span class="lbl">Swizzle</span>
@@ -80,7 +81,7 @@
 
   <div class="mat-box">
     <h2 style="color:var(--color-group-2)">Global Memory</h2>
-    <div class="dims">16&times;256 fp16（连续存放，row = 512B）</div>
+    <div class="dims">16&times;256 fp16（每个 cell = 8 fp16 = 16B）</div>
     <div class="grid" id="gg"></div>
   </div>
 
@@ -91,7 +92,7 @@
   </div>
 
   <div class="mat-box">
-    <h2 style="color:var(--color-group-4)">Shared Memory（tiled &amp; swizzled）</h2>
+    <h2 style="color:var(--color-group-4)">Shared Memory（按 atom 分组并完成 swizzle）</h2>
     <div class="groups" id="gs"></div>
   </div>
 </div>
@@ -146,10 +147,10 @@ function draw() {
     'boxDim = [64, 16, 2], swizzle = ' + swName + '</span><br>' +
     '<b>Instruction</b>: <span class="formula">cp.async.bulk.tensor.3d.shared::cta.global.mbarrier::complete_tx::bytes [smem], [tensormap, {' +
     '0, 0, ' + globalGStart + '}], [mbar]</span><br>' +
-    '<b>核心想法</b>：<span class="formula">令 gslice 为 16\u00d7128 f16 matrix slice \u2192 ' +
-        'gslice.reshape(16, 2, 64).transpose(1, 0, 2)' +
-        ' 得到 shape (2, 16, 64) \u2192 正好匹配 shared memory 的连续视图</span><br>' +
-    '<b>注意</b>：官方规范中的 TensorMap 和 PTX 按 column-major 书写；globalDim、globalStrides、boxDim 以及 copy 指令坐标，相对 row-major 顺序都是反过来的。';
+    '<b>坐标分解</b>：<span class="formula">16\u00d7128 fp16 slice \u2192 ' +
+        'reshape(16, 2, 64).transpose(1, 0, 2)' +
+        ' \u2192 (group=2, row=16, col=64)</span><br>' +
+    '<b>注意</b>：TensorMap 和 PTX 从最内层维度开始列出 shape 与 coordinates，所以指令中的顺序与图上标出的 (group, row, col) 相反。';
 
   // Global memory: single contiguous grid
   var gg = document.getElementById('gg');
@@ -184,7 +185,7 @@ function draw() {
   for (var gi = 0; gi < NGROUPS; gi++) {
     var gd = mk('div', 'group');
     var glabel = mk('div', 'group-label');
-    glabel.textContent = 'g' + gi;
+    glabel.textContent = 'g' + gi + '（2 个 atoms）';
     gd.appendChild(glabel);
 
     var grid = mk('div', 'grid');
@@ -203,6 +204,7 @@ function draw() {
     for (var r = 0; r < GDR; r++) {
       var rl = mk('div', 'rl');
       if (showRL) rl.textContent = r;
+      if (r === 8) rl.classList.add('atom-start');
       grid.appendChild(rl);
       for (var p = 0; p < GSECS; p++) {
         var logCol = useSw ? (p ^ (r % 8)) : p;
@@ -212,6 +214,7 @@ function draw() {
         d.style.height = SCSZ + 'px';
         d.style.background = BK[p % 8];
         d.textContent = logCol;
+        if (r === 8) d.classList.add('atom-start');
 
         // Is this cell in the TMA box?
         var inBox = true;  // always all groups, all rows

@@ -73,7 +73,7 @@
 <body>
 
 <h1>TMA：从 Global Memory 搬到 Shared Memory</h1>
-<div class="sub">硬件执行的 2D copy，可选 swizzle；一条指令完成，无需 thread 逐元素搬运</div>
+<div class="sub">一个 warp 中的一个 thread 提交 2D copy，TMA engine 搬运整个 tile，并可在写入时应用 swizzle</div>
 
 <div class="controls">
   <div><span class="lbl">Swizzle</span>
@@ -118,9 +118,9 @@
 </div>
 
 <ul class="notes">
-  <li><span class="icon">▸</span> <strong>单 thread dispatch</strong>（non-blocking）</li>
-  <li><span class="icon">▸</span> <strong>自动 swizzling</strong>：数据落到 Shared Memory 时已经避免 bank conflict</li>
-  <li><span class="icon">▸</span> <strong>双向支持：</strong>load（GMEM→SMEM）和 store（SMEM→GMEM）</li>
+  <li><span class="icon">▸</span> <strong>一个 thread 提交请求</strong>，TMA engine 异步完成搬运</li>
+  <li><span class="icon">▸</span> <strong>写入时自动应用 swizzle</strong>，减少目标访问的 bank conflict</li>
+  <li><span class="icon">▸</span> <strong>双向搬运：</strong>load（GMEM→SMEM）和 store（SMEM→GMEM）</li>
 </ul>
 
 <script>
@@ -158,7 +158,7 @@ function draw() {
     'boxDim = [64, 8], swizzle = ' + swName + '</span><br>' +
     '<b>Instruction</b>: <span class="formula">cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes [smem], [tensormap, {' +
     colCoord + ', ' + rowCoord + '}], [mbar]</span><br>' +
-    '<b>注意</b>：官方规范中的 TensorMap 和 PTX 按 column-major 书写；globalDim、globalStrides、boxDim 以及 copy 指令坐标，相对 row-major 顺序都是反过来的。';
+    '<b>注意</b>：TensorMap 和 PTX 从最内层维度开始列出 shape 与 coordinates；对于图中的 row-major matrix，书写顺序因此是 (col, row)。';
 
   // Global memory: 16 rows x 16 cells
   var gg = document.getElementById('gg');
@@ -238,7 +238,7 @@ function draw() {
   var sep = mk('div', 'leg-sep');
   sl.appendChild(sep);
   var cv = mk('div', 'li');
-  cv.textContent = 'Cell 数值 = logical col index  |  @N = SMEM byte offset';
+  cv.textContent = 'cell 内数字 = source tile 的逻辑列编号  |  @N = SMEM byte offset';
   sl.appendChild(cv);
 }
 

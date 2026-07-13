@@ -34,6 +34,7 @@
   .groups { display:flex; gap:8px; justify-content:center; }
   .group-label { text-align:center; font-size:11px; font-weight:700; color:var(--accent); margin-bottom:4px; }
   .group-label.inv { visibility:hidden; }
+  .atom-start { border-top:3px solid #273142 !important; }
 
   .bottom-bar { max-width:1300px; margin:10px auto 0; }
   .blab { font-size:11px; color:var(--dim); text-align:center; margin-bottom:3px; font-weight:600; }
@@ -68,7 +69,7 @@
 <body>
 
 <h1>Swizzle 带来的 Tiling 约束</h1>
-<div class="sub">对 16&times;16 matrix 应用 128B swizzle；切成 16&times;8 group 后可以消除 bank conflict</div>
+<div class="sub">每个 cell 表示一个 16B sector；对 16&times;16 sector grid 应用 128B swizzle</div>
 
 <div class="controls">
   <div><span class="lbl">Tiling</span>
@@ -90,14 +91,14 @@
 
 <div class="main">
   <div class="box">
-    <h2>原始 16&times;16 Matrix</h2>
+    <h2>原始 16&times;16 Sector Grid</h2>
     <div class="grid-wrap" id="glw">
       <div class="grid" id="gl"></div>
       <svg class="tile-overlay" id="tov"></svg>
     </div>
   </div>
   <div class="box">
-    <h2 id="rh">为 128B Swizzle 做 tiling（两个 16&times;8 group）</h2>
+    <h2 id="rh">为 128B Swizzle 做 tiling（两个 16&times;8 groups）</h2>
     <div id="rv"></div>
   </div>
 </div>
@@ -117,7 +118,7 @@
   <div class="dtype-info" id="dtype-info"></div>
 </div>
 <div class="formula-box">
-  <div class="ftitle">硬件根据 physical offset 计算 swizzle_col，就像每一 row 只有 8 个 element。若原始 row 有 16 个 element，那么在 swizzle 计算中，一行会被当成两行处理。</div>
+  <div class="ftitle">硬件根据 physical offset 计算 swizzle_col。一个 128B atom 的每行包含 8 个 16B sectors；如果 row stride 是 256B，每跨过一行就会跨过两个 128B 单元。</div>
   <div class="fcontent" id="ffml"></div>
 </div>
 <div class="leg" id="lg"></div>
@@ -134,8 +135,8 @@ function updateDtype() {
   const dn = DTYPES[ST.dsize];
   const info = document.getElementById('dtype-info'); info.innerHTML = '';
   const items = [
-    'Atom = 8 rows \u00d7 8 cols = 8 \u00d7 128B',
-    '1 cell = ' + epc + ' ' + dn,
+    'Atom = 8 rows \u00d7 8 sectors = 8 \u00d7 128B',
+    '1 cell = 1 sector = 16B = ' + epc + ' ' + dn,
     'Atom = 8\u00d7' + (8 * epc) + ' ' + dn,
     'Col tile = 8\u00d7' + epc + ' ' + dn,
   ];
@@ -181,19 +182,20 @@ function draw() {
       if (cells.length < COLS * ROWS) return;
       const first = cells[0].getBoundingClientRect();
       const midR = cells[GCOLS - 1].getBoundingClientRect();
+      const midB = cells[8 * COLS - 1].getBoundingClientRect();
       const last = cells[COLS * ROWS - 1].getBoundingClientRect();
       const x0 = first.left - wr.left;
       const y0 = first.top - wr.top;
       const xm = midR.right - wr.left;
+      const ym = midB.bottom - wr.top;
       const x1 = last.right - wr.left;
       const y1 = last.bottom - wr.top;
       tov.setAttribute('width', wr.width);
       tov.setAttribute('height', wr.height);
       const ns = 'http://www.w3.org/2000/svg';
-      // Outer rectangle: top, bottom, left, right
+      // Outer rectangle and the four 8-row x 8-sector atom boundaries.
       [[x0,y0,x1,y0],[x0,y1,x1,y1],[x0,y0,x0,y1],[x1,y0,x1,y1],
-      // Middle dividing line
-       [xm,y0,xm,y1]].forEach(([lx1,ly1,lx2,ly2]) => {
+       [xm,y0,xm,y1],[x0,ym,x1,ym]].forEach(([lx1,ly1,lx2,ly2]) => {
         const ln = document.createElementNS(ns, 'line');
         ln.setAttribute('x1', lx1); ln.setAttribute('y1', ly1);
         ln.setAttribute('x2', lx2); ln.setAttribute('y2', ly2);
@@ -228,7 +230,11 @@ function draw() {
     for (let p = 0; p < GCOLS; p++) { const h = mk('div', 'hdr'); h.textContent = 's' + p; grid.appendChild(h); }
 
     for (let r = 0; r < ROWS; r++) {
-      if (showRL) { const l = mk('div', 'rl'); l.textContent = r; grid.appendChild(l); }
+      if (showRL) {
+        const l = mk('div', 'rl'); l.textContent = r;
+        if (r === 8) l.classList.add('atom-start');
+        grid.appendChild(l);
+      }
       for (let p = 0; p < GCOLS; p++) {
         let lc, sec;
         if (ST.tile) {
@@ -246,6 +252,7 @@ function draw() {
         d.style.width = SZ + 'px'; d.style.height = SZ + 'px';
         d.textContent = origCol;
         d.style.background = BK[sec];
+        if (r === 8) d.classList.add('atom-start');
 
         const isSelected = (gi === selGroup && lc === selLocal && r >= rStart && r < rEnd);
         if (isSelected) {
@@ -287,9 +294,9 @@ function draw() {
   // Formula
   const ffml = document.getElementById('ffml');
   if (ST.tile) {
-    ffml.textContent = '(8 cols/row): swizzle_col = col XOR (row % 8) \u2192 8 个 XOR 值互不相同 \u2192 无 conflict';
+    ffml.textContent = '(8 sectors/row): swizzle_col = col XOR (row % 8) \u2192 8 个 XOR 值互不相同 \u2192 无 conflict';
   } else {
-    ffml.textContent = '(16 cols/row): swizzle_col = col XOR ((row \u00d7 2 + col // 8) % 8) \u2192 每一 row 的 XOR 值加 2 \u2192 只有 4 个不同值 \u2192 2-way conflict';
+    ffml.textContent = '(16 sectors/row): swizzle_col = col XOR ((row \u00d7 2 + col // 8) % 8) \u2192 XOR 使用的行编号每次前进 2 \u2192 只有 4 个不同值 \u2192 2-way conflict';
   }
 }
 
@@ -333,7 +340,7 @@ function mk(t, c) { const d = document.createElement(t); if (c) d.className = c;
   const r2 = mk('div', 'leg-row');
   r2.appendChild(Object.assign(mk('div', 'li'), {innerHTML: '<div class="swtch" style="background:var(--color-hover-bg);border:2.5px solid var(--accent)"></div> 原始矩阵中的 source'}));
   r2.appendChild(Object.assign(mk('div', 'li'), {innerHTML: '<div class="swtch brd"></div> swizzled view 中被选中的 read'}));
-  r2.appendChild(Object.assign(mk('div', 'li'), {textContent: 'Cell 数值 = 原始 column index'}));
+  r2.appendChild(Object.assign(mk('div', 'li'), {textContent: 'Cell 数值 = 原始 sector column'}));
   r2.appendChild(Object.assign(mk('div', 'li'), {textContent: 'g = group；每个 group 在内存中连续'}));
   lg.appendChild(r2);
 
