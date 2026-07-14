@@ -41,6 +41,7 @@
   /* Group labels */
   .groups { display:flex; gap:8px; justify-content:center; }
   .group-label { text-align:center; font-size:11px; font-weight:700; color:var(--accent); margin-bottom:4px; }
+  .atom-start { border-top:3px solid #273142 !important; }
 
   .arrow-box { display:flex; flex-direction:column; align-items:center; gap:4px; padding:0 10px; }
   .arrow-box .arrow { font-size:32px; color:var(--accent); }
@@ -61,8 +62,8 @@
 </head>
 <body>
 
-<h1>Tiling and Swizzling with 3D TMA</h1>
-<div class="sub">Use 3D TMA to copy into tiled shared memory</div>
+<h1>Moving Multiple Swizzle Atoms with 3D TMA</h1>
+<div class="sub">Split each 256-byte row into two 128-byte groups, then swizzle each group independently</div>
 
 <div class="controls">
   <div><span class="lbl">Swizzle</span>
@@ -79,7 +80,7 @@
 
   <div class="mat-box">
     <h2 style="color:var(--color-group-2)">Global Memory</h2>
-    <div class="dims">16&times;256 fp16 (contiguous, row = 512B)</div>
+    <div class="dims">16&times;256 fp16 (each cell = 8 fp16 = 16B)</div>
     <div class="grid" id="gg"></div>
   </div>
 
@@ -90,7 +91,7 @@
   </div>
 
   <div class="mat-box">
-    <h2 style="color:var(--color-group-4)">Shared Memory (tiled &amp; swizzled)</h2>
+    <h2 style="color:var(--color-group-4)">Shared Memory (grouped into atoms and swizzled)</h2>
     <div class="groups" id="gs"></div>
   </div>
 </div>
@@ -145,10 +146,10 @@ function draw() {
     'boxDim = [64, 16, 2], swizzle = ' + swName + '</span><br>' +
     '<b>Instruction</b>: <span class="formula">cp.async.bulk.tensor.3d.shared::cta.global.mbarrier::complete_tx::bytes [smem], [tensormap, {' +
     '0, 0, ' + globalGStart + '}], [mbar]</span><br>' +
-    '<b>Key idea</b>: <span class="formula">Let gslice be the 16\u00d7128 f16 matrix slice \u2192 ' +
-        'gslice.reshape(16, 2, 64).transpose(1, 0, 2)' +
-        ' has shape (2, 16, 64) \u2192 matches contiguous view of shared memory</span><br>' +
-    '<b>Note</b>: TensorMap and PTX follows column-major per official spec \u2014 globalDim, globalStrides, boxDim, and copy instruction coordinates are reversed from row-major order.';
+    '<b>Coordinate split</b>: <span class="formula">16\u00d7128 fp16 slice \u2192 ' +
+        'reshape(16, 2, 64).transpose(1, 0, 2)' +
+        ' \u2192 (group=2, row=16, col=64)</span><br>' +
+    '<b>Note</b>: TensorMap and PTX list dimensions from innermost to outermost, so the instruction order is the reverse of the (group, row, col) order shown in the diagram.';
 
   // Global memory: single contiguous grid
   var gg = document.getElementById('gg');
@@ -183,7 +184,7 @@ function draw() {
   for (var gi = 0; gi < NGROUPS; gi++) {
     var gd = mk('div', 'group');
     var glabel = mk('div', 'group-label');
-    glabel.textContent = 'g' + gi;
+    glabel.textContent = 'g' + gi + ' (2 atoms)';
     gd.appendChild(glabel);
 
     var grid = mk('div', 'grid');
@@ -202,6 +203,7 @@ function draw() {
     for (var r = 0; r < GDR; r++) {
       var rl = mk('div', 'rl');
       if (showRL) rl.textContent = r;
+      if (r === 8) rl.classList.add('atom-start');
       grid.appendChild(rl);
       for (var p = 0; p < GSECS; p++) {
         var logCol = useSw ? (p ^ (r % 8)) : p;
@@ -211,6 +213,7 @@ function draw() {
         d.style.height = SCSZ + 'px';
         d.style.background = BK[p % 8];
         d.textContent = logCol;
+        if (r === 8) d.classList.add('atom-start');
 
         // Is this cell in the TMA box?
         var inBox = true;  // always all groups, all rows

@@ -73,7 +73,7 @@
 <body>
 
 <h1>TMA: Global to Shared Memory</h1>
-<div class="sub">Hardware 2D copy with optional swizzle &mdash; one instruction, no threads</div>
+<div class="sub">One thread issues a 2D copy; the TMA engine moves the full tile and can swizzle it as it writes</div>
 
 <div class="controls">
   <div><span class="lbl">Swizzle</span>
@@ -118,9 +118,9 @@
 </div>
 
 <ul class="notes">
-  <li><span class="icon">▸</span> <strong>Single-thread dispatch</strong> (non-blocking)</li>
-  <li><span class="icon">▸</span> <strong>Automatic swizzling</strong> — data arrives bank-conflict-free</li>
-  <li><span class="icon">▸</span> <strong>Bidirectional:</strong> load (GMEM→SMEM) and store (SMEM→GMEM)</li>
+  <li><span class="icon">▸</span> <strong>One thread submits the request;</strong> the TMA engine performs the asynchronous copy</li>
+  <li><span class="icon">▸</span> <strong>Swizzle on arrival</strong> reduces bank conflicts for the target access pattern</li>
+  <li><span class="icon">▸</span> <strong>Copies in both directions:</strong> load (GMEM→SMEM) and store (SMEM→GMEM)</li>
 </ul>
 
 <script>
@@ -150,7 +150,7 @@ function draw() {
   document.getElementById('sdims').textContent =
     BOX_R + '\u00d7' + BOX_C + ' sectors (' + (useSw ? 'swizzled' : 'linear') + ')';
 
-  // Info box with TensorMap descriptor (concrete strides)
+  // Info box with tensor map descriptor (concrete strides)
   var swName = useSw ? 'CU_TENSOR_MAP_SWIZZLE_128B' : 'CU_TENSOR_MAP_SWIZZLE_NONE';
   document.getElementById('infobox').innerHTML =
     '<b>TensorMap</b>: <span class="formula">' +
@@ -158,7 +158,7 @@ function draw() {
     'boxDim = [64, 8], swizzle = ' + swName + '</span><br>' +
     '<b>Instruction</b>: <span class="formula">cp.async.bulk.tensor.2d.shared::cta.global.mbarrier::complete_tx::bytes [smem], [tensormap, {' +
     colCoord + ', ' + rowCoord + '}], [mbar]</span><br>' +
-    '<b>Note</b>: TensorMap and PTX follows column-major per official spec \u2014 globalDim, globalStrides, boxDim, and copy instruction coordinates are reversed from row-major order.';
+    '<b>Note</b>: TensorMap and PTX list dimensions from innermost to outermost. For the row-major matrix shown here, the order is therefore (col, row).';
 
   // Global memory: 16 rows x 16 cells
   var gg = document.getElementById('gg');
@@ -238,7 +238,7 @@ function draw() {
   var sep = mk('div', 'leg-sep');
   sl.appendChild(sep);
   var cv = mk('div', 'li');
-  cv.textContent = 'Cell value = logical col index  |  @N = smem byte offset';
+  cv.textContent = 'cell value = source-tile logical column  |  @N = SMEM byte offset';
   sl.appendChild(cv);
 }
 
