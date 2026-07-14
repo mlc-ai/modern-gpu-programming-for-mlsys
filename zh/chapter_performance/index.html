@@ -306,7 +306,7 @@
 </ul>
 </div>
 <p>一个 kernel 快不快，不能只看它的绝对吞吐数字，而要看它离硬件性能上限有多近。像 330 TFLOP/s 这样的数字单独看起来可能很大，但如果对应的 GPU 在 dense fp16 或 bf16 Tensor Core 计算上能够持续达到约 2 PFLOP/s，那么这个数字的意义就完全不同了。没有性能上限作为参照，我们就很难判断一个 kernel 是已经接近硬件极限，还是仍然让芯片的大部分算力处于空闲状态。</p>
-<p>本章用 roofline 模型建立这个参照，并以 NVIDIA B200 为例进行分析。沿用 <a class="reference internal" href="../chapter_background/index.html#chap-background"><span class="std std-ref">GPU 执行模型</span></a> 中的约定，我们采用两个便于计算的近似值：dense fp16 或 bf16 Tensor Core 吞吐约为 2 PFLOP/s，HBM3e 带宽约为 8 TB/s。实际性能还会受到设备配置、时钟频率、功耗限制和测量环境等因素影响，因此这里的数字不是官方规格中的精确上限。</p>
+<p>本章用 roofline 模型建立这个参照，并以 NVIDIA B200 为例进行分析。我们采用两个便于计算的近似值：dense fp16 或 bf16 Tensor Core 吞吐约为 2 PFLOP/s，HBM3e 带宽约为 8 TB/s。实际性能还会受到设备配置、时钟频率、功耗限制和测量环境等因素影响，因此这里的数字不是官方规格中的精确上限。</p>
 <section id="roofline">
 <h2>Roofline 模型<a class="headerlink" href="#roofline" title="Link to this heading">#</a></h2>
 <p>从性能分析的角度看，一个 kernel 的执行时间主要来自两部分：数据搬运和计算。roofline 模型给出了一个简单的判断方式：kernel 的性能上限由计算吞吐上限和内存带宽上限共同决定，更具体地说，是由二者中更低的那个上限决定。</p>
