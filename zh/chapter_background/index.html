@@ -274,7 +274,7 @@
                 <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">执行层级</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">内存空间</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster">跨 Cluster 的分布式共享内存</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster">Cluster 内的分布式共享内存</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cuda-core-tensor-core">计算核心：CUDA Core 和 Tensor Core</a></li>
@@ -360,7 +360,7 @@
 <p>可以把 TMEM 看作一个由 CTA 使用的二维临时存储区。这个空间包含 128 行（对应 128 条 TMEM lanes）和最多 512 列，每列宽 32 bit。它在逻辑上归 CTA 使用，物理上仍位于 SM 内。</p>
 <p>TMEM 需要由程序显式管理。Kernel 必须分配和释放 TMEM；MMA 完成后，epilogue 还需要显式地将 accumulator 从 TMEM 读回寄存器。读取完整的 128-lane accumulator 时，warpgroup 中的四个 warp 会分别加载自己的 32-lane TMEM window。</p>
 <section id="cluster">
-<h3>跨 Cluster 的分布式共享内存<a class="headerlink" href="#cluster" title="Link to this heading">#</a></h3>
+<h3>Cluster 内的分布式共享内存<a class="headerlink" href="#cluster" title="Link to this heading">#</a></h3>
 <p>一个 cluster 可以包含位于不同 SM 上的多个 CTA。每个 CTA 仍然拥有自己的 shared memory，但 distributed shared memory（DSMEM）允许同一 cluster 内的其他 CTA 访问其中的数据。</p>
 <p>这种能力可以避免不必要的 GMEM 往返。一个 CTA 可以直接访问另一个 CTA 的 SMEM，而不需要让对方先写回 GMEM、再重新读取。使用异步操作搬运这些数据时，completion barrier 会在搬运完成后通知后续计算继续执行。</p>
 <p>下图展示了一个 2-CTA cluster 中的 DSMEM 访问路径。每个 CTA 仍然拥有自己的 SMEM，但可以读取另一个 CTA 的 SMEM。</p>
@@ -450,7 +450,7 @@
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">执行层级</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">内存空间</a><ul class="visible nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster">跨 Cluster 的分布式共享内存</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster">Cluster 内的分布式共享内存</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#cuda-core-tensor-core">计算核心：CUDA Core 和 Tensor Core</a></li>
