@@ -261,6 +261,27 @@ function swizzleAddr(m, sw) {
 // tma_utils.mma_atom_layout): per_element = bit_length(128//bits) - 1,
 // swizzle_len = mode, atom_len = 3. Falls back to a typed Swizzle(...) prefix.
 const SWIZZLE_LEN = { none: 0, '32': 1, '64': 2, '128': 3 };
+
+// Swizzle XOR-permutes a linear shared-memory address, so it only applies when
+// the layout's sole physical axis is @m (a pure memory layout). With owner or
+// other storage axes (laneid, warpid, pid, P/F, TLane/TCol, ...) there is no
+// linear SMEM address to swizzle, and a bank view would be meaningless.
+function swizzleApplies(layout) {
+  const used = axesUsed(layout);
+  return used.length === 1 && used[0] === 'm';
+}
+
+function updateSwizzleControls(enabled) {
+  if (!dtypeSel || !swmodeSel) return;
+  dtypeSel.disabled = !enabled;
+  swmodeSel.disabled = !enabled;
+  const hint = document.getElementById('swhint');
+  if (hint) hint.hidden = enabled;
+  const tip = enabled ? '' : 'Swizzle applies only to shared-memory layouts whose sole physical axis is @m';
+  dtypeSel.title = tip;
+  swmodeSel.title = tip;
+}
+
 function computeSwizzle() {
   const mode = swmodeSel ? swmodeSel.value : 'off';
   if (mode === 'off') return (ST.layout && ST.layout.swizzle) ? ST.layout.swizzle : null;
@@ -312,7 +333,9 @@ function recompute() {
   ST.shapeTotal = total;
   ST.shardTotal = product(ST.layout.shard.map((it) => it.extent));
   ST.mismatch = ST.shardTotal !== total;
-  ST.swizzle = computeSwizzle();
+  ST.swizzleOk = swizzleApplies(ST.layout);
+  updateSwizzleControls(ST.swizzleOk);
+  ST.swizzle = ST.swizzleOk ? computeSwizzle() : null;
   // elements that share one 4-byte bank word (e.g. 2 fp16, 4 fp8, 1 fp32)
   ST.elemsPerBank = ST.swizzle ? Math.max(1, Math.round(4 / ((ST.swizzle.bits || 32) / 8))) : 1;
 
@@ -436,6 +459,10 @@ function draw() {
   if (ST.mismatch) {
     status.innerHTML += ` &nbsp;<span style="color:#b45309;font-weight:600">` +
       `⚠ shard total ${ST.shardTotal} ≠ shape total ${ST.shapeTotal} — mapping may be ill-formed</span>`;
+  }
+  if (ST.layout.swizzle && !ST.swizzleOk) {
+    status.innerHTML += ` &nbsp;<span style="color:var(--dim)">` +
+      `Swizzle(...) prefix ignored — swizzle applies only when the sole physical axis is @m</span>`;
   }
   if (ST.swizzle) {
     const s = ST.swizzle;
