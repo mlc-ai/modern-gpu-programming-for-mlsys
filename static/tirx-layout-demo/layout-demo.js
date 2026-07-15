@@ -267,6 +267,7 @@ const SWIZZLE_LEN = { none: 0, '32': 1, '64': 2, '128': 3 };
 // other storage axes (laneid, warpid, pid, P/F, TLane/TCol, ...) there is no
 // linear SMEM address to swizzle, and a bank view would be meaningless.
 function swizzleApplies(layout) {
+  if (!layout) return false;
   const used = axesUsed(layout);
   return used.length === 1 && used[0] === 'm';
 }
