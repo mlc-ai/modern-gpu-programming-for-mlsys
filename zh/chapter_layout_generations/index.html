@@ -278,7 +278,7 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ampere">Ampere：寄存器中的操作数与累加器</a><ul class="visible nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#fragment">一个具体的 fragment 映射</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ldmatrix-shared-memory-fragment"><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>：从 shared memory 构造 fragment</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shared-memory-swizzle">写回与 shared memory swizzle</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shared-memory-swizzle">写回结果与对 shared memory 做 swizzle</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hopper-shared-memory">Hopper：从 Shared Memory 直接读取</a><ul class="visible nav section-nav flex-column">
@@ -322,9 +322,9 @@
 \[
 D = AB + C
 \]</div>
-<p>其中，A 和 B 是乘法的输入，C 是已有的累加值，D 是计算结果。公式没有告诉我们这些矩阵存放在哪里，也没有说明 Tensor Core 按什么顺序读取它们。</p>
-<p>这正是本章要讨论的问题。Tensor Core 指令会按照固定规则读取 lane 中的寄存器、shared memory 地址或 TMEM 坐标。某个元素一旦放错位置，指令就会把它当成另一个矩阵元素参与计算，最后得到错误结果。</p>
-<p>下面沿着 Ampere、Hopper 和 Blackwell 的顺序，依次看清三个问题：MMA 从哪里读取输入，累加结果放在哪里，以及 kernel 怎样描述指令要求的 layout。描述具体映射时，我们会继续使用“<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局</span></a>”一章引入的记号。</p>
+<p>其中，A、B 是相乘的两个矩阵，C 是传入的累加项，D 是输出结果。公式没有告诉我们这些矩阵存放在哪里，也没有说明 Tensor Core 按什么顺序读取它们。</p>
+<p>这正是本章要讨论的问题。Tensor Core 指令会按照固定的硬件规则来解读寄存器、shared memory 地址或 TMEM 坐标。某个元素一旦放错位置，指令就会把它当成另一个矩阵元素参与计算，最后得到错误结果。</p>
+<p>下面我们将按照 Ampere、Hopper、Blackwell 的顺序，追踪三代架构中的数据路径，并分别考察三个相同的问题：MMA 从哪里读取输入？累加结果保存在哪里？kernel 如何描述指令要求的 layout？描述具体映射时，我们会继续使用“<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局</span></a>”一章引入的记号。</p>
 <section id="id1">
 <h2>先记住两项访存要求<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
 <p>在看具体指令之前，先回顾 layout 设计还要满足的两项要求。数据从 global memory 搬运时，一个 warp 访问的地址应尽量合并成少量连续且对齐的 memory transactions。访问 shared memory 时，地址还要尽量分散到不同 banks，避免 bank conflict。</p>
@@ -340,7 +340,7 @@ registers --mma.sync--&gt; registers
 registers --普通 store--&gt; SMEM 或 GMEM
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">mma.sync</span></code> 真正关心的是发出指令时各个寄存器里有什么。上面是高性能 kernel 最常见的数据路径；其他 load 或寄存器操作也可以准备这些值。</p>
+<p><code class="docutils literal notranslate"><span class="pre">mma.sync</span></code> 执行时，唯一重要的就是各寄存器中的内容。上面是高性能 kernel 最常见的数据路径；其他 load 或寄存器操作也可以准备这些值。</p>
 <section id="fragment">
 <h3>一个具体的 fragment 映射<a class="headerlink" href="#fragment" title="Link to this heading">#</a></h3>
 <p>接下来以 <code class="docutils literal notranslate"><span class="pre">mma.sync.aligned.m16n8k16</span></code> 为例，看看一个矩阵 tile 的元素如何分配到 warp 中 32 个 threads 的寄存器里。这里令 A 为 row-major、B 为 column-major，A/B 使用 <code class="docutils literal notranslate"><span class="pre">fp16</span></code> 或 <code class="docutils literal notranslate"><span class="pre">bf16</span></code>，C/D 使用 <code class="docutils literal notranslate"><span class="pre">fp32</span></code>。整个 warp 共同计算：</p>
@@ -432,9 +432,9 @@ cols = 2·(l % 4), 2·(l % 4) + 1
 <p><img alt="ldmatrix 将一个 8×8 shared memory tile 加载到 warp register fragment；图中的反向 stmatrix 路径仅适用于 Hopper sm_90 及后续架构" src="../_images/ldstmatrix.svg" /></p>
 </section>
 <section id="shared-memory-swizzle">
-<h3>写回与 shared memory swizzle<a class="headerlink" href="#shared-memory-swizzle" title="Link to this heading">#</a></h3>
+<h3>写回结果与对 shared memory 做 swizzle<a class="headerlink" href="#shared-memory-swizzle" title="Link to this heading">#</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">mma.sync</span></code> 完成后，C/D 仍然保存在 register fragment 中。在 Ampere 上，epilogue 通常由各 thread 执行普通 stores，将结果写入 shared memory 或 global memory，必要时再配合 warp shuffles 或局部重排。</p>
-<p>再看输入侧。普通 store 希望连续写入一行，<code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> 却会跨行读取；同一个 shared-memory layout 要同时照顾这两种访问。以一个 <code class="docutils literal notranslate"><span class="pre">(8,64)</span></code> 的 <code class="docutils literal notranslate"><span class="pre">float16</span></code> tile 为例，每行恰好占 128 bytes。在常见的 4-byte bank 粒度下，固定列的 8 个元素可能因为 128-byte row stride 而落到同一 bank，形成 8-way conflict。</p>
+<p>再看输入侧。普通 store 希望连续写入一行，<code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code> 却会跨行读取；同一个 shared-memory layout 必须同时兼顾这两种访问。以一个 <code class="docutils literal notranslate"><span class="pre">(8,64)</span></code> 的 <code class="docutils literal notranslate"><span class="pre">float16</span></code> tile 为例，每行恰好占 128 bytes。在常见的 4-byte bank 粒度下，固定列的 8 个元素可能因为 128-byte row stride 而落到同一 bank，形成 8-way conflict。</p>
 <p>Ampere kernel 通常手写 XOR 地址计算来改变 shared memory 中的物理排列。这样既能保留连续的行访问，又能把跨行读取分散到不同 banks。上一章已经详细介绍了这个过程，下面的图再次给出直观对比。</p>
 <p><img alt="在普通 row-major tile 中，行方向写入会分散到不同 banks，而列方向读取会集中到同一个 bank；XOR swizzle 在不破坏 coalesced row write 的前提下，将列方向读取分散到不同 banks" src="../_images/swizzle_conflict.svg" /></p>
 </section>
@@ -479,9 +479,9 @@ RS: A from registers, B from SMEM -&gt; wgmma -&gt; register accumulator
 </tbody>
 </table>
 </div>
-<p>WGMMA 先从 <code class="docutils literal notranslate"><span class="pre">matrix</span> <span class="pre">start</span> <span class="pre">address</span></code> 找到 tile 的起点，再用 <code class="docutils literal notranslate"><span class="pre">ldo</span></code> 和 <code class="docutils literal notranslate"><span class="pre">sdo</span></code> 跨到后续的数据组。这三个地址字段都以 16 bytes 为单位编码。leading dimension 和 stride dimension 对应到矩阵的哪个方向，由 major mode 和 swizzle mode 决定。</p>
+<p>WGMMA 先从 <code class="docutils literal notranslate"><span class="pre">matrix</span> <span class="pre">start</span> <span class="pre">address</span></code> 找到 tile 的起点，再用 <code class="docutils literal notranslate"><span class="pre">ldo</span></code> 和 <code class="docutils literal notranslate"><span class="pre">sdo</span></code> 跨到后续的数据组。这三个地址字段都以 16 bytes 为单位编码。至于 leading dimension 和 stride dimension 各自对应矩阵的哪个方向，则由 major mode 和 swizzle mode 决定。</p>
 <p>以 K-major 的 swizzled layout 为例，<code class="docutils literal notranslate"><span class="pre">ldo</span></code> 使用固定编码值 1，<code class="docutils literal notranslate"><span class="pre">sdo</span></code> 表示从前 8 行跨到后 8 行的 byte offset。<code class="docutils literal notranslate"><span class="pre">swizzle</span> <span class="pre">mode</span></code> 决定 atom 的形状和 atom 内部的 XOR 地址重排；<code class="docutils literal notranslate"><span class="pre">matrix</span> <span class="pre">base</span> <span class="pre">offset</span></code> 则指出矩阵起点位于这套重复模式中的什么位置。起点恰好对齐到模式边界时，base offset 为 0。</p>
-<p>下图把这个过程画了出来。例子中的 A 使用 K-major 和 128 B swizzle：横向是 K 维，纵向是 M 维，每个色块是一个 <code class="docutils literal notranslate"><span class="pre">8×128</span> <span class="pre">B</span></code> atom。左上角的黑点给出 <code class="docutils literal notranslate"><span class="pre">start_address</span></code>；K 方向按固定的 atom layout 展开，所以 <code class="docutils literal notranslate"><span class="pre">ldo</span></code> 编码为 1；向下跨过 8 行时，则使用 <code class="docutils literal notranslate"><span class="pre">sdo</span></code> 到达下一组。找到目标 atom 后，swizzle mode 再确定元素在 atom 内的 byte position。</p>
+<p>下图直观地展示了这一过程。例子中的 A 使用 K-major 和 128 B swizzle：横向是 K 维，纵向是 M 维，每个色块是一个 <code class="docutils literal notranslate"><span class="pre">8×128</span> <span class="pre">B</span></code> atom。左上角的黑点给出 <code class="docutils literal notranslate"><span class="pre">start_address</span></code>；K 方向按固定的 atom layout 展开，所以 <code class="docutils literal notranslate"><span class="pre">ldo</span></code> 编码为 1；向下跨过 8 行时，则使用 <code class="docutils literal notranslate"><span class="pre">sdo</span></code> 到达下一组。找到目标 atom 后，swizzle mode 再确定元素在 atom 内的 byte position。</p>
 <p><img alt="K-major 128 B swizzle 中，matrix descriptor 使用 start address 和 sdo 定位 8-row group，并通过固定的 atom layout 与 XOR swizzle 确定 byte position" src="../_images/wgmma_descriptor_kmajor.svg" /></p>
 <p>现在就能看出 descriptor 为什么必须和真实字节排列一致。假设 TMA 按 128 B swizzle 把数据写入 shared memory，WGMMA descriptor 也要按 128 B swizzle 解释这块数据。TMA 和 WGMMA 各有一份 descriptor，它们服务于不同指令，却要描述同一种物理排列。</p>
 </section>
@@ -496,7 +496,7 @@ RS: A from registers, B from SMEM -&gt; wgmma -&gt; register accumulator
 <section id="tmem">
 <h3>TMEM 中的累加器<a class="headerlink" href="#tmem" title="Link to this heading">#</a></h3>
 <p>到了 Blackwell，输入侧延续了 Hopper 的做法：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 通过 descriptor 找到 shared memory 中的 A、B，并按照 descriptor 指定的布局读取它们。某些模式也允许 A 来自 TMEM。</p>
-<p>输入路径说完，再看累加器。Hopper 将 C/D 保存在各 thread 的寄存器中；Blackwell 把它们放进 Tensor Memory，也就是 TMEM。等到 epilogue 需要处理结果时，再通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 将数据加载到寄存器中：</p>
+<p>而最主要的变化在于累加器的存放位置。Hopper 将 C/D 保存在各 thread 的寄存器中；Blackwell 则把它们放进 Tensor Memory，也就是 TMEM。等到 epilogue 需要处理结果时，再通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 将数据加载到寄存器中：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A/B in SMEM --tcgen05.mma--&gt; C/D in TMEM
 C/D in TMEM --tcgen05.ld--&gt; register fragment --store--&gt; GMEM
 </pre></div>
@@ -511,7 +511,7 @@ C/D in TMEM --tcgen05.ld--&gt; register fragment --store--&gt; GMEM
 SFB(N, SFK)
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">SFA[m,sfk]</span></code> 对应 A 的第 <code class="docutils literal notranslate"><span class="pre">m</span></code> 行、第 <code class="docutils literal notranslate"><span class="pre">sfk</span></code> 个 K-scale block；<code class="docutils literal notranslate"><span class="pre">SFB[n,sfk]</span></code> 对应 B 的第 <code class="docutils literal notranslate"><span class="pre">n</span></code> 列、第 <code class="docutils literal notranslate"><span class="pre">sfk</span></code> 个 K-scale block。这里沿用上一章的逻辑索引顺序；PTX 表格把同一个 B 侧矩阵写成 <code class="docutils literal notranslate"><span class="pre">SFB[sfk,n]</span></code>，shape 为 <code class="docutils literal notranslate"><span class="pre">SFB_M</span> <span class="pre">x</span> <span class="pre">N</span></code>。</p>
+<p><code class="docutils literal notranslate"><span class="pre">SFA[m,sfk]</span></code> 用于缩放 A 第 <code class="docutils literal notranslate"><span class="pre">m</span></code> 行、第 <code class="docutils literal notranslate"><span class="pre">sfk</span></code> 个 K-scale block 的元素；<code class="docutils literal notranslate"><span class="pre">SFB[n,sfk]</span></code> 对 B 的第 <code class="docutils literal notranslate"><span class="pre">n</span></code> 列做同样的缩放。这里沿用上一章的逻辑索引顺序；PTX 表格把同一个 B 侧矩阵写成 <code class="docutils literal notranslate"><span class="pre">SFB[sfk,n]</span></code>，shape 为 <code class="docutils literal notranslate"><span class="pre">SFB_M</span> <span class="pre">x</span> <span class="pre">N</span></code>。</p>
 <p>A 和 B 通常由 TMA 加载到 shared memory，再由 MMA 直接读取。Scale factors 需要进入 TMEM，而 TMA 的搬运路径只到 shared memory，所以中间还要经过一次 <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code>：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A, B:     GMEM --TMA--&gt; SMEM --tcgen05.mma--&gt; Tensor Core
 SFA, SFB: GMEM --TMA--&gt; SMEM --tcgen05.cp--&gt; TMEM --tcgen05.mma--&gt; Tensor Core
@@ -536,8 +536,8 @@ scale_vec::2X: [SF0, SF1, SF0, SF1]
 scale_vec::4X: [SF0, SF1, SF2, SF3]
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">SFA_ID</span></code> 或 <code class="docutils literal notranslate"><span class="pre">SFB_ID</span></code> 再选择 MMA 从哪个副本开始读取。1X 可以选择 byte offset 0、1、2 或 3；2X 可以选择 offset 0 或 2，也就是低 half-word 或高 half-word；4X 使用全部 4 bytes，因此 ID 必须为 0。</p>
-<p>这里的 word 内复制与前面的 <code class="docutils literal notranslate"><span class="pre">R[4</span> <span class="pre">:</span> <span class="pre">32&#64;TLane]</span></code> 是两件事：前者复制 32-bit word 中的 bytes，后者把数据复制到四个 TMEM lane windows。一个 scale 在数学上供整个 K-block 共用，则是第三层含义。</p>
+<p><code class="docutils literal notranslate"><span class="pre">SFA_ID</span></code> 或 <code class="docutils literal notranslate"><span class="pre">SFB_ID</span></code> 则告诉 MMA 该读取哪一个副本。1X 可以选择 byte offset 0、1、2 或 3；2X 可以选择 offset 0 或 2，也就是低 half-word 或高 half-word；4X 使用全部 4 bytes，因此 ID 必须为 0。</p>
+<p>这里的 word 内复制与前面的 <code class="docutils literal notranslate"><span class="pre">R[4</span> <span class="pre">:</span> <span class="pre">32&#64;TLane]</span></code> 是两件事：前者复制 32-bit word 中的 bytes，后者把数据复制到四个 TMEM lane windows。而一个 scale 会被它所在 K-block 内的每个 K 元素共用，这是第三件事，与前两者都不同。</p>
 <p><img alt="scale_vec packing：1X 在四个 bytes 中重复同一个 scale，2X 重复一对 scales，4X 存放四个不同 K-block 的 scales" src="../_images/sf_scale_vec.svg" /></p>
 </section>
 </section>
@@ -582,7 +582,7 @@ scale_vec::4X: [SF0, SF1, SF2, SF3]
 </tbody>
 </table>
 </div>
-<p>把三代架构放在一起看，变化过程就很清楚了：Ampere 先把输入整理成 per-lane register fragments；Hopper 让 Tensor Core 通过 descriptor 直接读取 shared memory；Blackwell 再把累加器和 scale factors 移入 TMEM。</p>
+<p>三代对照来看，这条演进脉络就很清晰了：Ampere 先把输入整理成 per-lane register fragments；Hopper 让 Tensor Core 通过 descriptor 直接读取 shared memory；Blackwell 再把累加器和 scale factors 移入 TMEM。</p>
 <p>写 kernel 时，可以顺着数据流逐段检查：上一条指令把数据写成什么排列，下一条指令就要用什么 layout 或 descriptor 去读。只要中间有一处解释不一致，Tensor Core 就可能读错元素；即使结果仍然正确，也可能因为访存方式不合适而损失性能。</p>
 </section>
 </section>
@@ -638,7 +638,7 @@ scale_vec::4X: [SF0, SF1, SF2, SF3]
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ampere">Ampere：寄存器中的操作数与累加器</a><ul class="visible nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#fragment">一个具体的 fragment 映射</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ldmatrix-shared-memory-fragment"><code class="docutils literal notranslate"><span class="pre">ldmatrix</span></code>：从 shared memory 构造 fragment</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shared-memory-swizzle">写回与 shared memory swizzle</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shared-memory-swizzle">写回结果与对 shared memory 做 swizzle</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#hopper-shared-memory">Hopper：从 Shared Memory 直接读取</a><ul class="visible nav section-nav flex-column">
