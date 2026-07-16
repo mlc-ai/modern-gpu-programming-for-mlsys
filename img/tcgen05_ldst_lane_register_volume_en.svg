@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="600" viewBox="0 0 1240 600" role="img" aria-labelledby="title desc">
+  <title id="title">Data volume for tcgen05.ld/st .16x128b.x4</title>
+  <desc id="desc">Sixteen TMEM lanes each contain four 128-bit groups, or sixteen 32-bit cells. The warp's 32 threads each receive or provide eight 32-bit registers.</desc>
+  <defs>
+    <g id="lane-row" stroke="#ffffff" stroke-width="1">
+      <rect x="0" y="0" width="16" height="15" fill="#dbeafe"/><rect x="16" y="0" width="16" height="15" fill="#dbeafe"/><rect x="32" y="0" width="16" height="15" fill="#dbeafe"/><rect x="48" y="0" width="16" height="15" fill="#dbeafe"/>
+      <rect x="70" y="0" width="16" height="15" fill="#bfdbfe"/><rect x="86" y="0" width="16" height="15" fill="#bfdbfe"/><rect x="102" y="0" width="16" height="15" fill="#bfdbfe"/><rect x="118" y="0" width="16" height="15" fill="#bfdbfe"/>
+      <rect x="140" y="0" width="16" height="15" fill="#93c5fd"/><rect x="156" y="0" width="16" height="15" fill="#93c5fd"/><rect x="172" y="0" width="16" height="15" fill="#93c5fd"/><rect x="188" y="0" width="16" height="15" fill="#93c5fd"/>
+      <rect x="210" y="0" width="16" height="15" fill="#60a5fa"/><rect x="226" y="0" width="16" height="15" fill="#60a5fa"/><rect x="242" y="0" width="16" height="15" fill="#60a5fa"/><rect x="258" y="0" width="16" height="15" fill="#60a5fa"/>
+    </g>
+    <style>
+      .title { font: 700 27px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+      .heading { font: 700 20px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #273449; }
+      .body { font: 500 14px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #475569; }
+      .label { font: 600 13px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+      .lane { font: 600 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #334155; }
+      .thread { font: 700 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #334155; }
+      .regs { font: 600 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #4f46e5; }
+      .equation { font: 600 17px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #334155; }
+    </style>
+  </defs>
+
+  <rect width="1240" height="600" fill="#ffffff"/>
+  <text x="620" y="39" text-anchor="middle" class="title">Data volume for tcgen05.ld/st .16x128b.x4</text>
+  <text x="620" y="66" text-anchor="middle" class="body">.16x128b: 16 lanes, 128 bits per lane; .x4: four groups per lane</text>
+
+  <rect x="25" y="92" width="520" height="400" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="285" y="126" text-anchor="middle" class="heading">TMEM access region</text>
+  <text x="285" y="150" text-anchor="middle" class="body">Each row is one lane with sixteen 32-bit cells</text>
+
+  <line x1="106" y1="180" x2="106" y2="420" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="100" y1="180" x2="112" y2="180" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="100" y1="420" x2="112" y2="420" stroke="#64748b" stroke-width="1.5"/>
+  <text x="72" y="300" text-anchor="middle" class="label" transform="rotate(-90 72 300)">16 lanes</text>
+
+  <text x="205" y="171" text-anchor="middle" class="label">128b</text>
+  <text x="275" y="171" text-anchor="middle" class="label">128b</text>
+  <text x="345" y="171" text-anchor="middle" class="label">128b</text>
+  <text x="415" y="171" text-anchor="middle" class="label">128b</text>
+
+  <g text-anchor="end" dominant-baseline="middle" class="lane">
+    <text x="166" y="187.5">lane 0</text><text x="166" y="202.5">lane 1</text>
+    <text x="166" y="217.5">lane 2</text><text x="166" y="232.5">lane 3</text>
+    <text x="166" y="247.5">lane 4</text><text x="166" y="262.5">lane 5</text>
+    <text x="166" y="277.5">lane 6</text><text x="166" y="292.5">lane 7</text>
+    <text x="166" y="307.5">lane 8</text><text x="166" y="322.5">lane 9</text>
+    <text x="166" y="337.5">lane 10</text><text x="166" y="352.5">lane 11</text>
+    <text x="166" y="367.5">lane 12</text><text x="166" y="382.5">lane 13</text>
+    <text x="166" y="397.5">lane 14</text><text x="166" y="412.5">lane 15</text>
+  </g>
+
+  <use href="#lane-row" x="173" y="180"/><use href="#lane-row" x="173" y="195"/>
+  <use href="#lane-row" x="173" y="210"/><use href="#lane-row" x="173" y="225"/>
+  <use href="#lane-row" x="173" y="240"/><use href="#lane-row" x="173" y="255"/>
+  <use href="#lane-row" x="173" y="270"/><use href="#lane-row" x="173" y="285"/>
+  <use href="#lane-row" x="173" y="300"/><use href="#lane-row" x="173" y="315"/>
+  <use href="#lane-row" x="173" y="330"/><use href="#lane-row" x="173" y="345"/>
+  <use href="#lane-row" x="173" y="360"/><use href="#lane-row" x="173" y="375"/>
+  <use href="#lane-row" x="173" y="390"/><use href="#lane-row" x="173" y="405"/>
+  <rect x="173" y="180" width="64" height="240" fill="none" stroke="#93c5fd"/>
+  <rect x="243" y="180" width="64" height="240" fill="none" stroke="#60a5fa"/>
+  <rect x="313" y="180" width="64" height="240" fill="none" stroke="#3b82f6"/>
+  <rect x="383" y="180" width="64" height="240" fill="none" stroke="#2563eb"/>
+  <text x="310" y="451" text-anchor="middle" class="label">Each 128b group = four 32-bit TMEM cells</text>
+  <text x="310" y="474" text-anchor="middle" class="body">4 groups x 4 cells = 16 cells per lane</text>
+
+  <line x1="566" y1="246" x2="661" y2="246" stroke="#2563eb" stroke-width="4"/>
+  <polygon points="676,246 656,235 656,257" fill="#2563eb"/>
+  <text x="620" y="226" text-anchor="middle" class="label" fill="#2563eb">tcgen05.ld</text>
+  <line x1="676" y1="326" x2="581" y2="326" stroke="#dc2626" stroke-width="4"/>
+  <polygon points="566,326 586,315 586,337" fill="#dc2626"/>
+  <text x="620" y="350" text-anchor="middle" class="label" fill="#dc2626">tcgen05.st</text>
+
+  <rect x="695" y="92" width="520" height="400" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="955" y="126" text-anchor="middle" class="heading">Registers across the warp</text>
+  <text x="955" y="150" text-anchor="middle" class="body">32 threads; eight 32-bit registers per thread</text>
+
+  <g fill="#eef2ff" stroke="#818cf8" stroke-width="1.4">
+    <rect x="718" y="174" width="56" height="54" rx="4"/><rect x="779" y="174" width="56" height="54" rx="4"/><rect x="840" y="174" width="56" height="54" rx="4"/><rect x="901" y="174" width="56" height="54" rx="4"/><rect x="962" y="174" width="56" height="54" rx="4"/><rect x="1023" y="174" width="56" height="54" rx="4"/><rect x="1084" y="174" width="56" height="54" rx="4"/><rect x="1145" y="174" width="56" height="54" rx="4"/>
+    <rect x="718" y="238" width="56" height="54" rx="4"/><rect x="779" y="238" width="56" height="54" rx="4"/><rect x="840" y="238" width="56" height="54" rx="4"/><rect x="901" y="238" width="56" height="54" rx="4"/><rect x="962" y="238" width="56" height="54" rx="4"/><rect x="1023" y="238" width="56" height="54" rx="4"/><rect x="1084" y="238" width="56" height="54" rx="4"/><rect x="1145" y="238" width="56" height="54" rx="4"/>
+    <rect x="718" y="302" width="56" height="54" rx="4"/><rect x="779" y="302" width="56" height="54" rx="4"/><rect x="840" y="302" width="56" height="54" rx="4"/><rect x="901" y="302" width="56" height="54" rx="4"/><rect x="962" y="302" width="56" height="54" rx="4"/><rect x="1023" y="302" width="56" height="54" rx="4"/><rect x="1084" y="302" width="56" height="54" rx="4"/><rect x="1145" y="302" width="56" height="54" rx="4"/>
+    <rect x="718" y="366" width="56" height="54" rx="4"/><rect x="779" y="366" width="56" height="54" rx="4"/><rect x="840" y="366" width="56" height="54" rx="4"/><rect x="901" y="366" width="56" height="54" rx="4"/><rect x="962" y="366" width="56" height="54" rx="4"/><rect x="1023" y="366" width="56" height="54" rx="4"/><rect x="1084" y="366" width="56" height="54" rx="4"/><rect x="1145" y="366" width="56" height="54" rx="4"/>
+  </g>
+
+  <g text-anchor="middle">
+    <g class="thread">
+      <text x="746" y="194">T0</text><text x="807" y="194">T1</text><text x="868" y="194">T2</text><text x="929" y="194">T3</text><text x="990" y="194">T4</text><text x="1051" y="194">T5</text><text x="1112" y="194">T6</text><text x="1173" y="194">T7</text>
+      <text x="746" y="258">T8</text><text x="807" y="258">T9</text><text x="868" y="258">T10</text><text x="929" y="258">T11</text><text x="990" y="258">T12</text><text x="1051" y="258">T13</text><text x="1112" y="258">T14</text><text x="1173" y="258">T15</text>
+      <text x="746" y="322">T16</text><text x="807" y="322">T17</text><text x="868" y="322">T18</text><text x="929" y="322">T19</text><text x="990" y="322">T20</text><text x="1051" y="322">T21</text><text x="1112" y="322">T22</text><text x="1173" y="322">T23</text>
+      <text x="746" y="386">T24</text><text x="807" y="386">T25</text><text x="868" y="386">T26</text><text x="929" y="386">T27</text><text x="990" y="386">T28</text><text x="1051" y="386">T29</text><text x="1112" y="386">T30</text><text x="1173" y="386">T31</text>
+    </g>
+    <g class="regs">
+      <text x="746" y="214">r0-r7</text><text x="807" y="214">r0-r7</text><text x="868" y="214">r0-r7</text><text x="929" y="214">r0-r7</text><text x="990" y="214">r0-r7</text><text x="1051" y="214">r0-r7</text><text x="1112" y="214">r0-r7</text><text x="1173" y="214">r0-r7</text>
+      <text x="746" y="278">r0-r7</text><text x="807" y="278">r0-r7</text><text x="868" y="278">r0-r7</text><text x="929" y="278">r0-r7</text><text x="990" y="278">r0-r7</text><text x="1051" y="278">r0-r7</text><text x="1112" y="278">r0-r7</text><text x="1173" y="278">r0-r7</text>
+      <text x="746" y="342">r0-r7</text><text x="807" y="342">r0-r7</text><text x="868" y="342">r0-r7</text><text x="929" y="342">r0-r7</text><text x="990" y="342">r0-r7</text><text x="1051" y="342">r0-r7</text><text x="1112" y="342">r0-r7</text><text x="1173" y="342">r0-r7</text>
+      <text x="746" y="406">r0-r7</text><text x="807" y="406">r0-r7</text><text x="868" y="406">r0-r7</text><text x="929" y="406">r0-r7</text><text x="990" y="406">r0-r7</text><text x="1051" y="406">r0-r7</text><text x="1112" y="406">r0-r7</text><text x="1173" y="406">r0-r7</text>
+    </g>
+  </g>
+
+  <text x="955" y="450" text-anchor="middle" class="label">Each box is one thread; r0-r7 are its own eight registers</text>
+  <text x="955" y="474" text-anchor="middle" class="body">The fragment layout defines the exact cell-to-thread mapping</text>
+
+  <text x="620" y="544" text-anchor="middle" class="equation">16 lanes x 16 cells/lane = 256 32-bit TMEM cells</text>
+  <text x="620" y="578" text-anchor="middle" class="equation">256 cells / 32 threads = eight 32-bit registers per thread</text>
+</svg>
