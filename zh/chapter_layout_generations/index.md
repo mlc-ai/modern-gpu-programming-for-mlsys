@@ -19,7 +19,7 @@ $$
 
 这正是本章要讨论的问题。Tensor Core 指令会按照固定的硬件规则来解读寄存器、shared memory 地址或 TMEM 坐标。某个元素一旦放错位置，指令就会把它当成另一个矩阵元素参与计算，最后得到错误结果。
 
-下面我们沿着 Ampere、Hopper、Blackwell 追踪数据路径，每一代都回答同样的三个问题：MMA 从哪里读取输入？累加结果保存在哪里？kernel 又如何描述指令要求的 layout？描述具体映射时，我们会继续使用“{ref}`数据布局 <chap_data_layout>`”一章引入的记号。
+下面我们将按照 Ampere、Hopper、Blackwell 的顺序，追踪三代架构中的数据路径，并分别考察三个相同的问题：MMA 从哪里读取输入？累加结果保存在哪里？kernel 如何描述指令要求的 layout？描述具体映射时，我们会继续使用“{ref}`数据布局 <chap_data_layout>`”一章引入的记号。
 
 ## 先记住两项访存要求
 
