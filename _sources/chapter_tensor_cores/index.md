@@ -129,7 +129,7 @@ The result occupies 128 Lane rows and N Col columns. The CTA reads A and B from 
 
 ### `cta_group::1`, `M = 64` (without `.ws`)
 
-When `M = 64`, the accumulator has only 64 rows, but TMEM still has 128 Lane rows. This section covers ordinary `tcgen05.mma`, not the weight-stationary `.ws` form. Its TMEM mapping uses Layout F.
+Following the notation used above, the figures label the MMA output accumulator as `C`. Its logical shape is `M x N`; this section sets `M = 64`, so `C` has shape `64 x N`. TMEM still has 128 Lane rows. This section covers ordinary `tcgen05.mma`, not the weight-stationary `.ws` form. Its TMEM mapping uses Layout F.
 
 Layout F divides the 128 TMEM lanes into four 32-lane regions, corresponding to `warp-rank % 4 = 0,1,2,3` in the hardware data path. It also divides the 64 M rows into four groups of 16 and places one group in each region. Because a group contains only 16 rows, the current tile uses only half of each 32-lane region.
 
@@ -152,7 +152,7 @@ rows 48-63  -> lanes 96-111
 
 Lanes `16-31`, `48-63`, `80-95`, and `112-127` do not belong to this tile.
 
-Layout F also permits lane alignment 16. A second, independent `M=64` tile can then occupy the complementary positions:
+If the kernel needs to retain a second, independent `M=64` accumulator tile, it can set that tile's lane alignment to 16. Its four row groups then map to the Lane positions left unused above:
 
 ```text
 rows  0-15  -> lanes  16-31
@@ -161,7 +161,7 @@ rows 32-47  -> lanes  80-95
 rows 48-63  -> lanes 112-127
 ```
 
-The two `M=64` tiles can therefore share TMEM's 128-lane structure without overlapping. N still extends across TMEM columns; only the placement of M rows along the Lane axis changes.
+In the figure, the orange bands show the current tile with lane alignment 0, while the hatched bands show the positions available with lane alignment 16. The two tiles can use the same TMEM columns because their Lane positions do not overlap. N still extends across the TMEM columns.
 
 ![`cta_group::1`, `M=64`, without `.ws`: four 16-row groups use a Lane stride of 32; lane alignment 0 or 16 selects complementary positions](../img/mma_cg1_m64.svg)
 

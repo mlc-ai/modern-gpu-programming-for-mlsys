@@ -129,7 +129,7 @@ Accumulator layout 由 `cta_group`、M 维大小、A 是稠密矩阵还是结构
 
 ### `cta_group::1`，`M = 64`（不使用 `.ws`）
 
-当 `M = 64` 时，accumulator 只有 64 行，但 TMEM 仍然包含 128 个 Lane rows。这里讨论的是普通的 `tcgen05.mma`，而不是带 `.ws` 后缀的 weight-stationary 形式；它的 TMEM 映射采用 Layout F。
+图中沿用前文的记号，用 `C` 表示 MMA 的 output accumulator。它的逻辑 shape 为 `M x N`；本节取 `M = 64`，因此 `C` 的 shape 是 `64 x N`。TMEM 仍然包含 128 个 Lane rows。这里讨论的是普通的 `tcgen05.mma`，而不是带 `.ws` 后缀的 weight-stationary 形式；它的 TMEM 映射采用 Layout F。
 
 Layout F 按硬件数据路径将 128 条 TMEM lanes 分成四个 32-lane 区域，分别对应 `warp-rank % 4 = 0,1,2,3`。64 个 M rows 也被分成四组，每组 16 行，并依次放入这四个区域。由于每组只有 16 行，一个 32-lane 区域中只有一半 lanes 会被当前 tile 使用。
 
@@ -152,7 +152,7 @@ rows 48-63  -> lanes 96-111
 
 因此，lanes `16-31`、`48-63`、`80-95` 和 `112-127` 不属于这个 tile。
 
-同一个 Layout F 也允许 lane alignment 为 16。此时，另一个独立的 `M=64` tile 可以占据上述互补位置：
+如果 kernel 还需要保存另一块独立的 `M=64` accumulator tile，可以将它的 lane alignment 设为 16。这样，它的四组 rows 会映射到前面空出的 Lane 位置：
 
 ```text
 rows  0-15  -> lanes  16-31
@@ -161,7 +161,7 @@ rows 32-47  -> lanes  80-95
 rows 48-63  -> lanes 112-127
 ```
 
-这样，两个独立的 `M=64` tiles 就能够共享 TMEM 的 128-lane 结构，而不会覆盖彼此的数据。N 维仍然沿 TMEM columns 展开，变化的只是 M rows 在 Lane 轴上的放置方式。
+图中橙色 bands 对应 lane alignment 0 的当前 tile，斜线 bands 则对应 lane alignment 16 可以使用的位置。两块 tile 可以使用相同的 TMEM columns，因为它们占用的 Lane 位置互不重叠。N 维仍然沿 TMEM columns 展开。
 
 ![`cta_group::1`、`M=64`、不使用 `.ws`：四组连续的 16 行以 32 为 Lane stride；lane alignment 可以选择 0 或 16，从而为另一个 `M=64` tile 留出互补位置](../../img/mma_cg1_m64.svg)
 

@@ -512,7 +512,7 @@
 </section>
 <section id="cta-group-1-m-64-without-ws">
 <h3><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code>, <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">64</span></code> (without <code class="docutils literal notranslate"><span class="pre">.ws</span></code>)<a class="headerlink" href="#cta-group-1-m-64-without-ws" title="Link to this heading">#</a></h3>
-<p>When <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">64</span></code>, the accumulator has only 64 rows, but TMEM still has 128 Lane rows. This section covers ordinary <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>, not the weight-stationary <code class="docutils literal notranslate"><span class="pre">.ws</span></code> form. Its TMEM mapping uses Layout F.</p>
+<p>Following the notation used above, the figures label the MMA output accumulator as <code class="docutils literal notranslate"><span class="pre">C</span></code>. Its logical shape is <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">x</span> <span class="pre">N</span></code>; this section sets <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">64</span></code>, so <code class="docutils literal notranslate"><span class="pre">C</span></code> has shape <code class="docutils literal notranslate"><span class="pre">64</span> <span class="pre">x</span> <span class="pre">N</span></code>. TMEM still has 128 Lane rows. This section covers ordinary <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>, not the weight-stationary <code class="docutils literal notranslate"><span class="pre">.ws</span></code> form. Its TMEM mapping uses Layout F.</p>
 <p>Layout F divides the 128 TMEM lanes into four 32-lane regions, corresponding to <code class="docutils literal notranslate"><span class="pre">warp-rank</span> <span class="pre">%</span> <span class="pre">4</span> <span class="pre">=</span> <span class="pre">0,1,2,3</span></code> in the hardware data path. It also divides the 64 M rows into four groups of 16 and places one group in each region. Because a group contains only 16 rows, the current tile uses only half of each 32-lane region.</p>
 <p>Let <code class="docutils literal notranslate"><span class="pre">a</span></code> be the TMEM lane alignment, either 0 or 16. Logical row <code class="docutils literal notranslate"><span class="pre">m</span></code> maps to</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>group        = m // 16
@@ -528,14 +528,14 @@ rows 48-63  -&gt; lanes 96-111
 </pre></div>
 </div>
 <p>Lanes <code class="docutils literal notranslate"><span class="pre">16-31</span></code>, <code class="docutils literal notranslate"><span class="pre">48-63</span></code>, <code class="docutils literal notranslate"><span class="pre">80-95</span></code>, and <code class="docutils literal notranslate"><span class="pre">112-127</span></code> do not belong to this tile.</p>
-<p>Layout F also permits lane alignment 16. A second, independent <code class="docutils literal notranslate"><span class="pre">M=64</span></code> tile can then occupy the complementary positions:</p>
+<p>If the kernel needs to retain a second, independent <code class="docutils literal notranslate"><span class="pre">M=64</span></code> accumulator tile, it can set that tile’s lane alignment to 16. Its four row groups then map to the Lane positions left unused above:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>rows  0-15  -&gt; lanes  16-31
 rows 16-31  -&gt; lanes  48-63
 rows 32-47  -&gt; lanes  80-95
 rows 48-63  -&gt; lanes 112-127
 </pre></div>
 </div>
-<p>The two <code class="docutils literal notranslate"><span class="pre">M=64</span></code> tiles can therefore share TMEM’s 128-lane structure without overlapping. N still extends across TMEM columns; only the placement of M rows along the Lane axis changes.</p>
+<p>In the figure, the orange bands show the current tile with lane alignment 0, while the hatched bands show the positions available with lane alignment 16. The two tiles can use the same TMEM columns because their Lane positions do not overlap. N still extends across the TMEM columns.</p>
 <p><img alt=", , without : four 16-row groups use a Lane stride of 32; lane alignment 0 or 16 selects complementary positions" src="../_images/mma_cg1_m64.svg" /></p>
 </section>
 <section id="cta-group-2-m-256">

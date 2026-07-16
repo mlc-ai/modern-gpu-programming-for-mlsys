@@ -413,7 +413,7 @@
 </section>
 <section id="cta-group-1-m-64-ws">
 <h3><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code>，<code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">64</span></code>（不使用 <code class="docutils literal notranslate"><span class="pre">.ws</span></code>）<a class="headerlink" href="#cta-group-1-m-64-ws" title="Link to this heading">#</a></h3>
-<p>当 <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">64</span></code> 时，accumulator 只有 64 行，但 TMEM 仍然包含 128 个 Lane rows。这里讨论的是普通的 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>，而不是带 <code class="docutils literal notranslate"><span class="pre">.ws</span></code> 后缀的 weight-stationary 形式；它的 TMEM 映射采用 Layout F。</p>
+<p>图中沿用前文的记号，用 <code class="docutils literal notranslate"><span class="pre">C</span></code> 表示 MMA 的 output accumulator。它的逻辑 shape 为 <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">x</span> <span class="pre">N</span></code>；本节取 <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">64</span></code>，因此 <code class="docutils literal notranslate"><span class="pre">C</span></code> 的 shape 是 <code class="docutils literal notranslate"><span class="pre">64</span> <span class="pre">x</span> <span class="pre">N</span></code>。TMEM 仍然包含 128 个 Lane rows。这里讨论的是普通的 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>，而不是带 <code class="docutils literal notranslate"><span class="pre">.ws</span></code> 后缀的 weight-stationary 形式；它的 TMEM 映射采用 Layout F。</p>
 <p>Layout F 按硬件数据路径将 128 条 TMEM lanes 分成四个 32-lane 区域，分别对应 <code class="docutils literal notranslate"><span class="pre">warp-rank</span> <span class="pre">%</span> <span class="pre">4</span> <span class="pre">=</span> <span class="pre">0,1,2,3</span></code>。64 个 M rows 也被分成四组，每组 16 行，并依次放入这四个区域。由于每组只有 16 行，一个 32-lane 区域中只有一半 lanes 会被当前 tile 使用。</p>
 <p>令 <code class="docutils literal notranslate"><span class="pre">a</span></code> 表示 TMEM lane alignment，取值为 0 或 16。逻辑行 <code class="docutils literal notranslate"><span class="pre">m</span></code> 对应的 TMEM Lane 为：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>group        = m // 16
@@ -429,14 +429,14 @@ rows 48-63  -&gt; lanes 96-111
 </pre></div>
 </div>
 <p>因此，lanes <code class="docutils literal notranslate"><span class="pre">16-31</span></code>、<code class="docutils literal notranslate"><span class="pre">48-63</span></code>、<code class="docutils literal notranslate"><span class="pre">80-95</span></code> 和 <code class="docutils literal notranslate"><span class="pre">112-127</span></code> 不属于这个 tile。</p>
-<p>同一个 Layout F 也允许 lane alignment 为 16。此时，另一个独立的 <code class="docutils literal notranslate"><span class="pre">M=64</span></code> tile 可以占据上述互补位置：</p>
+<p>如果 kernel 还需要保存另一块独立的 <code class="docutils literal notranslate"><span class="pre">M=64</span></code> accumulator tile，可以将它的 lane alignment 设为 16。这样，它的四组 rows 会映射到前面空出的 Lane 位置：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>rows  0-15  -&gt; lanes  16-31
 rows 16-31  -&gt; lanes  48-63
 rows 32-47  -&gt; lanes  80-95
 rows 48-63  -&gt; lanes 112-127
 </pre></div>
 </div>
-<p>这样，两个独立的 <code class="docutils literal notranslate"><span class="pre">M=64</span></code> tiles 就能够共享 TMEM 的 128-lane 结构，而不会覆盖彼此的数据。N 维仍然沿 TMEM columns 展开，变化的只是 M rows 在 Lane 轴上的放置方式。</p>
+<p>图中橙色 bands 对应 lane alignment 0 的当前 tile，斜线 bands 则对应 lane alignment 16 可以使用的位置。两块 tile 可以使用相同的 TMEM columns，因为它们占用的 Lane 位置互不重叠。N 维仍然沿 TMEM columns 展开。</p>
 <p><img alt="、、不使用 ：四组连续的 16 行以 32 为 Lane stride；lane alignment 可以选择 0 或 16，从而为另一个  tile 留出互补位置" src="../_images/mma_cg1_m64.svg" /></p>
 </section>
 <section id="cta-group-2-m-256">
