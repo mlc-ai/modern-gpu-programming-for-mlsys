@@ -48,6 +48,8 @@
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
     <script src="../_static/copybutton.js?v=f281be69"></script>
     <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'chapter_tma/index';</script>
     <script src="../_static/demo-embed.js?v=2d63667d"></script>
     <link rel="icon" href="../_static/mlc-favicon.ico"/>
@@ -371,12 +373,15 @@
             </div>
             <nav aria-label="Page">
                 <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#one-thread-issues-hardware-moves-the-tile">One Thread Issues, Hardware Moves the Tile</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzled-layouts">Swizzled Layouts</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#d-tma-for-tiling-and-swizzling">3D TMA for Tiling and Swizzling</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#completion-loads">Completion: Loads</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#completion-stores">Completion: Stores</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#why-tma-matters-for-pipelining">Why TMA Matters for Pipelining</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-one-thread-describes-an-entire-tile">How One Thread Describes an Entire Tile</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-tma-writes-a-swizzled-layout">How TMA Writes a Swizzled Layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#using-3d-tma-to-move-multiple-swizzle-atoms">Using 3D TMA to Move Multiple Swizzle Atoms</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-128-byte-swizzle-grouping-requirement">The 128-Byte Swizzle Grouping Requirement</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-wait-for-a-tma-load">How to Wait for a TMA Load</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-wait-for-a-tma-store">How to Wait for a TMA Store</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#putting-tma-into-a-pipeline">Putting TMA into a Pipeline</a></li>
 </ul>
             </nav>
         </div>
@@ -393,49 +398,75 @@
 <div class="overview admonition">
 <p class="admonition-title">Overview</p>
 <ul class="simple">
-<li><p>TMA is a hardware engine for asynchronous tile copies between global memory and shared memory. One thread issues the copy, and the engine moves the bytes.</p></li>
-<li><p>A TMA copy is described by a tensor map descriptor. The descriptor tells the engine the global tensor shape, strides, tile coordinates, and shared-memory swizzle mode.</p></li>
-<li><p>On the load path, TMA can swizzle the tile as it writes shared memory, so the tile lands in the layout expected by the Tensor Core.</p></li>
-<li><p>TMA loads complete through an <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> with byte-count tracking. TMA stores use a commit group and wait group.</p></li>
+<li><p>TMA asynchronously moves tiles between global memory and shared memory. One thread in a warp issues the operation; hardware performs the remaining address calculation and data transfer.</p></li>
+<li><p>A tensor map descriptor describes the global tensor, including its shape, strides, tile shape, and swizzle mode. The TMA instruction supplies the current tile coordinates and shared-memory address. On a load, TMA can apply the swizzle while writing shared memory, so the tile arrives in the layout expected by the later MMA.</p></li>
+<li><p>TMA loads and stores use different completion mechanisms. A load uses an <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> to track the number of transferred bytes; a store uses a commit group and wait group to determine when its source buffer can be reused.</p></li>
 </ul>
 </div>
-<p>A Tensor Core only helps if it has data ready to consume. In a GEMM or attention kernel, the math may be compute-bound once the pipeline is full (<a class="reference internal" href="../chapter_performance/index.html#chap-performance"><span class="std std-ref">What Makes a Kernel Fast</span></a>), but the pipeline only stays full if the next operand tile arrives in time.</p>
-<p>The older way to move a tile is to have threads copy it themselves. Each thread computes addresses, issues loads from global memory, and stores values into shared memory. That works, but it spends warp instructions on address arithmetic and copy bookkeeping instead of compute. It also makes the copy path visible in the instruction stream of the same warps that are supposed to feed the Tensor Core.</p>
-<p>The Tensor Memory Accelerator, or TMA, moves this work into a hardware copy engine. One thread issues a tile copy. The copy engine then moves a rectangular tile between global memory and shared memory asynchronously. While the engine is moving bytes, the rest of the CTA can continue with other work.</p>
-<p>TMA also handles part of the layout problem. A Tensor Core does not just need the right values in shared memory. It needs them in the right shared-memory layout. On the load path, TMA can apply a shared-memory swizzle as it writes the tile. That lets the tile land directly in the layout the later MMA expects.</p>
+<p>Start with the most common situation in a GEMM mainloop. While the Tensor Core computes tile <span class="math notranslate nohighlight">\(k\)</span>, the next A and B tiles must reach shared memory before the current computation finishes. If the data arrives late, the Tensor Core has to wait. The pipeline then develops a <strong>bubble</strong>, meaning a period in which the compute unit sits idle waiting for data.</p>
+<p>One way to move the tiles is to have several threads cooperate: each thread computes its global-memory and shared-memory addresses, then executes the corresponding load and store. The Tensor Memory Accelerator, or TMA, provides another path. One thread submits a tile copy, and a dedicated TMA engine performs the remaining address calculation and data transfer.</p>
+<p>TMA can also apply a swizzle as it writes shared memory, allowing the tile to arrive in the physical layout required by the later MMA. The following interactive figure shows this path. The global tensor on the left contains <code class="docutils literal notranslate"><span class="pre">16x128</span></code> <code class="docutils literal notranslate"><span class="pre">fp16</span></code> elements, and the blue rectangle selects an <code class="docutils literal notranslate"><span class="pre">8x64</span></code> tile. The right side shows how that tile is arranged after TMA writes it into shared memory. Each cell represents eight consecutive <code class="docutils literal notranslate"><span class="pre">fp16</span></code> values, or 16 bytes. Toggle the swizzle mode to compare the linear and 128-byte swizzled layouts.</p>
 <div style="overflow-x:auto;">
 <iframe src="../demo/tma_intro.html?v=tutorial-review-20260713" title="TMA: the Tensor Memory Accelerator" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-</div><p><em>Interactive: TMA copying a tile from global memory to shared memory. Toggle the swizzle mode and hover a source cell to see where it lands in shared memory.</em></p>
-<section id="one-thread-issues-hardware-moves-the-tile">
-<h2>One Thread Issues, Hardware Moves the Tile<a class="headerlink" href="#one-thread-issues-hardware-moves-the-tile" title="Link to this heading">#</a></h2>
-<p>A TMA copy starts with one issuing thread. That thread does not loop over all elements in the tile. It gives the hardware a description of the copy, then the TMA engine performs the transfer.</p>
-<p>The main input is a tensor map descriptor. The descriptor describes the global tensor and how a tile should be read from it. It records information such as the tensor shape, strides, element size, tile shape, and swizzle mode. The issuing thread also provides the shared-memory address where the tile should land.</p>
-<p>After the instruction is issued, the copy runs asynchronously. The issuing thread can continue. Other threads in the CTA can also continue. The transfer is now the responsibility of the TMA engine, not a loop of ordinary load and store instructions.</p>
-<p>This gives the kernel two different ways to express the same logical operation, “copy this tile.”</p>
-<p>One path is a thread copy. Threads cooperate to load from global memory and store into shared memory. This gives the kernel direct control over every access, but it consumes thread instructions and registers for address calculations.</p>
-<p>The other path is a TMA copy. One thread issues the transfer, and the hardware copy engine performs the rectangular copy. This is the natural path for large regular tiles, especially the operand tiles used by Tensor Core kernels.</p>
-<p>These two paths have different synchronization rules and different performance behavior. Choosing between them is a dispatch decision. The layout tells the kernel what memory arrangement it wants. The scope tells it which threads or CTAs are participating. The dispatch decides whether the copy is implemented by ordinary thread copy or by TMA.</p>
+</div><p><em>Hover over any source cell on the left to see its physical destination in shared memory.</em></p>
+<section id="how-one-thread-describes-an-entire-tile">
+<h2>How One Thread Describes an Entire Tile<a class="headerlink" href="#how-one-thread-describes-an-entire-tile" title="Link to this heading">#</a></h2>
+<p>The thread that issues a TMA copy does not iterate over the elements in the tile. It only provides the hardware with two kinds of information.</p>
+<p>The first is a tensor map descriptor. It records the global tensor’s element type, shape and strides in each dimension, the tile shape for one copy, and the swizzle mode to apply when writing shared memory. The same descriptor can usually be reused across many tile copies.</p>
+<p>The second is specific to the current copy: the tile’s starting coordinates in the global tensor and its destination address in shared memory. A useful distinction is that the descriptor says “how is this tensor organized?”, while the instruction arguments say “where does this copy begin, and where should it land?”</p>
+<p>The warp still follows the SIMT execution model when the TMA instruction is issued. Only the selected thread participates in that instruction; the other threads in the warp are masked off. This lasts only until the request has been submitted. The TMA engine then moves the data asynchronously, while the issuing warp and the other warps in the CTA may continue executing. They wait for completion only before they actually use the tile.</p>
 </section>
-<section id="swizzled-layouts">
-<h2>Swizzled Layouts<a class="headerlink" href="#swizzled-layouts" title="Link to this heading">#</a></h2>
-<p>Moving the tile is not enough. The tile also has to be placed in shared memory in a layout that the Tensor Core can read efficiently.</p>
-<p>This is where TMA swizzling is used. As TMA writes the tile into shared memory, it can permute the shared-memory address pattern. The global memory tile is still a logical rectangle, but the destination layout in shared memory can be swizzled.</p>
-<p>The swizzle mode is part of the TMA descriptor. Once the descriptor is set up, the issuing thread does not have to manually apply the swizzle. The engine applies it as the bytes land in shared memory.</p>
-<p>The important requirement is agreement. The TMA descriptor, the shared-memory tile layout, and the later MMA instruction must all describe the same layout (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a>). If TMA writes the tile with one swizzle but the MMA reads it as if it had another, the hardware will still do exactly what it was asked to do. The bytes will simply be arranged incorrectly for the computation.</p>
-<p>This is the point where the layout notation becomes more than a bookkeeping device. The layout used by the DSL has to match the hardware layout used by the TMA descriptor and the Tensor Core instruction. For example, if the kernel says an operand tile is stored in a 128-byte swizzled layout, the TMA descriptor has to use the matching swizzle mode, and the MMA dispatch has to expect that same shared-memory arrangement. The demo above lets you toggle between no swizzle and 128-byte swizzle; hover a source element to see where it lands once the swizzle is applied.</p>
-<p>A useful way to read the swizzle is that TMA is not changing the logical tile. It is changing where the logical elements land physically in shared memory. The later MMA still consumes the same logical A or B tile. The swizzle only decides how that tile is arranged across shared memory banks.</p>
+<section id="how-tma-writes-a-swizzled-layout">
+<h2>How TMA Writes a Swizzled Layout<a class="headerlink" href="#how-tma-writes-a-swizzled-layout" title="Link to this heading">#</a></h2>
+<p>Return to the interactive figure above and first select <code class="docutils literal notranslate"><span class="pre">None</span></code>. Each row is then written to shared memory in its original order, so logical sector <code class="docutils literal notranslate"><span class="pre">c</span></code> remains physical sector <code class="docutils literal notranslate"><span class="pre">c</span></code>.</p>
+<p>Now select <code class="docutils literal notranslate"><span class="pre">128B</span></code>. Each row in the figure contains eight 16-byte sectors, exactly 128 bytes. In this simplified, aligned example, logical sector <code class="docutils literal notranslate"><span class="pre">col</span></code> in row <code class="docutils literal notranslate"><span class="pre">row</span></code> is written to:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>physical_sector = col XOR row
+</pre></div>
+</div>
+<p>The sectors from one logical column now land at different physical positions in different rows, making a cross-row access less likely to concentrate on the same shared-memory banks. The TMA engine applies this address transformation while writing the tile; the issuing thread does not calculate each swizzled address itself.</p>
+<p>Swizzling changes the tile’s physical arrangement, not its logical contents. The TMA descriptor, the shared-memory tile layout, and the later MMA instruction must all describe the same physical arrangement (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a>). If TMA writes a 128-byte swizzle but MMA reads the data as a linear layout, the bytes have reached shared memory, but the Tensor Core will interpret them as the wrong matrix elements.</p>
 </section>
-<section id="d-tma-for-tiling-and-swizzling">
-<h2>3D TMA for Tiling and Swizzling<a class="headerlink" href="#d-tma-for-tiling-and-swizzling" title="Link to this heading">#</a></h2>
-<p>A plain TMA copy moves a flat 2D tile, but the shared-memory layout the Tensor Core wants is usually <em>tiled</em> into swizzle atoms (the 8 x 128-byte atoms from <a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a>). TMA handles that with an extra descriptor dimension. A <strong>3D TMA</strong> describes the shared-memory box as <code class="docutils literal notranslate"><span class="pre">(group,</span> <span class="pre">row,</span> <span class="pre">col)</span></code>, where the group dimension walks across atoms and the inner two address within one atom. A single 3D copy then both lays the tile out atom by atom (tiling) and applies the swizzle inside each atom, so the data arrives already in the layout the MMA expects, with no separate tiling or swizzling pass.</p>
+<section id="using-3d-tma-to-move-multiple-swizzle-atoms">
+<h2>Using 3D TMA to Move Multiple Swizzle Atoms<a class="headerlink" href="#using-3d-tma-to-move-multiple-swizzle-atoms" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> uses an <code class="docutils literal notranslate"><span class="pre">8</span> <span class="pre">rows</span> <span class="pre">x</span> <span class="pre">128</span> <span class="pre">bytes</span></code> repeating unit called a swizzle atom. Address remapping occurs only within an atom, so the innermost contiguous dimension of a TMA box cannot exceed 128 bytes. For <code class="docutils literal notranslate"><span class="pre">fp16</span></code>, that space holds exactly 64 elements.</p>
+<p>Now consider a <code class="docutils literal notranslate"><span class="pre">16x128</span></code> <code class="docutils literal notranslate"><span class="pre">fp16</span></code> matrix slice. Each row contains 128 <code class="docutils literal notranslate"><span class="pre">fp16</span></code> values, or 256 bytes, so the row cannot directly serve as one row of a 128-byte swizzle atom. To use <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>, split each row into two groups of 64 <code class="docutils literal notranslate"><span class="pre">fp16</span></code> values:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>group 0: columns 0-63    = 128 bytes
+group 1: columns 64-127  = 128 bytes
+</pre></div>
+</div>
+<p>For a column coordinate <code class="docutils literal notranslate"><span class="pre">j</span></code> within the slice, define:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>group = j // 64
+col   = j % 64
+
+global[row, j] = global3[group, row, col]
+</pre></div>
+</div>
+<p>The same data now has a three-dimensional <code class="docutils literal notranslate"><span class="pre">(group=2,</span> <span class="pre">row=16,</span> <span class="pre">col=64)</span></code> view. This reshape only changes how the tensor map interprets the coordinates; it does not move the data in global memory ahead of time. After adding the <code class="docutils literal notranslate"><span class="pre">group</span></code> dimension, the innermost <code class="docutils literal notranslate"><span class="pre">col</span></code> dimension contains 64 <code class="docutils literal notranslate"><span class="pre">fp16</span></code> values and therefore satisfies the 128-byte limit.</p>
+<p>The next interactive figure draws this process. The left side is a complete <code class="docutils literal notranslate"><span class="pre">16x256</span></code> global matrix. Each cell represents one 16-byte sector, or eight <code class="docutils literal notranslate"><span class="pre">fp16</span></code> values. The blue region selects one <code class="docutils literal notranslate"><span class="pre">16x128</span></code> slice. A single 3D TMA copy writes its two groups into <code class="docutils literal notranslate"><span class="pre">g0</span></code> and <code class="docutils literal notranslate"><span class="pre">g1</span></code> on the right.</p>
+<p>Each group has 16 rows, while one swizzle atom has only eight. Both <code class="docutils literal notranslate"><span class="pre">g0</span></code> and <code class="docutils literal notranslate"><span class="pre">g1</span></code> therefore contain two atoms: rows 0-7 form the first atom, and rows 8-15 form the second. The complete slice contains four atoms. With <code class="docutils literal notranslate"><span class="pre">128B</span></code> enabled, TMA rearranges sectors inside each atom according to <code class="docutils literal notranslate"><span class="pre">physical_sector</span> <span class="pre">=</span> <span class="pre">logical_sector</span> <span class="pre">XOR</span> <span class="pre">(row</span> <span class="pre">%</span> <span class="pre">8)</span></code>.</p>
 <div style="overflow-x:auto;">
-<iframe class="demo-tma3d" src="../demo/tma_3d.html?v=tutorial-review-20260713" title="Tiling and swizzling with 3D TMA" loading="lazy"
+<iframe class="demo-tma3d" src="../demo/tma_3d.html?v=tutorial-review-20260713" title="Using 3D TMA to move multiple swizzle atoms" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-</div><p><em>Interactive: a 3D TMA copy, addressed as (group, row, col), tiling into swizzled shared memory.</em></p>
-<p>Choosing the swizzle <em>format</em> is tied to this tiling. A wider swizzle scatters a column across more banks, so 128-byte swizzle is the default when it fits, but an N-byte atom needs the tile’s contiguous dimension to fill it. A tile that is small because of a shape constraint therefore cannot use 128-byte swizzle and must step down to 64-byte or 32-byte: the rule of thumb is to pick the largest swizzle the tile can fill (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a>). The demo below shows the constraint directly: a 128-byte swizzle on a 16 x 16 tile becomes conflict-free only once the tile is split into 16 x 8 groups that match the atom.</p>
+</div><p><em>Toggle <code class="docutils literal notranslate"><span class="pre">Col</span> <span class="pre">offset</span></code> to select the first or second 128 columns of the original matrix. Hover over any cell in the blue region to see where its 16-byte sector lands in shared memory.</em></p>
+<section id="the-128-byte-swizzle-grouping-requirement">
+<h3>The 128-Byte Swizzle Grouping Requirement<a class="headerlink" href="#the-128-byte-swizzle-grouping-requirement" title="Link to this heading">#</a></h3>
+<p>Why split a 256-byte row into two 128-byte groups? In addition to satisfying the TMA box width limit, the grouping changes which shared-memory banks a cross-row access reaches.</p>
+<p>Consider a <code class="docutils literal notranslate"><span class="pre">16x16</span></code> grid of sectors. Each sector is 16 bytes, so one row occupies 256 bytes. Suppose we read the same sector column from eight consecutive rows, producing eight parallel 16-byte accesses.</p>
+<p>One 16-byte access spans four adjacent shared-memory banks. To make the pattern easier to inspect, the figure below groups the 32 banks into eight bank sectors, <code class="docutils literal notranslate"><span class="pre">S0</span></code> through <code class="docutils literal notranslate"><span class="pre">S7</span></code>, with four adjacent banks in each sector. If two accesses land in the same bank sector, they contend for the same group of banks.</p>
+<p>First split each row into two 128-byte groups. For a column <code class="docutils literal notranslate"><span class="pre">col</span></code> in the complete grid, <code class="docutils literal notranslate"><span class="pre">col</span> <span class="pre">//</span> <span class="pre">8</span></code> selects the left or right group and <code class="docutils literal notranslate"><span class="pre">local_col</span> <span class="pre">=</span> <span class="pre">col</span> <span class="pre">%</span> <span class="pre">8</span></code> gives the column inside that group. For rows 0-7, the swizzled bank sector is:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank_sector = local_col XOR (row % 8)
+</pre></div>
+</div>
+<p>The eight rows produce eight different results, so these accesses can proceed in parallel.</p>
+<p>If the row remains ungrouped with a 256-byte stride, moving to the next row crosses two 128-byte units. The value used by the XOR consequently advances by two on each row:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank_sector = local_col XOR ((2*row + col // 8) % 8)
+</pre></div>
+</div>
+<p>This expression produces only four distinct results. Each bank sector is accessed twice, creating a 2-way conflict. The ungrouped state is included only for comparison; it is not a legal <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> TMA box.</p>
+<p>The following interactive figure compares the two cases. Select a <code class="docutils literal notranslate"><span class="pre">Column</span></code> and eight consecutive rows in the original grid on the left. On the right, cells with black outlines show where those accesses land in the swizzled layout. With <code class="docutils literal notranslate"><span class="pre">Tiling</span></code> set to <code class="docutils literal notranslate"><span class="pre">Yes</span></code>, each row is first split into 128-byte groups <code class="docutils literal notranslate"><span class="pre">g0</span></code> and <code class="docutils literal notranslate"><span class="pre">g1</span></code>. With <code class="docutils literal notranslate"><span class="pre">Tiling</span></code> set to <code class="docutils literal notranslate"><span class="pre">No</span></code>, the figure retains the 256-byte row stride as a comparison. The <code class="docutils literal notranslate"><span class="pre">S0</span></code>-<code class="docutils literal notranslate"><span class="pre">S7</span></code> summary at the bottom shows which bank sectors the accesses use. Changing <code class="docutils literal notranslate"><span class="pre">dtype</span></code> only changes how many elements fit in a sector; it does not change the address mapping.</p>
 <div style="overflow-x:auto;">
-<iframe class="demo-tma3d" src="../demo/tiling_constraint.html?v=tutorial-review-20260713" title="Swizzle imposes a tiling constraint" loading="lazy"
+<iframe class="demo-tma3d" src="../demo/tiling_constraint.html?v=tutorial-review-20260713" title="How 128-byte grouping affects bank conflicts" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 <script>
@@ -448,48 +479,52 @@
     });
   });
 })();
-</script><p><em>Interactive: a 128-byte swizzle on a 16 x 16 tile, conflict-free once tiled into 16 x 8 groups.</em></p>
+</script><p><em>Toggle tiling, then select a column and a range of eight rows to compare bank-sector use with and without grouping.</em></p>
+<p>When the tile dimensions and target access pattern allow it, choose the widest swizzle the tile can hold so that accesses spread across more banks. An <code class="docutils literal notranslate"><span class="pre">N</span></code>-byte swizzle atom requires a contiguous dimension of at least <code class="docutils literal notranslate"><span class="pre">N</span></code> bytes. If the tile cannot hold a 128-byte atom, use a 64-byte or 32-byte swizzle instead (<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a>).</p>
 </section>
-<section id="completion-loads">
-<h2>Completion: Loads<a class="headerlink" href="#completion-loads" title="Link to this heading">#</a></h2>
-<p>The copy is asynchronous, so issuing it is not enough. A consumer cannot read the shared-memory tile just because the TMA instruction has been issued. The tile is safe to read only after the engine has finished writing the bytes.</p>
-<p>For TMA loads, the completion signal is an <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> (<a class="reference internal" href="../chapter_async_barriers/index.html#chap-async-barriers"><span class="std std-ref">Async Coordination: mbarriers</span></a>).</p>
-<p>The usual sequence is:</p>
-<ol class="arabic simple">
-<li><p>initialize or reuse an <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> for the pipeline stage;</p></li>
-<li><p>tell the barrier how many bytes the TMA transfer is expected to write;</p></li>
-<li><p>issue the TMA load;</p></li>
-<li><p>let the TMA engine update the barrier as bytes arrive;</p></li>
-<li><p>have the consumer wait on the barrier phase before reading the shared-memory tile.</p></li>
-</ol>
-<p>The byte count is set with an operation such as:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>mbarrier.arrive.expect_tx(bytes)
+</section>
+<section id="how-to-wait-for-a-tma-load">
+<h2>How to Wait for a TMA Load<a class="headerlink" href="#how-to-wait-for-a-tma-load" title="Link to this heading">#</a></h2>
+<p>A TMA load is asynchronous. Issuing the instruction only starts the transfer; the consumer cannot read the destination tile yet. TMA uses an <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> for this handoff. The producer tells the barrier how many bytes to expect during the current phase, the TMA engine updates the barrier after writing those bytes, and the consumer waits for that barrier phase to complete.</p>
+<p>One phase of an <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> tracks both an arrival count and a pending transaction-byte count. The phase completes only after both reach zero.</p>
+<p>Consider a concrete example. Suppose a kernel loads two operand tiles, A and B, each containing <code class="docutils literal notranslate"><span class="pre">2048</span> <span class="pre">bytes</span></code>, and associates both copies with the same <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code>. The phase must wait for:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>2048 + 2048 = 4096 bytes
 </pre></div>
 </div>
-<p>This does two jobs. It records the expected transfer size, and it also performs the issuing thread’s arrival on the barrier. The barrier is not complete merely because this call happened. It still waits for the TMA engine to report that the expected bytes have arrived.</p>
-<p>As the transfer progresses, the engine performs complete-tx updates against the barrier. The barrier phase flips only after both conditions are met: the arrival count is satisfied, and the pending byte count reaches zero.</p>
-<p>The consumer then waits on that barrier. Once the wait completes for the expected phase, the shared-memory tile is ready. At that point the MMA path can safely read it.</p>
-<p><img alt="TMA load synchronization flow" src="../_images/tma_sync_flow.svg" /></p>
-<p>This is the same barrier model used by other asynchronous producer-consumer handoffs. The producer is the TMA engine. The consumer is the MMA path or any other code that reads the shared-memory tile. The barrier is the explicit handoff between them.</p>
-</section>
-<section id="completion-stores">
-<h2>Completion: Stores<a class="headerlink" href="#completion-stores" title="Link to this heading">#</a></h2>
-<p>TMA stores move data in the opposite direction, from shared memory to global memory. They are also asynchronous, but the completion mechanism is different.</p>
-<p>A TMA load usually feeds a consumer inside the same kernel. The MMA path needs to know when the shared-memory tile is ready. That is why the load path uses an <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code>.</p>
-<p>A TMA store usually writes the final data out to global memory. There is often no immediate in-kernel consumer waiting on the stored result. The main thing the kernel needs to know is when it is safe to reuse the shared-memory buffer or finish the store sequence.</p>
-<p>For that, TMA stores use a commit group and wait group. The kernel issues one or more stores, commits the group, and later waits for the group to drain. After the wait completes, the stores in that group have finished from the kernel’s point of view, and the shared-memory region used by the store can be reused safely.</p>
-<p>So the rule is simple:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TMA load:  wait through an mbarrier with byte-count tracking
-TMA store: wait through a commit group and wait group
+<p>Assume the barrier was initialized with an expected arrival count of 1. The issuing thread associates both TMA loads with the barrier and executes <code class="docutils literal notranslate"><span class="pre">mbarrier.arrive.expect_tx(4096)</span></code>. This performs the thread’s one arrival and sets the pending byte count to 4096:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>after expect_tx:       arrival count = 0, pending bytes = 4096
+after TMA completes:   arrival count = 0, pending bytes = 0
 </pre></div>
 </div>
-<p>The two mechanisms serve the same purpose at different handoff points. Loads need to make a shared-memory tile visible to later consumers. Stores need to make sure an outgoing transfer is complete before the kernel reuses the source storage or relies on the store having drained.</p>
+<p>As each TMA copy finishes, the engine applies a complete-tx update that subtracts the corresponding byte count. The consumer waits with <code class="docutils literal notranslate"><span class="pre">try_wait(phase)</span></code>. Only after the two copies have completed all 4096 bytes does the pending count reach zero, allowing the consumer to read the A and B tiles safely. The next figure shows this handoff in time order.</p>
+<p><img alt="TMA load synchronization: a thread issues copies and registers the byte count, the TMA engine updates the mbarrier after transferring the data, and the consumer waits for the phase to complete" src="../_images/tma_sync_flow.svg" /></p>
 </section>
-<section id="why-tma-matters-for-pipelining">
-<h2>Why TMA Matters for Pipelining<a class="headerlink" href="#why-tma-matters-for-pipelining" title="Link to this heading">#</a></h2>
-<p>TMA is most useful when it is part of a pipeline. A kernel can issue the load for a future tile while the Tensor Core computes the current tile. The load runs in the background. The compute runs in the foreground. The barrier connects the two when the future tile becomes the current tile.</p>
-<p>A typical GEMM loop uses this structure repeatedly. One stage of shared memory holds the tile currently consumed by MMA. Another stage is being filled by TMA. As the loop advances, the roles rotate. Before MMA reads a stage, it waits on that stage’s load barrier. Before TMA overwrites a stage, the kernel makes sure the previous consumer is done with it.</p>
-<p>This is why TMA and <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> usually appear together in Blackwell- and Hopper-style kernels. TMA gives the kernel an asynchronous copy engine. The barrier gives the kernel a precise way to know when the copied bytes are ready.</p>
+<section id="how-to-wait-for-a-tma-store">
+<h2>How to Wait for a TMA Store<a class="headerlink" href="#how-to-wait-for-a-tma-store" title="Link to this heading">#</a></h2>
+<p>A TMA store moves data in the opposite direction, from shared memory to global memory. The synchronization question changes with that direction: a load consumer needs to know when the destination tile is ready to read, whereas a store producer needs to know when the source buffer is safe to reuse.</p>
+<p>For example, suppose the epilogue has written an output tile into <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> and then starts a TMA store to write it back to <code class="docutils literal notranslate"><span class="pre">D</span></code>. The kernel cannot immediately overwrite <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code>, because the TMA engine might then read data from the next iteration. The store path uses a bulk async group:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>issue one or more TMA stores
+cp.async.bulk.commit_group
+cp.async.bulk.wait_group 0
+reuse Dsmem
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">commit_group</span></code> combines the uncommitted stores issued so far into one bulk async group. <code class="docutils literal notranslate"><span class="pre">wait_group</span> <span class="pre">0</span></code> waits until all previously committed groups have completed. Only after it returns can <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> be reused safely.</p>
+<p>The two paths can therefore be distinguished as follows:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TMA load:  consumer waits for data through an mbarrier with byte tracking
+TMA store: producer waits for source reuse through a commit group and wait group
+</pre></div>
+</div>
+</section>
+<section id="putting-tma-into-a-pipeline">
+<h2>Putting TMA into a Pipeline<a class="headerlink" href="#putting-tma-into-a-pipeline" title="Link to this heading">#</a></h2>
+<p>TMA reduces the number of copy instructions, but its larger benefit is the ability to overlap data movement with computation. With two shared-memory stages, for example:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>time t:    MMA reads stage 0    TMA fills stage 1
+time t+1:  MMA reads stage 1    TMA fills stage 0
+</pre></div>
+</div>
+<p>While the Tensor Core reads stage 0, TMA writes the next tile into stage 1. The two stages exchange roles on the next iteration. Before MMA reads a stage, it waits for the corresponding TMA load to finish. Before TMA overwrites a stage, the kernel also confirms that the previous computation no longer uses its data.</p>
+<p>TMA performs the asynchronous transfer, and the barrier hands each stage from producer to consumer. Together, they allow the time spent waiting for future data to be hidden behind computation on the current tile.</p>
 </section>
 </section>
 
@@ -540,12 +575,15 @@ TMA store: wait through a commit group and wait group
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#one-thread-issues-hardware-moves-the-tile">One Thread Issues, Hardware Moves the Tile</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzled-layouts">Swizzled Layouts</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#d-tma-for-tiling-and-swizzling">3D TMA for Tiling and Swizzling</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#completion-loads">Completion: Loads</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#completion-stores">Completion: Stores</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#why-tma-matters-for-pipelining">Why TMA Matters for Pipelining</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-one-thread-describes-an-entire-tile">How One Thread Describes an Entire Tile</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-tma-writes-a-swizzled-layout">How TMA Writes a Swizzled Layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#using-3d-tma-to-move-multiple-swizzle-atoms">Using 3D TMA to Move Multiple Swizzle Atoms</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#the-128-byte-swizzle-grouping-requirement">The 128-Byte Swizzle Grouping Requirement</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-wait-for-a-tma-load">How to Wait for a TMA Load</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-wait-for-a-tma-store">How to Wait for a TMA Store</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#putting-tma-into-a-pipeline">Putting TMA into a Pipeline</a></li>
 </ul>
   </nav></div>
 
