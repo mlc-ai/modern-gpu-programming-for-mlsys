@@ -43,6 +43,8 @@
 
   .info { max-width:1200px; margin:14px auto 0; text-align:center; font-size:13px; color:var(--dim); font-weight:600; }
 
+  .unit-note { max-width:1200px; margin:4px auto 12px; text-align:center; font-size:12px; color:var(--dim); font-weight:600; }
+
   .leg { gap:0; margin-top:12px; }
 </style>
 </head>
@@ -88,6 +90,7 @@
   <div><span class="lbl">Row group</span><div class="bg" id="rg"></div></div>
   <div><span class="lbl">Col group</span><div class="bg" id="cg"></div></div>
 </div>
+<div class="unit-note" id="unit-note"></div>
 
 <div class="main">
   <div class="mat-box" style="border-color:#8b5cf6;">
@@ -136,7 +139,8 @@
   </div>
   <div style="border:1px solid #059669; border-radius:8px; padding:8px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:11px;">
     <div style="font-weight:700; color:#065f46; margin-bottom:4px;">tcgen05.mma PTX</div>
-    <div style="color:#475569;">tcgen05.mma.cta_group::1.kind::f16 <span style="color:#059669;">taddr</span>, <span style="color:#8b5cf6;">a_desc</span>, <span style="color:#8b5cf6;">b_desc</span>, <span style="color:#f59e0b;">idesc</span>, <span style="color:#059669;">enable</span>;</div>
+    <div style="color:#475569;">tcgen05.mma.cta_group::1.kind::f16 [<span style="color:#059669;">taddr</span>], <span style="color:#8b5cf6;">a_desc</span>, <span style="color:#8b5cf6;">b_desc</span>, <span style="color:#f59e0b;">idesc</span>,</div>
+    <div style="color:#475569; padding-left:20px;">{<span style="color:#64748b;">mask0, mask1, mask2, mask3</span>}, <span style="color:#059669;">enable</span>;</div>
   </div>
 </div>
 
@@ -187,15 +191,18 @@ function draw() {
   // Dims
   const mEnd = rOff + mBlocks - 1;
   const nEnd = cOff + nBlocks - 1;
+  document.getElementById('unit-note').textContent =
+    '每个 cell 表示一个 16×16 element block；当前 C tile 为 ' +
+    mBlocks + '×' + nBlocks + ' cells = ' + ST.m + '×' + ST.n + ' elements';
   if (tA) {
-    document.getElementById('ad').textContent = 'K\u00d7M：K-row ' + (ST.k < 0 ? '全部' : ST.k) + '，M-cols ' + rOff + '-' + mEnd;
+    document.getElementById('ad').textContent = 'K\u00d7M：K-block ' + (ST.k < 0 ? '全部' : ST.k) + '，M-blocks ' + rOff + '-' + mEnd;
   } else {
-    document.getElementById('ad').textContent = 'M\u00d7K：M-rows ' + rOff + '-' + mEnd + '，K-col ' + (ST.k < 0 ? '全部' : ST.k);
+    document.getElementById('ad').textContent = 'M\u00d7K：M-blocks ' + rOff + '-' + mEnd + '，K-block ' + (ST.k < 0 ? '全部' : ST.k);
   }
   if (tB) {
-    document.getElementById('bd').textContent = 'N\u00d7K：N-rows ' + cOff + '-' + nEnd + '，K-col ' + (ST.k < 0 ? '全部' : ST.k);
+    document.getElementById('bd').textContent = 'N\u00d7K：N-blocks ' + cOff + '-' + nEnd + '，K-block ' + (ST.k < 0 ? '全部' : ST.k);
   } else {
-    document.getElementById('bd').textContent = 'K\u00d7N：K-row ' + (ST.k < 0 ? '全部' : ST.k) + '，N-cols ' + cOff + '-' + nEnd;
+    document.getElementById('bd').textContent = 'K\u00d7N：K-block ' + (ST.k < 0 ? '全部' : ST.k) + '，N-blocks ' + cOff + '-' + nEnd;
   }
   document.getElementById('cd').textContent = ST.m + '\u00d7' + ST.n + ' accumulator';
 
@@ -289,7 +296,7 @@ function draw() {
 
   // Info
   const inf = document.getElementById('inf');
-  inf.textContent = 'K step ' + ST.k + ' / ' + totalK + '  |  A 读取 ' + mBlocks + ' 个 block，B 读取 ' + nBlocks + ' 个 block';
+  inf.textContent = 'K step ' + ST.k + ' / ' + totalK + '  |  A 读取 ' + mBlocks + ' 个 16×16 block，B 读取 ' + nBlocks + ' 个 16×16 block';
 }
 
 function mk(t, c) { const d = document.createElement(t); if (c) d.className = c; return d; }
