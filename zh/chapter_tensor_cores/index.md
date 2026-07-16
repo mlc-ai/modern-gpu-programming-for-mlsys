@@ -161,7 +161,7 @@ rows 32-47  -> lanes  80-95
 rows 48-63  -> lanes 112-127
 ```
 
-这样，两个独立的 `M=64` tiles 就能够共享 TMEM 的 128-lane 结构，而不会覆盖彼此的数据。N 维仍然沿 TMEM columns 展开，变化的只是 M rows 在 Lane 轴上的放置方式。
+这样，两个独立的 `M=64` tiles 就能够共享 TMEM 的 128-lane 结构，而不会覆盖彼此的数据。N 维仍然沿 TMEM columns 展开，变化的只是 M rows 在 Lane 轴上的放置方式。图中橙色 bands 保存当前的 C tile，斜线 bands 则是它没有使用的 Lane 位置；另一个使用 lane alignment 16 的 `M=64` tile 可以占用这些位置。
 
 ![`cta_group::1`、`M=64`、不使用 `.ws`：四组连续的 16 行以 32 为 Lane stride；lane alignment 可以选择 0 或 16，从而为另一个 `M=64` tile 留出互补位置](../../img/mma_cg1_m64.svg)
 

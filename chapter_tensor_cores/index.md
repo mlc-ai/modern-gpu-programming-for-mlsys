@@ -161,7 +161,7 @@ rows 32-47  -> lanes  80-95
 rows 48-63  -> lanes 112-127
 ```
 
-The two `M=64` tiles can therefore share TMEM's 128-lane structure without overlapping. N still extends across TMEM columns; only the placement of M rows along the Lane axis changes.
+The two `M=64` tiles can therefore share TMEM's 128-lane structure without overlapping. N still extends across TMEM columns; only the placement of M rows along the Lane axis changes. In the figure, the orange bands hold the current C tile, while the hatched bands are its unused Lane positions; a second `M=64` tile with lane alignment 16 can occupy those bands.
 
 ![`cta_group::1`, `M=64`, without `.ws`: four 16-row groups use a Lane stride of 32; lane alignment 0 or 16 selects complementary positions](../img/mma_cg1_m64.svg)
 
