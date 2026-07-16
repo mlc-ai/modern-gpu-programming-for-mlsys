@@ -1,4 +1,4 @@
-"""Generate the simple TMEM address-space grid for chapter_tmem ('Special Memory: TMEM').
+"""Generate the simple TMEM address-space grid for chapter_tmem ('Tensor Memory (TMEM)').
 
 The chapter's "A 2D Address Space" section promises a plain grid: 128 TLane rows by
 up to 512 TCol columns, scoped to the CTA, with an accumulator written
