@@ -45,6 +45,7 @@
   .ti.expr { min-width:440px; max-width:70vw; }
   .ti.shape { width:84px; }
   select.ti { font-family:inherit; cursor:pointer; }
+  select.ti:disabled { opacity:.45; cursor:not-allowed; }
 
   /* preset = secondary helper (just loads an example into the two fields) */
   .preset-row { display:flex; align-items:center; gap:8px; justify-content:center;
@@ -137,6 +138,7 @@
       <select id="dtype" class="ti"></select>
       <select id="swmode" class="ti"></select>
     </div>
+    <div class="flbl-sub" id="swhint" hidden>applies to shared-memory layouts only (sole axis @m)</div>
   </div>
   <div class="field grow">
     <label class="flbl">Tile layout&nbsp;&nbsp;<span class="flbl-sub">S[shard] + R[replica] + offset</span></label>
