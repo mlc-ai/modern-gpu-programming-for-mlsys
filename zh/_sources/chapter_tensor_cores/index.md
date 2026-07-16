@@ -6,7 +6,7 @@
 
 - `tcgen05.mma` 通常从 SMEM 读取 A、B，并在 TMEM 中更新 C/D accumulator；epilogue 再通过 `tcgen05.ld` 将结果读回 registers。
 - `cta_group::1` 使用当前 CTA，`cta_group::2` 同时使用一个 CTA pair；两种模式对应不同的 TMEM accumulator 映射。
-- Block-scaled MMA 还需要位于 TMEM 的 SFA、SFB；它们先进入 SMEM，再由 `tcgen05.cp` 搬入 TMEM，并根据 A、B 在 CTA pair 中的分工进行分片或复制。
+- Block-scaled MMA 还需要位于 TMEM 的 SFA、SFB；在本章采用的加载路径中，它们先进入 SMEM，再由 `tcgen05.cp` 搬入 TMEM，并根据 A、B 在 CTA pair 中的分工进行分片或复制。
 :::
 
 “{ref}`Tensor Core 数据布局的演进 <chap_layout_generations>`”一章已经介绍了矩阵乘累加（Matrix Multiply-Accumulate，MMA）在 Ampere、Hopper 和 Blackwell 架构上的数据路径。本章将进一步聚焦 Blackwell 的 `tcgen05.mma`：一条 MMA 指令如何发起，累加器如何映射到 TMEM，以及 `cta_group` 如何决定操作使用当前 CTA 还是一个 CTA pair 的资源。
@@ -171,12 +171,7 @@ rows 48-63  -> lanes 112-127
 
 偶数 CTA 保存逻辑 rows `0-127`，奇数 CTA 保存逻辑 rows `128-255`。两个 CTA 都使用自己 TMEM 中的 lanes `0-127`，N 维则沿各自完整的 TMEM columns 展开。
 
-物理上，这是两块分别属于不同 CTA 的 128-row TMEM；逻辑上，它们共同表示一个 `256×N` accumulator tile。A 也按照 M 维分工：偶数 CTA 在自己的 SMEM 中准备 `A[0:128, :]`，奇数 CTA 准备 `A[128:256, :]`。B 在逻辑上覆盖完整的 N 维；装入 SMEM 时，两个 CTA 各自搬运一半 N columns，MMA 再将两部分作为完整的 B tile 使用。因此，两侧计算的是：
-
-```text
-偶数 CTA: C[0:128,   :] = A[0:128,   :] × B
-奇数 CTA: C[128:256, :] = A[128:256, :] × B
-```
+物理上，这是分别属于两个 CTA 的两块 128-row TMEM；逻辑上，它们共同表示一个 `256×N` accumulator tile。A、B 如何分布到两个 CTA 的 SMEM，由具体 kernel 的数据组织方式决定，并不是该 accumulator layout 的一部分。
 
 ![`cta_group::2`、`M=256`：M 维连续分配给 CTA pair 中的两个 CTA，每个 CTA 保存 128 行](../../img/mma_cg2_m256.svg)
 
@@ -233,7 +228,7 @@ SFA, SFB: global memory -> SMEM -> tcgen05.cp -> TMEM -> tcgen05.mma
 奇数 CTA: SFA[128:256, :]
 ```
 
-B 的情况不同。两个 CTA 在装入 SMEM 时各自准备 B 的一半 N columns，但 cooperative MMA 会把两部分作为完整的 B tile 使用。无论计算 C 的上半部还是下半部，都需要 N 维上的全部 B columns，因此也都需要完整的：
+图中采用一种常见实现：两个 CTA 各自在 SMEM 中准备 B 的一半 N columns，cooperative MMA 再将两部分作为完整的 B tile 使用。因此，两侧都需要完整的：
 
 ```text
 SFB[0:N, :]
@@ -245,7 +240,7 @@ SFB[0:N, :]
 
 ## `tcgen05` 指令如何正确交接数据
 
-`tcgen05.mma` 虽然只需要由一个 thread 发起，但它执行的是一次 tile-level 的协同操作。`cta_group` 决定这次操作使用当前 CTA，还是同时使用一个 CTA pair 的 SMEM 和 TMEM；对应的 TMEM layout 则决定每个 accumulator 元素最终写入哪个 CTA 的哪些 `TLane` 和 `TCol` 坐标。对于 block-scaled MMA，SFA 和 SFB 还必须预先通过 `tcgen05.cp` 搬入 TMEM，并按照 A、B 在 CTA pair 中的分工方式进行分片或复制。
+`tcgen05.mma` 虽然只需要由一个 thread 发起，但它执行的是一次 tile-level 的协同操作。`cta_group` 决定这次操作使用当前 CTA，还是同时使用一个 CTA pair 的 SMEM 和 TMEM；对应的 TMEM layout 则决定每个 accumulator 元素最终写入哪个 CTA 的哪些 `TLane` 和 `TCol` 坐标。在本章采用的 block-scaled 路径中，SFA 和 SFB 会先通过 `tcgen05.cp` 搬入 TMEM，再按照 A、B 在 CTA pair 中的分工方式进行分片或复制。
 
 因此，在连接 `tcgen05.cp`、`tcgen05.mma` 和 `tcgen05.ld` 等异步指令时，需要同时保证三件事：操作作用于正确的 CTA 或 CTA pair，生产者生成的数据布局与消费者预期的布局相匹配，并且消费者已经通过相应的完成与顺序机制确认数据可以安全使用。只要其中任一条件不满足，硬件就可能从错误的 TMEM 坐标解释数据，或者在数据仍在更新时提前读取它。
 

@@ -304,7 +304,7 @@
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 通常从 SMEM 读取 A、B，并在 TMEM 中更新 C/D accumulator；epilogue 再通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 将结果读回 registers。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code> 使用当前 CTA，<code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> 同时使用一个 CTA pair；两种模式对应不同的 TMEM accumulator 映射。</p></li>
-<li><p>Block-scaled MMA 还需要位于 TMEM 的 SFA、SFB；它们先进入 SMEM，再由 <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> 搬入 TMEM，并根据 A、B 在 CTA pair 中的分工进行分片或复制。</p></li>
+<li><p>Block-scaled MMA 还需要位于 TMEM 的 SFA、SFB；在本章采用的加载路径中，它们先进入 SMEM，再由 <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> 搬入 TMEM，并根据 A、B 在 CTA pair 中的分工进行分片或复制。</p></li>
 </ul>
 </div>
 <p>“<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core 数据布局的演进</span></a>”一章已经介绍了矩阵乘累加（Matrix Multiply-Accumulate，MMA）在 Ampere、Hopper 和 Blackwell 架构上的数据路径。本章将进一步聚焦 Blackwell 的 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>：一条 MMA 指令如何发起，累加器如何映射到 TMEM，以及 <code class="docutils literal notranslate"><span class="pre">cta_group</span></code> 如何决定操作使用当前 CTA 还是一个 CTA pair 的资源。</p>
@@ -443,11 +443,7 @@ rows 48-63  -&gt; lanes 112-127
 <h3><code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code>，<code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">256</span></code><a class="headerlink" href="#cta-group-2-m-256" title="Link to this heading">#</a></h3>
 <p>当 <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">256</span></code> 时，一个 CTA 的 128 个 Lane rows 无法容纳完整的 M 维，因此 accumulator 被分布到 CTA pair 的两块 TMEM 中。</p>
 <p>偶数 CTA 保存逻辑 rows <code class="docutils literal notranslate"><span class="pre">0-127</span></code>，奇数 CTA 保存逻辑 rows <code class="docutils literal notranslate"><span class="pre">128-255</span></code>。两个 CTA 都使用自己 TMEM 中的 lanes <code class="docutils literal notranslate"><span class="pre">0-127</span></code>，N 维则沿各自完整的 TMEM columns 展开。</p>
-<p>物理上，这是两块分别属于不同 CTA 的 128-row TMEM；逻辑上，它们共同表示一个 <code class="docutils literal notranslate"><span class="pre">256×N</span></code> accumulator tile。A 也按照 M 维分工：偶数 CTA 在自己的 SMEM 中准备 <code class="docutils literal notranslate"><span class="pre">A[0:128,</span> <span class="pre">:]</span></code>，奇数 CTA 准备 <code class="docutils literal notranslate"><span class="pre">A[128:256,</span> <span class="pre">:]</span></code>。B 在逻辑上覆盖完整的 N 维；装入 SMEM 时，两个 CTA 各自搬运一半 N columns，MMA 再将两部分作为完整的 B tile 使用。因此，两侧计算的是：</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>偶数 CTA: C[0:128,   :] = A[0:128,   :] × B
-奇数 CTA: C[128:256, :] = A[128:256, :] × B
-</pre></div>
-</div>
+<p>物理上，这是分别属于两个 CTA 的两块 128-row TMEM；逻辑上，它们共同表示一个 <code class="docutils literal notranslate"><span class="pre">256×N</span></code> accumulator tile。A、B 如何分布到两个 CTA 的 SMEM，由具体 kernel 的数据组织方式决定，并不是该 accumulator layout 的一部分。</p>
 <p><img alt="、：M 维连续分配给 CTA pair 中的两个 CTA，每个 CTA 保存 128 行" src="../_images/mma_cg2_m256.svg" /></p>
 </section>
 <section id="cta-group-2-m-128-a">
@@ -511,7 +507,7 @@ SFA, SFB: global memory -&gt; SMEM -&gt; tcgen05.cp -&gt; TMEM -&gt; tcgen05.mma
 奇数 CTA: SFA[128:256, :]
 </pre></div>
 </div>
-<p>B 的情况不同。两个 CTA 在装入 SMEM 时各自准备 B 的一半 N columns，但 cooperative MMA 会把两部分作为完整的 B tile 使用。无论计算 C 的上半部还是下半部，都需要 N 维上的全部 B columns，因此也都需要完整的：</p>
+<p>图中采用一种常见实现：两个 CTA 各自在 SMEM 中准备 B 的一半 N columns，cooperative MMA 再将两部分作为完整的 B tile 使用。因此，两侧都需要完整的：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>SFB[0:N, :]
 </pre></div>
 </div>
@@ -521,7 +517,7 @@ SFA, SFB: global memory -&gt; SMEM -&gt; tcgen05.cp -&gt; TMEM -&gt; tcgen05.mma
 </section>
 <section id="tcgen05">
 <h2><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 指令如何正确交接数据<a class="headerlink" href="#tcgen05" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 虽然只需要由一个 thread 发起，但它执行的是一次 tile-level 的协同操作。<code class="docutils literal notranslate"><span class="pre">cta_group</span></code> 决定这次操作使用当前 CTA，还是同时使用一个 CTA pair 的 SMEM 和 TMEM；对应的 TMEM layout 则决定每个 accumulator 元素最终写入哪个 CTA 的哪些 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 坐标。对于 block-scaled MMA，SFA 和 SFB 还必须预先通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> 搬入 TMEM，并按照 A、B 在 CTA pair 中的分工方式进行分片或复制。</p>
+<p><code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 虽然只需要由一个 thread 发起，但它执行的是一次 tile-level 的协同操作。<code class="docutils literal notranslate"><span class="pre">cta_group</span></code> 决定这次操作使用当前 CTA，还是同时使用一个 CTA pair 的 SMEM 和 TMEM；对应的 TMEM layout 则决定每个 accumulator 元素最终写入哪个 CTA 的哪些 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 坐标。在本章采用的 block-scaled 路径中，SFA 和 SFB 会先通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> 搬入 TMEM，再按照 A、B 在 CTA pair 中的分工方式进行分片或复制。</p>
 <p>因此，在连接 <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 等异步指令时，需要同时保证三件事：操作作用于正确的 CTA 或 CTA pair，生产者生成的数据布局与消费者预期的布局相匹配，并且消费者已经通过相应的完成与顺序机制确认数据可以安全使用。只要其中任一条件不满足，硬件就可能从错误的 TMEM 坐标解释数据，或者在数据仍在更新时提前读取它。</p>
 <p>理解 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 的关键，也可以归结为这三个问题：这条指令使用哪些 CTA 的资源，数据映射到什么位置，以及结果从什么时候开始可以被下一阶段读取。</p>
 </section>

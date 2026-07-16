@@ -1,187 +1,247 @@
 (chap_tensor_cores)=
-# Tensor Cores: `tcgen05`
+# Blackwell Tensor Core: `tcgen05.mma`
 
 :::{admonition} Overview
 :class: overview
 
-- `tcgen05` is Blackwell's Tensor Core instruction family. Its MMA instruction performs tile matrix-multiply-accumulate work cooperatively, and the instruction is committed by one elected thread.
-- The accumulator lives in TMEM instead of registers. The epilogue later brings it back into registers with `tcgen05.ld`.
-- `cta_group::1` and `cta_group::2` control whether one CTA or two CTAs cooperate on the MMA. That choice also changes how the M dimension is mapped into TMEM.
-- Block-scaled MMA modes, such as `mxfp8` and `nvfp4`, add scale-factor operands. The data operands live in SMEM, while the scale factors are staged through TMEM.
+- `tcgen05.mma` typically reads A and B from SMEM and updates the C/D accumulator in TMEM. The epilogue later brings the result back into registers with `tcgen05.ld`.
+- `cta_group::1` uses the current CTA, while `cta_group::2` uses a CTA pair. The two modes use different TMEM accumulator mappings.
+- Block-scaled MMA also needs SFA and SFB in TMEM. In the loading path used here, these scale factors first enter SMEM, then move to TMEM through `tcgen05.cp`, where they are sharded or replicated according to how the CTA pair divides A and B.
 :::
 
-Dense linear algebra is where modern GPUs spend most of their useful work. A normal CUDA-core matrix multiply cannot get close to the advertised peak of the chip ({ref}`chap_background`). Fast GEMM and attention kernels reach that peak by feeding the Tensor Core with the right tile shapes, layouts, and synchronization.
+{ref}`Tensor Core Operand Layouts Across GPU Generations <chap_layout_generations>` traced the data path for matrix multiply-accumulate (MMA) across Ampere, Hopper, and Blackwell. This chapter narrows the focus to Blackwell's `tcgen05.mma`: how one MMA is issued, how its accumulator maps into TMEM, and how `cta_group` determines whether the operation uses the current CTA or a CTA pair.
 
-The basic operation has not changed in spirit since Volta. A Tensor Core consumes matrix tiles, multiplies them, and accumulates the result. What changes from generation to generation is how the operation is issued, how the operands are laid out, and where the accumulator lives.
-
-Blackwell makes a large change to the last part. The accumulator for `tcgen05` is no longer kept as a long-lived register fragment. It is written into Tensor Memory, or TMEM ({ref}`chap_tmem`). That one change affects the whole kernel. The MMA writes to TMEM. Completion is tracked asynchronously. The epilogue later loads the accumulator out of TMEM and turns it back into the register fragment it wants for conversion and stores.
-
-This chapter focuses on the compute instruction itself. TMA ({ref}`chap_tma`) is responsible for moving operands into SMEM. TMEM is responsible for holding the accumulator and some scale-factor operands. `tcgen05.mma` is the Tensor Core operation that sits between those two memory movements.
+TMA, introduced in the previous chapter ({ref}`chap_tma`), usually moves A and B tiles into SMEM asynchronously. We begin after those tiles have arrived. From there, we will see how `tcgen05.mma` performs the matrix multiply-accumulate, where it places the result in TMEM, and why block-scaled MMA needs an additional scale-factor path.
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe src="../demo/tcgen05_intro.html" title="tcgen05 and Tensor Memory" loading="lazy"
+<iframe src="../demo/tcgen05_intro.html?v=block-units-20260715" title="tcgen05 and Tensor Memory" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 ```
-*Interactive: `tcgen05` accumulator behavior. Toggle the transpose of A or B, pick the output width `N`, and step through `K` iterations to watch partial sums accumulate in TMEM.*
+*Keep the default `M=128` and `N=16`, then step forward along K to watch the partial products accumulate in TMEM. You can also transpose A or B, or change N, to compare the input tiles, output tile, and instruction parameters for different configurations.*
 
-## The `tcgen05` MMA
+Start with the default view. Each cell represents a `16 × 16` block of elements. Although the output tile C has shape `128 × 16`, it therefore appears as an 8-by-1 grid of cells. Each click on **K iteration** makes the Tensor Core read one `128 × 16` slice of A, shown as `8 × 1` blocks, and one `16 × 16` slice of B, shown as a single block. Their product contributes one `128 × 16` partial result.
 
-A `tcgen05` MMA is the Blackwell Tensor Core matrix-multiply-accumulate instruction. It is a cooperative instruction. The work is performed for a warpgroup, and in some modes it can involve two CTAs from the same cluster. The instruction is not issued independently by every thread. One elected thread commits the operation on behalf of the participating group.
+The first iteration uses `accum=0`. It does not read the existing TMEM accumulator and writes the current product directly into the C tile:
 
-It helps to separate the MMA into three questions.
+```text
+C[0:128, 0:16] =
+    A[0:128, k:k+16] × B[k:k+16, 0:16]
+```
 
-The first question is who cooperates. A normal mode uses one CTA, written as `cta_group::1`. A larger mode uses two CTAs in a cluster, written as `cta_group::2`. In both cases, the instruction represents one Tensor Core operation over a tile, not a scalar operation by one thread.
+Later iterations use `accum=1` and add each new partial result to the value already in TMEM:
 
-The second question is where the operands and result live. The data operands normally live in SMEM. Some variants can also read an A operand from TMEM. The accumulator is written to TMEM. The operand layouts have to match what the Tensor Core expects, including the swizzled shared-memory layouts used by the data operands ({ref}`chap_data_layout`).
+```text
+C[0:128, 0:16] +=
+    A[0:128, k:k+16] × B[k:k+16, 0:16]
+```
 
-The third question is how completion is observed. `tcgen05.mma` is asynchronous. Issuing the MMA does not mean the multiply-accumulate has finished. The instruction returns after the operation is committed, while the Tensor Core continues running. The kernel uses a commit group and an `mbarrier` to learn when the result is ready ({ref}`chap_async_barriers`).
+Every K iteration updates the same `128 × 16` TMEM region. That region contains the final C tile only after the last iteration completes.
 
-That asynchronous behavior is what makes overlap possible. A fast kernel does not issue an MMA and immediately stall until it finishes. It can issue the MMA, start preparing later tiles, and wait only when the result is actually needed. The price is that every handoff must be explicit. If the epilogue reads TMEM before the MMA completion barrier has fired, it is reading too early.
+The bottom of the figure also shows the descriptors and PTX instruction used by this MMA. The next section explains their fields.
 
-## The Accumulator Lives in TMEM
+We will now look at how the instruction is issued, what `cta_group` controls, and how the accumulator maps into TMEM.
 
-On Ampere and Hopper, the accumulator is exposed to the program as registers. The MMA produces a per-lane register fragment, and the epilogue consumes that fragment directly. This is simple, but it ties the accumulator size to the register budget of each thread.
+## How `tcgen05.mma` Executes
 
-Blackwell breaks that link. `tcgen05.mma` writes its accumulator into TMEM, a Blackwell memory space scoped to the CTA. The accumulator can stay in TMEM through the compute phase, and the epilogue later uses `tcgen05.ld` to load it back into registers.
+`tcgen05.mma` is Blackwell's Tensor Core matrix multiply-accumulate instruction. It operates on a complete matrix tile rather than assigning an independent scalar multiply-accumulate to each thread.
 
-This changes the shape of the kernel. The register fragment is still important at the edges. The epilogue still wants registers so it can convert, apply elementwise work, and store the result. But the long-lived accumulator state is no longer a register allocation problem. It is a TMEM allocation and layout problem ({ref}`chap_tmem`).
+Unlike Ampere's `mma.sync` and Hopper's `wgmma.mma_async`, `tcgen05.mma` has single-thread semantics. One elected thread issues the instruction, and the hardware launches the full tile-level MMA. The other threads do not each submit a copy of the same instruction.
 
-This is why `tcgen05` and TMEM have to be understood together. The MMA instruction decides what tile is computed. TMEM decides where the accumulator lands. The epilogue must use the matching load path to recover the accumulator in the register layout it expects.
+The following is a common `tcgen05.mma` form for the case where both A and B reside in SMEM and block scaling is disabled:
 
-## `cta_group::1` and `cta_group::2`
+```text
+tcgen05.mma.cta_group.kind
+    [d-tmem], a-desc, b-desc, idesc,
+    {disable-output-lane}, enable-input-d {, scale-input-d};
+```
 
-A `tcgen05` MMA can run in either `cta_group::1` or `cta_group::2` mode.
+Its operands and qualifiers have the following roles:
 
-In `cta_group::1`, one CTA owns the MMA. Its operands are in that CTA's SMEM, and its accumulator is written into that CTA's TMEM.
+| Field | Role |
+| --- | --- |
+| `cta_group` | Selects the current CTA or a CTA pair as the resources used by the MMA |
+| `kind` | Selects the data-type family for A and B |
+| `d-tmem` | Gives the starting TMEM address of the C/D accumulator |
+| `a-desc`, `b-desc` | Describe the addresses and layouts of A and B in SMEM |
+| `idesc` | Specifies M, N, K, the concrete A/B and C/D data types, operand major modes, and other instruction parameters |
+| `disable-output-lane` | Selects TMEM lanes that will not be updated; the default example leaves every lane enabled |
+| `enable-input-d` | Corresponds to `accum` in the interactive figure: false computes `D=A × B`, while true computes `D=A × B+D` |
+| `scale-input-d` | Optionally scales the existing D before accumulation; the examples in this chapter do not use it |
 
-In `cta_group::2`, two CTAs in a cluster cooperate on one MMA tile. Each CTA has its own SMEM and its own TMEM. The accumulator is not stored in one physical TMEM region spanning both CTAs. It is split across the two CTAs, with each CTA holding its own part. The even CTA issues the instruction and commits the completion barrier for the pair.
+The default configuration in the interactive figure uses `cta_group::1.kind::f16`. Later kernels in this book also commonly use `.kind::f16` with an `f32` accumulator selected in `idesc`. Here `.kind::f16` identifies the 16-bit floating-point family for A and B. `idesc` separately chooses whether A and B are `f16` or `bf16`, and whether C/D is `f16` or `f32`.
 
-The choice matters because it changes how the logical accumulator tile `C(M, N)` maps to TMEM. TMEM has 128 hardware Lane rows and up to 512 hardware Col columns. In the TIRx layout notation, those axes are written as `TLane` and `TCol`. The MMA mode decides how rows and columns of `C` are placed onto those TMEM axes.
+`cta_group` does not change the single-thread issue semantics. It only determines whether the operation uses the current CTA or a CTA pair. The corresponding CTA responsibilities and TMEM mappings, along with the SFA and SFB addresses needed by block-scaled forms, appear later in this chapter.
 
-There are four useful cases to keep in mind.
+For the path considered here, where A and B come from SMEM, two layouts matter:
 
-The figures below follow the demo color convention: purple marks SMEM operands, orange marks TMEM accumulator state, and green marks the Tensor Core MMA path. CTA identity is shown by labels and position rather than by changing those hardware colors.
+- The SMEM layout determines how the Tensor Core interprets and reads A and B.
+- The TMEM layout determines how the C/D accumulator maps to TMEM lanes and columns.
+
+These layouts belong to different memory spaces. Their concrete mappings depend on the instruction shape, data types, and operand major modes of the current `tcgen05.mma`. We will use the named axes and swizzle concepts introduced in {ref}`Data Layout and Its Notation <chap_data_layout>` to describe them.
+
+Issuing `tcgen05.mma` starts an asynchronous operation; it does not mean the result has already reached TMEM. The same thread can issue one or more MMA instructions and then execute
+
+```text
+tcgen05.commit
+```
+
+to make an `mbarrier` track the asynchronous `tcgen05` operations previously issued by that thread. When the hardware finishes those operations, it signals completion through the barrier.
+
+Other warps can move data or prepare later tiles while the MMA is in flight. Before a consumer reads the accumulator with `tcgen05.ld`, it must wait for the corresponding `mbarrier` and execute
+
+```text
+tcgen05.fence::after_thread_sync
+```
+
+to order the completion notification before the subsequent TMEM access. Otherwise, the epilogue could read TMEM while the accumulator is still being updated. The asynchronous synchronization chapter develops this protocol in detail.
+
+## The Accumulator in TMEM
+
+In the PTX programming model for Ampere and Hopper, the accumulator resides in registers. MMA results are distributed across the participating threads as register fragments, which the epilogue can read and process directly. As the accumulator tile grows, those long-lived fragments consume more registers.
+
+Blackwell moves the long-lived accumulator into TMEM. TMEM is a two-dimensional, CTA-scoped on-chip memory space. On `sm_100a`, each CTA has 128 Lane rows and 512 Col columns, with one 32-bit cell at each Lane/Col coordinate. `tcgen05.mma` repeatedly updates the accumulator in TMEM, and the epilogue eventually loads it into registers with `tcgen05.ld` for conversion, elementwise work, and stores.
+
+`tcgen05.ld` is itself asynchronous. Before using its destination registers, the warp must execute `tcgen05.wait::ld` to confirm that its earlier TMEM loads have completed.
+
+The accumulator therefore no longer occupies registers throughout the main loop. Instead, the kernel must manage TMEM allocation and layout: MMA must write each result to the right TMEM coordinates, and the epilogue must read it back with a matching layout. The next chapter covers TMEM allocation, addressing, and data movement.
+
+## How `cta_group` Sets the Operation Scope
+
+With `cta_group::1`, the MMA updates only the current CTA's TMEM. We begin with the common dense-A path, where every A element is stored explicitly and descriptors supply both A and B from SMEM. Some `tcgen05.mma` variants can instead read A from TMEM.
+
+With `cta_group::2`, the MMA accesses the TMEM of both CTAs in a pair. A CTA pair consists of two CTAs in the same cluster whose `%cluster_ctarank` values differ only in the least-significant bit. One rank is even and the other is odd; we refer to them below as the even CTA and the odd CTA.
+
+Only one thread in the CTA pair needs to issue `tcgen05.mma`. That thread may belong to either CTA, but the peer CTA must remain active. The kernels later in this book generally elect one thread in the even CTA to issue the MMA and use `tcgen05.commit` to arrange completion notification.
+
+The accumulator layout depends on four choices: `cta_group`, the size of M, whether A is dense or structured sparse, and whether the instruction is ordinary `tcgen05.mma` or the weight-stationary `tcgen05.mma.ws`. The selected layout maps each logical coordinate `(m,n)` to `TLane` and `TCol`.
+
+The instruction descriptor supplies N. For the `f16`/`bf16` path considered here, `cta_group::1` supports N from 8 through 256 in increments of 8, while `cta_group::2` supports N from 16 through 256 in increments of 16. The four figures below use the symbol N for any of these legal values. Purple denotes SMEM operands, orange denotes the TMEM accumulator, and green denotes the Tensor Core MMA path.
 
 ### `cta_group::1`, `M = 128`
 
-This is the simplest case. One CTA computes a 128-row tile. TMEM also has 128 Lane rows. The mapping is therefore direct: row `m` of the accumulator maps to Lane `m`, and the N dimension maps to TMEM columns.
+This is the direct case. One CTA computes a 128-row output tile, and its TMEM has exactly 128 Lane rows. Accumulator row `m` therefore maps directly to TMEM Lane `m`, while N extends across TMEM columns.
 
-The result fills 128 Lane rows by N Col columns. This is the baseline picture. The CTA owns A and B in SMEM, and it owns the full accumulator tile in its TMEM.
+The result occupies 128 Lane rows and N Col columns. The CTA reads A and B from its own SMEM and keeps the complete accumulator tile in its own TMEM.
 
-![cta_group::1, M=128: row m maps directly to TMEM Lane m](../img/mma_cg1_m128.svg)
+![`cta_group::1`, `M=128`: row m maps directly to TMEM Lane m](../img/mma_cg1_m128.svg)
 
-### `cta_group::1`, `M = 64`
+### `cta_group::1`, `M = 64` (without `.ws`)
 
-With `M = 64`, the accumulator has only 64 rows, but TMEM still has 128 Lane rows. The hardware does not simply pack rows 0 through 63 into lanes 0 through 63. Instead, it spreads them across the 128 lanes in four runs of 16 rows.
+When `M = 64`, the accumulator has only 64 rows, but TMEM still has 128 Lane rows. This section covers ordinary `tcgen05.mma`, not the weight-stationary `.ws` form. Its TMEM mapping uses Layout F.
 
-Rows 0 through 15 go to lanes 0 through 15. Rows 16 through 31 go to lanes 32 through 47. Rows 32 through 47 go to lanes 64 through 79. Rows 48 through 63 go to lanes 96 through 111.
+Layout F divides the 128 TMEM lanes into four 32-lane regions, corresponding to `warp-rank % 4 = 0,1,2,3` in the hardware data path. It also divides the 64 M rows into four groups of 16 and places one group in each region. Because a group contains only 16 rows, the current tile uses only half of each 32-lane region.
 
-This leaves gaps at lanes 16 through 31, 48 through 63, 80 through 95, and 112 through 127. Those gaps are intentional. With a different lane alignment, another independent `M = 64` MMA can occupy the complementary lanes. This lets two smaller M tiles share the 128-lane TMEM structure without stepping on each other.
+Let `a` be the TMEM lane alignment, either 0 or 16. Logical row `m` maps to
 
-The N dimension still maps to TMEM columns. The unusual part is only the placement of M rows across Lane.
+```text
+group        = m // 16
+row_in_group = m % 16
+TLane        = group * 32 + a + row_in_group
+```
 
-![cta_group::1, M=64: four 16-row runs at a Lane stride of 32, leaving space for another aligned M=64 tile](../img/mma_cg1_m64.svg)
+With lane alignment 0, the mapping is
+
+```text
+rows  0-15  -> lanes   0-15
+rows 16-31  -> lanes  32-47
+rows 32-47  -> lanes  64-79
+rows 48-63  -> lanes 96-111
+```
+
+Lanes `16-31`, `48-63`, `80-95`, and `112-127` do not belong to this tile.
+
+Layout F also permits lane alignment 16. A second, independent `M=64` tile can then occupy the complementary positions:
+
+```text
+rows  0-15  -> lanes  16-31
+rows 16-31  -> lanes  48-63
+rows 32-47  -> lanes  80-95
+rows 48-63  -> lanes 112-127
+```
+
+The two `M=64` tiles can therefore share TMEM's 128-lane structure without overlapping. N still extends across TMEM columns; only the placement of M rows along the Lane axis changes.
+
+![`cta_group::1`, `M=64`, without `.ws`: four 16-row groups use a Lane stride of 32; lane alignment 0 or 16 selects complementary positions](../img/mma_cg1_m64.svg)
 
 ### `cta_group::2`, `M = 256`
 
-When the M dimension is larger than one CTA can naturally hold, the MMA can use `cta_group::2`. For `M = 256`, the split is direct. CTA 0 holds rows 0 through 127. CTA 1 holds rows 128 through 255.
+When `M = 256`, the 128 Lane rows of one CTA cannot hold the complete M dimension, so the accumulator is distributed across the two TMEM allocations in the CTA pair.
 
-Each CTA uses its own TMEM Lane rows 0 through 127 and the full N columns. Physically, this is two separate 128-row TMEM regions, one in each CTA. Logically, they form one 256 by N accumulator tile.
+The even CTA stores logical rows `0-127`, and the odd CTA stores rows `128-255`. Each CTA uses lanes `0-127` in its own TMEM, while N extends across all of its corresponding TMEM columns.
 
-Each CTA also supplies the part of A that corresponds to its M rows. B is available to both CTAs as required by the mode. The even CTA is responsible for issuing the MMA and committing the completion barrier for the pair.
+Physically, these are two separate 128-row TMEM regions owned by different CTAs. Logically, they form one `256 × N` accumulator tile. How A and B are distributed across the two CTAs' SMEM depends on the kernel and is not part of this accumulator layout.
 
-This is the mode used by the two-CTA cluster GEMM in {ref}`chap_gemm_advanced`.
+![`cta_group::2`, `M=256`: M is split contiguously across the CTA pair, with 128 rows in each CTA](../img/mma_cg2_m256.svg)
 
-![cta_group::2, M=256: M split contiguously across two CTAs, 128 rows per CTA](../img/mma_cg2_m256.svg)
+### `cta_group::2`, `M = 128` (dense A)
 
-### `cta_group::2`, `M = 128`
+For `cta_group::2, M=128` with dense A, PTX uses Layout B for the accumulator. It first divides M across the pair: the even CTA stores C rows `0-63`, and the odd CTA stores rows `64-127`.
 
-The `cta_group::2`, `M = 128` mode still uses two CTAs, but the M dimension is shorter. Since there are only 128 rows total, each CTA receives 64 M rows.
+Within each CTA, its 64 M rows are divided into two groups of 32, and N is divided into a lower and an upper half. The two row groups and two N halves form a 2-by-2 mapping onto that CTA's four 32-lane regions:
 
-The remaining lane capacity is used to pack the N dimension. Inside each CTA, one half of N occupies lanes 0 through 63, and the other half of N occupies lanes 64 through 127. This lets each CTA use all 128 Lane rows even though it owns only 64 rows of M.
+| N range | Local M rows in the CTA | TMEM lanes |
+| --- | --- | --- |
+| `0 ... N/2-1` | `0-31` | `0-31` |
+| `0 ... N/2-1` | `32-63` | `32-63` |
+| `N/2 ... N-1` | `0-31` | `64-95` |
+| `N/2 ... N-1` | `32-63` | `96-127` |
 
-So the split has two parts. M is split across the CTA pair, with 64 rows per CTA. N is then split within each CTA across the lower and upper halves of the TMEM Lane rows.
+Let `m_local = m % 64`. The CTA and TLane for logical element `C[m,n]` are
 
-![cta_group::2, M=128: 64 M rows per CTA, with the two halves of N stacked across the lower and upper Lane halves](../img/mma_cg2_m128.svg)
+```text
+CTA   = even,  if m < 64
+        odd,   if m >= 64
 
-Across these modes, the principle is the same. `tcgen05.mma` computes a logical accumulator tile, but that tile must be placed into the physical 128 Lane by up to 512 Col TMEM space. The mode and M shape determine that placement. The rest of the kernel has to use the same mapping when it later reads the accumulator back out.
+TLane = m_local,       if n < N/2
+        64 + m_local,  if n >= N/2
+```
 
-For the kernels here, the accumulator is usually f32 in TMEM. That is the common high-accuracy path. It is not the only possible accumulator type. The `.kind::f16` path can accumulate in f16.
+For example, when `N=16`, `C[10,3]` resides at TLane 10 in the even CTA. `C[10,11]` remains in the even CTA, but because it belongs to the upper half of N, it maps to TLane 74.
 
-## Operand Placement
+This is Layout B for dense A. With structured-sparse A, `cta_group::2, M=128` uses Layout C instead, so the mapping above does not apply.
 
-For the dense MMA modes, A and B are prepared in SMEM before the MMA runs. TMA is responsible for moving global memory tiles into SMEM. The kernel arranges those SMEM tiles in the layouts expected by the Tensor Core, including any required swizzle.
+![`cta_group::2`, `M=128`, dense A: each CTA stores 64 M rows, and the two halves of N map to the lower and upper halves of the Lane axis](../img/mma_cg2_m128.svg)
 
-The accumulator C is written to TMEM. That is the main difference from earlier generations. The epilogue does not receive the accumulator directly as the output of the MMA instruction. It must explicitly load from TMEM with `tcgen05.ld`.
-
-In `cta_group::1`, one CTA supplies the operands and owns the accumulator. In `cta_group::2`, each CTA supplies its own side of the operands from its own SMEM, and each CTA owns its own TMEM portion of the accumulator. When A is split by M, each CTA keeps the A rows for its own M slice. B is shared according to the mode, since both M slices multiply against the same N by K tile.
-
-This separation is important when reading the kernel. SMEM placement answers how the Tensor Core reads A and B. TMEM placement answers where the accumulator goes. The two layouts are related by the MMA mode, but they are not the same memory space and cannot be treated as interchangeable.
+These four layouts specify the CTA and TMEM location to which `tcgen05.mma` writes each accumulator element. A later `tcgen05.ld` must use a compatible TMEM address and load shape to reconstruct the original logical C tile.
 
 ## Block-Scaled MMA
 
-The dense modes read their data operands directly from SMEM and accumulate into TMEM. Block-scaled MMA adds two more operands: scale-factor tensors for A and B.
+MXFP8 and NVFP4 are two concrete block-scaled formats introduced earlier. {ref}`Data Layout and Its Notation <chap_data_layout>` explained block scaling and derived the packing and cross-warp replication of SFA and SFB in TMEM. {ref}`Tensor Core Operand Layouts Across GPU Generations <chap_layout_generations>` then followed the `tcgen05.cp` data path and explained how `scale_vec` selects bytes. We will not repeat those details here. Instead, we will focus on where the scale factors reside in a CTA pair.
 
-This is used for very low-precision formats such as `mxfp8` and `nvfp4`. Low-precision formats are efficient, but their dynamic range is small. A single global scale is usually too crude. If the scale is chosen for the largest values, smaller values lose precision. If the scale is chosen for small values, larger values may clip.
-
-Block scaling fixes this by assigning scale factors to small K blocks. A group of consecutive K elements shares one scale. The MMA conceptually dequantizes each block with its scale and then accumulates the products in the accumulator type.
-
-For A and B, this introduces two scale-factor tensors:
+We need two relationships. `SFA(M,SFK)` supplies scale factors for each row of A, while `SFB(N,SFK)` supplies them for each column of B. Block-scaled `tcgen05.mma` reads these factors from TMEM while continuing to read A and B from SMEM:
 
 ```text
-SFA(M, SFK)
-SFB(N, SFK)
+A, B:     global memory -> SMEM -> tcgen05.mma
+SFA, SFB: global memory -> SMEM -> tcgen05.cp -> TMEM -> tcgen05.mma
 ```
 
-where `SFK = K / B`, and `B` is the block size along K.
+### Placing Scale Factors Across Two CTAs
 
-The exact block size depends on the format. The important point is that the scale axis follows K at a coarser granularity. Each scale factor describes a block of K values, not one individual element and not the whole matrix.
+For output coordinate `(m,n)`, A uses `SFA[m,sfk]` and B uses `SFB[n,sfk]`. Scale-factor placement in a CTA pair therefore follows the division of M and N.
 
-The mathematical shape is:
+Consider the `M=256` MMA in the figure. The even CTA computes C rows `0-127`, while the odd CTA computes rows `128-255`. Each side needs only the SFA entries for its own A rows:
 
 ```text
-acc += (Aq * scale_a) * (Bq * scale_b)
+even CTA: SFA[0:128,   :]
+odd CTA:  SFA[128:256, :]
 ```
 
-where `Aq` and `Bq` are quantized low-precision values, and the scales restore their approximate magnitudes before accumulation.
-
-The scale dtype also matters. With `e8m0` scales, each scale is effectively a power of two. With `e4m3` scales, as used by `nvfp4`, the scale is a small floating-point value and can represent values between powers of two.
-
-## Where the Scale Factors Live
-
-Block-scaled `tcgen05.mma` differs from the dense MMA in one important placement rule: the scale factors are read from TMEM.
-
-The data operands A and B are still staged in SMEM. The scale factors SFA and SFB are staged through TMEM. Since TMA loads into SMEM, the scale factors usually take an extra step. The kernel first loads them into SMEM, then copies them from SMEM to TMEM with `tcgen05.cp`. Only after the scale factors are in TMEM can the block-scaled MMA read them.
-
-This gives the scale factors a different movement path from the data operands:
+The figure uses one common implementation: each CTA stages half of B's N columns in SMEM, and the cooperative MMA consumes the two halves as one complete B tile. Both sides therefore need the complete
 
 ```text
-A, B:     global memory to SMEM, then MMA reads SMEM
-SFA, SFB: global memory to SMEM, then tcgen05.cp copies SMEM to TMEM, then MMA reads TMEM
+SFB[0:N, :]
 ```
 
-The TMEM layout for scale factors is compact. A 128-row scale vector can pack into 32 Lane rows, using a mapping based on `r % 32` for the lane position and `r / 32` along columns. The data can then be broadcast across the four warps that read the full 128 Lane space ({ref}`chap_layout_generations`).
+A common `cta_group::2` block-scaled kernel multicasts this SFB data to the CTA pair so that each CTA's TMEM can present a complete copy in the layout required by MMA. The figure therefore shards SFA along M and replicates all of SFB on both sides.
 
-This is a good example of why TMEM layout has to be explicit. The accumulator layout and the scale-factor layout are both in TMEM, but they are not the same layout. The accumulator uses the MMA output mapping. The scale factors use the compact layout expected by the block-scaled MMA.
+![Data placement for block-scaled MMA: A and B are packed in SMEM; SFA, SFB, and C reside in TMEM; SFA is sharded along M, while SFB is multicast to the CTA pair](../img/mma_block_scaled.svg)
 
-## Scale Factors in `cta_group::2`
+## Handing Data Between `tcgen05` Instructions
 
-In the two-CTA case, scale factors follow the data they scale.
+Although one thread issues `tcgen05.mma`, the instruction performs a tile-level cooperative operation. `cta_group` determines whether it uses the SMEM and TMEM resources of the current CTA or of a CTA pair. The corresponding TMEM layout then determines the CTA and `TLane`/`TCol` coordinates that receive each accumulator element. In the block-scaled path used here, SFA and SFB first move into TMEM through `tcgen05.cp` and are sharded or replicated according to the division of A and B across the pair.
 
-SFA scales A. Since A is split by M across the CTA pair, SFA is also split by M. Each CTA holds the SFA rows that correspond to its own A rows.
+Connecting asynchronous instructions such as `tcgen05.cp`, `tcgen05.mma`, and `tcgen05.ld` requires three conditions: the operation must target the correct CTA or CTA pair, the producer's output layout must match the layout expected by the consumer, and the consumer must use the corresponding completion and ordering mechanism before accessing the data. If any condition fails, the hardware may interpret the wrong TMEM coordinates or read data that is still being updated.
 
-SFB scales B. Since both CTAs multiply against the same B tile, SFB has to be visible to both CTAs. In practice, that means SFB is multicast across the CTA pair.
-
-This is the source of the common loading pattern in block-scaled cluster GEMM. SFA is loaded per CTA, using the mask for the CTA's own M slice. SFB is broadcast to the pair, because both CTAs need the same N-side scale factors.
-
-![Block-scaled MMA placement: A and B packed in SMEM; SFA, SFB, and C in TMEM, with SFA split by M across CTAs and SFB multicast across the CTA pair](../img/mma_block_scaled.svg)
-
-## Keeping the MMA Contracts Matched
-
-A Blackwell GEMM tile moves through several specialized paths.
-
-TMA brings A and B from global memory into SMEM. For block-scaled modes, it also brings scale factors into SMEM. `tcgen05.cp` moves those scale factors into TMEM when needed. `tcgen05.mma` reads its operands, runs asynchronously on the Tensor Core, and accumulates into TMEM. The completion barrier tells the kernel when that accumulator is ready. The epilogue then uses `tcgen05.ld` to load the accumulator from TMEM back into registers and store the final output.
-
-Across those paths, the kernel has to keep three contracts matched: the SMEM operand layout, the TMEM accumulator or scale-factor layout, and the asynchronous completion signal that makes the next consumer safe to run.
+The key to understanding `tcgen05` is therefore to ask three questions: which CTA resources does this instruction use, where does it map the data, and when may the next stage safely consume the result?

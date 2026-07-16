@@ -1,76 +1,160 @@
 (chap_tmem)=
-# Special Memory: TMEM
+# Tensor Memory (TMEM)
 
 :::{admonition} Overview
 :class: overview
 
-- TMEM is a Blackwell-only memory space used by `tcgen05`. It is a two-dimensional scratchpad on each SM, with 128 Lane rows and up to 512 Col columns.
-- `tcgen05.mma` writes its accumulator into TMEM. Block-scaled MMA also uses TMEM for scale factors.
-- TMEM is addressed by Lane and Col. In the TIRx layout notation, these two hardware axes are written as `TLane` and `TCol`.
-- TMEM is not assigned like registers. A kernel must allocate it and free it explicitly, in units of 32 columns.
-- Ordinary shared-memory loads and stores cannot access TMEM. Data moves between TMEM, registers, and shared memory through dedicated asynchronous `tcgen05` instructions.
+- TMEM is a two-dimensional address space with Lane and Column coordinates, allocated dynamically along the Column dimension. `tcgen05.alloc` reserves space, `tcgen05.dealloc` releases it, and `tcgen05.relinquish_alloc_permit` gives up the right to make further allocations.
+- `tcgen05.ld` and `tcgen05.st` are warp-collective instructions. A warp's ID within its warpgroup determines which 32 TMEM Lane positions it can access, while `.shape` and `.num` determine how much data moves and how many registers each thread uses.
+- TMEM loads and stores are asynchronous. Execute `tcgen05.wait::ld` before using registers produced by a load, and `tcgen05.wait::st` before reusing TMEM locations touched by a store.
 :::
 
-On Hopper and earlier GPUs, the Tensor Core ({ref}`chap_tensor_cores`) accumulator lives in registers. That model is easy to reason about. The MMA instruction produces a register fragment, the kernel keeps that fragment live through the compute phase, and the epilogue later reads it, converts it, and stores the result.
+Earlier chapters introduced TMEM from several directions. {ref}`Data Layout and Its Notation <chap_data_layout>` explained the `TLane` and `TCol` axes and two-dimensional layouts. {ref}`Tensor Core Operand Layouts Across GPU Generations <chap_layout_generations>` traced the accumulator and scale-factor data paths. {ref}`Blackwell Tensor Core <chap_tensor_cores>` then showed how `tcgen05.mma` maps its result into TMEM.
 
-The problem is register pressure. Registers are a fixed per-thread resource. As MMA tiles get larger, the accumulator fragment gets larger too. At some point the accumulator starts to crowd out the other values the thread needs to hold. Larger tiles are good for Tensor Core throughput, but keeping the whole accumulator in registers makes those larger tiles harder to use.
+We begin by recalling TMEM's physical structure. PTX calls its two address coordinates Lane and Column; in TIRx layout notation, the corresponding axes are `TLane` and `TCol`. A TMEM Lane is an address coordinate, not a thread's lane ID.
 
-Blackwell changes this part of the data path. The accumulator for `tcgen05` does not have to stay in registers for the whole compute phase. Instead, `tcgen05.mma` writes the accumulator into Tensor Memory, or TMEM. TMEM is a memory space that earlier NVIDIA GPUs do not have. It is a two-dimensional scratchpad on the SM, shaped as 128 Lane rows by up to 512 Col columns, and it is scoped to the CTA using it.
+Each CTA has 128 positions along the Lane dimension and up to 512 positions along the Column dimension. Every `(Lane, Column)` cell is 32 bits. Allocating TMEM means reserving a range along the Column dimension, and every allocated column contains all 128 Lane positions.
 
-That extra memory space lets Blackwell support larger Tensor Core tiles without forcing the entire accumulator into per-thread registers. But TMEM is not automatic in the way registers are. The compiler does not simply hand it out as ordinary register storage. The kernel has to allocate TMEM, address it with the right layout, move data in and out with the right instructions, and free it when the CTA is done.
+![TMEM is a two-dimensional address space with 128 Lane positions and up to 512 Column positions](../img/tmem_grid.png)
 
-## A 2D Address Space
+This chapter focuses on the two remaining practical questions: how a kernel allocates and releases TMEM, and how its warps access that storage with `tcgen05.ld` and `tcgen05.st`.
 
-TMEM is not a flat byte array. It is a two-dimensional address space. The hardware names its two coordinates Lane and Col. There are 128 Lane rows and up to 512 Col columns. Each Col is a 32-bit column.
+## The TMEM Allocation Lifecycle
 
-That shape matters because `tcgen05.mma` writes its accumulator into TMEM using this two-dimensional structure. A TMEM location is described by a Lane coordinate and a Col coordinate, not by a single shared-memory-style byte offset.
+TMEM is allocated dynamically. `tcgen05.alloc` reserves space along the Column dimension, with legal `n_cols` values of 32, 64, 128, 256, or 512. Allocating one column reserves all 128 Lane positions in that column.
 
-When a kernel declares a TMEM buffer in TIRx, it gives the buffer a layout over these two hardware coordinates. In the layout notation ({ref}`chap_data_layout`), we write the TMEM Lane axis as `TLane` and the TMEM Col axis as `TCol`. The names are not meant to replace the official hardware terminology. They are layout axis names that make the TMEM dimensions explicit inside the DSL.
+The following pattern appears in later TIRx kernels:
 
-For example, an accumulator tile can be written as:
+```python
+pool = T.SMEMPool()
+tmem_addr = pool.alloc((1,), "uint32")
+pool.commit()
 
-```text
-S[(128, N) : (1@TLane, 1@TCol)]
+if warp_id == 0:
+    T.ptx.tcgen05.alloc(
+        T.address_of(tmem_addr), n_cols=256, cta_group=1
+    )
 ```
 
-This says that the tile has 128 rows along the hardware Lane dimension and `N` columns along the hardware Col dimension. In the layout notation, those two dimensions appear as `TLane` and `TCol`. The layout is direct: adjacent rows move along `TLane`, and adjacent columns move along `TCol`. The figure below shows that grid, with hardware Lane running down the 128 rows and hardware Col across the columns.
+`tmem_addr` is a 32-bit slot in SMEM. When `tcgen05.alloc` succeeds, it writes the base address of the allocated TMEM region into this slot. The instruction may wait for free TMEM columns, so it is a blocking instruction.
 
-![TMEM as a 2D grid: TLane rows × TCol columns](../img/tmem_grid.png)
+Here `warp_id == 0` selects all of warp 0. `tcgen05.alloc` is warp-collective: all 32 threads in that warp must execute it with the same `n_cols`. Do not add a `lane_id == 0` condition and turn it into a single-thread operation. Before other warps read `tmem_addr`, the kernel must also use the appropriate fence and CTA synchronization to make the allocation result visible throughout the CTA.
 
-The main point is that TMEM is part of the tile layout story. It is not just a hidden backing store for the Tensor Core. The kernel has to name the memory, allocate columns from it, and use a layout that matches how `tcgen05` instructions read and write that memory.
+Once the base address is available, TIRx can declare a TMEM buffer over the allocated region:
 
-## Allocation
+```python
+tmem = T.decl_buffer(
+    (128, 256),
+    "float32",
+    scope="tmem",
+    allocated_addr=tmem_addr[0],
+    layout=TileLayout(
+        S[(128, 256) : (1@TLane, 1@TCol)]
+    ),
+)
+```
 
-Before a kernel can use TMEM, it has to reserve space in it. This is different from registers. Registers are assigned by the compiler. TMEM is allocated explicitly by the kernel.
+`allocated_addr` binds the buffer to the address returned by `tcgen05.alloc`. The layout maps logical coordinate `(m,n)` to TMEM `TLane` and `TCol`. Later code can refer to the logical element as `tmem[m,n]`, while the layout handles the hardware coordinates.
 
-Allocation is done per CTA. One warp in the CTA requests a range of TMEM columns. The request is made in units of 32 columns, and the requested column count is rounded up according to the hardware allocation rules. After allocation, the CTA receives a base TMEM address. Later `tcgen05` instructions use that base address to access the reserved region.
+### Allocation-Size Restrictions
 
-It is useful to think of TMEM as a budgeted CTA resource, much like shared memory. The CTA owns the TMEM columns it has allocated. The kernel decides how many columns it needs for accumulators, scale factors, or temporary staging. When the CTA is done, it must free the allocation.
+If one CTA performs several allocations in program order, a later allocation cannot request more columns than an earlier one. For example:
 
-This makes TMEM part of kernel resource planning. A larger accumulator tile may improve Tensor Core throughput, but it consumes more TMEM columns. Block-scaled MMA may need additional TMEM space for scale factors. The kernel has to fit those uses within the available TMEM budget, just as it has to fit shared-memory buffers within the SMEM budget.
+```text
+256 columns -> 128 columns   valid
+128 columns -> 256 columns   invalid
+```
 
-## Reading and Writing TMEM
+The kernel must therefore determine its largest TMEM requirement when it designs the allocation sequence rather than expanding the allocation later.
 
-Ordinary `ld.shared` and `st.shared` instructions cannot access TMEM. TMEM is a separate address space, so data moves through dedicated `tcgen05` instructions.
+When the storage is no longer needed, the kernel performs two operations:
 
-There are three main paths.
+```python
+if warp_id == 0:
+    T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=256, cta_group=1)
+    T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
+```
 
-The first path is `tcgen05.ld`, which loads data from TMEM into registers. This is the path the epilogue uses after the MMA phase. The accumulator has been produced in TMEM, but the epilogue usually wants a register fragment so it can cast, apply elementwise operations, and store the final result.
+`tcgen05.dealloc` releases the allocated columns. Every TMEM allocation must be explicitly released before the kernel exits. `tcgen05.relinquish_alloc_permit` declares that the CTA will make no further TMEM allocations; after it executes, the CTA cannot call `tcgen05.alloc` again. Before cleanup begins, the kernel must ensure that asynchronous MMA, load, store, and other operations touching TMEM have completed.
 
-At the DSL level, a TMEM load is distributed across a warpgroup. It lowers to four warp-level `tcgen05.ld` operations, one per warp. Each warp handles 32 of the 128 TMEM Lane rows, so the four warps together cover the full Lane dimension. In the layout notation, that full dimension is the `TLane` axis.
+### Allocation with `cta_group::2`
 
-The instruction itself comes from a family of load shapes, such as `.16x64b`, `.16x128b`, `.16x256b`, `.32x32b`, and `.16x32bx2`, with repeat factors from `.x1` up to `.x128`. The chosen shape determines how many TMEM columns are read and how many registers each thread receives.
+`cta_group::1` involves only the current CTA, so one warp in that CTA performs the allocation and deallocation. With `cta_group::2`, one warp on each side of the CTA pair must execute the same `tcgen05.alloc` or `tcgen05.dealloc`; the side that arrives first may wait for its peer.
 
-The important result is the register fragment layout. For the common epilogue path, lane `l` receives values from TMEM row `l / 4` and two columns. This produces the same kind of per-lane accumulator fragment that earlier generations exposed directly from MMA ({ref}`chap_layout_generations`). That continuity matters. It means the Blackwell epilogue can reuse the same register-level cast and store structure that was already used for Ampere `mma` or Hopper `wgmma`, even though the accumulator lived in TMEM during the compute phase.
+The peer CTA must therefore have launched and eventually participate in these collective operations. Within one kernel, all `tcgen05` instructions carrying a `cta_group` qualifier must also use the same value. A kernel cannot allocate TMEM with `cta_group::2` and then access it with `cta_group::1` forms of `tcgen05.mma` or `tcgen05.commit`.
 
-![tcgen05.ld / st move the TMEM accumulator to and from registers in the m8n8 fragment (lane l → row l/4, two columns)](../img/tcgen05_ldst.svg)
+## Which TMEM Lanes Each Warp Can Access
 
-The second path is `tcgen05.st`, which stores data from registers back into TMEM. This is the reverse direction of `tcgen05.ld`. It is used when a thread already holds a register fragment and needs to place it into TMEM. For example, some operands or intermediate values may be staged through registers before being written into TMEM for a later `tcgen05` operation.
+TMEM belongs to the CTA, but `tcgen05.ld` and `tcgen05.st` do not give every warp access to all 128 Lane positions. The four warps in a warpgroup each access a fixed window of 32 TMEM Lane positions:
 
-The third path is `tcgen05.cp`, which copies data from shared memory into TMEM. This is a bulk copy path, commonly used for scale factors in block-scaled MMA. In that case, TMA or ordinary thread code first prepares the scale data in shared memory, and `tcgen05.cp` moves it into the TMEM layout expected by the Tensor Core.
+| Warp ID within the warpgroup | Accessible TMEM Lane positions |
+| --- | --- |
+| 0 | 0-31 |
+| 1 | 32-63 |
+| 2 | 64-95 |
+| 3 | 96-127 |
 
-All three paths are asynchronous. A `tcgen05.ld`, `tcgen05.st`, or `tcgen05.cp` instruction can return before the data movement has completed. A kernel must therefore use the right completion mechanism before consuming the result or reusing the storage ({ref}`chap_async_barriers`).
+All four warps can access every TMEM column; only their Lane windows differ. Reading an accumulator that spans all 128 Lane positions therefore requires four warp-level accesses, one for each window. This is the concrete meaning of the "warpgroup reads TMEM" shorthand used in earlier chapters.
 
-The wait path depends on the instruction. A `tcgen05.ld` completes through `tcgen05.wait::ld`. A `tcgen05.st` completes through `tcgen05.wait::st`. A `tcgen05.cp`, like `tcgen05.mma`, completes through a commit group and an `mbarrier`. If the data is handed from one set of threads to another, the kernel may also need fences so the receiving threads see the completed writes in the intended order.
+## How `tcgen05.ld` and `tcgen05.st` Move Data
 
-TMEM sits in the middle of the Blackwell Tensor Core data path. TMA stages operands into shared memory. `tcgen05.mma` reads its operands and accumulates into TMEM. For block-scaled MMA, scale factors can also be staged into TMEM. After the compute phase, `tcgen05.ld` brings the accumulator back into registers, and the epilogue converts and stores the final output.
+`tcgen05.ld` loads data from TMEM into registers, and `tcgen05.st` moves it in the opposite direction. Both are warp-collective instructions: every thread in the warp executes the same instruction and supplies the same TMEM address operand, `[taddr]`. The hardware uses each thread's lane ID to distribute the access among its registers, or to place those registers back into the corresponding TMEM cells.
+
+The following figure uses an m8n8-style register fragment to illustrate both directions. This is only one local mapping supported by `tcgen05.ld/st`; the actual data movement depends on `.shape`, `.num`, and the optional `.pack::16b` or `.unpack::16b` qualifier.
+
+![`tcgen05.ld` loads TMEM data into a register fragment, and `tcgen05.st` writes it back in the opposite direction](../img/tcgen05_ldst.svg)
+
+### Shape and Repeat Factor
+
+The amount of data moved by one load or store comes from `.shape` and `.num`. `.shape` specifies how many TMEM lanes participate and the base amount of data taken from each lane. `.num` repeats that amount. For example:
+
+```text
+tcgen05.ld.sync.aligned.16x128b.x4.b32
+    {r0, r1, r2, r3, r4, r5, r6, r7}, [taddr]
+```
+
+The next figure expands this instruction from left to right. Each horizontal row on the left is one TMEM lane. The four blue groups in a row correspond to the four repetitions selected by `.x4`. Each group contains four cells, representing the 128 bits in `.16x128b`; one small cell is one 32-bit TMEM cell.
+
+![Each TMEM lane contains four 128-bit groups, and every thread receives eight 32-bit registers](../img/tcgen05_ldst_lane_register_volume_en.svg)
+
+The left side therefore contains
+
+```text
+16 lanes × 4 groups/lane × 4 cells/group
+    = 256 32-bit TMEM cells
+```
+
+The 32 boxes on the right represent the 32 threads in the warp. The `r0-r7` inside each box are that thread's own eight 32-bit registers. `tcgen05.ld` distributes the 256 cells among those registers, giving each thread
+
+```text
+256 cells / 32 threads = 8 32-bit registers/thread
+```
+
+`tcgen05.st` moves the same amount of data in the opposite direction. The figure counts data volume only; the instruction's fragment mapping still determines which TMEM cell corresponds to which register slot in which thread.
+
+Changing `.x4` to `.x1` leaves only one 128-bit group in each lane. The instruction then moves `16 × 1 × 4 = 64` cells, which gives each of the 32 threads two 32-bit registers.
+
+| Instruction form | Data per lane | Registers per thread |
+| --- | ---: | ---: |
+| `.16x128b.x1` | 128 bits | 2 |
+| `.16x128b.x2` | 256 bits | 4 |
+| `.16x128b.x4` | 512 bits | 8 |
+| `.16x128b.x8` | 1024 bits | 16 |
+
+This data-movement shape is different from the `M × N × K` instruction shape of MMA. The MMA shape gives the logical dimensions of the matrix multiplication. Here, `.shape` describes the hardware movement between TMEM and registers. The register fragments in {ref}`Tensor Core Operand Layouts Across GPU Generations <chap_layout_generations>` explain how those registers map back to logical matrix elements.
+
+### Packing and Unpacking 16-Bit Data
+
+Each TMEM cell and each register operand of `tcgen05.ld/st` is 32 bits, but a kernel may manipulate 16-bit pieces of data. On `tcgen05.ld`, `.pack::16b` combines two 16-bit pieces from adjacent TMEM columns into one 32-bit register. On `tcgen05.st`, `.unpack::16b` splits one 32-bit register into two 16-bit pieces and writes them to adjacent TMEM columns.
+
+Packing and unpacking change only how data is organized while moving between TMEM and registers. They do not change the allocation unit: TMEM is still allocated along the Column dimension, and every allocated column still contains all 128 Lane positions.
+
+### Waiting for Asynchronous Loads and Stores
+
+`tcgen05.ld` and `tcgen05.st` are asynchronous. After a load, execute `tcgen05.wait::ld` before using the destination registers. After a store, use `tcgen05.wait::st` before relying on the write being complete. Each wait covers all earlier `tcgen05.ld` or `tcgen05.st` operations issued by the current thread, respectively.
+
+If another thread or warp will consume the data, waiting for the asynchronous operation is not enough by itself. The kernel also needs thread synchronization and the appropriate `tcgen05.fence` to establish ordering across threads.
+
+The SMEM-to-TMEM instruction `tcgen05.cp` uses a different set of shapes and a different completion mechanism. Its role in moving scale factors for block-scaled MMA was covered in {ref}`Tensor Core Operand Layouts Across GPU Generations <chap_layout_generations>` and {ref}`Blackwell Tensor Core <chap_tensor_cores>`, so we will not repeat it here.
+
+When reading a kernel that uses TMEM, check four things in order: how many columns it allocates and releases, which Lane window the current warp may access, how many registers the `.shape` and `.num` of each `ld/st` produce, and whether the corresponding asynchronous operation has completed. Together, these checks connect TMEM's resource lifetime, data layout, and synchronization protocol.
