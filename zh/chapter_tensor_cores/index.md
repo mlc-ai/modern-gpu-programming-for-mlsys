@@ -228,13 +228,13 @@ SFA, SFB: global memory -> SMEM -> tcgen05.cp -> TMEM -> tcgen05.mma
 奇数 CTA: SFA[128:256, :]
 ```
 
-图中展示了一种常见实现：两个 CTA 各自在 SMEM 中准备 B 的一半 N columns，cooperative MMA 再将两部分作为完整的 B tile 使用。因此，完整的 SFB 会复制到 CTA pair 的两侧：
+图中采用一种常见实现：两个 CTA 各自在 SMEM 中准备 B 的一半 N columns，cooperative MMA 再将两部分作为完整的 B tile 使用。因此，两侧都需要完整的：
 
 ```text
 SFB[0:N, :]
 ```
 
-所以，图中 SFA 沿 M 维分给两个 CTA，SFB 则在两侧各有一份符合 MMA layout 要求的完整副本。这是图中 kernel 的实现选择，并不表示所有 `cta_group::2` kernel 都必须按这种方式拆分 B。
+常见的 `cta_group::2` block-scaled kernel 会把这组 SFB multicast 到 CTA pair，使两个 CTA 的 TMEM 都能按 MMA 要求的 layout 提供它。所以，图中 SFA 沿 M 维分给两个 CTA，SFB 则在两侧各有一份完整副本。
 
 ![Block-scaled MMA 中的数据放置：A 和 B 打包在 SMEM 中，SFA、SFB 和 C 位于 TMEM；SFA 沿 M 维拆分到两个 CTA，SFB 则 multicast 到这个 CTA pair](../../img/mma_block_scaled.svg)
 

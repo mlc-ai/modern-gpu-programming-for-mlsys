@@ -228,13 +228,13 @@ even CTA: SFA[0:128,   :]
 odd CTA:  SFA[128:256, :]
 ```
 
-The figure shows one common implementation in which the two CTAs stage complementary halves of B's N columns. The cooperative MMA consumes them as one complete B tile, so the full SFB set is replicated across the CTA pair:
+The figure uses one common implementation: each CTA stages half of B's N columns in SMEM, and the cooperative MMA consumes the two halves as one complete B tile. Both sides therefore need the complete
 
 ```text
 SFB[0:N, :]
 ```
 
-The figure therefore shards SFA along M and gives each CTA a complete copy of SFB in the TMEM layout required by MMA. This is an implementation choice for the illustrated kernel, not a general requirement that every `cta_group::2` kernel split B in this way.
+A common `cta_group::2` block-scaled kernel multicasts this SFB data to the CTA pair so that each CTA's TMEM can present a complete copy in the layout required by MMA. The figure therefore shards SFA along M and replicates all of SFB on both sides.
 
 ![Data placement for block-scaled MMA: A and B are packed in SMEM; SFA, SFB, and C reside in TMEM; SFA is sharded along M, while SFB is multicast to the CTA pair](../img/mma_block_scaled.svg)
 
