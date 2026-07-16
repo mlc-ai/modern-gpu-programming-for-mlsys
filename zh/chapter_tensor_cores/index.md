@@ -171,12 +171,7 @@ rows 48-63  -> lanes 112-127
 
 偶数 CTA 保存逻辑 rows `0-127`，奇数 CTA 保存逻辑 rows `128-255`。两个 CTA 都使用自己 TMEM 中的 lanes `0-127`，N 维则沿各自完整的 TMEM columns 展开。
 
-物理上，这是两块分别属于不同 CTA 的 128-row TMEM；逻辑上，它们共同表示一个 `256×N` accumulator tile。图中采用的是本书后续 two-CTA GEMM 的组织方式：A 按照 M 维分工，偶数 CTA 在自己的 SMEM 中准备 `A[0:128, :]`，奇数 CTA 准备 `A[128:256, :]`；两个 CTA 还各自准备 B 的一半 N columns，cooperative MMA 再将两部分作为完整的 B tile 使用。在这种组织方式下，两侧计算的是：
-
-```text
-偶数 CTA: C[0:128,   :] = A[0:128,   :] × B
-奇数 CTA: C[128:256, :] = A[128:256, :] × B
-```
+物理上，这是分别属于两个 CTA 的两块 128-row TMEM；逻辑上，它们共同表示一个 `256×N` accumulator tile。A、B 如何分布到两个 CTA 的 SMEM，由具体 kernel 的数据组织方式决定，并不是该 accumulator layout 的一部分。
 
 ![`cta_group::2`、`M=256`：M 维连续分配给 CTA pair 中的两个 CTA，每个 CTA 保存 128 行](../../img/mma_cg2_m256.svg)
 
@@ -233,13 +228,13 @@ SFA, SFB: global memory -> SMEM -> tcgen05.cp -> TMEM -> tcgen05.mma
 奇数 CTA: SFA[128:256, :]
 ```
 
-在这种 two-CTA GEMM 组织方式中，B 的情况不同。两个 CTA 在装入 SMEM 时各自准备 B 的一半 N columns，但 cooperative MMA 会把两部分作为完整的 B tile 使用。无论计算 C 的上半部还是下半部，都需要 N 维上的全部 B columns，因此也都需要完整的：
+图中展示了一种常见实现：两个 CTA 各自在 SMEM 中准备 B 的一半 N columns，cooperative MMA 再将两部分作为完整的 B tile 使用。因此，完整的 SFB 会复制到 CTA pair 的两侧：
 
 ```text
 SFB[0:N, :]
 ```
 
-常见的 `cta_group::2` block-scaled kernel 会把这组 SFB multicast 到 CTA pair，使两个 CTA 的 TMEM 都能按 MMA 要求的 layout 提供它。所以，图中 SFA 沿 M 维分给两个 CTA，SFB 则在两侧各有一份完整副本。
+所以，图中 SFA 沿 M 维分给两个 CTA，SFB 则在两侧各有一份符合 MMA layout 要求的完整副本。这是图中 kernel 的实现选择，并不表示所有 `cta_group::2` kernel 都必须按这种方式拆分 B。
 
 ![Block-scaled MMA 中的数据放置：A 和 B 打包在 SMEM 中，SFA、SFB 和 C 位于 TMEM；SFA 沿 M 维拆分到两个 CTA，SFB 则 multicast 到这个 CTA pair](../../img/mma_block_scaled.svg)
 
