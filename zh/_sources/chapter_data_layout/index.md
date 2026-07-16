@@ -208,7 +208,9 @@ f_D(x) = (c0·4 + c1)@laneid + c2@reg
 
 先看一个发生在单个 kernel 内部的例子。Blackwell block-scaled MMA 会把 scale factors 存放在 TMEM 中，再通过 `.warpx4` broadcast 把它们提供给读取数据的四个 warps。结果是，同一个逻辑 scale factor 会出现在四个不同的 TMEM lane 位置。
 
-这些 scale factors 来自 block-scaled MMA。它面向低精度输入，沿 K 维将 A、B 划分为若干 scale blocks，并为每个 block 配置一个 scale factor，用来恢复该块的数值尺度。设每个 scale block 包含 `K_blk` 个 K 元素，那么元素 `k` 所属 block 的索引为：
+Block-scaled MMA 不是一种特定的数据类型，而是一类使用分块缩放因子的低精度 MMA。Blackwell 上常见的格式包括 MXFP8 和 NVFP4。就本节讨论的局部 block scale 而言，MXFP8 使用 FP8 数据，沿 K 维每 32 个元素共享一个 E8M0 scale factor；NVFP4 使用 E2M1 FP4 数据，每 16 个元素共享一个 E4M3 scale factor。
+
+无论采用哪种格式，基本思路都相同：沿 K 维将 A、B 划分为若干 scale blocks，并为每个 block 配置一个 scale factor，用来恢复该块的数值尺度。设每个 scale block 包含 `K_blk` 个 K 元素，那么元素 `k` 所属 block 的索引为：
 
 ```text
 sfk = k // K_blk
