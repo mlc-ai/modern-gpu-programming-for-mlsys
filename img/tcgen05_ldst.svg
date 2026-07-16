@@ -2855,7 +2855,7 @@ z
     </g>
    </g>
    <g id="text_48">
-    <!-- Warpgroup-cooperative and async (gated by tcgen05.wait). The fragment is the same m8n8 layout ldmatrix builds (Ampere) and wgmma outputs (Hopper). -->
+    <!-- Legacy footer glyph paths; the corrected footer below replaces them. -->
     <g style="fill: #1f2937" transform="translate(7.2 250.83108) scale(0.072 -0.072)">
      <defs>
       <path id="DejaVuSans-Oblique-57" d="M 616 4666 
@@ -3732,6 +3732,10 @@ z
      <use xlink:href="#DejaVuSans-Oblique-29" transform="translate(7764.568359 0)"/>
      <use xlink:href="#DejaVuSans-Oblique-2e" transform="translate(7803.582031 0)"/>
     </g>
+   </g>
+   <g id="corrected_footer">
+    <rect x="0" y="241" width="578.545875" height="13.5" fill="#ffffff"/>
+    <text x="7.2" y="250.83108" fill="#1f2937" font-family="DejaVu Sans, sans-serif" font-size="7.2" font-style="italic">Warp-collective and async (gated by tcgen05.wait). This diagram shows one m8n8-style local mapping; other tcgen05.ld/st shapes use different mappings.</text>
    </g>
   </g>
  </g>

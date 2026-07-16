@@ -6,7 +6,7 @@
 
 - `tcgen05.mma` typically reads A and B from SMEM and updates the C/D accumulator in TMEM. The epilogue later brings the result back into registers with `tcgen05.ld`.
 - `cta_group::1` uses the current CTA, while `cta_group::2` uses a CTA pair. The two modes use different TMEM accumulator mappings.
-- Block-scaled MMA also needs SFA and SFB in TMEM. These scale factors first enter SMEM, then move to TMEM through `tcgen05.cp`, where they are sharded or replicated according to how the CTA pair divides A and B.
+- Block-scaled MMA also needs SFA and SFB in TMEM. In the loading path used here, these scale factors first enter SMEM, then move to TMEM through `tcgen05.cp`, where they are sharded or replicated according to how the CTA pair divides A and B.
 :::
 
 {ref}`Tensor Core Operand Layouts Across GPU Generations <chap_layout_generations>` traced the data path for matrix multiply-accumulate (MMA) across Ampere, Hopper, and Blackwell. This chapter narrows the focus to Blackwell's `tcgen05.mma`: how one MMA is issued, how its accumulator maps into TMEM, and how `cta_group` determines whether the operation uses the current CTA or a CTA pair.
@@ -171,7 +171,7 @@ When `M = 256`, the 128 Lane rows of one CTA cannot hold the complete M dimensio
 
 The even CTA stores logical rows `0-127`, and the odd CTA stores rows `128-255`. Each CTA uses lanes `0-127` in its own TMEM, while N extends across all of its corresponding TMEM columns.
 
-Physically, these are two separate 128-row TMEM regions owned by different CTAs. Logically, they form one `256 × N` accumulator tile. A follows the same M partition: the even CTA prepares `A[0:128, :]` in its SMEM, and the odd CTA prepares `A[128:256, :]`. B logically spans the full N dimension. When B is staged into SMEM, each CTA brings in half of the N columns, and the cooperative MMA consumes both halves as one complete B tile. The two sides compute
+Physically, these are two separate 128-row TMEM regions owned by different CTAs. Logically, they form one `256 × N` accumulator tile. The figure uses the two-CTA GEMM organization developed later in this book: A follows the same M partition, so the even CTA prepares `A[0:128, :]` in its SMEM and the odd CTA prepares `A[128:256, :]`. Each CTA also stages half of B's N columns, and the cooperative MMA consumes both halves as one complete B tile. Under this organization, the two sides compute
 
 ```text
 even CTA: C[0:128,   :] = A[0:128,   :] × B
@@ -233,7 +233,7 @@ even CTA: SFA[0:128,   :]
 odd CTA:  SFA[128:256, :]
 ```
 
-B is different. Each CTA stages half of B's N columns into SMEM, but the cooperative MMA consumes both halves as a complete B tile. Computing either half of C along M therefore requires all B columns along N, and both CTAs need the complete
+B is different in this two-CTA GEMM organization. Each CTA stages half of B's N columns into SMEM, but the cooperative MMA consumes both halves as a complete B tile. Computing either half of C along M therefore requires all B columns along N, and both CTAs need the complete
 
 ```text
 SFB[0:N, :]
@@ -245,7 +245,7 @@ A common `cta_group::2` block-scaled kernel multicasts this SFB data to the CTA 
 
 ## Handing Data Between `tcgen05` Instructions
 
-Although one thread issues `tcgen05.mma`, the instruction performs a tile-level cooperative operation. `cta_group` determines whether it uses the SMEM and TMEM resources of the current CTA or of a CTA pair. The corresponding TMEM layout then determines the CTA and `TLane`/`TCol` coordinates that receive each accumulator element. For block-scaled MMA, SFA and SFB must first move into TMEM through `tcgen05.cp` and be sharded or replicated according to the division of A and B across the pair.
+Although one thread issues `tcgen05.mma`, the instruction performs a tile-level cooperative operation. `cta_group` determines whether it uses the SMEM and TMEM resources of the current CTA or of a CTA pair. The corresponding TMEM layout then determines the CTA and `TLane`/`TCol` coordinates that receive each accumulator element. In the block-scaled path used here, SFA and SFB first move into TMEM through `tcgen05.cp` and are sharded or replicated according to the division of A and B across the pair.
 
 Connecting asynchronous instructions such as `tcgen05.cp`, `tcgen05.mma`, and `tcgen05.ld` requires three conditions: the operation must target the correct CTA or CTA pair, the producer's output layout must match the layout expected by the consumer, and the consumer must use the corresponding completion and ordering mechanism before accessing the data. If any condition fails, the hardware may interpret the wrong TMEM coordinates or read data that is still being updated.
 

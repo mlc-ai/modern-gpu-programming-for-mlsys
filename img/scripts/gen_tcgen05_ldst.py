@@ -1,8 +1,8 @@
-"""tcgen05.ld / st data movement: TMEM accumulator <-> the warp register fragment.
-Ground truth: nymph-rust tcgen05 datapath atoms (CUTLASS SM100 TMEM-copy traits) —
-ld/st distribute TMEM into registers in the m8n8 fragment (lane l -> row l/4, two
-columns = one b32), the same fragment ldmatrix builds (Ampere) and wgmma outputs
-(Hopper). Outputs SVG into ../ (the img/ dir).
+"""tcgen05.ld / st data movement: TMEM accumulator <-> a warp register fragment.
+
+This diagram uses one m8n8-style local mapping to illustrate the direction of
+the transfer. Other tcgen05.ld/st shapes use different thread/register mappings.
+Outputs SVG into ../ (the img/ dir).
 """
 import matplotlib
 matplotlib.use("Agg")
@@ -67,8 +67,8 @@ ax.annotate("", xy=(SX0 + SW + 2, 44), xytext=(FX0 - 2, 44),
             arrowprops=dict(arrowstyle="-|>", color="#475569", lw=2))
 ax.text(50, 40, "tcgen05.st  (reg → TMEM)", ha="center", fontsize=7.8, color="#475569")
 
-ax.text(50, 6.5, "Warpgroup-cooperative and async (gated by tcgen05.wait). The fragment is the same "
-        "m8n8 layout ldmatrix builds (Ampere) and wgmma outputs (Hopper).",
+ax.text(50, 6.5, "Warp-collective and async (gated by tcgen05.wait). This diagram shows one "
+        "m8n8-style local mapping; other tcgen05.ld/st shapes use different mappings.",
         ha="center", fontsize=7.2, color=TXT, style="italic")
 
 fig.savefig(f"{OUT}/tcgen05_ldst.svg", facecolor="white", bbox_inches="tight")
