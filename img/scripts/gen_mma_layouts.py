@@ -117,8 +117,6 @@ for j in range(8):
     else:
         ax.add_patch(Rectangle((62, yb), 32, band_h - 0.6, facecolor=GRAY,
                                edgecolor="white", linewidth=1.0, alpha=0.6, hatch="//"))
-ax.text(78, 10.5, "C (M, N): unused Lane bands can hold another aligned M=64 tile",
-        ha="center", fontsize=6.6, color=TXT)
 save(fig, "mma_cg1_m64.svg")
 
 
