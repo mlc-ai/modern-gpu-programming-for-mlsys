@@ -129,7 +129,7 @@ Accumulator layout 由 `cta_group`、M 维大小、A 是稠密矩阵还是结构
 
 ### `cta_group::1`，`M = 64`（不使用 `.ws`）
 
-当 `M = 64` 时，accumulator 只有 64 行，但 TMEM 仍然包含 128 个 Lane rows。这里讨论的是普通的 `tcgen05.mma`，而不是带 `.ws` 后缀的 weight-stationary 形式；它的 TMEM 映射采用 Layout F。
+当 `M = 64` 时，输出 accumulator `C` 的逻辑 shape 是 `64xN`：`C` 表示 MMA 生成的矩阵，`M` 和 `N` 分别表示它的行数和列数。TMEM 仍然包含 128 个 Lane rows。这里讨论的是普通的 `tcgen05.mma`，而不是带 `.ws` 后缀的 weight-stationary 形式；它的 TMEM 映射采用 Layout F。
 
 Layout F 按硬件数据路径将 128 条 TMEM lanes 分成四个 32-lane 区域，分别对应 `warp-rank % 4 = 0,1,2,3`。64 个 M rows 也被分成四组，每组 16 行，并依次放入这四个区域。由于每组只有 16 行，一个 32-lane 区域中只有一半 lanes 会被当前 tile 使用。
 

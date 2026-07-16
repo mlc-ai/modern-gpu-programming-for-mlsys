@@ -129,7 +129,7 @@ The result occupies 128 Lane rows and N Col columns. The CTA reads A and B from 
 
 ### `cta_group::1`, `M = 64` (without `.ws`)
 
-When `M = 64`, the accumulator has only 64 rows, but TMEM still has 128 Lane rows. This section covers ordinary `tcgen05.mma`, not the weight-stationary `.ws` form. Its TMEM mapping uses Layout F.
+When `M = 64`, the output accumulator `C` has logical shape `64 x N`: `C` names the matrix produced by MMA, while `M` and `N` are its row and column dimensions. TMEM still has 128 Lane rows. This section covers ordinary `tcgen05.mma`, not the weight-stationary `.ws` form. Its TMEM mapping uses Layout F.
 
 Layout F divides the 128 TMEM lanes into four 32-lane regions, corresponding to `warp-rank % 4 = 0,1,2,3` in the hardware data path. It also divides the 64 M rows into four groups of 16 and places one group in each region. Because a group contains only 16 rows, the current tile uses only half of each 32-lane region.
 
