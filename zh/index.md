@@ -31,6 +31,7 @@ chapter_data_layout/index
 chapter_layout_generations/index
 chapter_tma/index
 chapter_tensor_cores/index
+chapter_tmem/index
 ```
 
 <!--
