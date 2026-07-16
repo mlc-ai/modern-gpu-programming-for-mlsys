@@ -1,0 +1,563 @@
+
+<!DOCTYPE html>
+
+
+<html lang="zh-CN" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Tensor Memory（TMEM） &#8212; 面向 MLSys 的现代 GPU 编程</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=3c74b3bc" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=654c0d46" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../_static/documentation_options.js?v=eb1cd0b9"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'chapter_tmem/index';</script>
+    <script src="../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <link rel="icon" href="../_static/mlc-favicon.ico"/>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="搜索" href="../search.html" />
+    <link rel="prev" title="Blackwell Tensor Core：tcgen05.mma" href="../chapter_tensor_cores/index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="zh-CN"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">跳转至主要内容</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>回到顶部</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="版本警告"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">异步数据搬运：TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Tensor Memory（TMEM）</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+<a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button"
+   title="源码库"
+   data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+
+</a>
+
+
+
+
+<button onclick="window.location.href='../../index.html'"
+  class="btn btn-sm btn-language-switch-button pst-navbar-icon"
+  title="Switch to English"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-language"></i>
+  </span>
+
+</button>
+
+
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="亮色"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="暗色"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Tensor Memory（TMEM）</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> 目录 </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tmem">TMEM 的分配生命周期</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">分配大小的限制</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cta-group-2"><code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> 的分配</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-tmem-lanes">每个 warp 能访问哪些 TMEM lanes</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tcgen05-ld-tcgen05-st"><code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 如何移动数据</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shape-repeat-factor">Shape 和 Repeat Factor</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bit">16-bit 数据的打包与拆包</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">等待异步读写完成</a></li>
+</ul>
+</li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="tensor-memory-tmem">
+<span id="chap-tmem"></span><h1>Tensor Memory（TMEM）<a class="headerlink" href="#tensor-memory-tmem" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">概览</p>
+<ul class="simple">
+<li><p>TMEM 是由 Lane 和 Column 组成的二维地址空间，并以 column 为单位动态分配。<code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 申请空间，<code class="docutils literal notranslate"><span class="pre">tcgen05.dealloc</span></code> 释放空间，<code class="docutils literal notranslate"><span class="pre">tcgen05.relinquish_alloc_permit</span></code> 放弃后续分配权限。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 由整个 warp 协同执行。warp 在 warpgroup 中的 ID 决定它能访问哪 32 个 TMEM Lane 位置，<code class="docutils literal notranslate"><span class="pre">.shape</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.num</span></code> 决定一次移动的数据量以及每个 thread 使用的 registers 数量。</p></li>
+<li><p>TMEM load 和 store 都是异步操作。使用 load 得到的 registers 前需要执行 <code class="docutils literal notranslate"><span class="pre">tcgen05.wait::ld</span></code>；复用 store 涉及的 TMEM 位置前需要执行 <code class="docutils literal notranslate"><span class="pre">tcgen05.wait::st</span></code>。</p></li>
+</ul>
+</div>
+<p>前几章已经从不同角度介绍过 TMEM。<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局及其记号</span></a> 解释了 <code class="docutils literal notranslate"><span class="pre">TLane</span></code>、<code class="docutils literal notranslate"><span class="pre">TCol</span></code> 和二维 layout；<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core 数据布局的演进</span></a> 介绍了 accumulator 与 scale factors 的数据路径；<a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Blackwell Tensor Core</span></a> 则说明了 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 如何把结果映射到 TMEM。</p>
+<p>先用下图回顾 TMEM 的物理结构。PTX 将它的两个地址坐标称为 Lane 和 Column；在 TIRx layout 记号中，对应的轴写作 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code>。这里的 TMEM Lane 是地址坐标，不是 thread 的 lane ID。</p>
+<p>每个 CTA 的 TMEM 在 Lane 维上有 128 个位置，在 Column 维上最多有 512 个位置，每个 <code class="docutils literal notranslate"><span class="pre">(Lane,</span> <span class="pre">Column)</span></code> cell 为 32 bits。后面所说的分配 TMEM，就是从 Column 维中申请一段空间；每个被分配的 column 都包含全部 128 个 Lane 位置。</p>
+<p><img alt="TMEM 的二维地址空间：Lane 维包含 128 个位置，Column 维最多包含 512 个位置" src="../_images/tmem_grid.png" /></p>
+<p>本章把重点放在使用 TMEM 时还需要处理的两个问题：kernel 如何申请和释放 TMEM，以及各个 warp 如何通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 访问它。</p>
+<section id="tmem">
+<h2>TMEM 的分配生命周期<a class="headerlink" href="#tmem" title="Link to this heading">#</a></h2>
+<p>TMEM 采用动态分配。<code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 沿 Column 维申请空间，可用的 <code class="docutils literal notranslate"><span class="pre">n_cols</span></code> 为 32、64、128、256 或 512；每次申请一个 column 时，该 column 中全部 128 个 Lane 位置会一起分配。</p>
+<p>下面是后续 TIRx kernel 中常见的写法：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>
+<span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>
+<span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+
+<span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span>
+        <span class="n">T</span><span class="o">.</span><span class="n">address_of</span><span class="p">(</span><span class="n">tmem_addr</span><span class="p">),</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span>
+    <span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">tmem_addr</span></code> 是 SMEM 中的一个 32-bit slot。<code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 成功后，会把分配到的 TMEM base address 写进这个 slot。指令本身可能等待空闲的 TMEM columns，因此它是一条 blocking instruction。</p>
+<p>这里的 <code class="docutils literal notranslate"><span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0</span></code> 选择的是整个 warp 0。<code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 是 warp-collective instruction，warp 中的 32 个 threads 必须使用相同的 <code class="docutils literal notranslate"><span class="pre">n_cols</span></code> 一起执行；不能再套一层 <code class="docutils literal notranslate"><span class="pre">lane_id</span> <span class="pre">==</span> <span class="pre">0</span></code>，把它变成单 thread 操作。其他 warps 在读取 <code class="docutils literal notranslate"><span class="pre">tmem_addr</span></code> 前，还需要经过相应的 fence 和 CTA synchronization，使分配结果对整个 CTA 可见。</p>
+<p>拿到 base address 后，TIRx 会在这段已分配的空间上声明一个 TMEM buffer：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tmem</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
+    <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">),</span>
+    <span class="s2">&quot;float32&quot;</span><span class="p">,</span>
+    <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span>
+    <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+    <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span>
+        <span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]</span>
+    <span class="p">),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code> 将 buffer 绑定到 <code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 返回的地址，<code class="docutils literal notranslate"><span class="pre">layout</span></code> 则规定逻辑坐标 <code class="docutils literal notranslate"><span class="pre">(m,n)</span></code> 如何映射到 TMEM 的 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code>。这样，后续代码可以通过 <code class="docutils literal notranslate"><span class="pre">tmem[m,n]</span></code> 表示逻辑元素，具体的 TMEM 坐标由 layout 统一处理。</p>
+<section id="id1">
+<h3>分配大小的限制<a class="headerlink" href="#id1" title="Link to this heading">#</a></h3>
+<p>同一个 CTA 按执行顺序进行多次分配时，后一次申请的 columns 数量不能比前一次更多。例如：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>256 columns -&gt; 128 columns   合法
+128 columns -&gt; 256 columns   不合法
+</pre></div>
+</div>
+<p>这个规则要求 kernel 在设计阶段先确定最大的 TMEM 需求，而不是运行到后面再扩大分配。</p>
+<p>使用结束后，kernel 要完成两件事：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">dealloc</span><span class="p">(</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">256</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">relinquish_alloc_permit</span><span class="p">(</span><span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">tcgen05.dealloc</span></code> 释放之前申请的 columns；kernel 退出前，所有已分配的 TMEM 都必须显式释放。<code class="docutils literal notranslate"><span class="pre">tcgen05.relinquish_alloc_permit</span></code> 表示当前 CTA 放弃后续分配 TMEM 的权利，执行之后不能再调用 <code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code>。清理阶段开始前，还要确认 MMA、load 和 store 等访问 TMEM 的异步操作已经完成。</p>
+</section>
+<section id="cta-group-2">
+<h3><code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> 的分配<a class="headerlink" href="#cta-group-2" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code> 只涉及当前 CTA，因此由当前 CTA 中的一个 warp 完成分配和释放。<code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> 则需要 CTA pair 两侧各有一个 warp 执行同一条 <code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 或 <code class="docutils literal notranslate"><span class="pre">tcgen05.dealloc</span></code>；先到达的一侧可能会等待 peer CTA 的 warp。</p>
+<p>这也意味着 peer CTA 必须已经启动，并最终参与这些 collective operations。一个 kernel 中所有带 <code class="docutils literal notranslate"><span class="pre">cta_group</span></code> qualifier 的 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 指令还必须使用相同的值，不能用 <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> 分配 TMEM，却用 <code class="docutils literal notranslate"><span class="pre">cta_group::1</span></code> 的 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 或 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> 访问它。</p>
+</section>
+</section>
+<section id="warp-tmem-lanes">
+<h2>每个 warp 能访问哪些 TMEM lanes<a class="headerlink" href="#warp-tmem-lanes" title="Link to this heading">#</a></h2>
+<p>TMEM 属于 CTA，但 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 不会让 CTA 中的任意 warp 访问全部 128 个 Lane 位置。一个 warpgroup 中的四个 warps 各自负责一个由 32 个 Lane 位置组成的固定范围：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>warp 在 warpgroup 中的 ID</p></th>
+<th class="head"><p>可访问的 TMEM Lane 位置</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0</p></td>
+<td><p>0-31</p></td>
+</tr>
+<tr class="row-odd"><td><p>1</p></td>
+<td><p>32-63</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p>64-95</p></td>
+</tr>
+<tr class="row-odd"><td><p>3</p></td>
+<td><p>96-127</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>四个 warps 都可以访问所有 TMEM columns，区别只在 Lane 范围。因此，完整读出一个覆盖 128 个 Lane 位置的 accumulator 时，需要四个 warps 分别读取自己的 Lane 范围。前面章节提到的“warpgroup 读回 TMEM”，具体指的就是这四次 warp-level access。</p>
+</section>
+<section id="tcgen05-ld-tcgen05-st">
+<h2><code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 如何移动数据<a class="headerlink" href="#tcgen05-ld-tcgen05-st" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 从 TMEM 加载数据到 registers，<code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 处理相反方向。两条指令都是 warp-collective operations：warp 中所有 threads 必须执行同一条指令，并提供相同的 TMEM 地址操作数 <code class="docutils literal notranslate"><span class="pre">[taddr]</span></code>。硬件再根据 thread 的 lane ID，将整个访问结果分配到各 thread 的 registers，或把这些 registers 写回对应的 TMEM cells。</p>
+<p>下图使用一个 m8n8-style register fragment 展示两个方向的数据移动。它只是 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld/st</span></code> 支持的一种局部映射；实际的数据移动方式由 <code class="docutils literal notranslate"><span class="pre">.shape</span></code>、<code class="docutils literal notranslate"><span class="pre">.num</span></code> 以及可选的 <code class="docutils literal notranslate"><span class="pre">.pack::16b</span></code> 或 <code class="docutils literal notranslate"><span class="pre">.unpack::16b</span></code> qualifier 决定。</p>
+<p><img alt=" 将 TMEM 数据加载到 register fragment， 按相反方向写回" src="../_images/tcgen05_ldst.svg" /></p>
+<section id="shape-repeat-factor">
+<h3>Shape 和 Repeat Factor<a class="headerlink" href="#shape-repeat-factor" title="Link to this heading">#</a></h3>
+<p>一次 load 或 store 移动多少数据，由 <code class="docutils literal notranslate"><span class="pre">.shape</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.num</span></code> 两部分共同决定。<code class="docutils literal notranslate"><span class="pre">.shape</span></code> 指定一次覆盖多少条 TMEM lanes，以及每条 lane 的基础数据量；<code class="docutils literal notranslate"><span class="pre">.num</span></code> 再将这份数据量重复若干次。例如：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>tcgen05.ld.sync.aligned.16x128b.x4.b32
+    {r0, r1, r2, r3, r4, r5, r6, r7}, [taddr]
+</pre></div>
+</div>
+<p>下图从左到右展开这条指令。左侧每一横行对应一条 TMEM lane。每行有四个蓝色色块，对应 <code class="docutils literal notranslate"><span class="pre">.x4</span></code> 的四次重复；每个色块包含 4 个小格，也就是 <code class="docutils literal notranslate"><span class="pre">.16x128b</span></code> 中的 128 bits。一个小格表示一个 32-bit TMEM cell。</p>
+<p><img alt="左侧每条 TMEM lane 包含四组 128-bit cells，右侧每个 thread 持有八个 registers" src="../_images/tcgen05_ldst_lane_register_volume.svg" /></p>
+<p>因此，左侧一共有：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>16 lanes × 4 groups/lane × 4 cells/group
+    = 256 个 32-bit TMEM cells
+</pre></div>
+</div>
+<p>右侧的 32 个方框分别表示 warp 中的 32 个 threads。每个方框中的 <code class="docutils literal notranslate"><span class="pre">r0-r7</span></code> 表示该 thread 自己的 8 个 32-bit registers。<code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 将左侧的 256 个 cells 分配到这些 registers，因此每个 thread 得到：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>256 cells ÷ 32 threads = 8 个 32-bit registers/thread
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 沿相反方向移动相同数量的数据。这张图只计算数据量；每个 TMEM cell 具体对应哪个 thread 的哪个 register slot，仍由指令的 fragment mapping 决定。</p>
+<p>如果把 <code class="docutils literal notranslate"><span class="pre">.x4</span></code> 改成 <code class="docutils literal notranslate"><span class="pre">.x1</span></code>，左侧每条 lane 就只剩一个 128-bit 色块。此时总共有 <code class="docutils literal notranslate"><span class="pre">16×1×4=64</span></code> 个 cells，平均到 32 个 threads 后，每个 thread 得到 2 个 32-bit registers。</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>指令形式</p></th>
+<th class="head text-right"><p>每条 lane 的数据量</p></th>
+<th class="head text-right"><p>每个 thread 的 registers</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">.16x128b.x1</span></code></p></td>
+<td class="text-right"><p>128 bits</p></td>
+<td class="text-right"><p>2</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">.16x128b.x2</span></code></p></td>
+<td class="text-right"><p>256 bits</p></td>
+<td class="text-right"><p>4</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">.16x128b.x4</span></code></p></td>
+<td class="text-right"><p>512 bits</p></td>
+<td class="text-right"><p>8</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">.16x128b.x8</span></code></p></td>
+<td class="text-right"><p>1024 bits</p></td>
+<td class="text-right"><p>16</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>这和 MMA 的 <code class="docutils literal notranslate"><span class="pre">M×N×K</span></code> instruction shape 是两套概念。MMA shape 描述矩阵乘法的逻辑尺寸；这里的 data-movement shape 描述 TMEM 与 registers 之间一次搬运的硬件模式。<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core 数据布局的演进</span></a> 中的 register fragment，则说明这些 registers 如何对应回逻辑矩阵元素。</p>
+</section>
+<section id="bit">
+<h3>16-bit 数据的打包与拆包<a class="headerlink" href="#bit" title="Link to this heading">#</a></h3>
+<p>TMEM 的每个 cell 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld/st</span></code> 的 register operand 都是 32 bits，但 kernel 处理的数据片段可能只有 16 bits。执行 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 时，<code class="docutils literal notranslate"><span class="pre">.pack::16b</span></code> 会把相邻 TMEM columns 中的两个 16-bit 数据片段打包进一个 32-bit register；执行 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 时，<code class="docutils literal notranslate"><span class="pre">.unpack::16b</span></code> 则将一个 32-bit register 拆成两个 16-bit 数据片段，写入相邻的 TMEM columns。</p>
+<p>Pack 和 unpack 只改变 TMEM 与 registers 之间的数据组织方式，不改变 TMEM 的分配单位：TMEM 仍然沿 Column 维分配，每个被分配的 column 仍然包含全部 128 个 Lane 位置。</p>
+</section>
+<section id="id2">
+<h3>等待异步读写完成<a class="headerlink" href="#id2" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 都是异步指令。执行 load 后，必须在使用目标 registers 前执行 <code class="docutils literal notranslate"><span class="pre">tcgen05.wait::ld</span></code>；执行 store 后，则通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.wait::st</span></code> 等待写入完成。二者分别等待当前 thread 此前发出的所有 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 或 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 操作。</p>
+<p>如果数据还要交给其他 threads 或 warps，除了等待异步操作完成，还需要配合 thread synchronization 和对应的 <code class="docutils literal notranslate"><span class="pre">tcgen05.fence</span></code> 建立跨 thread 的执行顺序。</p>
+<p>SMEM 到 TMEM 的 <code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> 使用另一套 shape 和完成机制。它如何搬运 block-scaled MMA 的 scale factors，已经在 <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core 数据布局的演进</span></a> 和 <a class="reference internal" href="../chapter_tensor_cores/index.html#chap-tensor-cores"><span class="std std-ref">Blackwell Tensor Core</span></a> 中介绍，这里不再重复。</p>
+<p>阅读一个使用 TMEM 的 kernel 时，可以依次检查四件事：申请和释放了多少 columns、当前 warp 能访问哪些 Lane 位置、<code class="docutils literal notranslate"><span class="pre">ld/st</span></code> 的 <code class="docutils literal notranslate"><span class="pre">.shape</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.num</span></code> 会产生多少 registers，以及相关异步操作是否已经完成。这样可以把 TMEM 的资源生命周期、数据布局和同步关系串联起来。</p>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../chapter_tensor_cores/index.html"
+       title="上一页">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></p>
+      </div>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> 目录
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tmem">TMEM 的分配生命周期</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">分配大小的限制</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cta-group-2"><code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> 的分配</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-tmem-lanes">每个 warp 能访问哪些 TMEM lanes</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tcgen05-ld-tcgen05-st"><code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 如何移动数据</a><ul class="visible nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shape-repeat-factor">Shape 和 Repeat Factor</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#bit">16-bit 数据的打包与拆包</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">等待异步读写完成</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+作者： MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
