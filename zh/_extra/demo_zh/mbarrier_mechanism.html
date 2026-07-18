@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MBarrier 机制</title>
+<title>mbarrier 机制</title>
 <link rel="stylesheet" href="../viz-base.css">
 <script src="../viz-base.js"></script>
 <style>
@@ -31,7 +31,7 @@
   .field-row:last-child { border-bottom: none; }
   .field-name {
     font-family: 'SF Mono','Fira Code',monospace; font-size: 11.5px;
-    font-weight: 600; color: #3b82f6; min-width: 120px;
+    font-weight: 600; color: #3b82f6; min-width: 145px;
   }
   .field-desc {
     font-size: 12px; color: #475569; line-height: 1.5;
@@ -53,7 +53,7 @@
   .obj-slot .slot-label {
     font-size: 9px; font-weight: 600; opacity: .7;
     font-family: 'SF Mono','Fira Code',monospace;
-    margin-bottom: 2px;
+    line-height: 1.25; margin-bottom: 2px;
   }
 
   .api-table {
@@ -110,45 +110,45 @@
 </style>
 </head>
 <body>
-  <h1>MBarrier：数据结构与 API</h1>
+  <h1>mbarrier：状态与操作</h1>
 
   <div class="struct-section">
     <div class="struct-card">
-      <h3>MBarrier Object（64-bit，位于 shared memory）</h3>
+      <h3>mbarrier 概念状态（64-bit，内部编码不透明）</h3>
       <div class="obj-visual">
-        <div class="obj-slot s-phase"><div class="slot-label">phase</div>0 或 1</div>
-        <div class="obj-slot s-pending"><div class="slot-label">pending_count</div>剩余 arrival</div>
-        <div class="obj-slot s-expected"><div class="slot-label">expected_count</div>预期总数</div>
-        <div class="obj-slot s-tx"><div class="slot-label">tx_count</div>待完成字节数</div>
+        <div class="obj-slot s-phase"><div class="slot-label">phase parity</div>0 或 1</div>
+        <div class="obj-slot s-pending"><div class="slot-label">pending arrival<br>count</div>剩余 arrival</div>
+        <div class="obj-slot s-expected"><div class="slot-label">expected arrival<br>count</div>预期总数</div>
+        <div class="obj-slot s-tx"><div class="slot-label">tx-count</div>待完成事务量</div>
       </div>
       <div class="field-row">
-        <span class="field-name">phase</span>
-        <span class="field-desc">当前 phase（0 或 1）。完成后会自动翻转。</span>
+        <span class="field-name">phase parity</span>
+        <span class="field-desc">当前 phase 的奇偶值。phase 前进一轮后，parity 会在 0 和 1 之间翻转。</span>
       </div>
       <div class="field-row">
-        <span class="field-name">pending_count</span>
+        <span class="field-name">pending arrival count</span>
         <span class="field-desc">当前 phase 完成前还需要多少次 arrival。</span>
       </div>
       <div class="field-row">
-        <span class="field-name">expected_count</span>
-        <span class="field-desc">每个 phase 预期的 arrival 总数（由 <code style="font-family:'SF Mono',monospace;font-size:11px;">init</code> 设置）。</span>
+        <span class="field-name">expected arrival count</span>
+        <span class="field-desc">每个 phase 需要等待的 arrival 数量，由 <code style="font-family:'SF Mono',monospace;font-size:11px;">init</code> 设置。</span>
       </div>
       <div class="field-row">
-        <span class="field-name">tx_count</span>
-        <span class="field-desc">尚未完成的异步传输字节数。<code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code> 会增加它；传输完成后硬件会减少它。</span>
+        <span class="field-name">tx-count</span>
+        <span class="field-desc">异步事务账本。<code style="font-family:'SF Mono',monospace;font-size:11px;">expect_tx</code> 增加它，硬件的 <code style="font-family:'SF Mono',monospace;font-size:11px;">complete_tx</code> 减少它。</span>
       </div>
     </div>
 
     <div class="struct-card">
       <h3>Phase 完成条件</h3>
       <div style="padding:12px 14px;background:#f8fafc;border-radius:8px;margin-bottom:10px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:2;text-align:center;">
-        pending_count == 0<br>
+        pending_arrival_count == 0<br>
         <strong style="color:#1e293b;">&amp;&amp;</strong><br>
-        tx_count &le; 0
+        tx-count == 0
       </div>
       <div class="field-desc" style="line-height:1.65;">
-        当 <strong style="color:#1e293b;">所有预期 thread 都已 arrive</strong>，并且 <strong style="color:#1e293b;">所有预期异步字节都已传输完成</strong> 时，一个 phase 才算完成。
-        完成后，barrier 会自动 reset：phase 翻转，pending_count 重置为 expected_count，tx_count 重置为 0。
+        当 <strong style="color:#1e293b;">预期的 arrival 都已发生</strong>，并且 <strong style="color:#1e293b;">事务账本回到 0</strong> 时，当前 phase 才算完成。
+        此时 barrier 会原子地进入下一 phase，并将 pending arrival count 恢复为 expected arrival count。
       </div>
     </div>
   </div>
@@ -157,42 +157,42 @@
     <h3>核心 API</h3>
     <table class="api-table">
       <thead>
-        <tr><th>Instruction</th><th>角色</th><th>对 MBarrier 的影响</th></tr>
+        <tr><th>Instruction</th><th>作用</th><th>对 mbarrier 的影响</th></tr>
       </thead>
       <tbody>
         <tr>
           <td><span class="api-name">mbarrier.init</span> <span class="tag">setup</span></td>
-          <td class="api-role">用 expected arrival count 初始化 barrier</td>
-          <td class="api-effect">phase=0, pending=count, tx=0</td>
+          <td class="api-role">设置每个 phase 需要等待的 arrival 数量</td>
+          <td class="api-effect">phase=0, expected_arrival=count, pending_arrival=count, tx=0</td>
         </tr>
         <tr>
-          <td><span class="api-name">mbarrier.arrive</span> <span class="tag">producer</span></td>
+          <td><span class="api-name">mbarrier.arrive</span> <span class="tag">participant</span></td>
           <td class="api-role">Thread 向 barrier 发出 arrival 信号</td>
-          <td class="api-effect">pending_count -= 1</td>
+          <td class="api-effect">pending_arrival_count -= 1</td>
         </tr>
         <tr>
-          <td><span class="api-name">mbarrier.arrive.expect_tx</span> <span class="tag">producer</span></td>
+          <td><span class="api-name">mbarrier.arrive.expect_tx</span> <span class="tag">participant</span></td>
           <td class="api-role">Arrive，同时声明预期的异步传输字节数</td>
-          <td class="api-effect">pending -= 1, tx_count += txCount</td>
+          <td class="api-effect">pending_arrival_count -= 1, tx_count += txCount</td>
         </tr>
         <tr>
-          <td><span class="api-name">tcgen05.commit</span> <span class="tag">producer</span></td>
-          <td class="api-role">Tensor Core 发出 MMA 完成信号</td>
-          <td class="api-effect">arrive::one on mbarrier</td>
+          <td><span class="api-name">tcgen05.commit...mbarrier::arrive::one</span> <span class="tag">issuer</span></td>
+          <td class="api-role">让 barrier 追踪当前 thread 此前发出的异步 tcgen05 操作</td>
+          <td class="api-effect">完成后由 system 执行一次 arrive(count=1)</td>
         </tr>
         <tr>
           <td><span class="api-name">mbarrier.try_wait</span> <span class="tag">consumer</span></td>
-          <td class="api-role">等待 phase 完成，期间挂起 thread</td>
-          <td class="api-effect">阻塞直到 phase done</td>
+          <td class="api-role">检查指定 phase 是否已经完成，并可能挂起 thread</td>
+          <td class="api-effect">返回 true 后才能使用受保护的数据</td>
         </tr>
       </tbody>
     </table>
   </div>
 
   <div class="note-bar">
-    <strong>三种 arrival 模式：</strong> (1) <code style="font-family:'SF Mono',monospace;font-size:11px;">mbarrier.arrive</code> — thread 直接减少 pending_count。
-    (2) <code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code> — thread arrive 并声明字节数；TMA engine 在传输完成后自动减少 tx_count。
-    (3) <code style="font-family:'SF Mono',monospace;font-size:11px;">tcgen05.commit</code> — MMA 完成时 Tensor Core 自动 arrive。
+    <strong>三种更新路径：</strong> (1) <code style="font-family:'SF Mono',monospace;font-size:11px;">mbarrier.arrive</code> 直接减少 pending arrival count。
+    (2) <code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code> 同时 arrive 并增加 tx-count；关联的 TMA copy 完成时，硬件执行 <code style="font-family:'SF Mono',monospace;font-size:11px;">complete_tx</code>。
+    (3) <code style="font-family:'SF Mono',monospace;font-size:11px;">tcgen05.commit...arrive::one</code> 在此前的异步 tcgen05 操作完成后，由 system 报告一次 arrival。
   </div>
 <script>
 (function () {

@@ -32,6 +32,8 @@ chapter_layout_generations/index
 chapter_tma/index
 chapter_tensor_cores/index
 chapter_tmem/index
+chapter_async_barriers/index
+chapter_clc/index
 ```
 
 <!--

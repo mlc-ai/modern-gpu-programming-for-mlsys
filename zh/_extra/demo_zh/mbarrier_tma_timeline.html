@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MBarrier TMA 时间线</title>
+<title>mbarrier TMA 时间线</title>
 <link rel="stylesheet" href="../viz-base.css">
 <script src="../viz-base.js"></script>
 <style>
@@ -129,7 +129,7 @@
 </style>
 </head>
 <body>
-  <h1>用 MBarrier 表示 TMA 完成</h1>
+  <h1>用 mbarrier 追踪两次 TMA Load</h1>
 
   <div class="timeline-area">
     <!-- Wrapper used for SVG overlay positioning -->
@@ -145,7 +145,7 @@
         <div class="tl-row" id="rowTMA"></div>
 
         <!-- MBar row -->
-        <div class="tl-label l-bar">MBar</div>
+        <div class="tl-label l-bar">mbarrier</div>
         <div class="tl-bar-row" id="rowBar"></div>
 
         <!-- T1 row -->
@@ -172,11 +172,13 @@
               stroke-dasharray="5,3"/>
         <text id="syncLabel" fill="#ef4444" font-size="9" font-weight="700"
               text-anchor="middle" letter-spacing="0.02em"></text>
-        <!-- Curved arrow: arrive.expect_tx (T0 col1) → MBar col1 -->
+        <!-- Curved arrow: arrive.expect_tx (T0 col3) → mbarrier col3 -->
         <path id="arrowArrive" stroke="#64748b" stroke-width="1.5" fill="none"
               marker-end="url(#arrowhead)"/>
-        <!-- Curved arrow: TMA tx-complete (col4) → MBar col4 -->
-        <path id="arrowTxDone" stroke="#64748b" stroke-width="1.5" fill="none"
+        <!-- Curved arrows: the two complete_tx events update mbarrier -->
+        <path id="arrowTxA" stroke="#64748b" stroke-width="1.5" fill="none"
+              marker-end="url(#arrowhead)"/>
+        <path id="arrowTxB" stroke="#64748b" stroke-width="1.5" fill="none"
               marker-end="url(#arrowhead)"/>
       </svg>
     </div>
@@ -195,7 +197,7 @@
       <div class="swtch" style="background:#e0e7ff; border:1px solid #a5b4fc;"></div> Dispatch 到 TMA
     </div>
     <div class="li">
-      <div class="swtch" style="background:#fee2e2; border:1px solid #fca5a5;"></div> 阻塞 / 等待
+      <div class="swtch" style="background:#fee2e2; border:1px solid #fca5a5;"></div> wait 返回 false / 重试
     </div>
     <div class="li">
       <div class="swtch" style="background:#fffbeb; border:1px solid #fde68a;"></div> Barrier 状态
@@ -214,15 +216,15 @@
   <div class="summary-row">
     <div class="sum-card">
       <h4>Producer（T0）</h4>
-      <p><code>arrive.expect_tx(4096)</code> 把 pending 减到 0，并设置 tx_count。<code>cp.async.bulk</code> 触发 TMA transfer。</p>
+      <p>先发出 A、B 两次 2048-byte TMA copy，再用 <code>arrive.expect_tx(4096)</code> 报告一次 arrival 并登记总字节数。</p>
     </div>
     <div class="sum-card">
       <h4>TMA Engine</h4>
-      <p>执行 T0 dispatch 的 <code>cp.async.bulk</code>。完成后自动减少 tx_count。</p>
+      <p>每次 copy 完成时执行一次 <code>complete_tx(2048)</code>。第二次完成后，tx-count 回到 0。</p>
     </div>
     <div class="sum-card">
       <h4>Consumer（T1）</h4>
-      <p><code>try_wait</code> 会挂起，直到 pending==0 且 tx==0。传输完成时，硬件会自动减少 tx_count。</p>
+      <p>调用阻塞式 <code>try_wait(phase=0)</code>；barrier 完成这一 phase 后，才能读取 A、B tiles。</p>
     </div>
   </div>
 
@@ -232,49 +234,49 @@
 
   /* ── Data ─────────────────────────────────────────────────── */
   var t0Data = [
-    { label: 'init(mbar,1)',         cls: 'c-blue'  },
+    { label: 'init(mbar, 1)',        cls: 'c-blue'  },
+    { label: 'TMA copy A (2048B)',   cls: 'c-teal'  },
+    { label: 'TMA copy B (2048B)',   cls: 'c-teal'  },
     { label: 'arrive.expect_tx(4096)', cls: 'c-blue'  },
-    { label: 'cp.async.bulk',        cls: 'c-teal'  },
-    { label: '',                     cls: 'c-idle'  },
     { label: '',                     cls: 'c-idle'  },
     { label: '',                     cls: 'c-idle'  },
     { label: '',                     cls: 'c-idle'  }
   ];
   var tmaData = [
     { label: '',                   cls: 'c-idle'   },
-    { label: '',                   cls: 'c-idle'   },
-    { label: 'xfer GMEM\u2192SMEM', cls: 'c-green'  },
-    { label: 'transferring...',    cls: 'c-green'  },
-    { label: 'tx-complete',        cls: 'c-blue'   },
-    { label: '',                   cls: 'c-idle'   },
+    { label: 'copy A in flight',   cls: 'c-green'  },
+    { label: 'copy A/B in flight', cls: 'c-green'  },
+    { label: 'copy A/B in flight', cls: 'c-green'  },
+    { label: 'A complete_tx(2048)', cls: 'c-blue'  },
+    { label: 'B complete_tx(2048)', cls: 'c-blue'  },
     { label: '',                   cls: 'c-idle'   }
   ];
   var barData = [
-    { label: 'pending=1 tx=0'    },
-    { label: 'pending=0 tx=4096' },
-    { label: 'pending=0 tx=4096' },
-    { label: 'pending=0 tx=2048' },
-    { label: 'pending=0 tx=0'    },
-    { label: 'phase done!'    },
-    { label: 'reset pending=1'   }
+    { label: 'parity=0 pending=1 tx=0'    },
+    { label: 'parity=0 pending=1 tx=0'    },
+    { label: 'parity=0 pending=1 tx=0'    },
+    { label: 'parity=0 pending=0 tx=4096' },
+    { label: 'parity=0 pending=0 tx=2048' },
+    { label: 'parity=1 pending=1 tx=0' },
+    { label: 'parity=1 pending=1 tx=0'    }
   ];
   var t1Data = [
     { label: '',                  cls: 'c-idle'  },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'resumed!',          cls: 'c-green' }
+    { label: '',                  cls: 'c-idle'  },
+    { label: '',                  cls: 'c-idle'  },
+    { label: 'try_wait(0) 等待中', cls: 'c-red'   },
+    { label: 'try_wait(0) 等待中', cls: 'c-red'   },
+    { label: 'try_wait(0) 返回',   cls: 'c-green' },
+    { label: 'MMA reads A/B',     cls: 'c-green' }
   ];
   var descs = [
-    'T0 初始化 barrier：pending=1, tx=0',
-    'T0 调用 arrive.expect_tx：pending→0，tx_count += 4096。T1 调用 try_wait：因为 tx > 0 而阻塞',
-    'T0 发起异步 TMA copy。TMA engine 开始传输。',
-    'TMA engine 仍在复制数据，tx 正在减少。',
-    'TMA transfer 完成：硬件发出 tx-complete，tx_count → 0',
-    'pending==0 && tx==0 → phase done',
-    'Barrier reset：phase 翻转，pending 恢复。T1 恢复执行，此时数据已在 SMEM 中。'
+    'T0 初始化 barrier：phase parity=0，pending=1，tx=0。其他参与者要在初始化完成后才能使用它。',
+    'T0 发出 A tile 的 2048-byte TMA copy；copy 与这个 mbarrier 关联。',
+    'T0 发出 B tile 的 2048-byte TMA copy；两次 copy 可以在硬件中继续执行。',
+    'T0 调用 arrive.expect_tx(4096)：pending→0，tx-count += 4096。Consumer 开始等待 phase 0 完成。',
+    'A copy 完成，硬件执行 complete_tx(2048)：tx-count 4096→2048；Consumer 仍在等待。',
+    'B copy 完成，tx-count 2048→0。pending 和 tx-count 同时为 0，barrier 原子地进入 phase 1，并把 pending 恢复为 1。Consumer 的等待结束。',
+    'Consumer 现在可以安全读取已经写入 SMEM 的 A、B tiles。'
   ];
 
   /* ── Build rows ──────────────────────────────────────────── */
@@ -386,8 +388,8 @@
   /* ── SVG arrows ──────────────────────────────────────────── */
   /*
    * Sync line: vertical red dashed between col 0 and col 1, crossing all rows.
-   * Arrow 1: right-mid of arrive.expect_tx (T0 col 1) curved down to MBar col 1 right-mid.
-   * Arrow 2: right-mid of MBar "phase done!" (col 5) curved down to T1 col 5 right-mid.
+   * Arrow 1: arrive.expect_tx (T0 col 3) updates mbarrier col 3.
+   * Arrows 2/3: A/B complete_tx (TMA cols 4/5) update mbarrier cols 4/5.
    */
   function positionArrows(activeCol) {
     var svg    = document.getElementById('arrowSvg');
@@ -427,12 +429,12 @@
     /* ── Curved arrows on cell right corners ──────────────────── */
     var BULGE = 20;
 
-    /* Arrow 1: right-mid of T0 arrive.expect_tx (col 1) → right-mid of MBar col 1 */
+    /* Arrow 1: T0 arrive.expect_tx (col 3) → mbarrier col 3 */
     var a1 = document.getElementById('arrowArrive');
     var tmaCells = rowTMA.querySelectorAll('.tl-cell');
-    if (t0cells[1] && barCells[1]) {
-      var t0r = t0cells[1].getBoundingClientRect();
-      var br  = barCells[1].getBoundingClientRect();
+    if (t0cells[3] && barCells[3]) {
+      var t0r = t0cells[3].getBoundingClientRect();
+      var br  = barCells[3].getBoundingClientRect();
       var x1 = t0r.right - wrapRect.left;
       var y1 = t0r.top + t0r.height / 2 - wrapRect.top;
       var x2 = br.right - wrapRect.left;
@@ -441,8 +443,8 @@
       a1.setAttribute('d', 'M'+x1+','+y1+' C'+(x1+BULGE)+','+y1+' '+(x2+B2)+','+(y2-B2)+' '+x2+','+y2);
     }
 
-    /* Arrow 2: right-mid of TMA tx-complete (col 4) → right-mid of MBar col 4 */
-    var a3 = document.getElementById('arrowTxDone');
+    /* Arrows 2/3: each TMA completion updates the matching barrier state */
+    var a2 = document.getElementById('arrowTxA');
     if (tmaCells[4] && barCells[4]) {
       var tmar = tmaCells[4].getBoundingClientRect();
       var br3  = barCells[4].getBoundingClientRect();
@@ -451,7 +453,17 @@
       var x6 = br3.right - wrapRect.left;
       var y6 = br3.top + br3.height / 2 - wrapRect.top;
       var B2c = BULGE * 0.5;
-      a3.setAttribute('d', 'M'+x5+','+y5+' C'+(x5+BULGE)+','+y5+' '+(x6+B2c)+','+(y6-B2c)+' '+x6+','+y6);
+      a2.setAttribute('d', 'M'+x5+','+y5+' C'+(x5+BULGE)+','+y5+' '+(x6+B2c)+','+(y6-B2c)+' '+x6+','+y6);
+    }
+    var a3 = document.getElementById('arrowTxB');
+    if (tmaCells[5] && barCells[5]) {
+      var tmarB = tmaCells[5].getBoundingClientRect();
+      var brB   = barCells[5].getBoundingClientRect();
+      var bx1 = tmarB.right - wrapRect.left;
+      var by1 = tmarB.top + tmarB.height / 2 - wrapRect.top;
+      var bx2 = brB.right - wrapRect.left;
+      var by2 = brB.top + brB.height / 2 - wrapRect.top;
+      a3.setAttribute('d', 'M'+bx1+','+by1+' C'+(bx1+BULGE)+','+by1+' '+(bx2+BULGE*0.5)+','+(by2-BULGE*0.5)+' '+bx2+','+by2);
     }
 
     /* Dim arrows when a different column is selected */
@@ -459,8 +471,9 @@
       if (activeCol < 0) return 1;
       return (activeCol === arrowColIndex) ? 1 : 0.15;
     }
-    a1.style.opacity = arrowOpacity(1);
-    a3.style.opacity = arrowOpacity(4);
+    a1.style.opacity = arrowOpacity(3);
+    a2.style.opacity = arrowOpacity(4);
+    a3.style.opacity = arrowOpacity(5);
     syncL.style.opacity = (activeCol < 0) ? 1 : 0.4;
     syncT.style.opacity = (activeCol < 0) ? 1 : 0.4;
   }
