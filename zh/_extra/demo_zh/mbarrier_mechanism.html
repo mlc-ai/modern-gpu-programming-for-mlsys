@@ -119,7 +119,7 @@
         <div class="obj-slot s-phase"><div class="slot-label">phase parity</div>0 或 1</div>
         <div class="obj-slot s-pending"><div class="slot-label">pending arrival<br>count</div>剩余 arrival</div>
         <div class="obj-slot s-expected"><div class="slot-label">expected arrival<br>count</div>预期总数</div>
-        <div class="obj-slot s-tx"><div class="slot-label">tx-count</div>待完成事务量</div>
+        <div class="obj-slot s-tx"><div class="slot-label">tx-count</div>待完成字节数</div>
       </div>
       <div class="field-row">
         <span class="field-name">phase parity</span>
@@ -135,7 +135,7 @@
       </div>
       <div class="field-row">
         <span class="field-name">tx-count</span>
-        <span class="field-desc">异步事务账本。<code style="font-family:'SF Mono',monospace;font-size:11px;">expect_tx</code> 增加它，硬件的 <code style="font-family:'SF Mono',monospace;font-size:11px;">complete_tx</code> 减少它。</span>
+        <span class="field-desc">尚未完成的异步传输字节数。<code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code> 会增加它；传输完成后硬件会减少它。</span>
       </div>
     </div>
 
@@ -147,8 +147,8 @@
         tx-count == 0
       </div>
       <div class="field-desc" style="line-height:1.65;">
-        当 <strong style="color:#1e293b;">预期的 arrival 都已发生</strong>，并且 <strong style="color:#1e293b;">事务账本回到 0</strong> 时，当前 phase 才算完成。
-        此时 barrier 会原子地进入下一 phase，并将 pending arrival count 恢复为 expected arrival count。
+        当 <strong style="color:#1e293b;">预期的 arrival 都已发生</strong>，并且 <strong style="color:#1e293b;">所有登记的异步传输字节都已完成</strong> 时，当前 phase 才算完成。
+        随后 barrier 会原子地进入下一 phase，并将 pending arrival count 恢复为 expected arrival count。
       </div>
     </div>
   </div>
@@ -167,12 +167,12 @@
         </tr>
         <tr>
           <td><span class="api-name">mbarrier.arrive</span> <span class="tag">participant</span></td>
-          <td class="api-role">Thread 向 barrier 发出 arrival 信号</td>
+          <td class="api-role">thread 向 barrier 发出 arrival 信号</td>
           <td class="api-effect">pending_arrival_count -= 1</td>
         </tr>
         <tr>
           <td><span class="api-name">mbarrier.arrive.expect_tx</span> <span class="tag">participant</span></td>
-          <td class="api-role">Arrive，同时声明预期的异步传输字节数</td>
+          <td class="api-role">arrive，同时声明预期的异步传输字节数</td>
           <td class="api-effect">pending_arrival_count -= 1, tx_count += txCount</td>
         </tr>
         <tr>

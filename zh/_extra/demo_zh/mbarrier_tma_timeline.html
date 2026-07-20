@@ -197,7 +197,7 @@
       <div class="swtch" style="background:#e0e7ff; border:1px solid #a5b4fc;"></div> Dispatch 到 TMA
     </div>
     <div class="li">
-      <div class="swtch" style="background:#fee2e2; border:1px solid #fca5a5;"></div> wait 返回 false / 重试
+      <div class="swtch" style="background:#fee2e2; border:1px solid #fca5a5;"></div> 阻塞 / 等待
     </div>
     <div class="li">
       <div class="swtch" style="background:#fffbeb; border:1px solid #fde68a;"></div> Barrier 状态
@@ -216,7 +216,7 @@
   <div class="summary-row">
     <div class="sum-card">
       <h4>Producer（T0）</h4>
-      <p>先发出 A、B 两次 2048-byte TMA copy，再用 <code>arrive.expect_tx(4096)</code> 报告一次 arrival 并登记总字节数。</p>
+      <p>Producer 分别用一次 TMA load 搬运 2048 bytes 的 A tile 和 2048 bytes 的 B tile。随后调用 <code>arrive.expect_tx(4096)</code>，报告一次 arrival，并让 barrier 等待两次 load 共 4096 bytes 的传输。</p>
     </div>
     <div class="sum-card">
       <h4>TMA Engine</h4>
