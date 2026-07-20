@@ -31,8 +31,6 @@ exclude_patterns = [
     # Release the Chinese edition chapter by chapter. Keep draft sources in
     # zh/, but exclude unreleased pages so they are not published or searchable.
     "appendix/**",
-    "chapter_async_barriers/**",
-    "chapter_clc/**",
     "chapter_flash_attention/**",
     "chapter_gemm_advanced/**",
     "chapter_gemm_async/**",
