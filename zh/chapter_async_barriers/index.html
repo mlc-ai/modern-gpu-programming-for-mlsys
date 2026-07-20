@@ -1,0 +1,567 @@
+
+<!DOCTYPE html>
+
+
+<html lang="zh-CN" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>异步协作：mbarrier &#8212; 面向 MLSys 的现代 GPU 编程</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=654c0d46" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../_static/documentation_options.js?v=eb1cd0b9"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'chapter_async_barriers/index';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <link rel="icon" href="../_static/mlc-favicon.ico"/>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="搜索" href="../search.html" />
+    <link rel="next" title="进阶调度：Cluster Launch Control" href="../chapter_clc/index.html" />
+    <link rel="prev" title="Tensor Memory（TMEM）" href="../chapter_tmem/index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="zh-CN"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">跳转至主要内容</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>回到顶部</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="版本警告"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="网页导航">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="当前页面">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">异步数据搬运：TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Tensor Memory（TMEM）</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">异步协作：mbarrier</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">进阶调度：Cluster Launch Control</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+<a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button"
+   title="源码库"
+   data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+
+</a>
+
+
+
+
+<button onclick="window.location.href='../../index.html'"
+  class="btn btn-sm btn-language-switch-button pst-navbar-icon"
+  title="Switch to English"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-language"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="亮色"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="暗色"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>亮色</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>暗色</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>异步协作：mbarrier</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> 目录 </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1"><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#phase">phase 如何区分不同轮次</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">常见的同步规则</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#barrier-stage">用 barrier 管理 stage 复用</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="mbarrier">
+<span id="chap-async-barriers"></span><h1>异步协作：mbarrier<a class="headerlink" href="#mbarrier" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">概览</p>
+<ul class="simple">
+<li><p>发出 TMA 或 Tensor Core 指令，只表示异步操作已经启动。consumer 必须等待对应的完成信号，才能读取结果或复用相关资源。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 将 producer 的 <code class="docutils literal notranslate"><span class="pre">arrive</span></code> 与 consumer 的 <code class="docutils literal notranslate"><span class="pre">wait</span></code> 分开，并把普通 thread 的 arrival 和异步硬件的完成状态纳入同一个条件；对于 TMA，它还会追踪尚未传输的字节数。</p></li>
+<li><p>在多级 pipeline 中，每个 stage 通常使用 <code class="docutils literal notranslate"><span class="pre">full</span></code> barrier 交付数据、使用 <code class="docutils literal notranslate"><span class="pre">empty</span></code> barrier 归还 buffer。barrier 可以通过 phase 反复使用，kernel 需要跟踪 phase parity，避免把上一轮的完成状态误认为当前轮已经完成。</p></li>
+</ul>
+</div>
+<p>前面的 TMA 和 Blackwell Tensor Core 章节介绍了两类异步操作。它们有一个共同特点：thread 只负责发出指令，实际的数据搬运或矩阵乘累加由硬件继续执行。发出指令的 thread 不必留在原地等待。</p>
+<p>以 TMA load 为例。程序可以先发出 TMA 指令，再执行读取 SMEM tile 的 MMA；但这个先后顺序只能说明 TMA <strong>先开始</strong>，不能说明它在 MMA 读取数据时已经<strong>完成</strong>。如果 TMA 仍在写入，MMA 就可能读到不完整的 tile。<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 与 epilogue 之间也有同样的问题：epilogue 必须等到 Tensor Core 写完 TMEM accumulator 后才能读取结果。</p>
+<p>这类异步数据交接需要一个明确的完成信号：producer 在工作完成时发出通知，consumer 收到通知后才能使用数据或复用资源。下面介绍用于传递这个信号的 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code>。</p>
+<section id="id1">
+<h2><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code><a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 是 memory barrier 的简称，是一个存放在 shared memory 中的硬件同步对象。它的内部编码是不透明的；理解其行为时，可以先关注 arrival counter 和 phase。Arrival counter 表示当前这一轮还差多少次 arrival，phase 则表示 barrier 当前处于第几轮。使用 parity 形式的 wait 时，kernel 只需要跟踪 <code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">%</span> <span class="pre">2</span></code>，这个 0 或 1 的值称为 phase parity。对于 TMA load，barrier 还会使用 tx-count 追踪尚未完成的传输字节数。</p>
+<div style="overflow-x:auto;">
+<iframe src="../demo_zh/mbarrier_mechanism.html?v=review-20260720" title="mbarrier 的状态与操作" loading="lazy"
+        style="width:100%; min-width:1320px; height:700px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+</div><p><em>点击任意字段，可以单独查看它在 barrier 状态中的含义。</em></p>
+<p><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 首先需要初始化。执行 <code class="docutils literal notranslate"><span class="pre">init</span></code> 时，kernel 指定 barrier 每轮需要等待多少次 arrival。barrier 从 phase 0 开始，pending arrival count 会被设为 expected arrival count。从这一刻起，它开始等待相关的 producer 或资源使用者报告完成。</p>
+<p>每次 arrival 都会减少 barrier 当前仍在等待的工作量。kernel 中的不同参与者会以不同方式发出 arrival。</p>
+<p>对于 TMA load，常见的路径是执行 <code class="docutils literal notranslate"><span class="pre">mbarrier.arrive.expect_tx(bytes)</span></code>。这项操作同时完成两件事：首先，发起指令的 thread 完成一次 arrival，使 pending arrival count 减少一次；其次，它把 TMA engine 预计传输的字节数登记到 tx-count 中。</p>
+<p>因此，发起指令的 thread 完成 arrival，并不代表 barrier 已经完成。TMA engine 每完成一部分传输，都会通过 complete-tx 扣减相应的 tx-count。只有下面两个条件同时满足，barrier 才会完成当前 phase、进入下一 phase；对应的 phase parity 也会随之在 0 和 1 之间切换：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>pending arrival count == 0
+tx-count              == 0
+</pre></div>
+</div>
+<p>所以，<code class="docutils literal notranslate"><span class="pre">expect_tx</span></code> 不能简单理解为“又一次普通 arrival”。它还为异步 copy 登记了需要等待的传输字节数。barrier 既要等所有 arrival 发生，也要等相关数据全部传输完成。</p>
+<p>Tensor Core 使用另一条 arrival 路径。仅仅发出 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 并不会更新 barrier。kernel 还需要通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit...mbarrier::arrive</span></code>，把一次 barrier arrival 关联到此前发出的异步 tcgen05 操作。这些操作完成后，硬件才会在 barrier 上报告 arrival；如果缺少这一步，等待该 arrival 的 consumer 就无法继续。</p>
+<p>普通 thread 也可以直接执行 <code class="docutils literal notranslate"><span class="pre">mbarrier.arrive</span></code>。例如，consumer 读完一个 shared-memory buffer 后，可以通过 arrival 通知 producer：这块 buffer 已经可以覆盖并复用。</p>
+<p><code class="docutils literal notranslate"><span class="pre">wait</span></code> 是同一套协议的 consumer 端。consumer 会等待 barrier 完成当前 iteration 对应的 phase；只有等待结束后，才能读取数据或复用 barrier 所保护的资源。原始 PTX <code class="docutils literal notranslate"><span class="pre">mbarrier.try_wait.parity</span></code> 可能在 phase 完成前返回 <code class="docutils literal notranslate"><span class="pre">false</span></code>，因此需要反复检查；本书使用的 <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.try_wait</span></code> 已经在内部封装了这个循环，会一直等到指定 phase 完成。<code class="docutils literal notranslate"><span class="pre">arrive</span></code> 和 <code class="docutils literal notranslate"><span class="pre">wait</span></code> 分开后，producer 报告进度便可以继续执行其他工作，consumer 只在真正需要数据时等待。</p>
+<p>关键在于，异步硬件不仅在后台继续执行，还会通过 barrier 报告完成。TMA 可以通知 shared-memory tile 已经准备好，Tensor Core 可以通知 TMEM 中的结果已经写完，普通 threads 也可以通知某块 buffer 已经不再使用。它们最终都遵循同一种 producer-consumer 协议：producer 报告 arrival，consumer 执行 wait。</p>
+</section>
+<section id="phase">
+<h2>phase 如何区分不同轮次<a class="headerlink" href="#phase" title="Link to this heading">#</a></h2>
+<p>前面提到，同一个 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 可以反复使用，每一轮称为一个 phase。一个 phase 完成后，barrier 会自动进入下一 phase，并重新开始等待新一轮的 arrivals。如果只记录“这个 barrier 曾经完成过”，consumer 就可能把上一轮留下的完成状态误认为当前数据已经准备好。phase parity 用 0 和 1 区分相邻两轮，让 consumer 明确自己等待的是哪一次完成。</p>
+<div style="overflow-x:auto;">
+<iframe src="../demo_zh/phase_tracking.html?v=restore-original-20260717-2" title="复用 mbarrier 时的 phase tracking" loading="lazy"
+        style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+</div><p><em>点击不同 iteration，可以观察同一个 barrier 在每轮完成后，phase parity 如何在 0 和 1 之间交替。</em></p>
+<p>上图展示了一个 barrier 如何在 phase 0 和 phase 1 之间切换，从而被反复使用。在两级 TMA pipeline 中，stage 0 和 stage 1 各有一块 SMEM buffer，也各有一个 TMA barrier。这样，consumer 可以分别等待每个 stage 的数据。</p>
+<p>当两个 stages 按 stage 0、stage 1 的顺序循环访问时，可以用一个 <code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 记录当前轮次。每访问完两个 stages，就翻转一次 parity：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>stage = iteration % 2
+T.ptx.mbarrier.try_wait(tma_bar[stage], phase_tma)
+
+if stage == 1:
+    phase_tma ^= 1
+</pre></div>
+</div>
+<p>两个 barriers 初始化后都处于 phase 0，<code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 也从 0 开始。前四次 iterations 的完整状态变化如下：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head text-right"><p>iteration</p></th>
+<th class="head text-right"><p>stage</p></th>
+<th class="head text-right"><p>本轮等待的 phase parity</p></th>
+<th class="head text-right"><p>该 barrier 完成后的当前 parity</p></th>
+<th class="head text-right"><p>iteration 结束后的 <code class="docutils literal notranslate"><span class="pre">phase_tma</span></code></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td class="text-right"><p>0</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>0</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>1</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>1</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>2</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>1</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>3</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>0</p></td>
+<td class="text-right"><p>0</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Iteration 0 等待 stage 0 的 phase 0。该 phase 完成后，stage 0 的 barrier 进入 phase 1，但这一轮 circular buffer 还没有遍历完，所以 <code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 仍为 0。Iteration 1 等待 stage 1 的 phase 0；等待完两个 stages 后，<code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 翻转为 1。</p>
+<p>Iteration 2 回到 stage 0，这次等待 phase 1；完成后，stage 0 的 barrier 回到 phase 0。Iteration 3 同样等待 stage 1 的 phase 1。第二轮两个 stages 都完成后，<code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 也翻转回 0。</p>
+<p><code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 描述的是软件访问 circular buffer 的轮次，与两次 TMA 传输在硬件上谁先完成无关。因此，深度为 <code class="docutils literal notranslate"><span class="pre">S</span></code> 的 TMA pipeline 通常为每个 stage 准备一个 barrier，再通过 phase parity 区分同一个 stage 的前后两轮。</p>
+</section>
+<section id="id2">
+<h2>常见的同步规则<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
+<p>在 Tensor Core kernel 中，<code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 主要用于协调以下三种数据交接。</p>
+<p><strong>threads 向异步硬件交接数据。</strong> 如果 threads 先写入 shared memory，随后由 TMA store 或 MMA 读取这块数据，kernel 必须先完成相应的同步和顺序保证。否则，异步操作可能在 shared-memory buffer 尚未写完时就开始读取。</p>
+<p><strong>TMA 向 MMA 交接数据。</strong> TMA load 异步填充 SMEM tile。producer 让 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 同时追踪 arrival 和传输字节数；执行 MMA 的 consumer 等到 barrier 完成当前 phase，并满足相应指令的顺序要求后，才能读取这个 tile。下面的交互图展示了这条时间线。</p>
+<div style="overflow-x:auto;">
+<iframe src="../demo_zh/mbarrier_tma_timeline.html?v=review-20260720" title="通过 mbarrier 追踪 TMA load" loading="lazy"
+        style="width:100%; min-width:1320px; height:500px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+</div><p><em>沿时间线逐步执行，可以看到两次 TMA copy 分别完成 2048 bytes 的传输；pending arrival count 和 tx-count 都归零后，barrier 原子地进入下一 phase，consumer 的等待才会成功。</em></p>
+<p><strong>MMA 向 epilogue 交接数据。</strong> <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 异步更新 TMEM accumulator，负责发起 MMA 的 thread 通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> 将完成通知关联到 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code>。epilogue 等待 barrier 完成，并按照 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 的顺序要求执行相应 fence 后，才能从 TMEM 读取结果。</p>
+</section>
+<section id="barrier-stage">
+<h2>用 barrier 管理 stage 复用<a class="headerlink" href="#barrier-stage" title="Link to this heading">#</a></h2>
+<p>barrier 不仅可以表示“数据已经准备好”，也可以表示“buffer 已经用完”。因此，pipelined kernel 通常会为每个 SMEM stage 准备一对 barriers：<code class="docutils literal notranslate"><span class="pre">full[stage]</span></code> 表示 TMA 已经填好该 stage，<code class="docutils literal notranslate"><span class="pre">empty[stage]</span></code> 表示 consumer 已经用完这块 buffer。在 pipeline 稳定运行时，一个 stage 的循环可以概括为：</p>
+<p><img alt="一个 SMEM stage 的 full/empty barrier 复用协议" src="../_images/mbarrier_stage_reuse_v2_zh.svg" /></p>
+<p><code class="docutils literal notranslate"><span class="pre">full</span></code> 负责从 producer 向 consumer 交接数据，<code class="docutils literal notranslate"><span class="pre">empty</span></code> 负责从 consumer 向 producer 归还 buffer。每个 barrier 的 expected arrival count 取决于有多少个 threads 负责报告完成。pipeline 循环复用同一对 barriers 时，还需要分别跟踪 <code class="docutils literal notranslate"><span class="pre">full</span></code> 和 <code class="docutils literal notranslate"><span class="pre">empty</span></code> 的 phase parity。</p>
+<p>因此，阅读 pipelined kernel 中的 wait 和 arrival 时，可以先找出三个对象：谁是 producer，谁是 consumer，它们交接的是哪块数据或资源。确定这三点后，每个 wait 和 arrival 的作用就能对应到一次具体的数据准备、结果读取或 buffer 复用。</p>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../chapter_tmem/index.html"
+       title="上一页">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">Tensor Memory（TMEM）</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../chapter_clc/index.html"
+       title="下一页">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">下一页</p>
+        <p class="prev-next-title">进阶调度：Cluster Launch Control</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> 目录
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1"><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#phase">phase 如何区分不同轮次</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">常见的同步规则</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#barrier-stage">用 barrier 管理 stage 复用</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+作者： MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

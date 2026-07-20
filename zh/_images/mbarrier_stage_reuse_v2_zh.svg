@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="620" viewBox="0 0 1400 620" role="img" aria-labelledby="title desc">
+  <title id="title">一个 SMEM stage 的 full/empty barrier 协议</title>
+  <desc id="desc">producer 等待 empty barrier 后通过 TMA 填充 SMEM stage，consumer 等待 full barrier 后使用 tile，最后通过 empty barrier 归还 buffer，开始下一轮复用。</desc>
+  <defs>
+    <marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
+      <path d="M0,0 L12,5 L0,10 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-loop" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
+      <path d="M0,0 L12,5 L0,10 Z" fill="#dc2626"/>
+    </marker>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; fill: #1f2937; }
+      .title { font-size: 34px; font-weight: 700; }
+      .subtitle { font-size: 18px; fill: #64748b; }
+      .card-title { font-size: 22px; font-weight: 700; }
+      .card-main { font-size: 18px; font-weight: 650; }
+      .card-detail { font-size: 16px; fill: #475569; }
+      .step { font-size: 18px; font-weight: 700; fill: #ffffff; }
+      .mono { font-family: "SFMono-Regular", Consolas, monospace; }
+      .legend-title { font-size: 17px; font-weight: 700; }
+      .legend-detail { font-size: 15px; fill: #475569; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="620" fill="#ffffff"/>
+  <text x="700" y="52" text-anchor="middle" class="title">一个 SMEM stage 的 full/empty barrier 协议</text>
+  <text x="700" y="84" text-anchor="middle" class="subtitle">同一块 buffer 在 producer 和 consumer 之间循环交接</text>
+
+  <!-- Step 1 -->
+  <g>
+    <rect x="35" y="150" width="220" height="210" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="2.5"/>
+    <circle cx="70" cy="184" r="20" fill="#e11d48"/>
+    <text x="70" y="191" text-anchor="middle" class="step">1</text>
+    <text x="115" y="195" class="card-title">等待空闲</text>
+    <text x="145" y="247" text-anchor="middle" class="card-main mono">wait empty[stage]</text>
+    <text x="145" y="286" text-anchor="middle" class="card-detail">上一轮 consumer</text>
+    <text x="145" y="313" text-anchor="middle" class="card-detail">已归还这块 buffer</text>
+  </g>
+
+  <!-- Step 2 -->
+  <g>
+    <rect x="305" y="150" width="220" height="210" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="2.5"/>
+    <circle cx="340" cy="184" r="20" fill="#2563eb"/>
+    <text x="340" y="191" text-anchor="middle" class="step">2</text>
+    <text x="385" y="195" class="card-title">填充 stage</text>
+    <text x="415" y="247" text-anchor="middle" class="card-main">producer 发起 TMA</text>
+    <text x="415" y="286" text-anchor="middle" class="card-detail">写入 SMEM stage</text>
+    <text x="415" y="313" text-anchor="middle" class="card-detail"><tspan class="mono">full[stage]</tspan> 追踪完成</text>
+  </g>
+
+  <!-- Step 3 -->
+  <g>
+    <rect x="575" y="150" width="220" height="210" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="2.5"/>
+    <circle cx="610" cy="184" r="20" fill="#d97706"/>
+    <text x="610" y="191" text-anchor="middle" class="step">3</text>
+    <text x="655" y="195" class="card-title">等待数据</text>
+    <text x="685" y="247" text-anchor="middle" class="card-main mono">wait full[stage]</text>
+    <text x="685" y="286" text-anchor="middle" class="card-detail">等待 TMA 完成</text>
+    <text x="685" y="313" text-anchor="middle" class="card-detail">确认 tile 已经就绪</text>
+  </g>
+
+  <!-- Step 4 -->
+  <g>
+    <rect x="845" y="150" width="220" height="210" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.5"/>
+    <circle cx="880" cy="184" r="20" fill="#16a34a"/>
+    <text x="880" y="191" text-anchor="middle" class="step">4</text>
+    <text x="925" y="195" class="card-title">使用 tile</text>
+    <text x="955" y="247" text-anchor="middle" class="card-main">consumer 读取 tile</text>
+    <text x="955" y="286" text-anchor="middle" class="card-detail">MMA 等操作使用</text>
+    <text x="955" y="313" text-anchor="middle" class="card-detail">当前 SMEM stage</text>
+  </g>
+
+  <!-- Step 5 -->
+  <g>
+    <rect x="1115" y="150" width="250" height="210" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="2.5"/>
+    <circle cx="1150" cy="184" r="20" fill="#e11d48"/>
+    <text x="1150" y="191" text-anchor="middle" class="step">5</text>
+    <text x="1195" y="195" class="card-title">归还 buffer</text>
+    <text x="1240" y="247" text-anchor="middle" class="card-main mono">arrive empty[stage]</text>
+    <text x="1240" y="286" text-anchor="middle" class="card-detail">通知 producer</text>
+    <text x="1240" y="313" text-anchor="middle" class="card-detail">允许下一轮覆盖 stage</text>
+  </g>
+
+  <!-- Forward arrows -->
+  <line x1="255" y1="255" x2="295" y2="255" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="525" y1="255" x2="565" y2="255" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="795" y1="255" x2="835" y2="255" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="1065" y1="255" x2="1105" y2="255" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <!-- Reuse loop -->
+  <path d="M1240 360 L1240 475 Q1240 500 1215 500 L170 500 Q145 500 145 475 L145 370"
+        fill="none" stroke="#dc2626" stroke-width="3" marker-end="url(#arrow-loop)"/>
+  <text x="700" y="482" text-anchor="middle" class="card-main" fill="#dc2626">下一轮：producer 再次填充该 stage</text>
+
+  <!-- Direction legend -->
+  <g>
+    <rect x="260" y="530" width="410" height="68" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="285" y="558" class="legend-title mono" fill="#b45309">full[stage]</text>
+    <text x="285" y="584" class="legend-detail">producer → consumer：数据已经准备好</text>
+
+    <rect x="730" y="530" width="410" height="68" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="2"/>
+    <text x="755" y="558" class="legend-title mono" fill="#be123c">empty[stage]</text>
+    <text x="755" y="584" class="legend-detail">consumer → producer：buffer 已经归还</text>
+  </g>
+</svg>
