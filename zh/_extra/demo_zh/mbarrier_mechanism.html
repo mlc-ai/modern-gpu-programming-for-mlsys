@@ -140,11 +140,11 @@
     </div>
 
     <div class="struct-card">
-      <h3>Phase 完成条件</h3>
+      <h3>phase 完成条件</h3>
       <div style="padding:12px 14px;background:#f8fafc;border-radius:8px;margin-bottom:10px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:2;text-align:center;">
         pending_arrival_count == 0<br>
         <strong style="color:#1e293b;">&amp;&amp;</strong><br>
-        tx-count == 0
+        tx_count == 0
       </div>
       <div class="field-desc" style="line-height:1.65;">
         当 <strong style="color:#1e293b;">预期的 arrival 都已发生</strong>，并且 <strong style="color:#1e293b;">所有登记的异步传输字节都已完成</strong> 时，当前 phase 才算完成。
@@ -157,13 +157,13 @@
     <h3>核心 API</h3>
     <table class="api-table">
       <thead>
-        <tr><th>Instruction</th><th>作用</th><th>对 mbarrier 的影响</th></tr>
+        <tr><th>操作</th><th>作用</th><th>对 mbarrier 的影响</th></tr>
       </thead>
       <tbody>
         <tr>
           <td><span class="api-name">mbarrier.init</span> <span class="tag">setup</span></td>
           <td class="api-role">设置每个 phase 需要等待的 arrival 数量</td>
-          <td class="api-effect">phase=0, expected_arrival=count, pending_arrival=count, tx=0</td>
+          <td class="api-effect">phase=0, expected_arrival_count=count, pending_arrival_count=count, tx_count=0</td>
         </tr>
         <tr>
           <td><span class="api-name">mbarrier.arrive</span> <span class="tag">participant</span></td>
@@ -173,7 +173,7 @@
         <tr>
           <td><span class="api-name">mbarrier.arrive.expect_tx</span> <span class="tag">participant</span></td>
           <td class="api-role">arrive，同时声明预期的异步传输字节数</td>
-          <td class="api-effect">pending_arrival_count -= 1, tx_count += txCount</td>
+          <td class="api-effect">pending_arrival_count -= 1, tx_count += byte_count</td>
         </tr>
         <tr>
           <td><span class="api-name">tcgen05.commit...mbarrier::arrive::one</span> <span class="tag">issuer</span></td>
@@ -181,9 +181,9 @@
           <td class="api-effect">完成后由 system 执行一次 arrive(count=1)</td>
         </tr>
         <tr>
-          <td><span class="api-name">mbarrier.try_wait</span> <span class="tag">consumer</span></td>
-          <td class="api-role">检查指定 phase 是否已经完成，并可能挂起 thread</td>
-          <td class="api-effect">返回 true 后才能使用受保护的数据</td>
+          <td><span class="api-name">T.ptx.mbarrier.try_wait</span> <span class="tag">consumer</span></td>
+          <td class="api-role">等待指定 phase 完成</td>
+          <td class="api-effect">不修改 barrier 状态；未完成时在内部重试，完成后返回</td>
         </tr>
       </tbody>
     </table>
@@ -191,7 +191,7 @@
 
   <div class="note-bar">
     <strong>三种更新路径：</strong> (1) <code style="font-family:'SF Mono',monospace;font-size:11px;">mbarrier.arrive</code> 直接减少 pending arrival count。
-    (2) <code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code> 同时 arrive 并增加 tx-count；关联的 TMA copy 完成时，硬件执行 <code style="font-family:'SF Mono',monospace;font-size:11px;">complete_tx</code>。
+    (2) <code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code> 同时 arrive 并增加 tx-count；关联的 TMA copy 完成时，硬件通过 <code style="font-family:'SF Mono',monospace;font-size:11px;">complete_tx</code> 扣减 tx-count。
     (3) <code style="font-family:'SF Mono',monospace;font-size:11px;">tcgen05.commit...arrive::one</code> 在此前的异步 tcgen05 操作完成后，由 system 报告一次 arrival。
   </div>
 <script>

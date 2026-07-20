@@ -13,11 +13,11 @@
 
 假设输出矩阵被划分成 100 个 tiles。最直接的做法是启动 100 个 CTAs，让第 0 个 CTA 计算 tile 0，第 1 个 CTA 计算 tile 1，以此类推。GPU 通常无法同时运行全部 100 个 CTAs，因此会先运行其中一部分；某个 CTA 结束并释放资源后，硬件再启动后续 CTA，直到所有 tiles 都处理完毕。
 
-Persistent kernel 使用的方式不同。它通常只启动一组长期运行的 CTAs 或 clusters，让每个 worker 在循环中连续计算多个 tiles。这样可以减少 CTA 启动和重复准备工作的开销，但也带来了新的调度问题：一个 worker 完成当前 tile 后，下一块 tile 从哪里来？
+传统的 fixed-number persistent kernel 使用另一种方式：它只启动一组长期运行的 CTAs 或 clusters，让每个 worker 在循环中连续计算多个 tiles。这样可以减少 CTA 启动和重复准备工作的开销，但也带来了新的调度问题：一个 worker 完成当前 tile 后，下一块 tile 从哪里来？
 
-本章介绍 Blackwell 提供的 Cluster Launch Control（CLC）。它允许正在运行的 worker 向硬件请求尚未启动的工作，使 persistent kernel 可以根据实际完成情况动态分配 tiles。
+本章介绍 Blackwell 提供的 Cluster Launch Control（CLC）。CLC kernel 的 launch grid 仍然覆盖全部 output tiles，但运行中的 worker 可以取消尚未开始的 CTA 或 cluster launch，并接管它的 coordinate。这样既保留了完整 grid 的任务编号，又能让已经驻留的 workers 根据实际完成情况动态领取工作。
 
-## 静态 Persistent Scheduler 的问题
+## 静态 persistent scheduler 的局限
 
 下面把这种已经开始运行、可以反复取任务的 CTA 或 cluster 统称为 worker。
 
@@ -34,7 +34,7 @@ worker 3: tile 3, 7, 11
 
 不同 tiles 的计算量也可能不一样。边界处理、mask、稀疏计算或融合在 GEMM 周围的其他操作，都可能让某些 tiles 更慢。静态 scheduler 在工作真正开始前就已经确定了分工，无法根据实际完成时间重新分配任务。
 
-CLC 会换一种方式组织这 12 个 tiles。kernel 启动一个包含 12 个 CTAs 的 grid，它们的 `blockIdx.x` 分别是 0 到 11，并约定 `blockIdx.x = i` 的 CTA 负责 tile `i`。如果当前只能容纳三个 CTAs，硬件会先启动 CTA 0、1、2；CTA 3 到 CTA 11 暂时留在 launch queue 中，等待资源空闲。
+CLC 会换一种方式组织这 12 个 tiles。它的 launch grid 包含 12 个 CTAs，它们的 `blockIdx.x` 分别是 0 到 11，并约定 `blockIdx.x = i` 的 CTA 负责 tile `i`。如果当前只能容纳三个 CTAs，硬件会先启动 CTA 0、1、2；CTA 3 到 CTA 11 暂时留在 launch queue 中，等待资源空闲。
 
 假设 CTA 0 已经算完 tile 0。它可以先不退出，而是向硬件请求一份尚未开始的工作。如果硬件选择了 CTA 3，就会取消 CTA 3 的启动，并把 CTA 3 原本应当使用的 `blockIdx` coordinate 返回给 CTA 0。CTA 0 根据这个 coordinate 找到 tile 3，接着完成 tile 3，然后再次请求下一份工作。
 
@@ -86,7 +86,7 @@ CLC 没有使用某个特殊数字表示“没有任务”。只有 `is_canceled
 4. 查询取消是否成功；
 5. 成功时使用返回的 coordinate 进入下一轮，失败时退出。
 
-忽略 barrier 初始化、phase 更新和 async-proxy fence 后，循环可以写成：
+下面的伪代码省略 barrier 初始化、phase 更新和 response buffer 所需的 async-proxy fence，只展示取任务与计算的顺序：
 
 ```text
 tile = decode(blockIdx)
@@ -106,7 +106,7 @@ while true:
 
 提前提交后，scheduler 处理请求和当前 tile 的计算可以同时进行。等当前 tile 完成时，下一块工作的 coordinate 往往已经写入 shared memory。TMA 用计算覆盖数据搬运延迟，CLC 则用当前 tile 的计算覆盖调度请求延迟，两者采用的是同一种异步流水思路。
 
-实际代码还需要正确处理 barrier phase、thread 或 cluster synchronization，以及 async-proxy fence。特别是重复使用同一块 response buffer 前，必须保证上一轮结果已经读取完毕，否则新请求可能覆盖仍在使用的数据。
+CLC 通过 async proxy 把 response 写入 shared memory，普通 thread 则通过 generic proxy 查询这份结果。实际代码在提交新请求前和读完 response 后，都必须按照 PTX 要求执行相应的 async-proxy fence，建立这两个 proxy 之间的顺序。这样既能保证查询时看到已经完成的 response，也能防止下一轮异步写入覆盖仍在读取的数据。此外，kernel 还需要正确处理 barrier phase，以及 CTA 或 cluster 范围的 thread synchronization。
 
 ## 什么时候使用 CLC
 

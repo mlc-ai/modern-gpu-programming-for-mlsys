@@ -129,7 +129,7 @@
 </style>
 </head>
 <body>
-  <h1>用 mbarrier 追踪两次 TMA Load</h1>
+  <h1>用 mbarrier 追踪两次 TMA load</h1>
 
   <div class="timeline-area">
     <!-- Wrapper used for SVG overlay positioning -->
@@ -188,43 +188,43 @@
   <!-- Legend: color = state -->
   <div class="leg">
     <div class="li">
-      <div class="swtch" style="background:#4ade80;"></div> 工作中 / active
+      <div class="swtch" style="background:#4ade80;"></div> 正在执行
     </div>
     <div class="li">
       <div class="swtch" style="background:#3b82f6;"></div> 发出信号的操作
     </div>
     <div class="li">
-      <div class="swtch" style="background:#e0e7ff; border:1px solid #a5b4fc;"></div> Dispatch 到 TMA
+      <div class="swtch" style="background:#e0e7ff; border:1px solid #a5b4fc;"></div> 提交给 TMA
     </div>
     <div class="li">
       <div class="swtch" style="background:#fee2e2; border:1px solid #fca5a5;"></div> 阻塞 / 等待
     </div>
     <div class="li">
-      <div class="swtch" style="background:#fffbeb; border:1px solid #fde68a;"></div> Barrier 状态
+      <div class="swtch" style="background:#fffbeb; border:1px solid #fde68a;"></div> barrier 状态
     </div>
     <div class="li">
       <div class="swtch" style="background:#f1f5f9; border:1px dashed #d1d5db;"></div> 空闲
     </div>
     <div class="li">
-      <svg width="18" height="14" viewBox="0 0 18 14"><line x1="2" y1="7" x2="14" y2="7" stroke="#64748b" stroke-width="1.5" marker-end="url(#legArrow)"/><defs><marker id="legArrow" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,6 2.5,0 5" fill="#64748b"/></marker></defs></svg> 发信号改变 mbar 状态
+      <svg width="18" height="14" viewBox="0 0 18 14"><line x1="2" y1="7" x2="14" y2="7" stroke="#64748b" stroke-width="1.5" marker-end="url(#legArrow)"/><defs><marker id="legArrow" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,6 2.5,0 5" fill="#64748b"/></marker></defs></svg> 更新 mbarrier 状态
     </div>
     <div class="li">
-      <div style="width:2px;height:14px;border-left:2px dashed #ef4444;"></div> init 后同步 thread
+      <div style="width:2px;height:14px;border-left:2px dashed #ef4444;"></div> 初始化后进行 CTA 同步
     </div>
   </div>
 
   <div class="summary-row">
     <div class="sum-card">
-      <h4>Producer（T0）</h4>
-      <p>Producer 分别用一次 TMA load 搬运 2048 bytes 的 A tile 和 2048 bytes 的 B tile。随后调用 <code>arrive.expect_tx(4096)</code>，报告一次 arrival，并让 barrier 等待两次 load 共 4096 bytes 的传输。</p>
+      <h4>producer（T0）</h4>
+      <p>producer 分别用一次 TMA load 搬运 2048 bytes 的 A tile 和 2048 bytes 的 B tile。随后调用 <code>arrive.expect_tx(4096)</code>，报告一次 arrival，并让 barrier 等待两次 load 共 4096 bytes 的传输。</p>
     </div>
     <div class="sum-card">
-      <h4>TMA Engine</h4>
-      <p>每次 copy 完成时执行一次 <code>complete_tx(2048)</code>。第二次完成后，tx-count 回到 0。</p>
+      <h4>TMA engine</h4>
+      <p>每次 copy 完成后，硬件都会向 barrier 报告 2048 bytes 的 complete-tx，并相应扣减 tx-count。第二次完成后，tx-count 回到 0。</p>
     </div>
     <div class="sum-card">
-      <h4>Consumer（T1）</h4>
-      <p>调用阻塞式 <code>try_wait(phase=0)</code>；barrier 完成这一 phase 后，才能读取 A、B tiles。</p>
+      <h4>consumer（T1）</h4>
+      <p>调用 TIRx 的阻塞式 <code>try_wait(phase=0)</code>；barrier 完成这一 phase 后，才能读取 A、B tiles。</p>
     </div>
   </div>
 
@@ -244,9 +244,9 @@
   ];
   var tmaData = [
     { label: '',                   cls: 'c-idle'   },
-    { label: 'copy A in flight',   cls: 'c-green'  },
-    { label: 'copy A/B in flight', cls: 'c-green'  },
-    { label: 'copy A/B in flight', cls: 'c-green'  },
+    { label: '正在搬运 A',         cls: 'c-green'  },
+    { label: '正在搬运 A/B',       cls: 'c-green'  },
+    { label: '正在搬运 A/B',       cls: 'c-green'  },
     { label: 'A complete_tx(2048)', cls: 'c-blue'  },
     { label: 'B complete_tx(2048)', cls: 'c-blue'  },
     { label: '',                   cls: 'c-idle'   }
@@ -267,16 +267,16 @@
     { label: 'try_wait(0) 等待中', cls: 'c-red'   },
     { label: 'try_wait(0) 等待中', cls: 'c-red'   },
     { label: 'try_wait(0) 返回',   cls: 'c-green' },
-    { label: 'MMA reads A/B',     cls: 'c-green' }
+    { label: 'MMA 读取 A/B',      cls: 'c-green' }
   ];
   var descs = [
     'T0 初始化 barrier：phase parity=0，pending=1，tx=0。其他参与者要在初始化完成后才能使用它。',
     'T0 发出 A tile 的 2048-byte TMA copy；copy 与这个 mbarrier 关联。',
     'T0 发出 B tile 的 2048-byte TMA copy；两次 copy 可以在硬件中继续执行。',
-    'T0 调用 arrive.expect_tx(4096)：pending→0，tx-count += 4096。Consumer 开始等待 phase 0 完成。',
-    'A copy 完成，硬件执行 complete_tx(2048)：tx-count 4096→2048；Consumer 仍在等待。',
-    'B copy 完成，tx-count 2048→0。pending 和 tx-count 同时为 0，barrier 原子地进入 phase 1，并把 pending 恢复为 1。Consumer 的等待结束。',
-    'Consumer 现在可以安全读取已经写入 SMEM 的 A、B tiles。'
+    'T0 调用 arrive.expect_tx(4096)：pending→0，tx-count += 4096。consumer 开始等待 phase 0 完成。',
+    'A copy 完成，硬件通过 complete_tx(2048) 将 tx-count 从 4096 扣减到 2048；consumer 仍在等待。',
+    'B copy 完成，tx-count 2048→0。pending 和 tx-count 同时为 0，barrier 原子地进入 phase 1，并把 pending 恢复为 1。consumer 的等待结束。',
+    'consumer 现在可以安全读取已经写入 SMEM 的 A、B tiles。'
   ];
 
   /* ── Build rows ──────────────────────────────────────────── */
