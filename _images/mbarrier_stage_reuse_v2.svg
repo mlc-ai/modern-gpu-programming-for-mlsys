@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="620" viewBox="0 0 1400 620" role="img" aria-labelledby="title desc">
+  <title id="title">The full/empty barrier protocol for one SMEM stage</title>
+  <desc id="desc">The producer waits on the empty barrier and fills the SMEM stage with TMA. The consumer waits on the full barrier, uses the tile, and arrives on the empty barrier to return the buffer for reuse.</desc>
+  <defs>
+    <marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
+      <path d="M0,0 L12,5 L0,10 Z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-loop" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="10" refX="11" refY="5" orient="auto">
+      <path d="M0,0 L12,5 L0,10 Z" fill="#dc2626"/>
+    </marker>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #1f2937; }
+      .title { font-size: 34px; font-weight: 700; }
+      .subtitle { font-size: 18px; fill: #64748b; }
+      .card-title { font-size: 17px; font-weight: 700; }
+      .card-main { font-size: 16px; font-weight: 650; }
+      .card-detail { font-size: 14px; fill: #475569; }
+      .step { font-size: 18px; font-weight: 700; fill: #ffffff; }
+      .mono { font-family: "SFMono-Regular", Consolas, monospace; }
+      .legend-title { font-size: 17px; font-weight: 700; }
+      .legend-detail { font-size: 15px; fill: #475569; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="620" fill="#ffffff"/>
+  <text x="700" y="52" text-anchor="middle" class="title">Full/Empty Barrier Protocol for One SMEM Stage</text>
+  <text x="700" y="84" text-anchor="middle" class="subtitle">The same buffer cycles between producer and consumer</text>
+
+  <g>
+    <rect x="35" y="150" width="220" height="210" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="2.5"/>
+    <circle cx="70" cy="184" r="20" fill="#e11d48"/>
+    <text x="70" y="191" text-anchor="middle" class="step">1</text>
+    <text x="165" y="195" text-anchor="middle" class="card-title">Wait for Empty</text>
+    <text x="145" y="247" text-anchor="middle" class="card-main mono">wait empty[stage]</text>
+    <text x="145" y="286" text-anchor="middle" class="card-detail">The previous consumer</text>
+    <text x="145" y="313" text-anchor="middle" class="card-detail">has returned the buffer</text>
+  </g>
+
+  <g>
+    <rect x="305" y="150" width="220" height="210" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="2.5"/>
+    <circle cx="340" cy="184" r="20" fill="#2563eb"/>
+    <text x="340" y="191" text-anchor="middle" class="step">2</text>
+    <text x="425" y="195" text-anchor="middle" class="card-title">Fill Stage</text>
+    <text x="415" y="247" text-anchor="middle" class="card-main">Producer issues TMA</text>
+    <text x="415" y="286" text-anchor="middle" class="card-detail">Writes the SMEM stage</text>
+    <text x="415" y="313" text-anchor="middle" class="card-detail">Tracked by <tspan class="mono">full[stage]</tspan></text>
+  </g>
+
+  <g>
+    <rect x="575" y="150" width="220" height="210" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="2.5"/>
+    <circle cx="610" cy="184" r="20" fill="#d97706"/>
+    <text x="610" y="191" text-anchor="middle" class="step">3</text>
+    <text x="705" y="195" text-anchor="middle" class="card-title">Wait for Data</text>
+    <text x="685" y="247" text-anchor="middle" class="card-main mono">wait full[stage]</text>
+    <text x="685" y="286" text-anchor="middle" class="card-detail">Waits for TMA to finish</text>
+    <text x="685" y="313" text-anchor="middle" class="card-detail">Confirms the tile is ready</text>
+  </g>
+
+  <g>
+    <rect x="845" y="150" width="220" height="210" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="2.5"/>
+    <circle cx="880" cy="184" r="20" fill="#16a34a"/>
+    <text x="880" y="191" text-anchor="middle" class="step">4</text>
+    <text x="965" y="195" text-anchor="middle" class="card-title">Use Tile</text>
+    <text x="955" y="247" text-anchor="middle" class="card-main">Consumer reads the tile</text>
+    <text x="955" y="286" text-anchor="middle" class="card-detail">MMA and other operations</text>
+    <text x="955" y="313" text-anchor="middle" class="card-detail">use the current SMEM stage</text>
+  </g>
+
+  <g>
+    <rect x="1115" y="150" width="250" height="210" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="2.5"/>
+    <circle cx="1150" cy="184" r="20" fill="#e11d48"/>
+    <text x="1150" y="191" text-anchor="middle" class="step">5</text>
+    <text x="1250" y="195" text-anchor="middle" class="card-title">Return Buffer</text>
+    <text x="1240" y="247" text-anchor="middle" class="card-main mono">arrive empty[stage]</text>
+    <text x="1240" y="286" text-anchor="middle" class="card-detail">Notifies the producer</text>
+    <text x="1240" y="313" text-anchor="middle" class="card-detail">The next round may overwrite it</text>
+  </g>
+
+  <line x1="255" y1="255" x2="295" y2="255" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="525" y1="255" x2="565" y2="255" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="795" y1="255" x2="835" y2="255" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <line x1="1065" y1="255" x2="1105" y2="255" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <path d="M1240 360 L1240 475 Q1240 500 1215 500 L170 500 Q145 500 145 475 L145 370"
+        fill="none" stroke="#dc2626" stroke-width="3" marker-end="url(#arrow-loop)"/>
+  <text x="700" y="482" text-anchor="middle" class="card-main" fill="#dc2626">Next round: the producer fills this stage again</text>
+
+  <g>
+    <rect x="260" y="530" width="410" height="68" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="2"/>
+    <text x="285" y="558" class="legend-title mono" fill="#b45309">full[stage]</text>
+    <text x="285" y="584" class="legend-detail">producer → consumer: data is ready</text>
+
+    <rect x="730" y="530" width="410" height="68" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="2"/>
+    <text x="755" y="558" class="legend-title mono" fill="#be123c">empty[stage]</text>
+    <text x="755" y="584" class="legend-detail">consumer → producer: buffer returned</text>
+  </g>
+</svg>

@@ -354,7 +354,7 @@
 <ul class="simple">
 <li><p>发出 TMA 或 Tensor Core 指令，只表示异步操作已经启动。consumer 必须等待对应的完成信号，才能读取结果或复用相关资源。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 将 producer 的 <code class="docutils literal notranslate"><span class="pre">arrive</span></code> 与 consumer 的 <code class="docutils literal notranslate"><span class="pre">wait</span></code> 分开，并把普通 thread 的 arrival 和异步硬件的完成状态纳入同一个条件；对于 TMA，它还会追踪尚未传输的字节数。</p></li>
-<li><p>在多级 pipeline 中，每个 stage 通常使用 <code class="docutils literal notranslate"><span class="pre">full</span></code> barrier 交付数据、使用 <code class="docutils literal notranslate"><span class="pre">empty</span></code> barrier 归还 buffer。barrier 可以通过 phase 反复使用，kernel 需要跟踪 phase parity，避免把上一轮的完成状态误认为当前轮已经完成。</p></li>
+<li><p>在多级 pipeline 中，每个 stage 通常使用 <code class="docutils literal notranslate"><span class="pre">full</span></code> barrier 通知数据已经就绪、使用 <code class="docutils literal notranslate"><span class="pre">empty</span></code> barrier 归还 buffer。barrier 可以通过 phase 反复使用，kernel 需要跟踪 phase parity，避免把上一轮的完成状态误认为当前轮已经完成。</p></li>
 </ul>
 </div>
 <p>前面的 TMA 和 Blackwell Tensor Core 章节介绍了两类异步操作。它们有一个共同特点：thread 只负责发出指令，实际的数据搬运或矩阵乘累加由硬件继续执行。发出指令的 thread 不必留在原地等待。</p>
@@ -365,7 +365,7 @@
 <p><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 是 memory barrier 的简称，是一个存放在 shared memory 中的硬件同步对象。它的内部编码是不透明的；理解其行为时，可以先关注 arrival counter 和 phase。Arrival counter 表示当前这一轮还差多少次 arrival，phase 则表示 barrier 当前处于第几轮。使用 parity 形式的 wait 时，kernel 只需要跟踪 <code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">%</span> <span class="pre">2</span></code>，这个 0 或 1 的值称为 phase parity。对于 TMA load，barrier 还会使用 tx-count 追踪尚未完成的传输字节数。</p>
 <div style="overflow-x:auto;">
 <iframe src="../demo_zh/mbarrier_mechanism.html?v=review-20260720" title="mbarrier 的状态与操作" loading="lazy"
-        style="width:100%; min-width:1320px; height:700px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+        style="width:100%; min-width:1320px; height:730px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div><p><em>点击任意字段，可以单独查看它在 barrier 状态中的含义。</em></p>
 <p><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 首先需要初始化。执行 <code class="docutils literal notranslate"><span class="pre">init</span></code> 时，kernel 指定 barrier 每轮需要等待多少次 arrival。barrier 从 phase 0 开始，pending arrival count 会被设为 expected arrival count。从这一刻起，它开始等待相关的 producer 或资源使用者报告完成。</p>
 <p>每次 arrival 都会减少 barrier 当前仍在等待的工作量。kernel 中的不同参与者会以不同方式发出 arrival。</p>
@@ -385,13 +385,13 @@ tx-count              == 0
 <h2>phase 如何区分不同轮次<a class="headerlink" href="#phase" title="Link to this heading">#</a></h2>
 <p>前面提到，同一个 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 可以反复使用，每一轮称为一个 phase。一个 phase 完成后，barrier 会自动进入下一 phase，并重新开始等待新一轮的 arrivals。如果只记录“这个 barrier 曾经完成过”，consumer 就可能把上一轮留下的完成状态误认为当前数据已经准备好。phase parity 用 0 和 1 区分相邻两轮，让 consumer 明确自己等待的是哪一次完成。</p>
 <div style="overflow-x:auto;">
-<iframe src="../demo_zh/phase_tracking.html?v=restore-original-20260717-2" title="复用 mbarrier 时的 phase tracking" loading="lazy"
+<iframe src="../demo_zh/phase_tracking.html?v=phase-order-20260720" title="复用 mbarrier 时的 phase tracking" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div><p><em>点击不同 iteration，可以观察同一个 barrier 在每轮完成后，phase parity 如何在 0 和 1 之间交替。</em></p>
 <p>上图展示了一个 barrier 如何在 phase 0 和 phase 1 之间切换，从而被反复使用。在两级 TMA pipeline 中，stage 0 和 stage 1 各有一块 SMEM buffer，也各有一个 TMA barrier。这样，consumer 可以分别等待每个 stage 的数据。</p>
 <p>当两个 stages 按 stage 0、stage 1 的顺序循环访问时，可以用一个 <code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 记录当前轮次。每访问完两个 stages，就翻转一次 parity：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>stage = iteration % 2
-T.ptx.mbarrier.try_wait(tma_bar[stage], phase_tma)
+T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma)
 
 if stage == 1:
     phase_tma ^= 1
@@ -437,7 +437,7 @@ if stage == 1:
 </div>
 <p>Iteration 0 等待 stage 0 的 phase 0。该 phase 完成后，stage 0 的 barrier 进入 phase 1，但这一轮 circular buffer 还没有遍历完，所以 <code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 仍为 0。Iteration 1 等待 stage 1 的 phase 0；等待完两个 stages 后，<code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 翻转为 1。</p>
 <p>Iteration 2 回到 stage 0，这次等待 phase 1；完成后，stage 0 的 barrier 回到 phase 0。Iteration 3 同样等待 stage 1 的 phase 1。第二轮两个 stages 都完成后，<code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 也翻转回 0。</p>
-<p><code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 描述的是软件访问 circular buffer 的轮次，与两次 TMA 传输在硬件上谁先完成无关。因此，深度为 <code class="docutils literal notranslate"><span class="pre">S</span></code> 的 TMA pipeline 通常为每个 stage 准备一个 barrier，再通过 phase parity 区分同一个 stage 的前后两轮。</p>
+<p><code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 描述的是软件访问 circular buffer 的轮次，与两次 TMA 传输在硬件上谁先完成无关。因此，深度为 <code class="docutils literal notranslate"><span class="pre">S</span></code> 的 TMA pipeline 通常为每个 stage 准备一个记录 TMA 完成状态的 <code class="docutils literal notranslate"><span class="pre">full</span></code> barrier，再通过 phase parity 区分同一个 stage 的前后两轮。完整的 buffer 复用协议还需要下文介绍的 <code class="docutils literal notranslate"><span class="pre">empty</span></code> barriers。</p>
 </section>
 <section id="id2">
 <h2>常见的同步规则<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
