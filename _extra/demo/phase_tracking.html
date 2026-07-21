@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="../viz-base.css">
 <script src="../viz-base.js"></script>
 <style>
-  body { padding: 24px 28px; max-width: 1200px; margin: 0 auto; }
+  body { padding: 24px 28px; max-width: 1200px; min-height: 468px; margin: 0 auto; }
 
   .phase-row {
     display: flex; align-items: center; justify-content: center;
@@ -119,11 +119,11 @@
     <div class="explain-card">
       <h3 style="color:#3b82f6;">How It Works</h3>
       <div class="ec-body">
-        Each barrier has a <strong>phase bit</strong> (0 or 1). After all expected arrivals, the barrier flips its phase and resets — ready for the next iteration. No reinitialization needed.
+        Each barrier has a <strong>phase bit</strong> (0 or 1). After all expected arrivals and tracked asynchronous transfers complete, the barrier advances to the next phase and resets — ready for the next iteration. No reinitialization is needed.
         <div class="sequence">
-          <div class="seq-step"><div class="seq-num blue">1</div> Producer arrives at barrier (phase 0)</div>
-          <div class="seq-step"><div class="seq-num green">2</div> Consumer calls <code>try_wait(phase=0)</code> — unblocks</div>
-          <div class="seq-step"><div class="seq-num amber">3</div> Barrier flips to phase 1, <code>phase ^= 1</code></div>
+          <div class="seq-step"><div class="seq-num blue">1</div> Producer reports the arrival and expected transfer bytes (phase 0)</div>
+          <div class="seq-step"><div class="seq-num green">2</div> Arrivals and transfers finish; the barrier advances to phase 1</div>
+          <div class="seq-step"><div class="seq-num amber">3</div> <code>try_wait(phase=0)</code> returns; the kernel updates its local parity</div>
         </div>
       </div>
     </div>

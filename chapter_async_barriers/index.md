@@ -1,94 +1,118 @@
 (chap_async_barriers)=
-# Async Coordination: mbarriers
+# Async Coordination: mbarrier
 
 :::{admonition} Overview
 :class: overview
 
-- TMA and the Tensor Core are asynchronous, so issuing work is not the same as finishing it, and consumers need an explicit completion signal.
-- An mbarrier is that signal: producers arrive, consumers wait, and it tracks arrival counts and (for TMA) byte counts.
-- Each barrier carries a *phase* that flips every round; waiting on the correct phase is what gates a consumer safely.
+- Issuing a TMA or Tensor Core instruction only starts an asynchronous operation. A consumer must wait for the corresponding completion signal before reading the result or reusing the resource.
+- An `mbarrier` separates the producer's `arrive` from the consumer's `wait`. It combines ordinary thread arrivals with hardware completion notifications and, for TMA, also tracks bytes still in flight.
+- A multistage pipeline typically uses a `full` barrier to signal that each stage is ready and an `empty` barrier to return its buffer. Barriers are reused through phases, so the kernel tracks phase parity to distinguish consecutive uses.
 :::
 
-TMA ({ref}`chap_tma`) and Tensor Core ({ref}`chap_tensor_cores`) operations are asynchronous. When a kernel issues a TMA load or a `tcgen05` MMA, the issuing thread does not wait for the operation to finish. The instruction is only submitted to the hardware engine; the actual data movement or matrix operation continues in parallel with the rest of the program.
+The previous chapters on TMA and the Blackwell Tensor Core introduced two kinds of asynchronous operations. In both cases, a thread issues an instruction while the hardware continues the data transfer or matrix multiply-accumulate independently. The issuing thread does not have to wait in place.
 
-That is useful because it lets memory movement and compute overlap. It also means that program order is not enough to prove that data is ready. A later instruction may run before the earlier asynchronous operation has completed. If TMA is still writing a shared-memory tile when MMA starts reading it, the MMA reads incomplete data. If the epilogue reads TMEM before the Tensor Core has finished writing the accumulator, it reads the wrong value. If the kernel waits on the wrong condition, it may never make progress.
+Consider a TMA load. Program order can show that the TMA instruction was issued before an MMA reads the SMEM tile, but that only proves the transfer **started** first. It does not prove that the transfer has **finished**. If TMA is still writing the tile, MMA may read incomplete data. The same problem appears between `tcgen05.mma` and the epilogue: the epilogue must not read the TMEM accumulator until the Tensor Core has finished writing it.
 
-The kernel therefore needs an explicit completion signal at every asynchronous handoff. An `mbarrier` is that signal. A producer arrives on the barrier when its work is complete, and a consumer waits on the barrier before using the produced data. The same mechanism is used for TMA-to-MMA handoff, MMA-to-epilogue handoff, and buffer reuse across pipeline stages.
+These handoffs need an explicit completion signal. The producer reports when its work is complete, and the consumer waits for that report before using the data or reusing the resource. The hardware object that carries this signal is an `mbarrier`.
 
-A barrier is not just a one-shot flag. It carries a phase bit, and that phase bit changes every time the barrier completes a round of arrivals. The phase is what lets one barrier be reused across many loop iterations without confusing the completion of one iteration with the completion of another.
+## `mbarrier`
 
-## The mbarrier
-
-An `mbarrier`, short for memory barrier, is a hardware synchronization object stored in shared memory. Conceptually, it contains two pieces of state: an arrival counter and a phase bit. The counter tells the barrier how many arrivals are still missing in the current round. The phase bit tells the kernel which round the barrier is currently in.
+`mbarrier` is short for memory barrier. It is a hardware synchronization object stored in shared memory, and its internal encoding is opaque. To understand its behavior, it is enough to track an arrival counter and a phase. The arrival counter says how many arrivals are still missing in the current round; the phase identifies the current round. With a parity-based wait, the kernel only tracks `phase % 2`, a zero-or-one value called the phase parity. For TMA loads, the barrier also uses a tx-count to track bytes that have not yet finished transferring.
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe src="../demo/mbarrier_mechanism.html" title="mbarrier data structure and APIs" loading="lazy"
-        style="width:100%; min-width:1320px; height:620px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+<iframe src="../demo/mbarrier_mechanism.html?v=review-20260720" title="mbarrier state and operations" loading="lazy"
+        style="width:100%; min-width:1320px; height:850px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 ```
-*Interactive: an `mbarrier` state view showing the arrival counter, the phase bit, and the `init`, `arrive`, and `wait` operations; click a field to focus it.*
+*Click any field to focus on its role in the barrier state.*
 
-A barrier starts with initialization. During `init`, the kernel sets how many arrivals this barrier should expect. The barrier begins in phase 0 with its counter loaded to that expected arrival count. From that point on, the barrier is waiting for all required producers or users of a resource to report that they are done.
+An `mbarrier` must first be initialized. During `init`, the kernel specifies how many arrivals each phase expects. The barrier starts in phase 0, with its pending arrival count set to the expected arrival count. It is now waiting for the relevant producers or resource users to report completion.
 
-An arrival reduces the amount of work the barrier is still waiting for. Different parts of a kernel can arrive on a barrier in different ways, and the distinction matters.
+Every arrival reduces the amount of work the barrier is still waiting for. Different participants in a kernel report arrival in different ways.
 
-For TMA loads, the usual arrival path is a tx-count arrival. An operation such as `mbarrier.arrive.expect_tx(bytes)` does two things. First, it counts as the issuing thread's arrival on the barrier. Second, it records the number of bytes that the TMA engine is expected to transfer. The barrier is not complete just because the issuing thread has arrived. It also waits for the TMA engine to drain the byte count as the transfer finishes. The phase flips only after both conditions are satisfied: the normal arrival count has reached zero, and the pending tx byte count has reached zero.
+For a TMA load, the usual path uses `mbarrier.arrive.expect_tx(bytes)`. This operation does two things. First, the issuing thread contributes one arrival, reducing the pending arrival count. Second, it adds the number of bytes that the TMA engine is expected to transfer to the tx-count.
 
-This is why `expect_tx` should not be read as "one more ordinary arrival." It sets up a byte budget for the asynchronous copy. The hardware later accounts for the actual copy completion through complete-tx updates. The barrier completes only when the arrivals and the byte transfer have both completed.
+The thread's arrival therefore does not mean that the barrier is complete. As the TMA engine finishes each transfer, hardware reports complete-tx updates that reduce the tx-count. The current phase completes only when both conditions below hold. The barrier then advances to the next phase, and its phase parity flips between 0 and 1:
 
-For Tensor Core work, the arrival path is different. A `tcgen05` MMA does not automatically advance a barrier just because the MMA was issued. The kernel must explicitly attach a barrier arrival to the commit path, for example with a `tcgen05.commit.mbarrier::arrive` operation. When that committed group completes, the Tensor Core side performs the barrier arrival. If the kernel forgets that commit arrival, the consumer waiting on the barrier will wait forever.
+```text
+pending arrival count == 0
+tx-count              == 0
+```
 
-A normal thread can also arrive directly on a barrier. This is used when ordinary thread code is the producer, or when a set of threads is announcing that it has finished using a resource. For example, after a consumer finishes reading a shared-memory buffer, it can arrive on a barrier that tells the producer the buffer is free to reuse.
+For this reason, `expect_tx` is more than another ordinary arrival. It also registers the number of transfer bytes that the barrier must wait for. Completion requires all expected arrivals and all associated data transfers to finish.
 
-Waiting is the consumer side of the same protocol. A consumer waits until the barrier has completed the phase expected for the current iteration. Only then is it safe to read the data or reuse the resource protected by that barrier.
+Tensor Core work follows a different arrival path. Issuing `tcgen05.mma` alone does not update a barrier. The kernel must use `tcgen05.commit...mbarrier::arrive` to associate one barrier arrival with the previously issued asynchronous tcgen05 operations. Hardware reports that arrival only after those operations complete. Without the commit arrival, a consumer waiting for it cannot make progress.
 
-The important point is that asynchronous hardware does not only run ahead of the program; it also reports completion back through the barrier. TMA can signal that a shared-memory tile is ready. Tensor Core work can signal that TMEM results are ready. Ordinary threads can signal that a buffer is no longer in use. The barrier gives all of these cases the same producer-consumer shape: the producer arrives, the consumer waits.
+An ordinary thread can also execute `mbarrier.arrive` directly. For example, after a consumer finishes reading a shared-memory buffer, it can arrive to tell the producer that the buffer may now be overwritten and reused.
 
-## Phase Tracking
+`wait` is the consumer side of the same protocol. A consumer waits for the phase associated with the current iteration and may read the data or reuse the protected resource only after that wait completes. Raw PTX `mbarrier.try_wait.parity` may return `false` before the phase completes and therefore has to be retried. The `T.ptx.mbarrier.try_wait` operation used in this book wraps that retry loop and blocks until the requested phase completes. Because `arrive` and `wait` are separate, a producer can report progress and continue with other work, while the consumer waits only when it actually needs the result.
 
-A barrier is usually not allocated for a single use. A pipelined K-loop may execute the same handoff hundreds of times, and allocating a new shared-memory barrier for every iteration would not be practical. Instead, the kernel keeps a small fixed set of barriers and reuses them as the loop advances.
+The common pattern is simple: asynchronous hardware runs independently and reports completion through the barrier. TMA can announce that an SMEM tile is ready, Tensor Core work can announce that a TMEM result is complete, and ordinary threads can announce that a buffer is no longer in use. In every case, the producer arrives and the consumer waits.
 
-The phase bit is what makes that reuse safe.
+## How phases distinguish consecutive uses
+
+The same `mbarrier` can be reused, with each round called a phase. After one phase completes, the barrier automatically enters the next phase and begins waiting for a new set of arrivals. If a consumer recorded only that the barrier had completed at some point, it could mistake the previous round's completion for the current data being ready. Phase parity alternates between 0 and 1 so the consumer can identify the particular completion it is waiting for.
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe src="../demo/phase_tracking.html" title="mbarrier phase tracking" loading="lazy"
+<iframe src="../demo/phase_tracking.html?v=phase-order-20260720" title="phase tracking when an mbarrier is reused" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 ```
-*Interactive: a reused barrier across several pipeline iterations, showing the phase bit flipping after each completed round.*
+*Select an iteration to see the phase parity alternate after each completed round.*
 
-Each time a barrier completes all arrivals for its current round, it flips phase: phase 0 becomes phase 1, phase 1 becomes phase 0, and so on. A wait operation checks the phase expected by the consumer. That expected phase is kept in a register by the kernel. After a stage has successfully waited for one round, the kernel toggles its local phase value before using the barrier for the next round.
+The figure shows one barrier alternating between phase 0 and phase 1. A two-stage TMA pipeline has two SMEM buffers, one for stage 0 and one for stage 1, and one TMA barrier for each stage. This lets the consumer wait for the two stages independently.
 
-This prevents the kernel from mistaking an old completion for a new one. Suppose a barrier was used for one TMA load and has already completed. If the next loop iteration reused the same barrier without tracking phase, a consumer could observe the previous completion and incorrectly assume the new load is ready. The phase bit separates those two rounds. Iteration 0 waits for one phase, iteration 1 waits for the opposite phase, iteration 2 waits for the first phase again, and the pattern continues.
+When the pipeline visits stage 0 and stage 1 in a fixed cycle, one `phase_tma` value can represent the current pass through the circular buffer. The parity flips after both stages have been visited:
 
-In a real pipeline, the bookkeeping is usually per stage. The kernel has a fixed number of shared-memory stages, a matching fixed number of barriers, and a small set of phase values in registers. As the loop advances, each logical iteration maps onto one physical stage, and the phase value tells the wait operation which round of that physical barrier it is waiting for.
+```text
+stage = iteration % 2
+T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma)
 
-This is why the later GEMM code does not need one barrier per K tile ({ref}`chap_gemm_async`). It needs one barrier per reusable stage, plus phase tracking. The stage index selects the shared-memory buffer and barrier. The phase value distinguishes the current use of that stage from the previous one.
+if stage == 1:
+    phase_tma ^= 1
+```
 
-**Try with your agent**: Give it a two-stage pipeline and ask it to trace four iterations. For each iteration, list the stage index, the local phase value, when the barrier flips, and what would go wrong if the phase were not toggled before the stage is reused.
+Both barriers start in phase 0, and `phase_tma` also starts at 0. The first four iterations evolve as follows:
 
-## Synchronization Rules
+| iteration | stage | phase parity waited on | barrier parity after completion | `phase_tma` after iteration |
+|---:|---:|---:|---:|---:|
+| 0 | 0 | 0 | 1 | 0 |
+| 1 | 1 | 0 | 1 | 1 |
+| 2 | 0 | 1 | 0 | 1 |
+| 3 | 1 | 1 | 0 | 0 |
 
-Once the barrier and phase mechanism are clear, the synchronization pattern in a tensor-core kernel is fairly mechanical. Every time one path produces data or releases a resource that another path will consume, the handoff must be made explicit.
+Iteration 0 waits for phase 0 of stage 0. When it completes, that barrier advances to phase 1, but the current pass through the circular buffer is not finished, so `phase_tma` remains 0. Iteration 1 waits for phase 0 of stage 1. Once both stages have been visited, `phase_tma` flips to 1.
 
-There are three common cases.
+Iteration 2 returns to stage 0 and waits for phase 1. That completion moves the stage 0 barrier back to phase 0. Iteration 3 does the same for stage 1, after which `phase_tma` returns to 0.
 
-The first case is thread code producing data for an asynchronous engine. If threads write shared memory and a later TMA store or MMA instruction reads that shared memory, the kernel must make the thread writes visible before the engine reads them. This requires the appropriate thread-level synchronization or fence. The exact instruction depends on the scope of the handoff, but the reason is always the same: the engine must not observe the shared-memory buffer before the producing threads have finished writing it.
+`phase_tma` describes the software's progress through the circular buffer. It does not assume that the two TMA transfers complete in any particular hardware order. A depth-`S` TMA pipeline therefore typically uses one TMA-completion, or `full`, barrier per stage and phase parity to distinguish consecutive uses of each stage. A complete buffer-reuse protocol adds the `empty` barriers introduced below.
 
-The second case is TMA producing data for MMA. A TMA load fills a shared-memory tile asynchronously. The MMA path cannot infer that the tile is ready just because the TMA instruction was issued. The TMA operation must be associated with an `mbarrier`, and the MMA path must wait on that barrier before reading the tile.
+## Common synchronization handoffs
 
-The third case is MMA producing data for the epilogue. A `tcgen05` MMA writes its result into TMEM asynchronously. The epilogue cannot safely read the accumulator until the Tensor Core has completed the relevant work. The MMA commit path therefore arrives on a completion barrier, and the epilogue waits on that barrier before reading TMEM.
+In a Tensor Core kernel, `mbarrier` commonly coordinates three kinds of data handoff.
+
+**Threads to asynchronous hardware.** If threads write shared memory and a later TMA store or MMA reads that memory, the kernel must first establish the required synchronization and ordering. Otherwise, the asynchronous operation may begin reading before the threads have finished writing the buffer.
+
+**TMA to MMA.** A TMA load fills an SMEM tile asynchronously. The producer arranges for the `mbarrier` to track both its arrival and the transfer bytes. The MMA consumer waits for the current barrier phase to complete, along with any ordering required by the instruction, before reading the tile. The timeline below shows this handoff.
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe src="../demo/mbarrier_tma_timeline.html" title="mbarrier signalling TMA completion" loading="lazy"
-        style="width:100%; min-width:1320px; height:700px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
+<iframe src="../demo/mbarrier_tma_timeline.html?v=review-20260720" title="tracking TMA loads with an mbarrier" loading="lazy"
+        style="width:100%; min-width:1320px; height:500px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 ```
-*Interactive: a TMA load signaling completion through an `mbarrier`. The MMA path waits for the barrier before reading the shared-memory tile. The Tensor Core to epilogue handoff follows the same shape, except that the Tensor Core commit path performs the arrival instead of TMA.*
+*Step through the timeline to see two 2,048-byte TMA copies complete. The barrier advances atomically to the next phase only after both the pending arrival count and tx-count reach zero, allowing the consumer's wait to finish.*
 
-The same idea also applies to resource reuse. A barrier is not only a data-ready signal. It can also be a "resource is free" signal. A shared-memory stage cannot be overwritten until all consumers of the old tile are done with it. A TMEM region cannot be reused until the previous user has finished reading or writing it. In those cases, the arrival means "I am done with this resource," and the wait means "it is now safe to reuse this resource for the next stage."
+**MMA to the epilogue.** `tcgen05.mma` updates a TMEM accumulator asynchronously. The thread that issues MMA uses `tcgen05.commit` to associate completion with an `mbarrier`. The epilogue waits for that barrier and applies the ordering fence required by tcgen05 before reading the result from TMEM.
 
-This is the right way to read the synchronization in a pipelined GEMM kernel. The waits and arrives are not scattered around as defensive programming. Each one marks a concrete ownership transfer: a tile becomes ready, an accumulator becomes readable, or a buffer becomes reusable. Once those handoffs are identified, the control flow becomes much easier to follow.
+## Using barriers to reuse a stage
+
+A barrier can mean either "data is ready" or "the buffer is no longer in use." A pipelined kernel therefore usually gives each SMEM stage a pair of barriers: `full[stage]` means that TMA has filled the stage, while `empty[stage]` means that the consumer has finished with the buffer. Once the pipeline reaches steady state, one stage follows this cycle:
+
+![The full/empty barrier protocol for one SMEM stage](../img/mbarrier_stage_reuse_v2.svg)
+
+`full` hands data from producer to consumer, while `empty` returns the buffer from consumer to producer. Each barrier's expected arrival count depends on how many threads report completion. When the pipeline reuses the same pair of barriers, it must track the phase parity of `full` and `empty` separately.
+
+When reading waits and arrivals in a pipelined kernel, first identify three things: the producer, the consumer, and the data or resource being handed off. Each wait and arrival can then be tied to a concrete event: data becoming ready, a result becoming readable, or a buffer becoming reusable.

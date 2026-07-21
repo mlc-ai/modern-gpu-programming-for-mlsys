@@ -119,11 +119,11 @@
     <div class="explain-card">
       <h3 style="color:#3b82f6;">工作方式</h3>
       <div class="ec-body">
-        每个 barrier 都有一个 <strong>phase bit</strong>（0 或 1）。所有预期 arrival 到达后，barrier 会翻转 phase 并 reset，为下一次 iteration 做好准备，不需要重新初始化。
+        每个 barrier 都有一个 <strong>phase bit</strong>（0 或 1）。所有预期 arrival 和被追踪的异步传输都完成后，barrier 会进入下一 phase 并 reset，为下一次 iteration 做好准备，不需要重新初始化。
         <div class="sequence">
-          <div class="seq-step"><div class="seq-num blue">1</div> Producer 在 barrier 上 arrive（phase 0）</div>
-          <div class="seq-step"><div class="seq-num green">2</div> Consumer 调用 <code>try_wait(phase=0)</code> 后解除阻塞</div>
-          <div class="seq-step"><div class="seq-num amber">3</div> Barrier 翻转到 phase 1，<code>phase ^= 1</code></div>
+          <div class="seq-step"><div class="seq-num blue">1</div> Producer 报告 arrival 和预期传输字节数（phase 0）</div>
+          <div class="seq-step"><div class="seq-num green">2</div> Arrival 与传输全部完成，barrier 进入 phase 1</div>
+          <div class="seq-step"><div class="seq-num amber">3</div> <code>try_wait(phase=0)</code> 返回，kernel 更新本地 parity</div>
         </div>
       </div>
     </div>
