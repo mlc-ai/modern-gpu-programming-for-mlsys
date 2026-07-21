@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MBarrier Mechanism</title>
+<title>mbarrier State and Operations</title>
 <link rel="stylesheet" href="../viz-base.css">
 <script src="../viz-base.js"></script>
 <style>
@@ -110,45 +110,45 @@
 </style>
 </head>
 <body>
-  <h1>MBarrier: Data Structure & APIs</h1>
+  <h1>mbarrier State and Operations</h1>
 
   <div class="struct-section">
     <div class="struct-card">
-      <h3>MBarrier Object (64-bit, in shared memory)</h3>
+      <h3>mbarrier object (64-bit, in shared memory)</h3>
       <div class="obj-visual">
-        <div class="obj-slot s-phase"><div class="slot-label">phase</div>0 or 1</div>
-        <div class="obj-slot s-pending"><div class="slot-label">pending_count</div>arrivals left</div>
-        <div class="obj-slot s-expected"><div class="slot-label">expected_count</div>total expected</div>
+        <div class="obj-slot s-phase"><div class="slot-label">phase parity</div>0 or 1</div>
+        <div class="obj-slot s-pending"><div class="slot-label">pending arrival<br>count</div>arrivals left</div>
+        <div class="obj-slot s-expected"><div class="slot-label">expected arrival<br>count</div>expected total</div>
         <div class="obj-slot s-tx"><div class="slot-label">tx-count</div>bytes pending</div>
       </div>
       <div class="field-row">
-        <span class="field-name">phase</span>
-        <span class="field-desc">Current phase (0 or 1). Flips automatically on completion.</span>
+        <span class="field-name">phase parity</span>
+        <span class="field-desc">The parity of the current phase. It alternates between 0 and 1 whenever the barrier advances.</span>
       </div>
       <div class="field-row">
-        <span class="field-name">pending_count</span>
-        <span class="field-desc">Remaining arrivals needed before phase completes.</span>
+        <span class="field-name">pending arrival count</span>
+        <span class="field-desc">The arrivals still required before the current phase can complete.</span>
       </div>
       <div class="field-row">
-        <span class="field-name">expected_count</span>
-        <span class="field-desc">Total arrivals expected per phase (set by <code style="font-family:'SF Mono',monospace;font-size:11px;">init</code>).</span>
+        <span class="field-name">expected arrival count</span>
+        <span class="field-desc">The number of arrivals required in each phase, set by <code style="font-family:'SF Mono',monospace;font-size:11px;">init</code>.</span>
       </div>
       <div class="field-row">
         <span class="field-name">tx-count</span>
-        <span class="field-desc">Pending async bytes. Increased by <code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code>, decreased by HW on transfer completion.</span>
+        <span class="field-desc">Bytes of asynchronous transfer still outstanding. <code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code> increases this count; hardware decreases it as transfers complete.</span>
       </div>
     </div>
 
     <div class="struct-card">
       <h3>Phase Completion Condition</h3>
       <div style="padding:12px 14px;background:#f8fafc;border-radius:8px;margin-bottom:10px;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:2;text-align:center;">
-        pending_count == 0<br>
+        pending_arrival_count == 0<br>
         <strong style="color:#1e293b;">&amp;&amp;</strong><br>
-        tx-count &le; 0
+        tx_count == 0
       </div>
       <div class="field-desc" style="line-height:1.65;">
-        A phase completes when <strong style="color:#1e293b;">all expected threads have arrived</strong> AND <strong style="color:#1e293b;">all expected async bytes have been transferred</strong>.
-        Upon completion, the barrier auto-resets: phase flips, pending_count resets to expected_count, tx-count resets to 0.
+        The current phase completes only after <strong style="color:#1e293b;">all expected arrivals have occurred</strong> and <strong style="color:#1e293b;">all registered asynchronous transfer bytes have completed</strong>.
+        The barrier then advances atomically to the next phase and restores the pending arrival count from the expected arrival count.
       </div>
     </div>
   </div>
@@ -157,42 +157,42 @@
     <h3>Core APIs</h3>
     <table class="api-table">
       <thead>
-        <tr><th>Instruction</th><th>Role</th><th>Effect on MBarrier</th></tr>
+        <tr><th>Instruction</th><th>Role</th><th>Effect on mbarrier</th></tr>
       </thead>
       <tbody>
         <tr>
           <td><span class="api-name">mbarrier.init</span> <span class="tag">setup</span></td>
-          <td class="api-role">Initialize barrier with expected arrival count</td>
-          <td class="api-effect">phase=0, pending=count, tx=0</td>
+          <td class="api-role">Set the number of arrivals required in each phase</td>
+          <td class="api-effect">phase=0, expected_arrival_count=count, pending_arrival_count=count, tx_count=0</td>
         </tr>
         <tr>
           <td><span class="api-name">mbarrier.arrive</span> <span class="tag">producer</span></td>
-          <td class="api-role">Thread signals arrival at the barrier</td>
-          <td class="api-effect">pending_count -= 1</td>
+          <td class="api-role">Thread reports an arrival to the barrier</td>
+          <td class="api-effect">pending_arrival_count -= 1</td>
         </tr>
         <tr>
-          <td><span class="api-name">mbarrier.arrive.expect_tx</span> <span class="tag">producer</span></td>
-          <td class="api-role">Arrive + declare expected async transfer bytes</td>
-          <td class="api-effect">pending -= 1, tx_count += txCount</td>
+          <td><span class="api-name">mbarrier.arrive.expect_tx</span> <span class="tag">participant</span></td>
+          <td class="api-role">Arrive and declare the expected asynchronous transfer bytes</td>
+          <td class="api-effect">pending_arrival_count -= 1, tx_count += byte_count</td>
         </tr>
         <tr>
           <td><span class="api-name">tcgen05.commit</span> <span class="tag">producer</span></td>
-          <td class="api-role">Tensor core signals MMA completion</td>
-          <td class="api-effect">arrive::one on mbarrier</td>
+          <td class="api-role">Track asynchronous tcgen05 operations previously issued by this thread</td>
+          <td class="api-effect">The system performs one arrive(count=1) after completion</td>
         </tr>
         <tr>
-          <td><span class="api-name">mbarrier.try_wait</span> <span class="tag">consumer</span></td>
-          <td class="api-role">Wait (suspend thread) until phase completes</td>
-          <td class="api-effect">blocks until phase done</td>
+          <td><span class="api-name">T.ptx.mbarrier.try_wait</span> <span class="tag">consumer</span></td>
+          <td class="api-role">Wait for the requested phase to complete</td>
+          <td class="api-effect">Does not modify barrier state; retries internally and returns after completion</td>
         </tr>
       </tbody>
     </table>
   </div>
 
   <div class="note-bar">
-    <strong>Three arrival patterns:</strong> (1) <code style="font-family:'SF Mono',monospace;font-size:11px;">mbarrier.arrive</code> — thread directly decrements pending_count.
-    (2) <code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code> — thread arrives + declares bytes; TMA engine auto-decrements tx_count when transfer finishes.
-    (3) <code style="font-family:'SF Mono',monospace;font-size:11px;">tcgen05.commit</code> — tensor core auto-arrives when MMA completes.
+    <strong>Three update paths:</strong> (1) <code style="font-family:'SF Mono',monospace;font-size:11px;">mbarrier.arrive</code> directly reduces the pending arrival count.
+    (2) <code style="font-family:'SF Mono',monospace;font-size:11px;">arrive.expect_tx</code> arrives and increases tx-count; when the associated TMA copy finishes, hardware reduces tx-count through <code style="font-family:'SF Mono',monospace;font-size:11px;">complete_tx</code>.
+    (3) <code style="font-family:'SF Mono',monospace;font-size:11px;">tcgen05.commit...arrive::one</code> makes the system report one arrival after the preceding asynchronous tcgen05 operations complete.
   </div>
 <script>
 (function () {

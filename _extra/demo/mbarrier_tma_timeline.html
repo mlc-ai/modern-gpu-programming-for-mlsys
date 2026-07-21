@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MBarrier TMA Timeline</title>
+<title>mbarrier TMA Timeline</title>
 <link rel="stylesheet" href="../viz-base.css">
 <script src="../viz-base.js"></script>
 <style>
-  body { padding: 20px 28px; max-width: 1200px; margin: 0 auto; }
+  body { padding: 20px 28px; max-width: 1200px; min-height: 433px; margin: 0 auto; }
 
   /* ── Timeline card ───────────────────────────────────────── */
   .timeline-area {
@@ -33,7 +33,7 @@
     position: relative;
   }
 
-  /* Row labels — neutral dark, no thread color */
+  /* Row labels: neutral dark, no thread color */
   .tl-label {
     font-size: 11px; font-weight: 700; text-align: left;
     padding-right: 12px; white-space: nowrap; color: #475569;
@@ -129,7 +129,7 @@
 </style>
 </head>
 <body>
-  <h1>MBarrier to Signal TMA Completion</h1>
+  <h1>Tracking Two TMA Loads with an mbarrier</h1>
 
   <div class="timeline-area">
     <!-- Wrapper used for SVG overlay positioning -->
@@ -145,7 +145,7 @@
         <div class="tl-row" id="rowTMA"></div>
 
         <!-- MBar row -->
-        <div class="tl-label l-bar">MBar</div>
+        <div class="tl-label l-bar">mbarrier</div>
         <div class="tl-bar-row" id="rowBar"></div>
 
         <!-- T1 row -->
@@ -172,11 +172,13 @@
               stroke-dasharray="5,3"/>
         <text id="syncLabel" fill="#ef4444" font-size="9" font-weight="700"
               text-anchor="middle" letter-spacing="0.02em"></text>
-        <!-- Curved arrow: arrive.expect_tx (T0 col1) → MBar col1 -->
+        <!-- Curved arrow: arrive.expect_tx (T0 col3) → mbarrier col3 -->
         <path id="arrowArrive" stroke="#64748b" stroke-width="1.5" fill="none"
               marker-end="url(#arrowhead)"/>
-        <!-- Curved arrow: TMA tx-complete (col4) → MBar col4 -->
-        <path id="arrowTxDone" stroke="#64748b" stroke-width="1.5" fill="none"
+        <!-- Curved arrows: the two complete_tx events update mbarrier -->
+        <path id="arrowTxA" stroke="#64748b" stroke-width="1.5" fill="none"
+              marker-end="url(#arrowhead)"/>
+        <path id="arrowTxB" stroke="#64748b" stroke-width="1.5" fill="none"
               marker-end="url(#arrowhead)"/>
       </svg>
     </div>
@@ -204,7 +206,7 @@
       <div class="swtch" style="background:#f1f5f9; border:1px dashed #d1d5db;"></div> Idle
     </div>
     <div class="li">
-      <svg width="18" height="14" viewBox="0 0 18 14"><line x1="2" y1="7" x2="14" y2="7" stroke="#64748b" stroke-width="1.5" marker-end="url(#legArrow)"/><defs><marker id="legArrow" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,6 2.5,0 5" fill="#64748b"/></marker></defs></svg> Signaling to change mbar state
+      <svg width="18" height="14" viewBox="0 0 18 14"><line x1="2" y1="7" x2="14" y2="7" stroke="#64748b" stroke-width="1.5" marker-end="url(#legArrow)"/><defs><marker id="legArrow" markerWidth="6" markerHeight="5" refX="6" refY="2.5" orient="auto"><polygon points="0 0,6 2.5,0 5" fill="#64748b"/></marker></defs></svg> Updates mbarrier state
     </div>
     <div class="li">
       <div style="width:2px;height:14px;border-left:2px dashed #ef4444;"></div> Sync threads after init
@@ -214,15 +216,15 @@
   <div class="summary-row">
     <div class="sum-card">
       <h4>Producer (T0)</h4>
-      <p><code>arrive.expect_tx(4096)</code> decrements pending to 0 and sets tx_count. <code>cp.async.bulk</code> triggers TMA transfer.</p>
+      <p>The producer issues one TMA load for a 2,048-byte A tile and another for a 2,048-byte B tile. It then calls <code>arrive.expect_tx(4096)</code> to contribute one arrival and make the barrier wait for all 4,096 bytes.</p>
     </div>
     <div class="sum-card">
       <h4>TMA Engine</h4>
-      <p>Executes <code>cp.async.bulk</code> dispatched from T0. Auto-decrements tx_count on completion.</p>
+      <p>When each copy finishes, hardware reports a 2,048-byte complete-tx update to the barrier. After the second copy, tx-count reaches zero.</p>
     </div>
     <div class="sum-card">
       <h4>Consumer (T1)</h4>
-      <p><code>try_wait</code> suspends until pending==0 AND tx==0. HW auto-decrements tx_count when transfer completes.</p>
+      <p>The consumer calls TIRx's blocking <code>try_wait(phase=0)</code>. It may read the A and B tiles only after the barrier completes that phase.</p>
     </div>
   </div>
 
@@ -232,49 +234,49 @@
 
   /* ── Data ─────────────────────────────────────────────────── */
   var t0Data = [
-    { label: 'init(mbar,1)',         cls: 'c-blue'  },
+    { label: 'init(mbar, 1)',        cls: 'c-blue'  },
+    { label: 'TMA copy A (2048B)',   cls: 'c-teal'  },
+    { label: 'TMA copy B (2048B)',   cls: 'c-teal'  },
     { label: 'arrive.expect_tx(4096)', cls: 'c-blue'  },
-    { label: 'cp.async.bulk',        cls: 'c-teal'  },
-    { label: '',                     cls: 'c-idle'  },
     { label: '',                     cls: 'c-idle'  },
     { label: '',                     cls: 'c-idle'  },
     { label: '',                     cls: 'c-idle'  }
   ];
   var tmaData = [
-    { label: '',                   cls: 'c-idle'   },
-    { label: '',                   cls: 'c-idle'   },
-    { label: 'xfer GMEM\u2192SMEM', cls: 'c-green'  },
-    { label: 'transferring...',    cls: 'c-green'  },
-    { label: 'tx-complete',        cls: 'c-blue'   },
-    { label: '',                   cls: 'c-idle'   },
-    { label: '',                   cls: 'c-idle'   }
+    { label: '',                     cls: 'c-idle'   },
+    { label: 'transferring A',       cls: 'c-green'  },
+    { label: 'transferring A/B',     cls: 'c-green'  },
+    { label: 'transferring A/B',     cls: 'c-green'  },
+    { label: 'A complete_tx(2048)',  cls: 'c-blue'   },
+    { label: 'B complete_tx(2048)',  cls: 'c-blue'   },
+    { label: '',                     cls: 'c-idle'   }
   ];
   var barData = [
-    { label: 'pending=1 tx=0'    },
-    { label: 'pending=0 tx=4096' },
-    { label: 'pending=0 tx=4096' },
-    { label: 'pending=0 tx=2048' },
-    { label: 'pending=0 tx=0'    },
-    { label: 'phase done!'    },
-    { label: 'reset pending=1'   }
+    { label: 'parity=0 pending=1 tx=0'    },
+    { label: 'parity=0 pending=1 tx=0'    },
+    { label: 'parity=0 pending=1 tx=0'    },
+    { label: 'parity=0 pending=0 tx=4096' },
+    { label: 'parity=0 pending=0 tx=2048' },
+    { label: 'parity=1 pending=1 tx=0'    },
+    { label: 'parity=1 pending=1 tx=0'    }
   ];
   var t1Data = [
-    { label: '',                  cls: 'c-idle'  },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'try_wait(phase=0)', cls: 'c-red'   },
-    { label: 'resumed!',          cls: 'c-green' }
+    { label: '',                    cls: 'c-idle'  },
+    { label: '',                    cls: 'c-idle'  },
+    { label: '',                    cls: 'c-idle'  },
+    { label: 'try_wait(0): waiting', cls: 'c-red'   },
+    { label: 'try_wait(0): waiting', cls: 'c-red'   },
+    { label: 'try_wait(0): returns', cls: 'c-green' },
+    { label: 'MMA reads A/B',       cls: 'c-green' }
   ];
   var descs = [
-    'T0 initializes barrier: pending=1, tx=0',
-    'T0 calls arrive.expect_tx \u2014 pending\u21920, tx_count += 4096. T1 calls try_wait \u2014 blocked (tx > 0)',
-    'T0 issues async TMA copy. TMA engine starts transferring...',
-    'TMA engine still copying data (tx decreasing)...',
-    'TMA transfer complete \u2014 HW signals tx-complete, tx_count \u2192 0',
-    'pending==0 && tx==0 \u2192 phase done!',
-    'Barrier resets: phase flips, pending restored. T1 resumes with data in SMEM.'
+    'T0 initializes the barrier: phase parity=0, pending=1, tx=0. Other participants may use it only after initialization is visible.',
+    'T0 issues the 2,048-byte TMA copy for the A tile and associates it with this mbarrier.',
+    'T0 issues the 2,048-byte TMA copy for the B tile. Both copies continue in hardware.',
+    'T0 calls arrive.expect_tx(4096): pending\u21920 and tx-count += 4096. The consumer begins waiting for phase 0.',
+    'The A copy completes. Hardware applies complete_tx(2048), reducing tx-count from 4096 to 2048; the consumer keeps waiting.',
+    'The B copy completes, reducing tx-count from 2048 to 0. With pending and tx-count both zero, the barrier advances atomically to phase 1, restores pending to 1, and releases the consumer.',
+    'The consumer may now safely read the A and B tiles in SMEM.'
   ];
 
   /* ── Build rows ──────────────────────────────────────────── */
@@ -386,8 +388,8 @@
   /* ── SVG arrows ──────────────────────────────────────────── */
   /*
    * Sync line: vertical red dashed between col 0 and col 1, crossing all rows.
-   * Arrow 1: right-mid of arrive.expect_tx (T0 col 1) curved down to MBar col 1 right-mid.
-   * Arrow 2: right-mid of MBar "phase done!" (col 5) curved down to T1 col 5 right-mid.
+   * Arrow 1: arrive.expect_tx (T0 col 3) updates mbarrier col 3.
+   * Arrows 2/3: A/B complete_tx (TMA cols 4/5) update mbarrier cols 4/5.
    */
   function positionArrows(activeCol) {
     var svg    = document.getElementById('arrowSvg');
@@ -427,12 +429,12 @@
     /* ── Curved arrows on cell right corners ──────────────────── */
     var BULGE = 20;
 
-    /* Arrow 1: right-mid of T0 arrive.expect_tx (col 1) → right-mid of MBar col 1 */
+    /* Arrow 1: T0 arrive.expect_tx (col 3) → mbarrier col 3 */
     var a1 = document.getElementById('arrowArrive');
     var tmaCells = rowTMA.querySelectorAll('.tl-cell');
-    if (t0cells[1] && barCells[1]) {
-      var t0r = t0cells[1].getBoundingClientRect();
-      var br  = barCells[1].getBoundingClientRect();
+    if (t0cells[3] && barCells[3]) {
+      var t0r = t0cells[3].getBoundingClientRect();
+      var br  = barCells[3].getBoundingClientRect();
       var x1 = t0r.right - wrapRect.left;
       var y1 = t0r.top + t0r.height / 2 - wrapRect.top;
       var x2 = br.right - wrapRect.left;
@@ -441,8 +443,8 @@
       a1.setAttribute('d', 'M'+x1+','+y1+' C'+(x1+BULGE)+','+y1+' '+(x2+B2)+','+(y2-B2)+' '+x2+','+y2);
     }
 
-    /* Arrow 2: right-mid of TMA tx-complete (col 4) → right-mid of MBar col 4 */
-    var a3 = document.getElementById('arrowTxDone');
+    /* Arrows 2/3: each TMA completion updates the matching barrier state */
+    var a2 = document.getElementById('arrowTxA');
     if (tmaCells[4] && barCells[4]) {
       var tmar = tmaCells[4].getBoundingClientRect();
       var br3  = barCells[4].getBoundingClientRect();
@@ -451,7 +453,17 @@
       var x6 = br3.right - wrapRect.left;
       var y6 = br3.top + br3.height / 2 - wrapRect.top;
       var B2c = BULGE * 0.5;
-      a3.setAttribute('d', 'M'+x5+','+y5+' C'+(x5+BULGE)+','+y5+' '+(x6+B2c)+','+(y6-B2c)+' '+x6+','+y6);
+      a2.setAttribute('d', 'M'+x5+','+y5+' C'+(x5+BULGE)+','+y5+' '+(x6+B2c)+','+(y6-B2c)+' '+x6+','+y6);
+    }
+    var a3 = document.getElementById('arrowTxB');
+    if (tmaCells[5] && barCells[5]) {
+      var tmarB = tmaCells[5].getBoundingClientRect();
+      var brB   = barCells[5].getBoundingClientRect();
+      var bx1 = tmarB.right - wrapRect.left;
+      var by1 = tmarB.top + tmarB.height / 2 - wrapRect.top;
+      var bx2 = brB.right - wrapRect.left;
+      var by2 = brB.top + brB.height / 2 - wrapRect.top;
+      a3.setAttribute('d', 'M'+bx1+','+by1+' C'+(bx1+BULGE)+','+by1+' '+(bx2+BULGE*0.5)+','+(by2-BULGE*0.5)+' '+bx2+','+by2);
     }
 
     /* Dim arrows when a different column is selected */
@@ -459,8 +471,9 @@
       if (activeCol < 0) return 1;
       return (activeCol === arrowColIndex) ? 1 : 0.15;
     }
-    a1.style.opacity = arrowOpacity(1);
-    a3.style.opacity = arrowOpacity(4);
+    a1.style.opacity = arrowOpacity(3);
+    a2.style.opacity = arrowOpacity(4);
+    a3.style.opacity = arrowOpacity(5);
     syncL.style.opacity = (activeCol < 0) ? 1 : 0.4;
     syncT.style.opacity = (activeCol < 0) ? 1 : 0.4;
   }
