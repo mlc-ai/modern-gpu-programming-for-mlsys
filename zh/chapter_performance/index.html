@@ -454,7 +454,7 @@
 <li><p>计算 attention 时不生成完整的 score matrix。</p></li>
 </ul>
 <p>另一个办法是通过 blocking 提高复用。Blocking 把大问题切成较小的 tile，使加载到片上的数据可以被多次使用。对 GEMM 来说，A 的一个元素会参与同一行多个 C 元素的计算，B 的一个元素也会参与同一列多个 C 元素的计算。如果每次使用都重新从 HBM 读取，数据搬运量会很大。</p>
-<p>将 A/B tile 留在片上复用后，同样的 <code class="docutils literal notranslate"><span class="pre">2MNK</span></code> 次计算只需要更少的 HBM 访问，因此算术强度更高。其他存在 tile 复用的 workload 也可以采用同样的思路。</p>
+<p>将 A/B tile 留在片上复用后，同样的 <code class="docutils literal notranslate"><span class="pre">2MNK</span></code> 次计算只需要更少的 HBM 访问，因此算术强度更高。其他会反复复用同一 tile 的 workload 也可以采用同样的思路。</p>
 <p>下面用一个简化模型说明这种复用。假设一个 CTA 计算 <code class="docutils literal notranslate"><span class="pre">B_M</span> <span class="pre">×</span> <span class="pre">B_N</span></code> 的 C tile；每个 K-stage 加载 <code class="docutils literal notranslate"><span class="pre">B_M</span> <span class="pre">×</span> <span class="pre">B_K</span></code> 的 A tile 和 <code class="docutils literal notranslate"><span class="pre">B_K</span> <span class="pre">×</span> <span class="pre">B_N</span></code> 的 B tile；每个元素占 <code class="docutils literal notranslate"><span class="pre">s</span></code> bytes。只统计这个 stage 的 A/B global memory 访问，不考虑 C 的读写，算术强度近似为：</p>
 <div class="math notranslate nohighlight">
 \[
@@ -471,7 +471,7 @@
 \[
 \mathrm{AI} \approx \frac{B}{s}
 \]</div>
-<p>举个带数字的例子。这里整个 GEMM 的矩阵尺寸 <code class="docutils literal notranslate"><span class="pre">M</span></code>、<code class="docutils literal notranslate"><span class="pre">N</span></code>、<code class="docutils literal notranslate"><span class="pre">K</span></code> 不变，总计算量 <code class="docutils literal notranslate"><span class="pre">2MNK</span></code> 也不变；我们只是在比较同一个 GEMM 下不同 CTA tile 大小带来的片上复用差异。假设是 FP16/BF16，所以 <code class="docutils literal notranslate"><span class="pre">s</span> <span class="pre">=</span> <span class="pre">2</span> <span class="pre">bytes</span></code>，并且每个 K-stage 取 <code class="docutils literal notranslate"><span class="pre">B_K</span> <span class="pre">=</span> <span class="pre">64</span></code>。如果 CTA tile 是 <code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">×</span> <span class="pre">16</span></code>，这一 stage 的计算量是：</p>
+<p>举个带数字的例子。这里整个 GEMM 的矩阵尺寸 <code class="docutils literal notranslate"><span class="pre">M</span></code>、<code class="docutils literal notranslate"><span class="pre">N</span></code>、<code class="docutils literal notranslate"><span class="pre">K</span></code> 不变，总计算量 <code class="docutils literal notranslate"><span class="pre">2MNK</span></code> 也不变；我们只是在比较同一个 GEMM 下不同 CTA tile 大小带来的片上复用差异。假设数据类型是 FP16/BF16，则 <code class="docutils literal notranslate"><span class="pre">s</span> <span class="pre">=</span> <span class="pre">2</span> <span class="pre">bytes</span></code>，并且每个 K-stage 取 <code class="docutils literal notranslate"><span class="pre">B_K</span> <span class="pre">=</span> <span class="pre">64</span></code>。如果 CTA tile 是 <code class="docutils literal notranslate"><span class="pre">16</span> <span class="pre">×</span> <span class="pre">16</span></code>，这一 stage 的计算量是：</p>
 <div class="math notranslate nohighlight">
 \[
 2 \times 16 \times 16 \times 64 = 32768
@@ -492,7 +492,7 @@
 2 \times (64 \times 64 + 64 \times 64) = 16384
 \]</div>
 <p>于是算术强度变成 <code class="docutils literal notranslate"><span class="pre">524288</span> <span class="pre">/</span> <span class="pre">16384</span> <span class="pre">=</span> <span class="pre">32</span> <span class="pre">FLOP/byte</span></code>。tile 变大后，每个从 global memory 读入的 A/B 元素会在片上参与更多次计算，因此相同计算量所需的数据搬运更少。</p>
-<p>实际 kernel 还会受到 C 的读写、L2 reuse、occupancy、register pressure、SMEM bandwidth 和 Tensor Core issue 等因素影响。这里的模型虽然简化，但已经说明了 blocking 提高算术强度的原因：同一个 A/B 元素从 global memory 读入后，可以在 tile 内参与更多次乘加。</p>
+<p>实际 kernel 还会受到 C 的读写、L2 reuse、occupancy、register pressure、SMEM bandwidth 和 Tensor Core issue rate 等因素影响。这里的模型虽然简化，但已经说明了 blocking 提高算术强度的原因：同一个 A/B 元素从 global memory 读入后，可以在 tile 内参与更多次乘加。</p>
 <p>除了增加片上复用，还可以缩小数据类型。从 fp32 换成 fp16、fp8 或 fp4，可以减少数据搬运量，并提高每 byte 对应的有效计算量。如果低精度格式需要额外的 metadata、scale factor 或类型转换，实际收益会低于按 dtype 大小估算的结果。Scale factor 是低精度数据使用的缩放系数，block-scaled fp8 和 fp4 就需要这类辅助数据。即便如此，使用更小的 dtype 通常仍是提高算术强度的直接方法。</p>
 <p>如果算术强度已经很难提高，优化目标就应转向有效带宽。纯 copy、简单的 elementwise 操作或大 tensor 上的 single-pass reduction，通常缺少可融合的中间结果，也没有足够的数据复用。这时应尽量做到：</p>
 <ul class="simple">
