@@ -145,10 +145,11 @@ Fusion is often the most direct method. A common source of low arithmetic intens
 - Fuse normalization into an adjacent operator.
 - Compute attention without materializing the full score matrix.
 
-Another approach is to increase reuse through blocking. Blocking divides a large problem into smaller
-tiles so that data loaded on chip can be used multiple times. In GEMM, one A element contributes to
-many C elements in the same row, while one B element contributes to many C elements in the same
-column. Reloading those values from HBM for every use would create substantial traffic.
+Another approach is to increase reuse through tiling, also called blocking in this context. Tiling
+divides a large problem into smaller tiles so that data loaded on chip can be used multiple times. In
+GEMM, one A element contributes to many C elements in the same row, while one B element contributes
+to many C elements in the same column. Reloading those values from HBM for every use would create
+substantial traffic.
 
 Keeping A and B tiles on chip allows the same `2MNK` operations to use fewer HBM bytes, increasing
 arithmetic intensity. The same principle applies to other workloads that repeatedly reuse a tile.
@@ -209,7 +210,7 @@ data movement required for the same amount of work.
 
 Real kernels must also account for reads and writes of C, L2 reuse, occupancy, register pressure,
 SMEM bandwidth, Tensor Core issue rate, and other factors. Although simplified, this model captures
-why blocking raises arithmetic intensity: an A or B element loaded from global memory can serve more
+why tiling raises arithmetic intensity: an A or B element loaded from global memory can serve more
 multiply-accumulate operations inside the tile.
 
 Another way to raise arithmetic intensity is to use a smaller dtype. Moving from fp32 to fp16, fp8,
