@@ -172,7 +172,7 @@ $$
 
 实际 kernel 还会受到 C 的读写、L2 reuse、occupancy、register pressure、SMEM bandwidth 和 Tensor Core issue rate 等因素影响。这里的模型虽然简化，但已经说明了 tiling 提高算术强度的原因：同一个 A/B 元素从 global memory 读入后，可以在 tile 内参与更多次乘加。
 
-除了增加片上复用，还可以缩小数据类型。从 fp32 换成 fp16、fp8 或 fp4，可以减少数据搬运量，并提高每 byte 对应的有效计算量。如果低精度格式需要额外的 metadata、scale factor 或类型转换，实际收益会低于按 dtype 大小估算的结果。Scale factor 是低精度数据使用的缩放系数，block-scaled fp8 和 fp4 就需要这类辅助数据。即便如此，使用更小的 dtype 通常仍是提高算术强度的直接方法。
+除了增加片上复用，还可以缩小数据类型。从 fp32 换成 fp16、fp8 或 fp4，可以减少数据搬运量，并提高每 byte 对应的有效计算量。如果低精度格式需要额外的 metadata、scale factor 或类型转换，实际收益会低于按 dtype 大小估算的结果。Scale factor 是用于恢复低精度数据数值范围的辅助值，block-scaled fp8 和 fp4 就需要这类数据。即便如此，使用更小的 dtype 通常仍是提高算术强度的直接方法。
 
 如果算术强度已经很难提高，优化目标就应转向有效带宽。纯 copy、简单的 elementwise 操作或大 tensor 上的 single-pass reduction，通常缺少可融合的中间结果，也没有足够的数据复用。这时应尽量做到：
 
