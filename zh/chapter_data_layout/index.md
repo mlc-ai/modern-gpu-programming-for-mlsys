@@ -100,7 +100,7 @@ c2 = j // 4    = tile_col
 c3 = j % 4     = col_in_tile
 ```
 
-接下来确定这四个坐标如何映射到物理地址。每个 tile 包含 `2×4=8` 个元素，每个 tile row 包含 2 个 tiles；tile 内部每行包含 4 个元素，列方向连续存储。因此：
+接下来确定这四个坐标如何映射到物理地址。每个 tile 包含 `2×4=8` 个元素，每个 tile row 包含 2 个 tiles；tile 内部每行包含 4 个连续元素。因此：
 
 $$
 \begin{aligned}
