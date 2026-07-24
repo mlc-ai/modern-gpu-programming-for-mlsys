@@ -36,6 +36,14 @@ chapter_async_barriers/index
 chapter_clc/index
 ```
 
+```{toctree}
+:caption: 第二部分：TIRx 概览
+:maxdepth: 1
+
+chapter_intro_tirx/index
+chapter_tirx_layout_api/index
+```
+
 <!--
 Release chapters one by one by adding them back to the visible toctree above.
 Keep unreleased placeholder pages marked with `orphan: true`, so Sphinx builds
