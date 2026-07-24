@@ -35,8 +35,6 @@ exclude_patterns = [
     "chapter_gemm_advanced/**",
     "chapter_gemm_async/**",
     "chapter_gemm_basics/**",
-    "chapter_intro_tirx/**",
-    "chapter_tirx_layout_api/**",
     "tirx_guide/**",
 ]
 

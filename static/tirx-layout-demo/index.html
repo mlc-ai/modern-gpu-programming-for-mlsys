@@ -118,22 +118,22 @@
 </head>
 <body>
 
-<h1>TIRx Tensor Layout</h1>
-<div class="sub">how a <code>TileLayout</code> (shard / replica / offset) maps logical tensor elements to physical threads</div>
+<h1 id="page-title">TIRx Tensor Layout</h1>
+<div class="sub" id="page-subtitle">how a <code>TileLayout</code> (shard / replica / offset) maps logical tensor elements to physical threads</div>
 
 <div class="preset-row">
-  <span class="lbl">load an example</span>
+  <span class="lbl" id="preset-label">load an example</span>
   <select id="preset" class="ti"></select>
-  <span class="preset-hint">↓ fills the two fields below</span>
+  <span class="preset-hint" id="preset-hint">↓ fills the two fields below</span>
 </div>
 
 <div class="main-controls">
   <div class="field">
-    <label class="flbl">Logical shape</label>
+    <label class="flbl" id="shape-label">Logical shape</label>
     <input id="shape" class="ti shape" value="4, 8" spellcheck="false">
   </div>
   <div class="field">
-    <label class="flbl">Swizzle (SMEM)</label>
+    <label class="flbl" id="swizzle-label">Swizzle (SMEM)</label>
     <div class="sw-group">
       <select id="dtype" class="ti"></select>
       <select id="swmode" class="ti"></select>
@@ -141,7 +141,7 @@
     <div class="flbl-sub" id="swhint" hidden>applies to shared-memory layouts only (sole axis @m)</div>
   </div>
   <div class="field grow">
-    <label class="flbl">Tile layout&nbsp;&nbsp;<span class="flbl-sub">S[shard] + R[replica] + offset</span></label>
+    <label class="flbl" id="layout-label">Tile layout&nbsp;&nbsp;<span class="flbl-sub">S[shard] + R[replica] + offset</span></label>
     <input id="expr" class="ti expr" value="S[(4,8):(8@laneid,1@laneid)]" spellcheck="false">
   </div>
 </div>
@@ -149,12 +149,12 @@
 
 <div class="panels" id="panels">
   <div class="panel">
-    <h2>Logical tensor</h2>
+    <h2 id="logical-title">Logical tensor</h2>
     <div class="nota" id="n0"></div>
     <div class="grid" id="g0"></div>
   </div>
   <div class="panel">
-    <h2>Physical threads</h2>
+    <h2 id="physical-title">Physical threads</h2>
     <div class="nota" id="nphys"></div>
     <div id="phys"></div>
   </div>
@@ -164,6 +164,27 @@
 <div class="formula-bar" id="fb"></div>
 <div class="leg" id="lg"></div>
 
+<script>
+(function () {
+  var zh = new URLSearchParams(location.search).get('lang') === 'zh';
+  window.TIRX_LAYOUT_LANG = zh ? 'zh' : 'en';
+  if (!zh) return;
+  document.documentElement.lang = 'zh-CN';
+  document.title = 'TIRx Tensor Layout 交互图';
+  document.getElementById('page-title').textContent = 'TIRx Tensor Layout';
+  document.getElementById('page-subtitle').innerHTML =
+    '<code>TileLayout</code> 如何通过 shard、replica 和 offset 将逻辑元素映射到物理位置';
+  document.getElementById('preset-label').textContent = '载入示例';
+  document.getElementById('preset-hint').textContent = '↓ 自动填入下面两个字段';
+  document.getElementById('shape-label').textContent = '逻辑 shape';
+  document.getElementById('swizzle-label').textContent = 'Swizzle（SMEM）';
+  document.getElementById('swhint').textContent = '只适用于唯一物理轴为 @m 的 shared-memory layout';
+  document.getElementById('layout-label').innerHTML =
+    'Tile layout&nbsp;&nbsp;<span class="flbl-sub">S[shard] + R[replica] + offset</span>';
+  document.getElementById('logical-title').textContent = '逻辑 Tensor';
+  document.getElementById('physical-title').textContent = '物理位置';
+})();
+</script>
 <script src="layout-demo.js"></script>
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TIRx：Scope, Layout, Dispatch</title>
+<title>TIRx 中的 Scope、Layout 与 Dispatch</title>
 <link rel="stylesheet" href="../viz-base.css">
 <script src="../viz-base.js"></script>
 <style>
@@ -44,8 +44,8 @@
 </style>
 </head>
 <body>
-<h1>TIRx：Scope, Layout, Dispatch</h1>
-<div class="sub">点击一个设计维度，查看它控制 single-MMA GEMM 中的哪些代码行</div>
+<h1>TIRx 中的 Scope、Layout 与 Dispatch</h1>
+<div class="sub">点击一项，查看它控制单 tile GEMM 中的哪些代码行</div>
 
 <div class="knobs">
   <button class="knob" data-k="scope">Scope</button>
@@ -71,7 +71,7 @@
     ["@T.prim_func", null],
     ["def kernel(A, B, D):", null],
     ["    T.device_entry()", null],
-    ["    warp_id = T.warp_id_in_wg([4])      ## thread/lane id，不是 scope", null],
+    ["    warp_id = T.warp_id_in_wg([4])      ## 当前 thread 位于 warpgroup 中的哪个 warp", null],
     ["    lane_id = T.lane_id([32])", null],
     ["", null],
     ["    Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout)   ## A in SMEM", "layout"],
@@ -79,26 +79,28 @@
     ["    tmem = T.decl_buffer((128, 512), \"float32\", scope=\"tmem\",     ## accumulator 放在 TMEM", "layout"],
     ["                         layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))", "layout"],
     ["", null],
-    ["    Tx.cta.copy(Asmem[:, :], A[m0:m0+BLK_M, :])   ## 128 个 thread 协作执行", "scope"],
-    ["    Tx.cta.copy(Bsmem[:, :], B[n0:n0+BLK_N, :])", "scope"],
+    ["    Tx.cta.copy(Asmem[:, :], A[m_st:m_st+BLK_M, :])   ## 128 个 threads 协作执行", "scope"],
+    ["    Tx.cta.copy(Bsmem[:, :], B[n_st:n_st+BLK_N, :])", "scope"],
     ["    T.cuda.cta_sync()", null],
     ["", null],
-    ["    if warp_id == 0:                     ## 选出一个 thread", "scope"],
-    ["        if T.ptx.elect_sync():           ## 发出 MMA 指令", "scope"],
+    ["    if warp_id == 0:                     ## 先选出 warp 0", "scope"],
+    ["        if T.ptx.elect_sync():           ## 再选出一个 thread 发出 MMA", "scope"],
     ["            Tx.gemm_async(tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],", null],
     ["                          accum=False,", null],
     ["                          dispatch=\"tcgen05\")   ## Blackwell Tensor Core 路径", "dispatch"],
-    ["    T.ptx.mbarrier.try_wait(mma_bar, phase)", null],
+    ["            T.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)", null],
+    ["    T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)", null],
     ["", null],
     ["    Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])   ## warpgroup 读取 TMEM", "scope"],
+    ["    T.ptx.tcgen05.wait.ld()", null],
     ["    Tx.cast(Dreg_f16[:], Dreg[:])", null],
-    ["    Tx.copy(D[m_thr, n0:n0+BLK_N], Dreg_f16[:])", null]
+    ["    Tx.copy(D[m_thr, n_st:n_st+BLK_N], Dreg_f16[:])", null]
   ];
   var EXPL = {
-    scope:    "<b>Scope — 哪些 thread 执行这个操作。</b>每个 operation 都会说明由哪一组 thread 运行：<code>Tx.cta.copy</code> 使用 CTA 的全部 128 个 thread；MMA 由于 <code>tcgen05.mma</code> 是 single-instruction cooperative op，会收窄到 <em>一个被选中的 thread</em>（<code>elect_sync</code>）发起；<code>Tx.wg.copy_async</code> 则由完整的 128-thread warpgroup 把 accumulator 读回来。",
-    layout:   "<b>Layout — 每个 tile 放在哪里。</b>每个 operand 都带有显式放置方式：A 和 B 进入 SMEM，使用 Tensor Core 所需的 swizzled <code>tma_shared_layout</code>；accumulator 放在 TMEM 中，并用基于 <code>TLane</code>/<code>TCol</code> 的 <code>TileLayout</code> 声明。MMA 读取这些 layout，才能知道 tile 的物理排布。",
-    dispatch: "<b>Dispatch — 这个操作走哪条硬件路径。</b>当一个 operation 有多种 lowering 时，<code>dispatch=\"tcgen05\"</code> 会选择 Blackwell Tensor Core，因此 tile MMA 会 lowered 到写入 TMEM 的 <code>tcgen05.mma</code>。更换这条路径（或把 copy 换成 TMA）时，不需要改 scope 或 layout。",
-    none:     "这个 single-MMA GEMM 中的每一行，都对应 TIRx 三个设计维度之一。点击 <b>Scope</b>、<b>Layout</b> 或 <b>Dispatch</b>，可以高亮它控制的代码行。"
+    scope:    "<b>Scope 决定哪些 threads 执行操作。</b><code>Tx.cta.copy</code> 由 CTA 的 128 个 threads 协作完成；<code>Tx.gemm_async</code> 只由 <code>elect_sync</code> 选出的一个 thread 发出；<code>Tx.wg.copy_async</code> 则由整个 warpgroup 协作读取 accumulator。",
+    layout:   "<b>Layout 决定 tile 如何映射到物理位置。</b>A 和 B 在 SMEM 中使用 <code>tma_shared_layout</code> 生成的 swizzled layout；accumulator 位于 TMEM，并通过 <code>TLane</code> 和 <code>TCol</code> 描述二维坐标。",
+    dispatch: "<b>Dispatch 决定操作使用哪种硬件实现。</b><code>dispatch=\"tcgen05\"</code> 选择 Blackwell Tensor Core 路径，编译器会将这项 tile GEMM 展开成写入 TMEM 的 <code>tcgen05.mma</code> 指令。",
+    none:     "点击 <b>Scope</b>、<b>Layout</b> 或 <b>Dispatch</b>，可以高亮它控制的代码行。"
   };
 
   // --- tiny Python highlighter (keywords / strings / decorators / numbers) ---
