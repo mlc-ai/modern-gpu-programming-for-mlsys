@@ -29,6 +29,9 @@
 
 'use strict';
 
+const ZH = window.TIRX_LAYOUT_LANG === 'zh';
+function tr(en, zh) { return ZH ? zh : en; }
+
 // ── TIRx named axes (from tvm/python/tvm/tirx/layout.py _AXIS_NAMES, plus the
 // device axis `pid` used by distributed layouts) ──────────────────────────────
 const AXIS_ORDER = [
@@ -278,7 +281,9 @@ function updateSwizzleControls(enabled) {
   swmodeSel.disabled = !enabled;
   const hint = document.getElementById('swhint');
   if (hint) hint.hidden = enabled;
-  const tip = enabled ? '' : 'Swizzle applies only to shared-memory layouts whose sole physical axis is @m';
+  const tip = enabled ? '' : tr(
+    'Swizzle applies only to shared-memory layouts whose sole physical axis is @m',
+    'Swizzle 只适用于唯一物理轴为 @m 的 shared-memory layout');
   dtypeSel.title = tip;
   swmodeSel.title = tip;
 }
@@ -430,7 +435,7 @@ function fitEmbed() {
 function postHeight() {
   if (window.parent === window) return;
   const h = Math.ceil(document.body.scrollHeight);
-  window.parent.postMessage({ tirxLayoutDemoHeight: h + 4 }, '*');
+  window.parent.postMessage({ type: 'demoHeight', height: h + 4 }, '*');
 }
 function draw() {
   drawing = true;
@@ -442,39 +447,45 @@ function draw() {
   const lg = document.getElementById('lg');
 
   if (ST.error) {
-    status.innerHTML = `<span style="color:var(--color-bad)">parse error: ${escapeHtml(ST.error)}</span>`;
+    status.innerHTML = `<span style="color:var(--color-bad)">${tr('parse error', '解析错误')}: ${escapeHtml(ST.error)}</span>`;
     g0.innerHTML = ''; phys.innerHTML = ''; lg.innerHTML = '';
-    fb.innerHTML = '<div class="ftitle">Fix the layout expression to continue.</div>';
+    fb.innerHTML = `<div class="ftitle">${tr('Fix the layout expression to continue.', '请先修正 layout 表达式。')}</div>`;
     setTimeout(() => { drawing = false; }, 0); return;
   }
   if (ST.tooBig) {
-    status.innerHTML = `<span style="color:var(--color-bad)">${product(ST.shape)} elements exceeds the ${MAX_ELEMENTS} render cap — use a smaller shape.</span>`;
+    status.innerHTML = `<span style="color:var(--color-bad)">${tr(
+      `${product(ST.shape)} elements exceeds the ${MAX_ELEMENTS} render cap — use a smaller shape.`,
+      `${product(ST.shape)} 个元素超过 ${MAX_ELEMENTS} 个元素的显示上限，请缩小 shape。`)}</span>`;
     g0.innerHTML = ''; phys.innerHTML = ''; lg.innerHTML = '';
-    fb.innerHTML = '<div class="ftitle">Shape too large to visualize.</div>';
+    fb.innerHTML = `<div class="ftitle">${tr('Shape too large to visualize.', 'Shape 过大，无法显示。')}</div>`;
     setTimeout(() => { drawing = false; }, 0); return;
   }
 
   status.innerHTML = `<span style="color:var(--color-good)">ok</span> &nbsp; ` +
-    `${product(ST.shape)} logical elements &nbsp;|&nbsp; ` +
-    `${ST.yVals.length * (ST.xVals.length || 1)} physical cells`;
+    tr(`${product(ST.shape)} logical elements`, `${product(ST.shape)} 个逻辑元素`) + ' &nbsp;|&nbsp; ' +
+    tr(`${ST.yVals.length * (ST.xVals.length || 1)} physical cells`,
+       `${ST.yVals.length * (ST.xVals.length || 1)} 个物理位置`);
   if (ST.mismatch) {
     status.innerHTML += ` &nbsp;<span style="color:#b45309;font-weight:600">` +
-      `⚠ shard total ${ST.shardTotal} ≠ shape total ${ST.shapeTotal} — mapping may be ill-formed</span>`;
+      tr(`⚠ shard total ${ST.shardTotal} ≠ shape total ${ST.shapeTotal} — mapping may be ill-formed`,
+         `⚠ shard 元素数 ${ST.shardTotal} ≠ shape 元素数 ${ST.shapeTotal}，映射可能不合法`) + '</span>';
   }
   if (ST.layout.swizzle && !ST.swizzleOk) {
     status.innerHTML += ` &nbsp;<span style="color:var(--dim)">` +
-      `Swizzle(...) prefix ignored — swizzle applies only when the sole physical axis is @m</span>`;
+      tr('Swizzle(...) prefix ignored — swizzle applies only when the sole physical axis is @m',
+         '已忽略 Swizzle(...) 前缀：swizzle 只适用于唯一物理轴为 @m 的 layout') + '</span>';
   }
   if (ST.swizzle) {
     const s = ST.swizzle;
-    const label = s.mode ? (s.mode === 'none' ? 'no swizzle' : s.mode + 'B swizzle') : 'swizzle';
+    const label = s.mode ? (s.mode === 'none' ? tr('no swizzle', '无 swizzle') : s.mode + 'B swizzle') : 'swizzle';
     status.innerHTML += ` &nbsp;<span style="color:var(--dim)">` +
       `${label}${s.bits ? ', ' + s.bits + '-bit' : ''} → Swizzle(${s.per_element},${s.swizzle_len},${s.atom_len})</span>`;
   }
-  document.getElementById('n0').textContent = `logical shape (${ST.shape.join(', ')})`;
+  document.getElementById('n0').textContent = `${tr('logical shape', '逻辑 shape')} (${ST.shape.join(', ')})`;
   document.getElementById('nphys').textContent =
-    (ST.xAxis ? `rows = ${ST.yAxis}, cols = ${ST.xAxis}` : `tiles = ${ST.yAxis || '(none)'}`) +
-    (ST.cellAxes.length ? '   ·   in-cell: ' + ST.cellAxes.join(', ') : '');
+    (ST.xAxis ? `${tr('rows', '行')} = ${ST.yAxis}, ${tr('cols', '列')} = ${ST.xAxis}`
+              : `tiles = ${ST.yAxis || tr('(none)', '（无）')}`) +
+    (ST.cellAxes.length ? `   ·   ${tr('in-cell', 'cell 内')}: ` + ST.cellAxes.join(', ') : '');
 
   const hovKeys = hovFlat !== null ? new Set(ST.byFlat[hovFlat].keys) : null;
   drawLogical(hovKeys);
@@ -525,7 +536,8 @@ function makeSlot(entry) {
   s.style.color = '#fff';
   s.dataset.flat = entry.flat;
   s.textContent = entry.flat;
-  s.title = entry.slot ? `element ${entry.flat} @ ${entry.slot}` : `element ${entry.flat}`;
+  s.title = entry.slot ? `${tr('element', '元素')} ${entry.flat} @ ${entry.slot}`
+                       : `${tr('element', '元素')} ${entry.flat}`;
   if (hovFlat !== null) {
     if (entry.flat === hovFlat) s.classList.add('hov');
     else s.classList.add('dm');
@@ -536,7 +548,7 @@ function makeSlot(entry) {
 function drawPhysical(hovKeys) {
   const wrap = document.getElementById('phys');
   wrap.innerHTML = '';
-  if (!ST.yAxis) { wrap.textContent = '(no physical axes)'; return; }
+  if (!ST.yAxis) { wrap.textContent = tr('(no physical axes)', '（没有物理轴）'); return; }
 
   if (ST.xAxis) {
     // 2D table: rows = yAxis values, cols = xAxis values.
@@ -592,7 +604,12 @@ function axHdr(text, isRow, title) {
 
 function drawFormula() {
   const fb = document.getElementById('fb');
-  if (hovFlat === null) { fb.innerHTML = '<div class="ftitle">Click a logical element to see its mapping.</div>'; return; }
+  if (hovFlat === null) {
+    fb.innerHTML = `<div class="ftitle">${tr(
+      'Click a logical element to see its mapping.',
+      '点击一个逻辑元素，查看它对应的物理位置。')}</div>`;
+    return;
+  }
   const flat = hovFlat;
   const coord = coordFromFlat(flat, ST.shape);
   const comps = splitCoord(flat, ST.layout.shard.map((it) => it.extent));
@@ -609,13 +626,13 @@ function drawFormula() {
     offStrings.push(`${ST.layout.offset[axis]}@${axis}`);
   }
   const owners = ST.byFlat[flat].owners;
-  let html = `<div class="ftitle">element ${flat} at logical (${coord.join(', ')})` +
-    ` &nbsp;→&nbsp; shard split = (${comps.join(', ')})</div>`;
+  let html = `<div class="ftitle">${tr('element', '元素')} ${flat} ${tr('at logical', '的逻辑坐标为')} (${coord.join(', ')})` +
+    ` &nbsp;→&nbsp; shard ${tr('split', '拆分')} = (${comps.join(', ')})</div>`;
   html += '<div class="fcontent">';
-  html += `terms: ${termStrings.join('  +  ')}` +
+  html += `${tr('terms', '各项')}: ${termStrings.join('  +  ')}` +
     (offStrings.length ? `  +  offset[${offStrings.join(', ')}]` : '') + '<br>';
   const baseParts = AXIS_ORDER.filter((a) => perAxis[a] !== undefined).map((a) => `<b>${perAxis[a]}</b>@${a}`);
-  html += `base location: ${baseParts.join(' , ')}`;
+  html += `${tr('base location', '基础位置')}: ${baseParts.join(' , ')}`;
   if (ST.swizzle) {
     const o0 = owners[0];
     const sw = ST.swizzle;
@@ -625,7 +642,7 @@ function drawFormula() {
       `<b>bank ${o0.bank}</b>, line ${o0.line} (${bytes}-byte dtype, 4-byte banks ×32)`;
   }
   if (owners.length > 1) {
-    html += `<br>owners (×${owners.length} via replica): ` +
+    html += `<br>${tr('owners', '物理位置')} (×${owners.length}, replica): ` +
       owners.map((o) => '{ ' + coordStr(o, ST.gridAxes) + ' }').join('  ,  ');
   }
   html += '</div>';
@@ -690,7 +707,7 @@ function drawLegend() {
   // Color key: an actual swatch-per-value table using the same palette as the grid.
   const r0 = mk('div', 'leg-row');
   const lead = mk('div', 'li');
-  lead.innerHTML = `<b>color = ${ST.colorAxis || 'physical'} value:</b>`;
+  lead.innerHTML = `<b>${tr('color', '颜色')} = ${ST.colorAxis || tr('physical', '物理坐标')} ${tr('value', '值')}:</b>`;
   r0.appendChild(lead);
   const vals = ST.colorVals || [];
   if (vals.length <= 8) {
@@ -708,17 +725,21 @@ function drawLegend() {
       r0.appendChild(li);
     }
     const note = mk('div', 'li');
-    note.textContent = `(${ST.colorAxis} mod 8; ${vals.length} values)`;
+    note.textContent = `(${ST.colorAxis} mod 8; ${vals.length} ${tr('values', '个值')})`;
     r0.appendChild(note);
   }
   lg.appendChild(r0);
 
   const r1 = mk('div', 'leg-row');
-  const c2 = mk('div', 'li'); c2.textContent = 'number = logical element index'; r1.appendChild(c2);
+  const c2 = mk('div', 'li');
+  c2.textContent = tr('number = logical element index', '数字 = 逻辑元素编号');
+  r1.appendChild(c2);
   if (ST.layout.replica.length) {
     r1.appendChild(mk('div', 'leg-sep'));
     const c3 = mk('div', 'li');
-    c3.textContent = 'replica → identical copies: the same color appears in multiple physical cells';
+    c3.textContent = tr(
+      'replica → identical copies: the same color appears in multiple physical cells',
+      'replica → 相同副本：同一种颜色会出现在多个物理位置');
     r1.appendChild(c3);
   }
   lg.appendChild(r1);
@@ -727,8 +748,9 @@ function drawLegend() {
   const m = mk('div', 'li');
   const owners = axesUsed(ST.layout).filter(isOwnerAxis);
   const mem = axesUsed(ST.layout).filter((a) => !isOwnerAxis(a));
-  m.textContent = 'owner axes: ' + (owners.join(', ') || '(none — pure memory layout)') +
-    '   ·   memory axes: ' + (mem.join(', ') || '(none)');
+  m.textContent = tr('owner axes', 'ownership 轴') + ': ' +
+    (owners.join(', ') || tr('(none — pure memory layout)', '（无，纯 memory layout）')) +
+    '   ·   ' + tr('memory axes', 'memory 轴') + ': ' + (mem.join(', ') || tr('(none)', '（无）'));
   r2.appendChild(m);
   lg.appendChild(r2);
 }
@@ -741,21 +763,21 @@ function escapeHtml(s) {
 // Case-study presets use scaled-down shapes so every element renders; the
 // mapping semantics match the full-size examples in the docs.
 const PRESETS = [
-  { label: 'Shard → lanes (intro)', shape: '4, 8', expr: 'S[(4,8):(8@laneid,1@laneid)]' },
-  { label: 'Shard + registers', shape: '4, 8', expr: 'S[(4,2,4):(8@laneid,1@m,1@laneid)]' },
-  { label: 'Shard + replica', shape: '4, 8', expr: 'S[(4,8):(8@laneid,1@laneid)] + R[2:1@warpid]' },
+  { label: tr('Shard → lanes (intro)', 'Shard → lanes（入门）'), shape: '4, 8', expr: 'S[(4,8):(8@laneid,1@laneid)]' },
+  { label: tr('Shard + registers', 'Shard + registers'), shape: '4, 8', expr: 'S[(4,2,4):(8@laneid,1@m,1@laneid)]' },
+  { label: tr('Shard + replica', 'Shard + replica'), shape: '4, 8', expr: 'S[(4,8):(8@laneid,1@laneid)] + R[2:1@warpid]' },
   {
-    label: 'Tensor-core tile (doc example)', shape: '8, 16',
+    label: tr('Tensor-core tile (doc example)', 'Tensor Core tile（正文示例）'), shape: '8, 16',
     expr: 'S[(8,2,4,2):(4@laneid,1@warpid,1@laneid,1)] + R[2:4@warpid] + 5@warpid',
   },
-  { label: 'Distributed 2×2 GPU mesh (pid)', shape: '4, 4', expr: 'S[(2,2,2,2):(1@pid,2@m,2@pid,1@m)]' },
-  { label: 'Mesh + replica (pid)', shape: '4, 4', expr: 'S[(2,2,4):(1@pid,2@m,1@m)] + R[2:2@pid]' },
-  { label: 'Accelerator scratchpad (P/F)', shape: '4, 8', expr: 'S[(2,4,4):(4@F,1@P,1@F)]' },
-  { label: 'Blackwell tensor memory (TLane/TCol)', shape: '4, 8', expr: 'S[(2,4,4):(4@TCol,1@TLane,1@TCol)]' },
-  { label: 'SMEM, no swizzle (bank conflicts)', shape: '8, 64', expr: 'S[(8,64):(64@m,1@m)]', dtype: 16, mode: 'none' },
-  { label: 'SMEM swizzle 128B (fp16)', shape: '8, 64', expr: 'S[(8,64):(64@m,1@m)]', dtype: 16, mode: '128' },
-  { label: '1-D shard', shape: '8', expr: 'S[8:4@laneid]' },
-  { label: 'Extents only (default strides)', shape: '8, 4', expr: 'S[(8,4)]' },
+  { label: tr('Distributed 2×2 GPU mesh (pid)', '分布在 2×2 GPU mesh（pid）'), shape: '4, 4', expr: 'S[(2,2,2,2):(1@pid,2@m,2@pid,1@m)]' },
+  { label: tr('Mesh + replica (pid)', 'GPU mesh + replica（pid）'), shape: '4, 4', expr: 'S[(2,2,4):(1@pid,2@m,1@m)] + R[2:2@pid]' },
+  { label: tr('Accelerator scratchpad (P/F)', '加速器 scratchpad（P/F）'), shape: '4, 8', expr: 'S[(2,4,4):(4@F,1@P,1@F)]' },
+  { label: tr('Blackwell tensor memory (TLane/TCol)', 'Blackwell TMEM（TLane/TCol）'), shape: '4, 8', expr: 'S[(2,4,4):(4@TCol,1@TLane,1@TCol)]' },
+  { label: tr('SMEM, no swizzle (bank conflicts)', 'SMEM，无 swizzle（bank conflict）'), shape: '8, 64', expr: 'S[(8,64):(64@m,1@m)]', dtype: 16, mode: 'none' },
+  { label: tr('SMEM swizzle 128B (fp16)', 'SMEM 128B swizzle（fp16）'), shape: '8, 64', expr: 'S[(8,64):(64@m,1@m)]', dtype: 16, mode: '128' },
+  { label: tr('1-D shard', '一维 shard'), shape: '8', expr: 'S[8:4@laneid]' },
+  { label: tr('Extents only (default strides)', '只写 extents（默认 strides）'), shape: '8, 4', expr: 'S[(8,4)]' },
 ];
 
 const DTYPES = [
@@ -767,8 +789,8 @@ const DTYPES = [
   { label: 'float64 (64-bit)', bits: 64 },
 ];
 const SWMODES = [
-  { label: 'off (general layout)', value: 'off' },
-  { label: 'none — raw banks', value: 'none' },
+  { label: tr('off (general layout)', '关闭（普通 layout）'), value: 'off' },
+  { label: tr('none — raw banks', '无 swizzle，直接显示 banks'), value: 'none' },
   { label: '32B swizzle', value: '32' },
   { label: '64B swizzle', value: '64' },
   { label: '128B swizzle', value: '128' },
