@@ -446,7 +446,7 @@
 </section>
 <section id="memory-bound-kernel">
 <h2>优化 Memory-Bound Kernel<a class="headerlink" href="#memory-bound-kernel" title="Link to this heading">#</a></h2>
-<p>确定一个 kernel 是 memory-bound 后，优化有两个方向：一是减少 HBM 搬运量，提高算术强度；二是在搬运量无法继续减少时，让实际带宽尽可能接近硬件上限。</p>
+<p>确定一个 kernel 是 memory-bound 后，优化有两个方向：一是减少 HBM 搬运量，提高算术强度；二是在搬运量无法继续减少时，让有效带宽尽可能接近硬件上限。</p>
 <p>算子融合通常是最直接的方法。低算术强度的一个常见来源是：kernel 把中间张量写入 HBM，而下一个操作又立刻把它读回来。把 producer（产生中间结果的操作）和 consumer（使用中间结果的操作）融合在一起后，这个中间结果就可以保留在寄存器或片上存储中，例如 SMEM 或 TMEM，从而避免这次 HBM 往返。</p>
 <ul class="simple">
 <li><p>将 GEMM 与 elementwise epilogue 融合；</p></li>
