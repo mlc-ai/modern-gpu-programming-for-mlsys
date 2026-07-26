@@ -389,7 +389,11 @@ function recompute() {
       keys.push(gridKey(o, ST.gridAxes));
       const ck = y + '#' + x;
       if (!ST.byCell.has(ck)) ST.byCell.set(ck, []);
-      ST.byCell.get(ck).push({ flat, slot: ST.swizzle ? ('addr ' + o.__sm) : coordStr(o, ST.cellAxes) });
+      ST.byCell.get(ck).push({
+        flat,
+        phys: o,
+        slot: ST.swizzle ? ('addr ' + o.__sm) : coordStr(o, ST.cellAxes),
+      });
     }
     rec.keys = keys;
     const cv = ST.colorAxis ? (rec.owners[0][ST.colorAxis] || 0) : 0;
@@ -517,7 +521,14 @@ function drawLogical(hovKeys) {
   }
 }
 
-function cellEntries(y, x) { return ST.byCell.get(y + '#' + x) || []; }
+function cellEntries(y, x) {
+  const entries = (ST.byCell.get(y + '#' + x) || []).slice();
+  if (!ST.cellAxes.includes('m')) return entries;
+  return entries.sort((a, b) => {
+    const byM = (a.phys.m || 0) - (b.phys.m || 0);
+    return byM || a.flat - b.flat;
+  });
+}
 
 function makeSlot(entry) {
   const s = mk('div', 'gcell');
@@ -566,7 +577,7 @@ function drawPhysical(hovKeys) {
       const tile = mk('div', 'thread-tile');
       const lbl = mk('div', 'thread-lbl'); lbl.textContent = `${ST.yAxis}=${y}`; tile.appendChild(lbl);
       const slots = mk('div', 'thread-slots');
-      const entries = cellEntries(y, 0).slice().sort((a, b) => a.flat - b.flat);
+      const entries = cellEntries(y, 0);
       if (hovFlat !== null && entries.some((e) => e.flat === hovFlat)) tile.classList.add('hov-tile');
       else if (hovFlat !== null && entries.length) tile.classList.add('dm-tile');
       for (const e of entries) slots.appendChild(makeSlot(e));
