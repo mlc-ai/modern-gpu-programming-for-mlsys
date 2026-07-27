@@ -36,7 +36,7 @@ GPU 不会把成千上万个线程当作一个扁平集合来管理，而是把�
 * **Thread**：最小的执行单位。每个 thread 都有自己的程序计数器和寄存器，并通过它所在 warp 内的 lane ID 来标识。
 * **Warp**：以 SIMT（*single instruction, multiple threads*）方式执行的一组 32 个 thread。一个 warp 中的 lane 会一起发出同一条指令，但每个 lane 保留自己的寄存器，也可以被单独 mask 掉。遇到分支时，warp 会通过不同的 mask 分别执行各条路径。
 * **Warpgroup**：四个连续的 warp，也就是 128 个 thread。Hopper 架构引入了 warpgroup，作为发起 warpgroup-level MMA（`wgmma`）的单位；在 Blackwell 上，它的四个 warp 还可以分别覆盖 Tensor Memory 的四个 32-lane window。
-* **CTA**（*Cooperative Thread Array*，也就是 CUDA 中的 thread block）：硬件调度的基本单位。一个 CTA 运行在单个 SM 上，并拥有该 SM 中一块属于自己的 shared memory 分配。多个 CTA 可以同时驻留在同一个 SM 上，此时它们共享这个 SM 的 shared memory 总容量。
+* **CTA**（*Cooperative Thread Array*，也就是 CUDA 中的 thread block）：硬件调度的基本单位。一个 CTA 运行在单个 SM 上，并拥有该 SM 中一块属于自己的 shared memory 分配。多个 CTA 可以同时驻留在同一个 SM 上，此时，该 SM 的 shared memory 总容量会分配给这些 CTA 使用。
 * **Cluster**：一组可以相互协作的 CTA。一个 cluster 中的 CTA 可以位于不同 SM 上；它们可以彼此同步，也可以通过 distributed shared memory（DSMEM）访问对方的 shared memory。
 
 Blackwell 上的关键操作并不都由同一组线程发起。TMA copy 由单个 thread 发起，再交给硬件执行；每个 warp 通过 warp-level TMEM load 读取自己的 32-lane window；`tcgen05` MMA 由一个选定的 thread 提交；2-CTA cooperative MMA 则跨越两个 CTA。
