@@ -50,7 +50,7 @@ Blackwell 上的关键操作并不都由同一组线程发起。TMA copy 由单�
 
 | 内存 | 作用范围 | 用途 | 说明 |
 |------|----------|------|------|
-| **Global（GMEM）** | 整个 device | 存放输入/输出 tensor | 大容量 HBM，由所有 SM 共享 |
+| **Global（GMEM）** | 整个 device | 长期存放 tensor | 大容量 HBM，由所有 SM 共享 |
 | **Shared（SMEM）** | 每个 CTA（一个 SM 内） | Tile 暂存 | 低延迟的临时存储区；B200 上最高可达 228 KB/SM |
 | **Tensor Memory（TMEM）** | 每个 CTA | MMA accumulator 存储 | Blackwell 新增；供 `tcgen05` 使用 |
 | **Register File（RF）** | 每个 thread | 标量和每个 thread 的 tile fragment | 很快；保存 epilogue/临时值 |
