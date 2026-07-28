@@ -1,0 +1,905 @@
+
+<!DOCTYPE html>
+
+
+<html lang="zh-CN" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>TIRx Layout API &#8212; 面向 MLSys 的现代 GPU 编程</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=654c0d46" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../_static/documentation_options.js?v=eb1cd0b9"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'chapter_tirx_layout_api/index';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <link rel="icon" href="../_static/mlc-favicon.ico"/>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="搜索" href="../search.html" />
+    <link rel="prev" title="TIRx 入门" href="../chapter_intro_tirx/index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="zh-CN"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">跳转至主要内容</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>回到顶部</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="版本警告"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="网页导航">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="当前页面">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">异步数据搬运：TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Tensor Memory（TMEM）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_async_barriers/index.html">异步协作：mbarrier</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">进阶调度：Cluster Launch Control</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第二部分：TIRx 概览</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">TIRx 入门</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">TIRx Layout API</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+<a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button"
+   title="源码库"
+   data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+
+</a>
+
+
+
+
+<button onclick="window.location.href='../../index.html'"
+  class="btn btn-sm btn-language-switch-button pst-navbar-icon"
+  title="Switch to English"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-language"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="亮色"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="暗色"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>亮色</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>暗色</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>TIRx Layout API</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> 目录 </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">交互图</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tilelayout">TileLayout</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shard">Shard</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#replica">Replica</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#offset">Offset</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">组合三个部分</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">命名轴</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">正向映射</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#blackwell-tensor-memory">示例：Blackwell Tensor Memory</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor">Scale Factor 布局</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#layout">常用 Layout 构造函数</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzlelayout-composelayout">SwizzleLayout 与 ComposeLayout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle">为什么需要 Swizzle</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">Swizzle 变换</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">选择 Swizzle 参数</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#float16-tile-128b-swizzle">示例：对 <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">64)</span></code> float16 Tile 应用 128B Swizzle</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="tirx-layout-api">
+<span id="chap-tirx-layout-api"></span><h1>TIRx Layout API<a class="headerlink" href="#tirx-layout-api" title="Link to this heading">#</a></h1>
+<div class="overview admonition">
+<p class="admonition-title">概览</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 使用 <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>、<code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 和 offset 描述逻辑 tile 在命名轴上的放置方式。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TileLayout.apply()</span></code> 计算逻辑元素的基础物理坐标；replica 信息保存在 <code class="docutils literal notranslate"><span class="pre">layout.replica</span></code> 中，由使用该 layout 的 tile 操作处理。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> 描述 shared memory 中基于 XOR 的地址重排；需要同时表达普通 tile layout 时，可以使用 <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> 组合两者。</p></li>
+</ul>
+</div>
+<p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局及其记号</span></a> 介绍了 tile shape、带命名轴的 strides、replication dimension 和固定 offset。本章接着说明如何在 TIRx 程序中构造、使用和查询这些 layout。</p>
+<p>例如，下面的记号描述一个位于 TMEM 中的 <code class="docutils literal notranslate"><span class="pre">128×256</span></code> tile：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]</span>
+</pre></div>
+</div>
+<p>在 TIRx 程序中，可以直接用这个记号构造 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>，再将它绑定到 buffer：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layout</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)])</span>
+
+<span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">)</span>
+
+<span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="n">scope</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Buffer 由此记录自己的物理布局。后续 tile 操作可以直接读取这项信息，不必在每次访问时重新说明元素位于哪些 lanes、registers 或线性存储位置。</p>
+<p>本章使用的 layout 对象和命名轴都位于 <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">TileLayout</span><span class="p">,</span>
+    <span class="n">SwizzleLayout</span><span class="p">,</span>
+    <span class="n">ComposeLayout</span><span class="p">,</span>
+    <span class="n">S</span><span class="p">,</span>
+    <span class="n">R</span><span class="p">,</span>
+    <span class="n">laneid</span><span class="p">,</span>
+    <span class="n">warpid</span><span class="p">,</span>
+    <span class="n">tid_in_wg</span><span class="p">,</span>
+    <span class="n">TLane</span><span class="p">,</span>
+    <span class="n">TCol</span><span class="p">,</span>
+    <span class="n">m</span><span class="p">,</span>
+    <span class="n">tcgen05_atom_layout</span><span class="p">,</span>
+    <span class="n">tmem_datapath_layout</span><span class="p">,</span>
+    <span class="n">wg_local_layout</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>Layout 的结果不一定是一个线性地址，也可以是 <code class="docutils literal notranslate"><span class="pre">laneid</span></code>、<code class="docutils literal notranslate"><span class="pre">warpid</span></code>、<code class="docutils literal notranslate"><span class="pre">TLane</span></code> 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 等硬件坐标。前面的 TMEM layout 将逻辑 row 映射到 <code class="docutils literal notranslate"><span class="pre">TLane</span></code>，将逻辑 column 映射到 <code class="docutils literal notranslate"><span class="pre">TCol</span></code>。再看一个同时使用 lane 和 warp 轴的 register fragment：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">frag</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span>
+    <span class="n">S</span><span class="p">[(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">4</span><span class="nd">@laneid</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@warpid</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@laneid</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>同一个物理轴可以出现多次。这里，第一个和第三个 iter 都会对 <code class="docutils literal notranslate"><span class="pre">laneid</span></code> 产生贡献。最后一个 stride 没有显式 axis tag，因此使用默认轴 <code class="docutils literal notranslate"><span class="pre">m</span></code>。</p>
+<p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局及其记号</span></a> 为了区分 lane 内的 fragment slots，使用过 <code class="docutils literal notranslate"><span class="pre">&#64;reg</span></code> 这个记号。当前 TIRx API 没有单独注册 <code class="docutils literal notranslate"><span class="pre">reg</span></code> axis；当 layout 绑定到 register-backed local buffer 时，默认轴 <code class="docutils literal notranslate"><span class="pre">m</span></code> 表示该 thread 的局部线性位置。Buffer scope 决定数据实际位于 registers 中，所以这里的 <code class="docutils literal notranslate"><span class="pre">m</span></code> 并不表示数据存放在 global memory 或 shared memory。</p>
+<p>对于 <code class="docutils literal notranslate"><span class="pre">m</span></code> 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 这类存储轴，stride 以 buffer element 为单位。对于 32-bit TMEM buffer，沿 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 前进一个元素就对应一个 32-bit hardware Col；对于 8-bit 或 16-bit buffer，多个相邻元素会打包进同一个 hardware Col。后面的 scale-factor 示例会具体说明这一点。</p>
+<section id="id1">
+<h2>交互图<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
+<p>下面的交互图提供几种常用 layout preset。可以修改逻辑 shape、<code class="docutils literal notranslate"><span class="pre">S[...]</span></code> 或 <code class="docutils literal notranslate"><span class="pre">R[...]</span></code>，选择 data type 和 swizzle mode，再点击一个逻辑元素，查看它对应的物理坐标。</p>
+<p>
+  <a class="reference external" href="../_static/tirx-layout-demo/index.html?lang=zh"
+     target="_blank" rel="noopener"
+     style="display:inline-block; padding:10px 18px; background:#3b82f6;
+     color:#fff !important; font-weight:700; border-radius:8px;
+     text-decoration:none;">在新窗口中打开交互图</a>
+</p>
+<iframe id="tirx-layout-demo-frame" src="../_static/tirx-layout-demo/index.html?notitle&lang=zh"
+        style="width:100%; height:1040px; border:1px solid #dfe1e6;
+        border-radius:10px; margin:10px 0 6px; display:block; box-sizing:content-box;"
+        title="TIRx layout 交互图" loading="lazy"></iframe>
+<script>
+(function () {
+  var f = document.getElementById('tirx-layout-demo-frame');
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'demoHeight' || !d.height) return;
+    if (f && e.source === f.contentWindow) f.style.height = d.height + 'px';
+  });
+})();
+</script><p>这张图也展示了 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 的基本计算过程：先将逻辑坐标 flatten，再按照各个 iters 的 extent 将扁平索引拆开；每个分量根据自己的 stride 和 axis 生成基础坐标，随后加入 offset。交互图还会枚举 replica，从而显示同一个元素的所有副本。</p>
+</section>
+<section id="tilelayout">
+<h2>TileLayout<a class="headerlink" href="#tilelayout" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 是 TIRx 中主要的仿射布局对象，通常写成：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[</span><span class="n">shape</span> <span class="p">:</span> <span class="n">strides</span><span class="p">])</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">S[...]</span></code> 是 shard spec。它给出一组 iter extents 和 strides，决定逻辑 tile 如何映射到命名轴上的基础物理位置。</p>
+<p>同一个值需要出现在多个物理位置时，可以加入 replica spec：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[</span><span class="n">shape</span> <span class="p">:</span> <span class="n">strides</span><span class="p">]</span> <span class="o">+</span> <span class="n">R</span><span class="p">[</span><span class="n">replica_shape</span> <span class="p">:</span> <span class="n">replica_stride</span><span class="p">])</span>
+</pre></div>
+</div>
+<p>还可以再加入固定 offset：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[</span><span class="n">shape</span> <span class="p">:</span> <span class="n">strides</span><span class="p">]</span> <span class="o">+</span> <span class="n">R</span><span class="p">[</span><span class="n">replica_shape</span> <span class="p">:</span> <span class="n">replica_stride</span><span class="p">]</span> <span class="o">+</span> <span class="n">offset</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>在 API 内部，每个 iter 都是一个三元组：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>(extent, stride, axis)
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">extent</span></code> 表示这个 iter 包含多少个位置，<code class="docutils literal notranslate"><span class="pre">stride</span></code> 表示每前进一步会移动多少，<code class="docutils literal notranslate"><span class="pre">axis</span></code> 则说明移动发生在哪个物理轴上。</p>
+<section id="shard">
+<h3>Shard<a class="headerlink" href="#shard" title="Link to this heading">#</a></h3>
+<p>Shard 由 <code class="docutils literal notranslate"><span class="pre">S[...]</span></code> 构造。它将逻辑索引拆分到一个或多个 iters 上，并产生基础物理坐标。前面的 <code class="docutils literal notranslate"><span class="pre">frag</span></code> 包含四个 shard iters，extents 分别为 <code class="docutils literal notranslate"><span class="pre">8</span></code>、<code class="docutils literal notranslate"><span class="pre">2</span></code>、<code class="docutils literal notranslate"><span class="pre">4</span></code> 和 <code class="docutils literal notranslate"><span class="pre">2</span></code>；相应的 strides 将坐标映射到 <code class="docutils literal notranslate"><span class="pre">laneid</span></code>、<code class="docutils literal notranslate"><span class="pre">warpid</span></code>、再次映射到 <code class="docutils literal notranslate"><span class="pre">laneid</span></code>，以及默认线性轴 <code class="docutils literal notranslate"><span class="pre">m</span></code>。</p>
+<p>这仍然是普通 Shape-Stride 规则，只是每个 stride 现在属于一个明确的命名轴，而不再全部累加到同一个线性地址。</p>
+</section>
+<section id="replica">
+<h3>Replica<a class="headerlink" href="#replica" title="Link to this heading">#</a></h3>
+<p>Replica 由 <code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 构造，用于描述同一个逻辑元素的额外物理副本。Replica iters 不依赖逻辑索引，而是枚举物理空间中的额外 offsets。</p>
+<p>例如：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">R</span><span class="p">[</span><span class="mi">2</span> <span class="p">:</span> <span class="mi">4</span><span class="nd">@warpid</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>表示沿 <code class="docutils literal notranslate"><span class="pre">warpid</span></code> 轴放置 2 份副本，两份之间相隔 4 个 warps。</p>
+<p>GPU 硬件经常需要将同一份数据广播到多个 warps、lanes 或存储区域。Replica 直接将这种行为表示为“一项逻辑数据对应多个物理坐标”。</p>
+</section>
+<section id="offset">
+<h3>Offset<a class="headerlink" href="#offset" title="Link to this heading">#</a></h3>
+<p>Offset 会加到所有映射结果上。在下面的集合公式中将它记为 <code class="docutils literal notranslate"><span class="pre">O</span></code>。</p>
+<p>例如：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="mi">5</span><span class="nd">@warpid</span>
+</pre></div>
+</div>
+<p>表示整个 layout 沿 <code class="docutils literal notranslate"><span class="pre">warpid</span></code> 轴移动 5 个位置。</p>
+<p>Offset 可以用来指定 tile 的起始坐标，也可以把多个 tiles 放入同一硬件资源中的不同区域。</p>
+</section>
+<section id="id2">
+<h3>组合三个部分<a class="headerlink" href="#id2" title="Link to this heading">#</a></h3>
+<p>对于逻辑坐标 <code class="docutils literal notranslate"><span class="pre">x</span></code>，把 shard 产生的基础坐标记为 <code class="docutils literal notranslate"><span class="pre">D(x)</span></code>。<code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 再加上固定 offset，并根据 replica iters 枚举额外位置：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>L(x) = { D(x) + r + O | r in R }
+</pre></div>
+</div>
+<p>这里的 <code class="docutils literal notranslate"><span class="pre">r</span></code> 表示 replica iters 枚举出的一个 offset。没有 replica 时，可以把 <code class="docutils literal notranslate"><span class="pre">R</span></code> 看作只包含零 offset，因此集合中只有一个坐标；存在 replica 时，集合中会包含每个副本的位置。当前 <code class="docutils literal notranslate"><span class="pre">layout.apply()</span></code> 只计算 <code class="docutils literal notranslate"><span class="pre">D(x)+O</span></code> 这一基础坐标，不会枚举 <code class="docutils literal notranslate"><span class="pre">R</span></code>；replica iters 保存在 <code class="docutils literal notranslate"><span class="pre">layout.replica</span></code> 中，由使用该 layout 的 tile 操作处理。</p>
+<p>完整的 TIRx 写法如下：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layout</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span>
+    <span class="n">S</span><span class="p">[(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">4</span><span class="nd">@laneid</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@warpid</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@laneid</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]</span>
+    <span class="o">+</span> <span class="n">R</span><span class="p">[</span><span class="mi">2</span> <span class="p">:</span> <span class="mi">4</span><span class="nd">@warpid</span><span class="p">]</span>
+    <span class="o">+</span> <span class="mi">5</span><span class="nd">@warpid</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>从左到右读取：<code class="docutils literal notranslate"><span class="pre">S[...]</span></code> 放置逻辑 tile，<code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 在相隔 4 个 warps 的位置增加第二份副本，<code class="docutils literal notranslate"><span class="pre">5&#64;warpid</span></code> 再将所有位置整体移动 5。</p>
+<p>如果已经直接构造了 shard、replica 和 offset 对象，也可以使用：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">TileLayout</span><span class="o">.</span><span class="n">from_iters</span><span class="p">(</span><span class="n">shard</span><span class="p">,</span> <span class="n">replica</span><span class="p">,</span> <span class="n">offset</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>普通 kernel 代码更常使用 <code class="docutils literal notranslate"><span class="pre">S[...]</span></code> 和 <code class="docutils literal notranslate"><span class="pre">R[...]</span></code>，因为它们能够直接显示 layout 的 shape、strides 和 axes。</p>
+</section>
+</section>
+<section id="id3">
+<h2>命名轴<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
+<p>Layout 中的 axis 不是匿名维度，每个名字都表示一种硬件坐标或编译器布局坐标。下面列出本章会遇到的几组轴：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Axis</p></th>
+<th class="head"><p>含义</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">bx</span></code>、<code class="docutils literal notranslate"><span class="pre">by</span></code>、<code class="docutils literal notranslate"><span class="pre">bz</span></code></p></td>
+<td><p>CTA 在 grid 中的坐标</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cbx</span></code>、<code class="docutils literal notranslate"><span class="pre">cby</span></code>、<code class="docutils literal notranslate"><span class="pre">cbz</span></code></p></td>
+<td><p>CTA 在 cluster 中的坐标</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tx</span></code></p></td>
+<td><p>thread 在 CTA 中的坐标</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">warpid</span></code>、<code class="docutils literal notranslate"><span class="pre">laneid</span></code></p></td>
+<td><p>warp ID，以及 thread 在 warp 中的 lane ID</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">wgid</span></code>、<code class="docutils literal notranslate"><span class="pre">tid_in_wg</span></code>、<code class="docutils literal notranslate"><span class="pre">wid_in_wg</span></code></p></td>
+<td><p>warpgroup ID，以及 thread 或 warp 在 warpgroup 中的位置</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">m</span></code></p></td>
+<td><p>默认的线性物理轴；实际对应哪种存储由 buffer scope 决定</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TLane</span></code>、<code class="docutils literal notranslate"><span class="pre">TCol</span></code></p></td>
+<td><p>TMEM 的 Lane 方向和 Col 方向</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Axis 名称本身就是 layout 的一部分。即使整数值相同，位于不同 axis 上也表示不同的硬件位置。例如，<code class="docutils literal notranslate"><span class="pre">1&#64;tx</span></code> 与 <code class="docutils literal notranslate"><span class="pre">1&#64;tid_in_wg</span></code> 的含义不同，<code class="docutils literal notranslate"><span class="pre">1&#64;laneid</span></code> 也不是 <code class="docutils literal notranslate"><span class="pre">1&#64;TLane</span></code>。<code class="docutils literal notranslate"><span class="pre">TCol</span></code> stride 仍以 buffer element 为单位；只有在 element width 为 32 bits 时，它才与 hardware Col 一一对应。</p>
+</section>
+<section id="id4">
+<h2>正向映射<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">apply()</span></code> 从逻辑坐标出发，计算 shard 和 offset 对应的基础物理坐标。它支持三种输入形式：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">linear_coord</span><span class="p">)</span>
+<span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="o">*</span><span class="n">shard_coord</span><span class="p">)</span>
+<span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="o">*</span><span class="n">logical_coord</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">input_shape</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>第三种形式最能完整展示计算过程。设逻辑坐标为：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>x = (x0, x1, ..., xr-1)
+</pre></div>
+</div>
+<p>相应的逻辑 shape 为：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>(S0, S1, ..., Sr-1)
+</pre></div>
+</div>
+<p>首先，按照 row-major 顺序将逻辑坐标 flatten：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>flat = x0 * S1 * S2 * ... * Sr-1
+     + x1 * S2 * ... * Sr-1
+     + ...
+     + xr-2 * Sr-1
+     + xr-1
+</pre></div>
+</div>
+<p>随后，按照 shard extents：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>(e0, e1, ..., en-1)
+</pre></div>
+</div>
+<p>将 <code class="docutils literal notranslate"><span class="pre">flat</span></code> 拆成分量：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>(c0, c1, ..., cn-1)
+</pre></div>
+</div>
+<p>如果第 <code class="docutils literal notranslate"><span class="pre">k</span></code> 个 shard iter 的 stride 为 <code class="docutils literal notranslate"><span class="pre">sk</span></code>、axis 为 <code class="docutils literal notranslate"><span class="pre">ak</span></code>，那么 <code class="docutils literal notranslate"><span class="pre">ck</span></code> 对物理坐标的贡献就是：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>ck * sk @ ak
+</pre></div>
+</div>
+<p>属于同一 axis 的贡献会相加，最后再加入固定 offset。<code class="docutils literal notranslate"><span class="pre">apply()</span></code> 返回的 coordinate dictionary 就是这一步得到的结果。</p>
+<p>另外两种形式从中间开始计算。<code class="docutils literal notranslate"><span class="pre">layout.apply(linear_coord)</span></code> 直接接收已经 flatten 的索引；<code class="docutils literal notranslate"><span class="pre">layout.apply(*shard_coord)</span></code> 直接接收各个 shard iter 的坐标，因此不再执行 flatten 和拆分。使用 <code class="docutils literal notranslate"><span class="pre">shape=input_shape</span></code> 时，逻辑 shape 的维数和分解方式不必与 shard extents 相同，只要 flatten 后的索引没有超出 shard 表示的逻辑范围即可。</p>
+<p><code class="docutils literal notranslate"><span class="pre">apply()</span></code> 不枚举 replica。完整 layout 中的 replica iters 会在基础坐标之外增加额外位置，但这些信息保存在 <code class="docutils literal notranslate"><span class="pre">layout.replica</span></code> 中，由实际使用该 layout 的 tile 操作处理。</p>
+<p>下面用前面由 shard、replica 和 offset 组成的 <code class="docutils literal notranslate"><span class="pre">layout</span></code> 具体计算一次。将输入坐标解释为 <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">16)</span></code> tile 中的 <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">3)</span></code>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">[</span><span class="mi">8</span><span class="p">,</span> <span class="mi">16</span><span class="p">])</span>
+
+<span class="c1"># {&quot;laneid&quot;: 5, &quot;warpid&quot;: 5, &quot;m&quot;: 1}</span>
+</pre></div>
+</div>
+<p>这个结果可以分三步得到。首先，<code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">3)</span></code> 按 <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">16)</span></code> 的 row-major 顺序变成扁平索引 <code class="docutils literal notranslate"><span class="pre">19</span></code>。随后，<code class="docutils literal notranslate"><span class="pre">19</span></code> 按 shard extents <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">2,</span> <span class="pre">4,</span> <span class="pre">2)</span></code> 拆成：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>(c0, c1, c2, c3) = (1, 0, 1, 1)
+</pre></div>
+</div>
+<p>各分量乘以自己的 stride 后，基础坐标为 <code class="docutils literal notranslate"><span class="pre">laneid=5</span></code>、<code class="docutils literal notranslate"><span class="pre">warpid=0</span></code>、<code class="docutils literal notranslate"><span class="pre">m=1</span></code>；最后加入 <code class="docutils literal notranslate"><span class="pre">5&#64;warpid</span></code>，得到返回值中的 <code class="docutils literal notranslate"><span class="pre">warpid=5</span></code>。</p>
+<p><code class="docutils literal notranslate"><span class="pre">apply()</span></code> 不枚举 replica，所以返回值中只有这个基础位置。当前 layout 的 <code class="docutils literal notranslate"><span class="pre">R[2</span> <span class="pre">:</span> <span class="pre">4&#64;warpid]</span></code> 还会让使用该 layout 的 tile 操作处理 <code class="docutils literal notranslate"><span class="pre">warpid=5</span></code> 和 <code class="docutils literal notranslate"><span class="pre">warpid=9</span></code> 两个物理位置。</p>
+<p><code class="docutils literal notranslate"><span class="pre">apply()</span></code> 支持三种输入形式：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">linear_coord</span><span class="p">)</span>
+<span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="o">*</span><span class="n">shard_coord</span><span class="p">)</span>
+<span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="o">*</span><span class="n">logical_coord</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">input_shape</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>第一种形式直接使用已经扁平化的索引；第二种形式为每个 shard iter 直接提供一个坐标；第三种形式先按 <code class="docutils literal notranslate"><span class="pre">input_shape</span></code> flatten，再按照 shard extents 拆分。</p>
+<p>对于整个 <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">16)</span></code> tile，基础映射为：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>laneid = 4 * i + (floor(j / 2) mod 4)
+warpid = floor(j / 8) + 5
+m      = j mod 2
+</pre></div>
+</div>
+<p>Replica 再给 <code class="docutils literal notranslate"><span class="pre">warpid</span></code> 加上 <code class="docutils literal notranslate"><span class="pre">0</span></code> 或 <code class="docutils literal notranslate"><span class="pre">4</span></code>。因此，shard 和 offset 将 tile 放在 warps 5 和 6，replica 又在 warps 9 和 10 中放置一份副本。</p>
+</section>
+<section id="blackwell-tensor-memory">
+<h2>示例：Blackwell Tensor Memory<a class="headerlink" href="#blackwell-tensor-memory" title="Link to this heading">#</a></h2>
+<p>命名轴也可以表示存储坐标。TMEM 使用硬件 Lane 和 Col 坐标，在 TIRx layout 中分别写作 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code>。</p>
+<p>考虑下面的 layout：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layout</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span>
+    <span class="n">S</span><span class="p">[(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">112</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">112</span><span class="nd">@TCol</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>逻辑 tile shape 与 shard extents 都是 <code class="docutils literal notranslate"><span class="pre">(2,</span> <span class="pre">128,</span> <span class="pre">112)</span></code>，因此拆分后的三个分量就是逻辑坐标本身。对于元素 <code class="docutils literal notranslate"><span class="pre">(a,</span> <span class="pre">l,</span> <span class="pre">c)</span></code>：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TLane = l
+TCol  = 112 * a + c
+</pre></div>
+</div>
+<p>Extent 为 128、stride 为 <code class="docutils literal notranslate"><span class="pre">1&#64;TLane</span></code> 的 iter 填满 128 条 TMEM Lane rows；另外两个 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> iters 共同覆盖 224 个 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 位置：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TCol in [0, 224)
+</pre></div>
+</div>
+<p>TMEM layout 不要求各维大小为 2 的幂。这里可以直接使用 extent 为 112 的 column iter；两个这样的区域共覆盖 224 个 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 位置，不需要把 extent 补齐到 128。实际 kernel 也可能主动选择这样的大小：例如，block-scaled FP8 GEMM 可以为两个 accumulator stages 和 scale factors 共同分配 TMEM，而不是让单个 accumulator tile 占满 256 个 columns。</p>
+</section>
+<section id="scale-factor">
+<h2>Scale Factor 布局<a class="headerlink" href="#scale-factor" title="Link to this heading">#</a></h2>
+<p>前面的 accumulator layout 是一对一映射，每个逻辑 accumulator 元素只对应一个 TMEM 坐标。Block-scaled MMA 需要让同一组逻辑 scale factors 对多个 warp windows 可见，因此会使用 replication。先看完整 scale-factor layout 中反复出现的一个 <code class="docutils literal notranslate"><span class="pre">32×sf_per_mma</span></code> atom：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">scale</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span>
+    <span class="n">S</span><span class="p">[(</span><span class="mi">32</span><span class="p">,</span> <span class="n">sf_per_mma</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]</span>
+    <span class="o">+</span> <span class="n">R</span><span class="p">[</span><span class="mi">4</span> <span class="p">:</span> <span class="mi">32</span><span class="nd">@TLane</span><span class="p">]</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>对于逻辑 scale coordinate <code class="docutils literal notranslate"><span class="pre">(r,</span> <span class="pre">s)</span></code>，shard 先给出：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TLane = r
+TCol  = s
+</pre></div>
+</div>
+<p>对于 8-bit scale-factor buffer，这里的 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 坐标同样以 buffer element 为单位。四个连续的元素位置会打包进一个 32-bit hardware Col；具体的 hardware Col 编号和 byte 位置分别是 <code class="docutils literal notranslate"><span class="pre">s//4</span></code> 和 <code class="docutils literal notranslate"><span class="pre">s%4</span></code>。</p>
+<p>Replica 再沿 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 轴以 32 为 stride 创建 4 份副本：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TLane = r + 32 * q, where q in {0, 1, 2, 3}
+TCol  = s
+</pre></div>
+</div>
+<p>因此，这个 32-row group 会同时出现在 lanes <code class="docutils literal notranslate"><span class="pre">0-31</span></code>、<code class="docutils literal notranslate"><span class="pre">32-63</span></code>、<code class="docutils literal notranslate"><span class="pre">64-95</span></code> 和 <code class="docutils literal notranslate"><span class="pre">96-127</span></code>。每个 warp 对应的 32-lane TMEM window 都能访问同一组 scale factors。完整布局还会加入 M 方向和 K-scale-block 方向的外层 iters；这里的 atom 只负责描述一次 MMA 所读取的局部模式。具体硬件数据路径可参考<a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">Tensor Core 数据布局的演进</span></a>。</p>
+<p>Accumulator 和 scale factors 使用的仍是同一个 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 模型：前者通常是 TMEM 中的一组基础坐标，后者则在相同的 <code class="docutils literal notranslate"><span class="pre">TLane</span></code>、<code class="docutils literal notranslate"><span class="pre">TCol</span></code> 空间中加入 replication。</p>
+</section>
+<section id="layout">
+<h2>常用 Layout 构造函数<a class="headerlink" href="#layout" title="Link to this heading">#</a></h2>
+<p>实际 kernel 通常不需要手写每一种硬件 layout。TIRx 为常见模式提供了构造函数。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tmem_datapath_layout</span><span class="p">(</span><span class="n">datapath</span><span class="p">,</span> <span class="n">rows</span><span class="p">,</span> <span class="n">cols</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>返回 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 写入的 TMEM accumulator layout。<code class="docutils literal notranslate"><span class="pre">datapath</span></code> 选择行映射方式。例如，<code class="docutils literal notranslate"><span class="pre">&quot;D&quot;</span></code> 对应 <code class="docutils literal notranslate"><span class="pre">M=128</span></code> 时按 row 直接映射的布局，<code class="docutils literal notranslate"><span class="pre">&quot;F&quot;</span></code> 对应 <code class="docutils literal notranslate"><span class="pre">M=64</span></code> 时分散到多个 Lane 区域的布局。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tcgen05_atom_layout</span><span class="p">(</span><span class="n">instr_shape</span><span class="p">,</span> <span class="n">tensor_shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>返回与 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 或 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> data-movement shape 对应的 register tile layout。<code class="docutils literal notranslate"><span class="pre">instr_shape</span></code> 可以是 <code class="docutils literal notranslate"><span class="pre">&quot;32x32b&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;16x64b&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;16x128b&quot;</span></code> 等字符串；<code class="docutils literal notranslate"><span class="pre">tensor_shape</span></code> 和 <code class="docutils literal notranslate"><span class="pre">dtype</span></code> 共同决定相应的 repeat factor。</p>
+<p>这个对象描述一个分布到 warpgroup 各 thread registers 中的 tile。当它用于 TMEM 与 local fragment 之间的 <code class="docutils literal notranslate"><span class="pre">Tx.wg.copy_async</span></code> 时，lowering 可以据此选择匹配的 warp-collective <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 或 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code>；每个 warp 处理自己的 32-lane TMEM partition。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">wg_local_layout</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">rows</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>返回 warpgroup-local register tile。它把逻辑 row 映射到 <code class="docutils literal notranslate"><span class="pre">tid_in_wg</span></code>，把同一 row 中的 columns 映射到该 thread 的局部 <code class="docutils literal notranslate"><span class="pre">m</span></code> 轴；使用默认的 <code class="docutils literal notranslate"><span class="pre">rows=128</span></code> 时，每个 thread 持有一行。</p>
+<p>这些构造函数返回的仍是 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>，使用的也是相同的 iter 和命名轴模型；构造函数只是替 kernel 生成了常见的硬件映射。</p>
+</section>
+<section id="swizzlelayout-composelayout">
+<h2>SwizzleLayout 与 ComposeLayout<a class="headerlink" href="#swizzlelayout-composelayout" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 是仿射布局，可以描述命名轴上的 strides、replication 和 offsets，适合表示 register fragments、TMEM tiles 和 scale-factor layouts。</p>
+<p>Shared memory swizzle 不属于仿射变换。它通过 XOR 重排线性 shared-memory address，以改变元素落到各个 banks 的方式。因此，TIRx 使用单独的对象表示它：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">SwizzleLayout</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>如果只需要描述 swizzle，可以直接把 <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> 绑定到 buffer。需要在仿射 tile mapping 之上叠加 swizzle 时，再使用 <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ComposeLayout</span><span class="p">(</span><span class="n">swizzle</span><span class="p">,</span> <span class="n">tile</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>这里的 <code class="docutils literal notranslate"><span class="pre">tile</span></code> 必须只产生默认 <code class="docutils literal notranslate"><span class="pre">m</span></code> 轴上的线性地址。计算时，tile layout 先得到这个地址，swizzle 再对它进行重排。这样可以让仿射 Shape-Stride 映射与非仿射 XOR 变换各自保持清晰。</p>
+</section>
+<section id="swizzle">
+<h2>为什么需要 Swizzle<a class="headerlink" href="#swizzle" title="Link to this heading">#</a></h2>
+<p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局及其记号</span></a> 已经介绍了 shared memory bank conflict 和 XOR swizzle。这里关注它们在 API 中如何表示。</p>
+<p>考虑一个 row-major 的 <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">64)</span></code> float16 tile：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">64</span><span class="nd">@m</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@m</span><span class="p">)])</span>
+</pre></div>
+</div>
+<p>逻辑元素 <code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">j)</span></code> 的线性 element address 为：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>m = 64 * i + j
+</pre></div>
+</div>
+<p>每行包含 64 个 float16，也就是 128 bytes。固定 <code class="docutils literal notranslate"><span class="pre">j</span></code> 并沿 column 读取时，每换一行都会前进 128 bytes，多个访问可能重复落到同一组 banks。</p>
+<p>Swizzle 让 address 的低位同时依赖较高的 row bits，使原本落到同一个 bank 的 column access 分散到多个 banks。</p>
+</section>
+<section id="id5">
+<h2>Swizzle 变换<a class="headerlink" href="#id5" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> 由三个整数参数控制：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>per_element = M
+swizzle_len = B
+atom_len    = S
+</pre></div>
+</div>
+<p>这三个参数都是 bit counts，而不是 bytes。下面的公式以线性 element address <code class="docutils literal notranslate"><span class="pre">m</span></code> 为输入。</p>
+<p><code class="docutils literal notranslate"><span class="pre">M</span></code> 表示需要原样保留的低位数量，<code class="docutils literal notranslate"><span class="pre">B</span></code> 表示参与 XOR 的 bit-field 宽度，<code class="docutils literal notranslate"><span class="pre">S</span></code> 表示两个 bit fields 之间的距离。首先保留 <code class="docutils literal notranslate"><span class="pre">m</span></code> 的低 <code class="docutils literal notranslate"><span class="pre">M</span></code> bits，使一小组相邻元素继续保持 contiguous；其余高位右移得到：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>x = m &gt;&gt; M
+</pre></div>
+</div>
+<p>随后，把 <code class="docutils literal notranslate"><span class="pre">x</span></code> 中 <code class="docutils literal notranslate"><span class="pre">[S,</span> <span class="pre">S+B)</span></code> 位置的 bits XOR 到 <code class="docutils literal notranslate"><span class="pre">[0,</span> <span class="pre">B)</span></code>，最后再放回此前保留的低 <code class="docutils literal notranslate"><span class="pre">M</span></code> bits：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>mask = (1 &lt;&lt; B) - 1
+
+low  = m &amp; ((1 &lt;&lt; M) - 1)
+x    = m &gt;&gt; M
+x2   = x ^ ((x &gt;&gt; S) &amp; mask)
+
+addr = (x2 &lt;&lt; M) | low
+</pre></div>
+</div>
+<p>一个合法的 swizzle 要求 <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">&gt;=</span> <span class="pre">B</span></code>。</p>
+<p>这个变换不会改变 tile 中包含哪些逻辑元素，只会改变它们在 shared memory 中的物理地址。后续 MMA 读取的仍是同一个逻辑 tile，但相应的 bank access pattern 已经发生变化。</p>
+</section>
+<section id="id6">
+<h2>选择 Swizzle 参数<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
+<p>实际使用中，swizzle 参数通常由 data type 和 shared-memory swizzle mode 决定。常见模式包括 32-byte、64-byte 和 128-byte swizzle。</p>
+<p><code class="docutils literal notranslate"><span class="pre">per_element</span></code> 决定保留多少个 element-address 低位，使一个 vector group 内的元素继续保持连续。对于 float16，一个 16-byte vector 包含 8 个元素，因此：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>M = log2(8) = 3
+</pre></div>
+</div>
+<p>128-byte swizzle 使用：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">SwizzleLayout</span><span class="p">(</span><span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>这里的 128 bytes 指 swizzle atom 中每一行的宽度；完整 atom 包含 8 行。上述参数既能保持每个 16-byte vector group 连续，又能重排更高的 address bits，打散 column access 的 bank pattern。</p>
+<p>普通 kernel 不需要反复手工推导这些参数。Data type 和 descriptor mode 通常已经决定具体配置；kernel 需要保证 TIRx layout、TMA descriptor 和 MMA 使用同一种 shared-memory 排列。</p>
+<p>一个 swizzled shared-memory allocation 可以写成：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tile</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">64</span><span class="nd">@m</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@m</span><span class="p">)])</span>
+<span class="n">swizzle</span> <span class="o">=</span> <span class="n">SwizzleLayout</span><span class="p">(</span><span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="n">layout</span> <span class="o">=</span> <span class="n">ComposeLayout</span><span class="p">(</span><span class="n">swizzle</span><span class="p">,</span> <span class="n">tile</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>最终绑定到 shared-memory buffer 上的是组合后的 <code class="docutils literal notranslate"><span class="pre">layout</span></code>。下面用这个 layout 检查一次实际地址映射。</p>
+</section>
+<section id="float16-tile-128b-swizzle">
+<h2>示例：对 <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">64)</span></code> float16 Tile 应用 128B Swizzle<a class="headerlink" href="#float16-tile-128b-swizzle" title="Link to this heading">#</a></h2>
+<p>继续使用上面的 128-byte swizzle。前面的 row-major tile 使用线性 element address：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>m = 64 * i + j
+</pre></div>
+</div>
+<p>令：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>q = floor(j / 8)
+r = j mod 8
+</pre></div>
+</div>
+<p>代入前面的 swizzle 公式，物理 element address 为：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>addr = 64 * i + 8 * (q xor i) + r
+</pre></div>
+</div>
+<p>以 column <code class="docutils literal notranslate"><span class="pre">j=0</span></code> 为例，此时 <code class="docutils literal notranslate"><span class="pre">q=0</span></code>、<code class="docutils literal notranslate"><span class="pre">r=0</span></code>：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>addr = 72 * i
+</pre></div>
+</div>
+<p>Shared memory 包含 32 个 banks，每个 bank word 为 4 bytes。对于 float16：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank = floor(addr / 2) mod 32
+</pre></div>
+</div>
+<p>因此，8 行分别映射到：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>i = 0: bank 0
+i = 1: bank 4
+i = 2: bank 8
+i = 3: bank 12
+i = 4: bank 16
+i = 5: bank 20
+i = 6: bank 24
+i = 7: bank 28
+</pre></div>
+</div>
+<p>这次 column access 使用了 8 个不同的 banks。不使用 swizzle 时，同一列的地址为 <code class="docutils literal notranslate"><span class="pre">m=64*i</span></code>，因此：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank = floor(64 * i / 2) mod 32 = 0
+</pre></div>
+</div>
+<p>8 行都会落到 bank 0。Swizzle 没有改变逻辑 tile，只改变了元素的物理地址，使这个访问模式不再集中到同一个 bank。</p>
+<p>上面的推导只说明这种 float16 按列访问会被分散到 8 个 banks。其他访问是否无冲突，还取决于 data type、每次访问的宽度以及硬件指令采用的 access shape。在本章开头的交互图中切换 data type 和 swizzle mode，可以直接比较不同组合的地址映射。</p>
+<p>对于构造函数已经覆盖的 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 布局，可以直接使用 <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code> 等 helper。其他仿射布局仍然使用 <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>、<code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 和 offset 表示。查询 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 时，<code class="docutils literal notranslate"><span class="pre">apply()</span></code> 只计算逻辑元素的基础物理坐标，不会枚举 replica。Shared-memory swizzle 由 <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> 表示；需要将它叠加到只产生线性 <code class="docutils literal notranslate"><span class="pre">m</span></code> 地址的 tile layout 上时，再使用 <code class="docutils literal notranslate"><span class="pre">ComposeLayout(swizzle,</span> <span class="pre">tile)</span></code>。</p>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../chapter_intro_tirx/index.html"
+       title="上一页">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">TIRx 入门</p>
+      </div>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> 目录
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">交互图</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tilelayout">TileLayout</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shard">Shard</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#replica">Replica</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#offset">Offset</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">组合三个部分</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">命名轴</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">正向映射</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#blackwell-tensor-memory">示例：Blackwell Tensor Memory</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor">Scale Factor 布局</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#layout">常用 Layout 构造函数</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzlelayout-composelayout">SwizzleLayout 与 ComposeLayout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle">为什么需要 Swizzle</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">Swizzle 变换</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">选择 Swizzle 参数</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#float16-tile-128b-swizzle">示例：对 <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">64)</span></code> float16 Tile 应用 128B Swizzle</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+作者： MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
