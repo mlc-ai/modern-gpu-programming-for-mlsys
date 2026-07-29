@@ -49,9 +49,9 @@ chapter_tirx_layout_api/index
 :maxdepth: 1
 
 appendix/index
+tirx_guide/language_reference/index
 appendix/debugging_warp_specialized
 tirx_guide/arch/index
-tirx_guide/language_reference/index
 ```
 
 <!--

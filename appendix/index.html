@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Reference &#8212; Modern GPU Programming For MLSys</title>
+    <title>Overview &#8212; Modern GPU Programming For MLSys</title>
   
   
   
@@ -54,7 +54,7 @@
     <link rel="icon" href="../_static/mlc-favicon.ico"/>
     <link rel="index" title="Index" href="../genindex.html" />
     <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Debugging Warp-Specialized Kernels" href="debugging_warp_specialized.html" />
+    <link rel="next" title="TIRx Language Reference" href="../tirx_guide/language_reference/index.html" />
     <link rel="prev" title="Flash Attention 4" href="../chapter_flash_attention/index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -186,18 +186,18 @@
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">Reference</span></p>
 <ul class="current nav bd-sidenav">
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Reference</a></li>
-<li class="toctree-l1"><a class="reference internal" href="debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx lowering pipeline</a></li>
-</ul>
-</details></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Overview</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx Language Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/parser_utils.html">Parser utilities</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/data_types.html">Data types and expressions</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/buffers.html">Buffers and memory</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/control_flow.html">Control flow</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx lowering pipeline</a></li>
 </ul>
 </details></li>
 </ul>
@@ -373,7 +373,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>Reference</h1>
+    <h1>Overview</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -387,8 +387,8 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section class="tex2jax_ignore mathjax_ignore" id="reference">
-<span id="chap-appendix"></span><h1>Reference<a class="headerlink" href="#reference" title="Link to this heading">#</a></h1>
+  <section class="tex2jax_ignore mathjax_ignore" id="overview">
+<span id="chap-appendix"></span><h1>Overview<a class="headerlink" href="#overview" title="Link to this heading">#</a></h1>
 <p>The main path runs through Parts I–IV. The Reference holds material you reach for while reading:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
@@ -400,11 +400,11 @@
 <tr class="row-even"><td><p>Look up a TIRx language feature</p></td>
 <td><p><strong><a class="reference internal" href="../tirx_guide/language_reference/index.html#chap-language-reference"><span class="std std-ref">TIRx Language Reference</span></a></strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>Compiler internals (the lowering pipeline)</p></td>
-<td><p><strong><a class="reference internal" href="../tirx_guide/arch/index.html#chap-arch"><span class="std std-ref">Compiler Internals</span></a></strong></p></td>
-</tr>
-<tr class="row-even"><td><p>Debug asynchronous GEMM/FA hangs, crashes, wrong results, or slowdowns</p></td>
+<tr class="row-odd"><td><p>Debug asynchronous GEMM/FA hangs, crashes, wrong results, or slowdowns</p></td>
 <td><p><strong><a class="reference internal" href="debugging_warp_specialized.html#chap-warp-spec-debug"><span class="std std-ref">Debugging Warp-Specialized Kernels</span></a></strong></p></td>
+</tr>
+<tr class="row-even"><td><p>Compiler internals (the lowering pipeline)</p></td>
+<td><p><strong><a class="reference internal" href="../tirx_guide/arch/index.html#chap-arch"><span class="std std-ref">Compiler Internals</span></a></strong></p></td>
 </tr>
 </tbody>
 </table>
@@ -436,11 +436,11 @@
       </div>
     </a>
     <a class="right-next"
-       href="debugging_warp_specialized.html"
+       href="../tirx_guide/language_reference/index.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Debugging Warp-Specialized Kernels</p>
+        <p class="prev-next-title">TIRx Language Reference</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

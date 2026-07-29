@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>参考资料 &#8212; 面向 MLSys 的现代 GPU 编程</title>
+    <title>概览 &#8212; 面向 MLSys 的现代 GPU 编程</title>
   
   
   
@@ -55,7 +55,7 @@
     <link rel="icon" href="../_static/mlc-favicon.ico"/>
     <link rel="index" title="索引" href="../genindex.html" />
     <link rel="search" title="搜索" href="../search.html" />
-    <link rel="next" title="调试 Warp-Specialized Kernel" href="debugging_warp_specialized.html" />
+    <link rel="next" title="TIRx 语言参考" href="../tirx_guide/language_reference/index.html" />
     <link rel="prev" title="TIRx Layout API" href="../chapter_tirx_layout_api/index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="zh-CN"/>
@@ -177,18 +177,18 @@
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
 <ul class="current nav bd-sidenav">
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">参考资料</a></li>
-<li class="toctree-l1"><a class="reference internal" href="debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
-</ul>
-</details></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">概览</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/parser_utils.html">Parser 工具</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/data_types.html">数据类型与表达式</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/buffers.html">Buffer 与内存</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/control_flow.html">控制流</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
 </details></li>
 </ul>
@@ -298,7 +298,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>参考资料</h1>
+    <h1>概览</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -313,7 +313,7 @@
                 <article class="bd-article">
                   
   <section class="tex2jax_ignore mathjax_ignore" id="chap-appendix">
-<span id="id1"></span><h1>参考资料<a class="headerlink" href="#chap-appendix" title="Link to this heading">#</a></h1>
+<span id="id1"></span><h1>概览<a class="headerlink" href="#chap-appendix" title="Link to this heading">#</a></h1>
 <p>本书的主线内容位于第一至第四部分。阅读过程中需要查询具体细节时，可以使用下面的参考资料：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
@@ -325,11 +325,11 @@
 <tr class="row-even"><td><p>TIRx 语言特性的准确写法和语义</p></td>
 <td><p><strong><a class="reference internal" href="../tirx_guide/language_reference/index.html#chap-language-reference"><span class="std std-ref">TIRx 语言参考</span></a></strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>编译器内部机制与 lowering pipeline</p></td>
-<td><p><strong><a class="reference internal" href="../tirx_guide/arch/index.html#chap-arch"><span class="std std-ref">编译器内部机制</span></a></strong></p></td>
-</tr>
-<tr class="row-even"><td><p>排查异步 GEMM 或 Flash Attention kernel 的卡死、崩溃、错误结果和性能下降</p></td>
+<tr class="row-odd"><td><p>排查异步 GEMM 或 Flash Attention kernel 的卡死、崩溃、错误结果和性能下降</p></td>
 <td><p><strong><a class="reference internal" href="debugging_warp_specialized.html#chap-warp-spec-debug"><span class="std std-ref">调试 Warp-Specialized Kernel</span></a></strong></p></td>
+</tr>
+<tr class="row-even"><td><p>编译器内部机制与 lowering pipeline</p></td>
+<td><p><strong><a class="reference internal" href="../tirx_guide/arch/index.html#chap-arch"><span class="std std-ref">编译器内部机制</span></a></strong></p></td>
 </tr>
 </tbody>
 </table>
@@ -361,11 +361,11 @@
       </div>
     </a>
     <a class="right-next"
-       href="debugging_warp_specialized.html"
+       href="../tirx_guide/language_reference/index.html"
        title="下一页">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">下一页</p>
-        <p class="prev-next-title">调试 Warp-Specialized Kernel</p>
+        <p class="prev-next-title">TIRx 语言参考</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
