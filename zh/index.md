@@ -17,7 +17,7 @@
 - **第二部分：TIRx 概览。** 这一部分介绍 TIRx 的核心组成部分，为理解后续章节中的代码示例做准备。
 - **第三部分：GEMM：从 Tiled 到 SOTA。** 这一部分完整讲解如何优化一个 tiled GEMM，并逐步加入 TMA pipelining、persistent scheduling、warp specialization 和 2-CTA cluster。
 - **第四部分：Flash Attention 4。** 这一部分基于第三部分的技术构建完整的 attention kernel：两个 MMA，中间插入 softmax，并包含 online-softmax rescaling、causal masking 和 GQA。
-- **附录。** TIRx API 和编译器内部机制说明。
+- **参考资料。** TIRx 语言参考、编译器内部机制，以及异步 kernel 调试指南。
 
 ## 已发布章节
 
@@ -42,6 +42,16 @@ chapter_clc/index
 
 chapter_intro_tirx/index
 chapter_tirx_layout_api/index
+```
+
+```{toctree}
+:caption: 参考资料
+:maxdepth: 1
+
+appendix/index
+appendix/debugging_warp_specialized
+tirx_guide/arch/index
+tirx_guide/language_reference/index
 ```
 
 <!--
