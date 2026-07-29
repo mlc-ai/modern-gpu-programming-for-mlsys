@@ -57,7 +57,7 @@ tt.untyped_storage().data_ptr() == t.untyped_storage().data_ptr()
 
 ## Tile Layout
 
-GPU kernel 很少一次处理完整矩阵，通常会将矩阵划分成更小的 tiles。例如，可以把一个 `8×8` 矩阵划分成 `2×4` 的 tiles，让各个 tile 按行优先顺序排列，并让每个 tile 内部的元素也按行优先顺序连续存储。
+GPU kernel 很少一次处理完整矩阵，通常会将矩阵划分成更小的 tiles。例如，可以把一个 `8×8` 矩阵划分成 `2×4` 的 tiles，让各个 tile 按 row-major 顺序排列，并让每个 tile 内部的元素也按 row-major 顺序连续存储。
 
 下图先展示这个例子在逻辑矩阵和物理内存中的排列。
 
@@ -264,7 +264,7 @@ S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
 
 ### GPU Mesh 中的 Replication 与 Offset
 
-同一个 replication 结构也可以描述多设备布局。GPU mesh 是把多张 GPU 按一个或多个逻辑轴组成的设备网格。例如，一个 `2×2` GPU mesh 包含四张 GPU，每张 GPU 都可以用 `(@gpuid_x, @gpuid_y)` 坐标确定。
+同一个 replication 结构也可以描述多设备布局。GPU mesh 把多张 GPU 沿一个或多个逻辑设备轴排布成网格。例如，一个 `2×2` GPU mesh 包含四张 GPU，每张 GPU 都可以用 `(@gpuid_x, @gpuid_y)` 坐标确定。
 
 先定义一个沿 `@gpuid_y` 分片的基础布局：
 
@@ -368,6 +368,10 @@ physical_addr = row·8 + mapped_col
 
 应该选择哪一种 swizzle mode？一个实用的原则是：**在 tile 尺寸允许的情况下，优先选择每行宽度最大的 atom。** 每行宽度为 `N` bytes 的 atom 要求 tile 的连续维度至少达到 `N` bytes，最好还能被 `N` 整除。
 
-因此，一行至少包含 128 bytes，也就是 64 个 `float16` 元素时，通常优先使用 `SWIZZLE_128B`。如果连续维度不足 128 bytes，则选择能够容纳的 `SWIZZLE_64B` 或 `SWIZZLE_32B`。对于图中使用 `fp16` 的访问方式，`SWIZZLE_128B` 可以让连续的行读取和跨 8 行的列读取都避免 bank conflict。不过，这一保证只适用于与硬件 descriptor 匹配的元素宽度、swizzle mode 和访问模式；元素宽度、对齐方式或访问模式改变后，仍可能产生冲突。
+因此，一行至少包含 128 bytes，也就是 64 个 `float16` 元素时，通常优先使用 `SWIZZLE_128B`。如果连续维度不足 128 bytes，则选择能够容纳的 `SWIZZLE_64B` 或 `SWIZZLE_32B`。
 
-实际编程时，不需要手工计算 swizzle 后的地址。可以把完整映射理解成两步：`S[...]` 先把逻辑元素映射到线性的 memory 地址 `@m`，swizzle 再重排这个地址。由于 XOR 重排不是仿射变换，swizzle 不属于 affine layout 本身，而是与它组合使用的另一层地址变换。所有访问同一个 tile 的操作必须使用一致的 swizzle mode，具体的地址变换由组合后的 layout 统一处理。不同硬件单元对 swizzle mode 的要求会随 GPU 架构代际变化，下一章会进一步介绍这些约束。
+对于图中使用 `fp16` 的访问方式，`SWIZZLE_128B` 可以让连续的行读取和跨 8 行的列读取都避免 bank conflict。不过，这一保证只适用于与硬件 descriptor 匹配的元素宽度、swizzle mode 和访问模式；元素宽度、对齐方式或访问模式改变后，仍可能产生冲突。
+
+实际编程时，不需要手工计算 swizzle 后的地址。可以把完整映射理解成两步：`S[...]` 先把逻辑元素映射到线性的 memory 地址 `@m`，swizzle 再重排这个地址。由于 XOR 重排不是仿射变换，swizzle 不属于 affine layout 本身，而是与它组合使用的另一层地址变换。
+
+所有访问同一个 tile 的操作必须使用一致的 swizzle mode，具体的地址变换由组合后的 layout 统一处理。不同硬件单元对 swizzle mode 的要求会随 GPU 架构代际变化，下一章会进一步介绍这些约束。
