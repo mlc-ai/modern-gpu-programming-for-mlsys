@@ -407,7 +407,34 @@ columns and, in turn, different banks.
 Click a column index to compare the bank mapping of the plain row-major layout with the XOR swizzle.
 The former takes eight cycles; the latter takes one.
 
-The figure above uses eight banks to illustrate the XOR rule. Real hardware applies the rule over a
+The arrangement in the right-hand “With Swizzle (XOR)” panel matches the K-major 128B swizzling
+figure in the NVIDIA PTX documentation. Our demo labels each cell with its logical column `c` within
+the row, whereas NVIDIA labels each 128-bit cell with its full logical index `8r+c`. At physical
+position `(row=r, col=p)`, both figures use `c=p XOR r`, so the NVIDIA label is:
+
+```text
+8r + (p XOR r)
+```
+
+For example, row 1 reads `1, 0, 3, 2, 5, 4, 7, 6` in our demo. Adding the row base of 8 gives
+`9, 8, 11, 10, 13, 12, 15, 14`, exactly as in the NVIDIA figure.
+
+The colors serve different purposes. Our demo assigns colors to physical banks so that bank
+conflicts remain visible. In the NVIDIA figure, colors follow the numbered logical cells, making the
+data permutation easier to track. The color patterns therefore differ even though the `8×8` cell
+permutation is the same. The cell units are not the same: the toy example simplifies one cell to one
+bank, whereas each cell in the NVIDIA figure represents a 128-bit element.
+
+```{image} ../img/async-warpgroup-smem-layout-128B-k.png
+:alt: K-major 128B swizzling layout from the NVIDIA PTX documentation
+:width: 760px
+:align: center
+```
+
+*K-major 128B swizzling layout from the NVIDIA PTX ISA. Each cell represents one 128-bit element.
+Source: [NVIDIA PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/).*
+
+The preceding interactive figure uses eight banks to illustrate the XOR rule. Real hardware applies the rule over a
 larger repeating unit. We call each contiguous 16 B region a **sector** and represent it with one
 colored block. In `SWIZZLE_128B`, each row of an atom contains eight sectors, for a total width of
 128 B. At the common 4-byte bank granularity, that row spans 32 bank slots. The swizzle uses the row

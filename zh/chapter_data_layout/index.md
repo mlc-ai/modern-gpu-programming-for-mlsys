@@ -330,7 +330,25 @@ physical_addr = row·8 + mapped_col
 
 *点击图中的任意 column index，可以比较普通 row-major layout 和 XOR swizzle 的 bank 映射：前者需要 8 个 cycles，后者只需要 1 个 cycle。*
 
-上图用 8 个 bank 说明了 XOR 的基本思想。实际硬件使用更大的重复单元：我们把连续的 16 B 数据称为一个 sector，并用一个色块表示。对于 `SWIZZLE_128B`，atom 的每一行包含 8 个 sector，共 128 B；在常见的 4-byte bank 粒度下，这一行覆盖 32 个 bank slot。swizzle 根据行坐标对这 8 个 sector 的位置做 XOR 重排。
+右侧“使用 Swizzle（XOR）”的排列与 NVIDIA PTX 文档中的 K-major 128B swizzling 图一致。当前交互图只在 cell 中显示行内逻辑列 `c`；NVIDIA 图显示完整的逻辑 128-bit cell 编号 `8r+c`。对于物理位置 `(row=r, col=p)`，两张图使用的都是 `c=p XOR r`，因此 NVIDIA 图中的编号为：
+
+```text
+8r + (p XOR r)
+```
+
+例如，第 1 行在当前交互图中显示 `1, 0, 3, 2, 5, 4, 7, 6`，加上行基址 `8` 后，就得到 NVIDIA 图中的 `9, 8, 11, 10, 13, 12, 15, 14`。
+
+两张图的颜色用途不同。当前交互图让颜色固定表示物理 bank，方便直接观察 bank conflict；NVIDIA 图中的颜色跟随带编号的逻辑 cell，方便观察数据如何被重新排列。配色方式虽然不同，`8×8` cell 的位置置换是相同的。需要注意，两图的 cell 单位并不相同：当前 toy example 将一个 cell 简化为一个 bank，而 NVIDIA 图中的一个 cell 是 128-bit 元素块。
+
+```{image} ../../img/async-warpgroup-smem-layout-128B-k.png
+:alt: NVIDIA PTX 文档中的 K-major 128B swizzling layout
+:width: 760px
+:align: center
+```
+
+*NVIDIA PTX ISA 中的 K-major 128B swizzling layout。每个 cell 表示一个 128-bit 元素块。图片来源：[NVIDIA PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/)。*
+
+前面的交互图用 8 个 bank 说明了 XOR 的基本思想。实际硬件使用更大的重复单元：我们把连续的 16 B 数据称为一个 sector，并用一个色块表示。对于 `SWIZZLE_128B`，atom 的每一行包含 8 个 sector，共 128 B；在常见的 4-byte bank 粒度下，这一行覆盖 32 个 bank slot。swizzle 根据行坐标对这 8 个 sector 的位置做 XOR 重排。
 
 一个 `SWIZZLE_128B` atom 包含 8 行，因此大小为 `8 × 128 B = 1024 B`。这里的 `128 B` 指 atom 每一行在连续维度上的宽度，而不是 atom 的总大小。atom 是地址重排的最小重复块，更大的 tile 由多个 atom 平铺而成。
 
