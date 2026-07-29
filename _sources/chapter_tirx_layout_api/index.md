@@ -4,34 +4,32 @@
 :::{admonition} Overview
 :class: overview
 
-- The TIRx layout API turns the layout notation from {ref}`chap_data_layout` into compiler objects. The main objects are `TileLayout`, `SwizzleLayout`, and `ComposeLayout`.
-- `TileLayout` describes affine placement over named hardware axes. It is built from shard specs `S[...]`, replica specs `R[...]`, and optional offsets.
-- A layout maps one logical coordinate to one or more physical coordinates. `layout.apply()` evaluates that mapping.
-- `SwizzleLayout` describes the XOR-based shared-memory swizzles used to avoid bank conflicts. `ComposeLayout` stacks a swizzle on top of a tile layout.
-- Ready-made constructors such as `tmem_datapath_layout`, `tcgen05_atom_layout`, and `wg_local_layout` cover the hardware layouts that appear repeatedly in kernels.
+- `TileLayout` uses `S[...]`, `R[...]`, and an offset to describe how a logical tile is placed over named axes.
+- `TileLayout.apply()` computes the base physical coordinate of a logical element. Replica information remains in `layout.replica` and is handled by the tile operation that uses the layout.
+- `SwizzleLayout` describes XOR-based address permutations in shared memory. Use `ComposeLayout` when a swizzle needs to be combined with an ordinary tile layout.
 :::
 
-{ref}`chap_data_layout` introduced the notation used throughout this book: a tile shape, a set of strides over named axes, and an optional replication term for values that are copied rather than partitioned. This chapter turns that notation into the API used by the compiler.
+{ref}`chap_data_layout` introduced tile shapes, strides over named axes, replication dimensions, and fixed offsets. This chapter explains how to construct, attach, and inspect those layouts in TIRx programs.
 
-The goal is that the notation on the page and the code in the kernel look almost the same. When you write a layout such as:
+For example, the following notation describes a `128x256` tile in TMEM:
 
 ```python
 S[(128, 256) : (1@TLane, 1@TCol)]
 ```
 
-you are not just writing an explanation. You are constructing a `TileLayout` object that can be attached to a buffer. After that, every tile operation that touches the buffer can read its placement from the layout. The placement is written once, checked once, and reused by the compiler.
-
-A layout is attached either when allocating from a pool or when declaring a buffer:
+In a TIRx program, the same notation constructs a `TileLayout` that can be attached to a buffer:
 
 ```python
+layout = TileLayout(S[(128, 256) : (1@TLane, 1@TCol)])
+
 pool.alloc(shape, dtype, layout=layout)
 
 T.decl_buffer(shape, dtype, scope=scope, layout=layout)
 ```
 
-From that point on, the buffer carries its physical placement. The tile operations do not need to repeat where each element lives.
+The buffer now carries its physical layout. Tile operations can use that information directly instead of restating which lanes, registers, or linear storage locations hold its elements.
 
-The layout objects live in one module:
+The layout objects and named axes used in this chapter live in `tvm.tirx.layout`:
 
 ```python
 from tvm.tirx.layout import (
@@ -48,36 +46,11 @@ from tvm.tirx.layout import (
     m,
     tcgen05_atom_layout,
     tmem_datapath_layout,
+    wg_local_layout,
 )
 ```
 
-There is one central idea behind the API. A layout does not have to map a logical index to a single physical address. It maps a logical index to a set of physical coordinates over named axes. In the usual case that set has one element. When replication is present, the same logical element has several physical placements.
-
-This is why the layout model has three pieces: shard, replica, and offset. The shard places the element. The replica copies it to additional coordinates. The offset shifts the whole placement.
-
-## Layouts by Example
-
-The examples below show the basic shape of the API.
-
-An accumulator in TMEM can be written as a direct placement over the TMEM axes:
-
-```python
-acc = TileLayout(S[(128, 256) : (1@TLane, 1@TCol)])
-```
-
-Here the logical row maps to `TLane`, and the logical column maps to `TCol`. In {ref}`chap_tmem`, the hardware coordinates are called Lane and Col. In the TIRx layout notation, those hardware axes are written as `TLane` and `TCol`.
-
-A block-scaled MMA scale-factor layout uses replication:
-
-```python
-scale_factor_layout = TileLayout(
-    S[(32, sf_per_mma) : (1@TLane, 1@TCol)] + R[4 : 32@TLane]
-)
-```
-
-The shard places a 32-row group in TMEM. The replica repeats that group four times at a stride of 32 lanes, so the 32-row group is visible across the full 128-lane TMEM space.
-
-A tensor-core register fragment can be distributed across lanes and warps:
+A layout does not have to produce a single linear address. Its result may instead contain hardware coordinates such as `laneid`, `warpid`, `TLane`, and `TCol`. The TMEM layout above maps the logical row to `TLane` and the logical column to `TCol`. Here is a register fragment that uses both lane and warp axes:
 
 ```python
 frag = TileLayout(
@@ -85,21 +58,15 @@ frag = TileLayout(
 )
 ```
 
-The same physical axis can appear more than once. In this example, two different iters both contribute to `laneid`. A stride without an explicit axis uses the default memory axis `m`.
+The same physical axis may appear more than once. Here, the first and third iters both contribute to `laneid`. The final stride has no explicit axis tag, so it uses the default axis `m`.
 
-In real kernels, common hardware layouts usually come from constructors:
+{ref}`chap_data_layout` used the notation `@reg` to distinguish lane-local fragment slots. The current TIRx API does not register a separate `reg` axis. When a layout is attached to a register-backed local buffer, the default axis `m` denotes that thread's local linear position. The buffer scope determines that the data resides in registers; `m` does not imply global or shared memory in this context.
 
-```python
-acc = tmem_datapath_layout("D", 128, 256)
-
-ld = tcgen05_atom_layout("32x32b", (128, 64), "float32")
-```
-
-These constructors return ordinary `TileLayout` objects. They are conveniences, not a separate mechanism. You can inspect the returned layout, compose it with other layouts, or write the underlying `S[...]` and `R[...]` form by hand when a shape is unusual.
+For storage axes such as `m` and `TCol`, strides are measured in buffer elements. In a 32-bit TMEM buffer, advancing one element along `TCol` advances one 32-bit hardware Col. In an 8-bit or 16-bit buffer, several adjacent elements are packed into one hardware Col. The scale-factor example later in this chapter makes this distinction concrete.
 
 ## Interactive Demo
 
-Before the mechanics, it helps to have something concrete to poke at. The demo below lets you choose a preset layout, edit the logical shape and the `S` or `R` terms, choose a dtype and swizzle mode, and click an element to see which physical coordinate or coordinates own it.
+The interactive demo below provides several common layout presets. You can edit the logical shape, `S[...]`, or `R[...]`, select a data type and swizzle mode, and click a logical element to inspect its physical coordinates.
 
 ```{raw} html
 <p>
@@ -107,16 +74,13 @@ Before the mechanics, it helps to have something concrete to poke at. The demo b
      target="_blank" rel="noopener"
      style="display:inline-block; padding:10px 18px; background:#3b82f6;
      color:#fff !important; font-weight:700; border-radius:8px;
-     text-decoration:none;">▶ Open the demo full screen ↗</a>
+     text-decoration:none;">Open the interactive demo in a new window</a>
 </p>
 <iframe id="tirx-layout-demo-frame" src="../_static/tirx-layout-demo/index.html?notitle"
         style="width:100%; height:1040px; border:1px solid #dfe1e6;
-        border-radius:10px; margin:10px 0 6px; display:block;"
+        border-radius:10px; margin:10px 0 6px; display:block; box-sizing:content-box;"
         title="TIRx interactive layout demo" loading="lazy"></iframe>
 <script>
-// The demo (viz-base.js) posts its content height; size the iframe to fit so
-// there is no inner scrollbar. This demo is responsive (fills the width), so
-// only the height follows content.
 (function () {
   var f = document.getElementById('tirx-layout-demo-frame');
   window.addEventListener('message', function (e) {
@@ -128,57 +92,47 @@ Before the mechanics, it helps to have something concrete to poke at. The demo b
 </script>
 ```
 
-The demo is useful because most of the API is just a precise version of what the demo shows. A logical element enters the layout. The layout flattens it, splits it across its iters, accumulates coordinates on named axes, and then applies replication if needed.
+The demo also shows the basic `TileLayout` evaluation process. It first flattens a logical coordinate, then splits the flat index according to the extent of each iter. Each component contributes a base coordinate according to its stride and axis, after which the offset is added. The demo also enumerates replicas so that every physical copy of an element is visible.
 
 ## TileLayout
 
-A `TileLayout` is the main affine layout object. It is usually written with the same notation used in the text:
+`TileLayout` is the primary affine layout object in TIRx. It is usually written as:
 
 ```python
 TileLayout(S[shape : strides])
 ```
 
-The `S` term is the shard spec. You can read it as: take a logical tile of this shape and place it using these strides over named axes.
+`S[...]` is the shard spec. It supplies a sequence of iter extents and strides that map the logical tile to a base position on the named axes.
 
-When a value needs to appear in multiple places, the shard spec is extended with a replica spec:
+When the same value must appear at several physical locations, add a replica spec:
 
 ```python
 TileLayout(S[shape : strides] + R[replica_shape : replica_stride])
 ```
 
-An optional offset can also be added:
+A fixed offset may be added as well:
 
 ```python
 TileLayout(S[shape : strides] + R[replica_shape : replica_stride] + offset)
 ```
 
-Under the surface, these pieces are represented by iters. An iter is a triple:
+Inside the API, each iter is a triple:
 
 ```text
 (extent, stride, axis)
 ```
 
-It describes a strided walk over one named axis. The extent tells how many positions the iter has. The stride tells how far each step moves. The axis tells which hardware coordinate is being changed.
-
-A layout has three parts.
+The `extent` gives the number of positions in the iter, the `stride` gives the distance moved by one step, and the `axis` identifies the physical axis along which that movement occurs.
 
 ### Shard
 
-The shard, or `D`, is the part built by `S[...]`. It partitions the logical index across one or more iters and produces the base physical coordinate.
+The shard is constructed by `S[...]`. It splits the logical index across one or more iters and produces the base physical coordinate. The `frag` layout above has four shard iters with extents `8`, `2`, `4`, and `2`. Their strides map the components to `laneid`, `warpid`, `laneid` again, and the default linear axis `m`.
 
-For example:
-
-```python
-S[(8, 2, 4, 2) : (4@laneid, 1@warpid, 1@laneid, 1)]
-```
-
-has four shard iters. Their extents are `8`, `2`, `4`, and `2`. Their strides place data on `laneid`, `warpid`, `laneid` again, and the default memory axis `m`.
-
-This generalizes the ordinary shape-and-stride rule. The difference is that the strides are attached to named hardware axes instead of to a single flat address.
+This is still the ordinary shape-and-stride rule, except that every stride belongs to an explicit named axis instead of contributing to a single linear address.
 
 ### Replica
 
-The replica, or `R`, describes additional physical copies of the same logical element. The replica iters are independent of the logical index. They enumerate extra offsets in hardware space.
+The replica is constructed by `R[...]` and describes additional physical copies of the same logical element. Replica iters do not depend on the logical index; they enumerate additional offsets in physical space.
 
 For example:
 
@@ -186,13 +140,13 @@ For example:
 R[2 : 4@warpid]
 ```
 
-creates two copies separated by four warps on the `warpid` axis.
+places two copies along the `warpid` axis, separated by four warps.
 
-Replication is not a trick for convenience. It describes real hardware behavior. Some data is broadcast across warps, lanes, or memory regions. A logical-to-physical mapping naturally supports that because one logical element can map to a set of physical coordinates.
+GPU hardware often needs to broadcast the same data across warps, lanes, or storage regions. A replica expresses that behavior directly as one logical element with several physical coordinates.
 
 ### Offset
 
-The offset, or `O`, is a fixed coordinate added to every result.
+The offset is added to every mapped coordinate. We denote it by `O` in the set expression below.
 
 For example:
 
@@ -200,25 +154,21 @@ For example:
 5@warpid
 ```
 
-shifts the whole placement by five on the `warpid` axis.
+shifts the entire layout by five positions along the `warpid` axis.
 
-Offsets are used to place a tile at a chosen base coordinate, reserve a region for exclusive use, or describe a tile that starts after another tile in the same resource.
+An offset can select a tile's starting coordinate or place several tiles in different regions of the same hardware resource.
 
-### Putting the Pieces Together
+### Putting the Three Pieces Together
 
-A layout applies these three parts in order.
-
-First, the shard computes the base coordinate. Then the replica fans that coordinate out into zero or more additional copies. Finally, the offset shifts every coordinate.
-
-For a logical coordinate `x`, the result is:
+For a logical coordinate `x`, let `D(x)` be the base coordinate generated by the shard. `TileLayout` adds the fixed offset and uses the replica iters to enumerate additional positions:
 
 ```text
 L(x) = { D(x) + r + O | r in R }
 ```
 
-If there is no replica, `R` contains only the zero offset, so the result is a singleton set. If there is a replica, the result contains one coordinate for each replica position.
+Here, `r` is one offset generated by the replica iters. With no replica, `R` can be treated as containing only the zero offset, so the set contains one coordinate. With replication, the set contains one coordinate for each copy. The current `layout.apply()` method computes only the base coordinate `D(x) + O`; it does not enumerate `R`. Replica iters remain in `layout.replica` and are handled by the tile operation that uses the layout.
 
-In TIRx syntax, a full layout can look like this:
+The complete TIRx form is:
 
 ```python
 layout = TileLayout(
@@ -228,70 +178,55 @@ layout = TileLayout(
 )
 ```
 
-Read left to right, the shard places the logical tile, the replica creates a second copy four warp IDs away, and the offset shifts the whole placement to start at `warpid = 5`.
+Read it from left to right: `S[...]` places the logical tile, `R[...]` adds a second copy four warps away, and `5@warpid` shifts every position by five.
 
-If the iters have already been built as objects, the same layout can be constructed directly:
+If the shard, replica, and offset objects have already been constructed directly, the same layout can be created with:
 
 ```python
 TileLayout.from_iters(shard, replica, offset)
 ```
 
-Most user code uses the `S[...]` and `R[...]` notation because it is closer to the mathematical form.
+Kernel code usually uses `S[...]` and `R[...]` because the notation exposes the layout's shape, strides, and axes directly.
 
 ## Named Axes
 
-The axes in a layout are not anonymous dimensions. Each axis names a real hardware coordinate or a compiler-level placement coordinate.
+Axes in a layout are not anonymous dimensions. Each name identifies a hardware coordinate or a compiler-defined layout coordinate. The axes used in this chapter are summarized below:
 
-Examples include:
+| Axis | Meaning |
+|---|---|
+| `bx`, `by`, `bz` | CTA coordinates in the grid |
+| `cbx`, `cby`, `cbz` | CTA coordinates within a cluster |
+| `tx` | Thread coordinate within a CTA |
+| `warpid`, `laneid` | Warp ID and the thread's lane ID within its warp |
+| `wgid`, `tid_in_wg`, `wid_in_wg` | Warpgroup ID and the thread or warp position within a warpgroup |
+| `m` | Default linear physical axis; the buffer scope determines the backing storage |
+| `TLane`, `TCol` | The Lane and Col directions in TMEM |
 
-```text
-bx, by, bz
-cbx, cby, cbz
-tx
-warpid
-laneid
-wgid
-tid_in_wg
-wid_in_wg
-m
-P, F
-Bank
-TLane, TCol
-```
-
-Grid axes such as `bx`, `by`, and `bz` place work across CTAs. Cluster axes such as `cbx`, `cby`, and `cbz` place work within a CTA cluster. Thread axes such as `tx`, `warpid`, `laneid`, `tid_in_wg`, and `wid_in_wg` describe ownership inside a CTA or warpgroup. The axis `m` is the default linear memory axis. `P` and `F` are used for two-dimensional scratchpad-style placement. `Bank` names shared memory banks. `TLane` and `TCol` are the TIRx layout names for the TMEM Lane and Col coordinates.
-
-The axis name is part of the layout. This matters because two coordinates with the same integer value can mean different hardware things. `1@tx` is not the same as `1@tid_in_wg`. `1@laneid` is not the same as `1@TLane`. The layout keeps those meanings explicit.
+The axis name is part of the layout. Equal integer values on different axes identify different hardware positions. For example, `1@tx` differs from `1@tid_in_wg`, and `1@laneid` differs from `1@TLane`. A `TCol` stride is still measured in buffer elements and corresponds one-to-one with hardware Col only when the element width is 32 bits.
 
 ## Forward Mapping
 
-Evaluating a layout means taking a logical coordinate and computing where it lands physically. The API method is:
+`apply()` starts from a logical coordinate and computes the base physical coordinate contributed by the shard and offset. It supports three input forms:
 
 ```python
-layout.apply(*coord)
+layout.apply(linear_coord)
+layout.apply(*shard_coord)
+layout.apply(*logical_coord, shape=input_shape)
 ```
 
-For a layout without replication, the result is one coordinate dictionary. With replication, the result is a set of coordinate dictionaries. A coordinate dictionary maps axis names to integer positions, such as:
-
-```python
-{"laneid": 7, "warpid": 2, "m": 1}
-```
-
-The evaluation rule has four steps.
-
-First, flatten the logical coordinate in row-major order. For a logical coordinate:
+The third form makes the full evaluation process easiest to see. Let the logical coordinate be:
 
 ```text
 x = (x0, x1, ..., xr-1)
 ```
 
-inside a logical shape:
+inside the logical shape:
 
 ```text
 (S0, S1, ..., Sr-1)
 ```
 
-the flat index is:
+First flatten the logical coordinate in row-major order:
 
 ```text
 flat = x0 * S1 * S2 * ... * Sr-1
@@ -301,102 +236,63 @@ flat = x0 * S1 * S2 * ... * Sr-1
      + xr-1
 ```
 
-Second, split that flat index across the shard extents. If the shard extents are:
+Next, split `flat` according to the shard extents:
 
 ```text
 (e0, e1, ..., en-1)
 ```
 
-then the split produces components:
+to obtain:
 
 ```text
-c0, c1, ..., cn-1
+(c0, c1, ..., cn-1)
 ```
 
-using the same row-major order over the shard extents.
-
-Third, accumulate each component onto its axis using its stride. If shard iter `k` has extent `ek`, stride `sk`, and axis `ak`, then component `ck` contributes:
+If shard iter `k` has stride `sk` and axis `ak`, component `ck` contributes:
 
 ```text
 ck * sk @ ak
 ```
 
-All contributions to the same axis are added together. The offset is then added.
+Contributions to the same axis are added, followed by the fixed offset. The resulting coordinate dictionary is what `apply()` returns.
 
-Fourth, apply the replica iters. Each replica iter contributes an additional offset independent of the logical coordinate. If there are several replica iters, the layout enumerates all combinations.
+The other two forms skip one or both of these steps. `layout.apply(linear_coord)` accepts an index that is already flat. `layout.apply(*shard_coord)` accepts one coordinate for each shard iter, so neither flattening nor splitting is needed. With `shape=input_shape`, the logical shape may have a different rank and decomposition from the shard extents, provided that its flat index stays within the logical range represented by the shard.
 
-One useful consequence of this rule is that the layout does not need to hard-code the input shape. What it needs is that the logical tile has the same total number of elements as the product of the shard extents. Once that holds, flattening and splitting define the mapping.
+`apply()` does not enumerate replicas. Replica iters add positions beyond the base coordinate, but they remain in `layout.replica` for the tile operation that consumes the layout.
 
-## Case Study: Tensor Core Register Tile
-
-Consider a logical `(8, 16)` tile distributed across two warps of 32 lanes each. Each lane owns a small register fragment. The register slot is represented by the default memory axis `m`.
+Now evaluate the layout assembled earlier from a shard, replica, and offset. Interpret `(1, 3)` as a coordinate in an `(8, 16)` input tile:
 
 ```python
-layout = TileLayout(
-    S[(8, 2, 4, 2) : (4@laneid, 1@warpid, 1@laneid, 1)]
-    + R[2 : 4@warpid]
-    + 5@warpid
-)
+layout.apply(1, 3, shape=[8, 16])
+
+# {"laneid": 5, "warpid": 5, "m": 1}
 ```
 
-Take a logical element `(i, j)` from the `(8, 16)` tile.
-
-The row-major flat index is:
+The result follows in three steps. First, `(1, 3)` becomes flat index `19` in the row-major `(8, 16)` shape. Splitting `19` according to the shard extents `(8, 2, 4, 2)` gives:
 
 ```text
-flat = 16 * i + j
+(c0, c1, c2, c3) = (1, 0, 1, 1)
 ```
 
-Splitting by the shard extents `(8, 2, 4, 2)` gives:
+After multiplying each component by its stride, the base coordinate is `laneid=5`, `warpid=0`, and `m=1`. Adding `5@warpid` produces the returned coordinate `warpid=5`.
+
+Because `apply()` does not enumerate replicas, it returns only this base position. The layout's `R[2 : 4@warpid]` tells the tile operation to handle both `warpid=5` and `warpid=9`.
+
+Across the complete `(8, 16)` tile, the base mapping is:
 
 ```text
-c0 = i
-c1 = floor(j / 8)
-c2 = floor(j / 2) mod 4
-c3 = j mod 2
-```
-
-The shard contributions are:
-
-```text
-laneid = 4 * c0 + c2
-warpid = c1
-m      = c3
-```
-
-After adding the offset `5@warpid`, this becomes:
-
-```text
-laneid = 4 * i + floor(j / 2) mod 4
+laneid = 4 * i + (floor(j / 2) mod 4)
 warpid = floor(j / 8) + 5
 m      = j mod 2
 ```
 
-The replica term:
+The replica adds either `0` or `4` to `warpid`. The shard and offset therefore place the tile on warps 5 and 6, while the replica adds a copy on warps 9 and 10.
 
-```python
-R[2 : 4@warpid]
-```
+## Example: Blackwell Tensor Memory
 
-adds either `0` or `4` to `warpid`. So the full mapping is:
+Named axes can also describe storage coordinates. TMEM uses hardware Lane and Col coordinates, written as `TLane` and `TCol` in TIRx layouts.
 
-```text
-laneid = 4 * i + floor(j / 2) mod 4
-warpid = floor(j / 8) + 5 + 4 * r, where r in {0, 1}
-m      = j mod 2
-```
-
-The shard places the tile on warps 5 and 6. The replica then copies it to warps 9 and 10. The same logical element therefore appears in two warp positions.
-
-This example shows why the model uses a set of physical coordinates. Replication is not naturally represented by a function from physical coordinate to logical coordinate. It is naturally represented by a function from one logical coordinate to several physical coordinates.
-
-## Case Study: Blackwell Tensor Memory
-
-The same layout model works for memory placement. The axes do not have to be thread axes. They can be memory axes.
-
-TMEM is addressed by hardware Lane and Col coordinates. In the TIRx layout notation, those axes are written as `TLane` and `TCol`.
-
-Consider this layout:
+Consider:
 
 ```python
 layout = TileLayout(
@@ -404,26 +300,24 @@ layout = TileLayout(
 )
 ```
 
-If the logical tile shape is `(2, 128, 112)`, the split components are just the logical coordinates themselves. For element `(a, l, c)`, the mapping is:
+The logical tile shape and shard extents are both `(2, 128, 112)`, so the three split components are the logical coordinates themselves. For element `(a, l, c)`:
 
 ```text
 TLane = l
 TCol  = 112 * a + c
 ```
 
-The extent-128 iter with stride `1@TLane` fills the 128 TMEM Lane rows. The extent-2 iter with stride `112@TCol` and the extent-112 iter with stride `1@TCol` together cover 224 columns:
+The extent-128 iter with stride `1@TLane` fills all 128 TMEM Lane rows. The other two iters together span 224 `TCol` positions:
 
 ```text
 TCol in [0, 224)
 ```
 
-The 224-column span is intentional. TMEM layouts do not have to be powers of two. A block-scaled FP8 GEMM may choose a 224-column accumulator because a full 256-column tile would not leave enough TMEM capacity for two accumulator stages plus scale factors. The layout API can express that shape directly.
+TMEM layout dimensions need not be powers of two. The column iter can use an extent of 112 directly; two such regions cover 224 `TCol` positions without padding the extent to 128. A real kernel may choose this shape deliberately. For example, a block-scaled FP8 GEMM can allocate TMEM for two accumulator stages and scale factors instead of allowing one accumulator tile to occupy all 256 columns.
 
-## Scale Factor Layouts
+## Scale-Factor Layouts
 
-The accumulator layout above is a pure placement. Each logical accumulator element maps to one TMEM coordinate. Scale factors for block-scaled MMA are different because the same physical group may need to be visible across several warp windows. This is where replication becomes useful.
-
-A compact scale-factor layout can be written as:
+The accumulator layout above is one-to-one: each logical accumulator element has one TMEM coordinate. Block-scaled MMA needs the same group of logical scale factors to be visible from several warp windows, so it uses replication. Consider the `32xsf_per_mma` atom that recurs in the complete scale-factor layout:
 
 ```python
 scale = TileLayout(
@@ -432,95 +326,93 @@ scale = TileLayout(
 )
 ```
 
-The shard places a 32-row scale-factor group in TMEM:
+For logical scale coordinate `(r, s)`, the shard first produces:
 
 ```text
 TLane = r
 TCol  = s
 ```
 
-for a logical scale coordinate `(r, s)`.
+For an 8-bit scale-factor buffer, the `TCol` coordinate is still measured in buffer elements. Four adjacent element positions are packed into one 32-bit hardware Col. Their hardware Col and byte position are therefore `s//4` and `s%4`, respectively.
 
-The replica term creates four copies separated by 32 lanes:
+The replica then creates four copies along `TLane` at a stride of 32:
 
 ```text
 TLane = r + 32 * q, where q in {0, 1, 2, 3}
 TCol  = s
 ```
 
-So the 32-row group is visible at TMEM lanes 0 through 31, 32 through 63, 64 through 95, and 96 through 127. This broadcasts the scale-factor group to four warps ({ref}`chap_layout_generations`). Each of the four warp-sized TMEM lane windows sees the same scale-factor group.
+The 32-row group consequently appears in lanes `0-31`, `32-63`, `64-95`, and `96-127`. Each warp's 32-lane TMEM window can access the same scale factors. The complete layout adds outer iters for the M and K-scale-block dimensions; this atom describes only the local pattern read by one MMA. See {ref}`chap_layout_generations` for the corresponding hardware data path.
 
-In the full block-scaled MMA layout, this atom is combined with outer iters over M rows and K scale-factor groups. Several scale factors may also be packed into one 32-bit `TCol` cell, depending on the scale-factor dtype. For example, fp8 scale factors can pack four values into one 32-bit column cell. Optional stride-zero reuse and pipeline-depth iters can then describe scale reuse across multiple MMAs and double buffering.
+Accumulators and scale factors therefore use the same `TileLayout` model. An accumulator layout normally maps each element to one TMEM coordinate, while a scale-factor layout adds replication in the same `TLane`/`TCol` space.
 
-The important part is that the same `TileLayout` model describes both cases. The accumulator is a single placement in TMEM. The scale factors are a replicated placement in the same TMEM address space.
+## Common Layout Constructors
 
-## Ready-Made Layouts
-
-Most kernels do not hand-write every hardware layout. TIRx provides constructors for the layouts that appear often.
+Kernels rarely need to spell out every hardware layout by hand. TIRx provides constructors for common patterns.
 
 ```python
 tmem_datapath_layout(datapath, rows, cols)
 ```
 
-returns the TMEM accumulator layout written by `tcgen05.mma`. The `datapath` argument selects the row placement pattern. For example, `"D"` corresponds to the `M = 128` identity-style placement, while `"F"` corresponds to the `M = 64` scattered placement.
+This returns the TMEM accumulator layout written by `tcgen05.mma`. The `datapath` argument selects the row mapping. For example, `"D"` is the direct row mapping used for `M=128`, while `"F"` is the mapping that scatters `M=64` across several Lane regions.
 
 ```python
 tcgen05_atom_layout(instr_shape, tensor_shape, dtype)
 ```
 
-returns the register tile layout moved by a `tcgen05.ld` or `tcgen05.st` atom. Examples of instruction shapes include `.32x32b`, `.16x64b`, `.16x128b`, and related forms. At the DSL level this is a warpgroup-distributed tile. During lowering it becomes four warp-collective `tcgen05.ld` or `tcgen05.st` instructions, one per warp, with each warp handling its own 32 TMEM lanes.
+This returns the register tile layout associated with a `tcgen05.ld` or `tcgen05.st` data-movement shape. `instr_shape` may be `"32x32b"`, `"16x64b"`, `"16x128b"`, or another supported string. Together, `tensor_shape` and `dtype` determine the repeat factor.
+
+The returned object describes a tile distributed across the registers of a warpgroup's threads. When used by `Tx.wg.copy_async` between TMEM and a local fragment, lowering can select the matching warp-collective `tcgen05.ld` or `tcgen05.st`; each warp handles its own 32-lane TMEM partition.
 
 ```python
 wg_local_layout(cols, rows=128)
 ```
 
-returns a warpgroup-local register tile, usually with one row per thread on `tid_in_wg`.
+This returns a warpgroup-local register tile. It maps logical rows to `tid_in_wg` and columns within a row to that thread's local `m` axis. With the default `rows=128`, each thread owns one row.
 
-These helpers are there to avoid rewriting common hardware mappings by hand. They do not hide the model. Each helper returns an ordinary `TileLayout` built from the same `S` and `R` pieces described above.
+All three constructors return ordinary `TileLayout` objects built from the same iters and named axes. They are convenience wrappers for hardware mappings that recur across kernels.
 
 ## SwizzleLayout and ComposeLayout
 
-A `TileLayout` is affine. It can express strides, replication, and offsets over named axes. That is enough for many placements, including thread fragments, TMEM tiles, and compact scale-factor layouts.
+`TileLayout` is affine. It can express strides, replication, and offsets over named axes, making it suitable for register fragments, TMEM tiles, and scale-factor layouts.
 
-Shared memory swizzles need something else. The swizzle used to avoid bank conflicts is not an affine stride pattern. It is an XOR-based permutation of the linear shared-memory address.
-
-TIRx therefore keeps swizzling as a separate layout object:
+A shared-memory swizzle is not affine. It uses XOR to permute a linear shared-memory address and change which banks receive the elements. TIRx therefore represents it with a separate object:
 
 ```python
 SwizzleLayout(...)
 ```
 
-and composes it with the tile layout:
+When a buffer needs only the swizzle, `SwizzleLayout` can be attached directly. When the swizzle must be applied on top of an affine tile mapping, use `ComposeLayout`:
 
 ```python
 ComposeLayout(swizzle, tile)
 ```
 
-The tile layout first produces a linear memory address. The swizzle then permutes that address. Keeping these two layers separate is cleaner than forcing the XOR permutation into the affine layout model.
+Here, `tile` must produce a linear address on the default `m` axis only. During evaluation, the tile layout produces that address first, and the swizzle then permutes it. This keeps the affine shape-and-stride mapping separate from the non-affine XOR transform.
 
 ## Why Swizzle
 
-Shared memory is divided into 32 banks, with each bank word holding 4 bytes. When the lanes of one access touch different addresses in the same bank, the access is serialized by a bank conflict.
+{ref}`chap_data_layout` introduced shared-memory bank conflicts and XOR swizzling. Here we focus on how the API represents them.
 
-A plain row-major tile can create this conflict structurally. Consider an `(8, 64)` float16 tile with row-major layout:
+Consider a row-major `(8, 64)` float16 tile:
 
 ```python
 TileLayout(S[(8, 64) : (64@m, 1@m)])
 ```
 
-The logical element `(i, j)` has linear element address:
+Logical element `(i, j)` has linear element address:
 
 ```text
 m = 64 * i + j
 ```
 
-Each row is 64 float16 values, or 128 bytes. That is exactly one full shared memory bank line. If a warp reads down a column with fixed `j`, each row step advances by one full 128-byte line. The bank index repeats, so the column read collapses onto the same bank across rows.
+Each row contains 64 float16 values, or 128 bytes. Reading a fixed column `j` advances by 128 bytes from one row to the next, so several accesses may repeatedly land in the same set of banks.
 
-The swizzle changes this by making the low address bits depend on higher row bits. A column that would otherwise land repeatedly on the same bank is scattered across different banks.
+A swizzle makes low address bits depend on higher row bits, scattering a column access that would otherwise repeatedly hit the same bank.
 
 ## The Swizzle Transform
 
-A `SwizzleLayout` is controlled by three integer parameters:
+`SwizzleLayout` is controlled by three integer parameters:
 
 ```text
 per_element = M
@@ -528,17 +420,15 @@ swizzle_len = B
 atom_len    = S
 ```
 
-The input is a linear element address `m`.
+All three parameters are bit counts, not byte counts. The formulas below take a linear element address `m` as input.
 
-The low `M` bits of `m` are left unchanged. This preserves a small contiguous group of elements. The higher bits are shifted down into a temporary value:
+`M` is the number of low bits left unchanged, `B` is the width of the bit field participating in the XOR, and `S` is the distance between the two bit fields. First preserve the low `M` bits of `m` so that a small group of adjacent elements remains contiguous, then shift the remaining high bits down:
 
 ```text
 x = m >> M
 ```
 
-Then the bit group at positions `[S, S + B)` of `x` is XORed into the bit group `[0, B)` of `x`. The swizzled address is then formed by putting the unchanged low `M` bits back.
-
-Equivalently:
+Next, XOR bits `[S, S+B)` of `x` into bits `[0, B)`, then restore the preserved low `M` bits:
 
 ```text
 mask = (1 << B) - 1
@@ -550,31 +440,31 @@ x2   = x ^ ((x >> S) & mask)
 addr = (x2 << M) | low
 ```
 
-For the layout to be well formed, `S` must be at least `B`.
+A valid swizzle requires `S >= B`.
 
-The point of the transform is not to change which logical elements are in the tile. It changes where those elements land in shared memory. The MMA still reads the same logical tile. The swizzle makes the physical bank pattern better.
+The transform does not change which logical elements belong to the tile. It changes only their physical addresses in shared memory. A subsequent MMA still reads the same logical tile, but its bank access pattern is different.
 
 ## Choosing Swizzle Parameters
 
-In normal use, the swizzle parameters are chosen from the dtype and the shared-memory swizzle mode. The common modes are 32-byte, 64-byte, and 128-byte swizzles.
+In practice, the data type and shared-memory swizzle mode usually determine these parameters. Common modes include 32-byte, 64-byte, and 128-byte swizzles.
 
-The `per_element` parameter is chosen so that a small vector-sized group stays contiguous. For float16, a 16-byte vector contains 8 elements, so:
+`per_element` preserves enough low element-address bits to keep one vector group contiguous. For float16, a 16-byte vector contains eight elements:
 
 ```text
 M = log2(8) = 3
 ```
 
-With a 128-byte swizzle, the layout uses:
+A 128-byte swizzle uses:
 
 ```python
 SwizzleLayout(per_element=3, swizzle_len=3, atom_len=3)
 ```
 
-This keeps the 16-byte vector group intact while still permuting the larger shared-memory address pattern enough to break the column bank conflict.
+Here, 128 bytes is the width of one row in the swizzle atom; the complete atom contains eight rows. These parameters preserve each contiguous 16-byte vector group while permuting higher address bits to spread column accesses across banks.
 
-Most code should not derive these parameters by hand. The dtype and descriptor mode usually determine them. What matters for the programmer is that the swizzle in the TIRx layout, the TMA descriptor, and the MMA expectation all match.
+Kernel code generally should not derive these parameters by hand. The data type and descriptor mode usually select the configuration. The important requirement is that the TIRx layout, TMA descriptor, and MMA all agree on the shared-memory arrangement.
 
-A swizzled shared memory allocation therefore looks like:
+A swizzled shared-memory allocation can be written as:
 
 ```python
 tile = TileLayout(S[(8, 64) : (64@m, 1@m)])
@@ -583,91 +473,42 @@ swizzle = SwizzleLayout(per_element=3, swizzle_len=3, atom_len=3)
 layout = ComposeLayout(swizzle, tile)
 ```
 
-The composed layout is what gets attached to the shared memory buffer.
+The composed `layout` is attached to the shared-memory buffer. We can now use it to inspect a concrete address mapping.
 
-## Bank and Line of an Element
+## Example: Applying a 128B Swizzle to an `(8, 64)` float16 Tile
 
-To see whether a swizzle helps, translate the swizzled element address back into a shared memory bank.
-
-Let `addr` be the swizzled element address, and let `b` be the element size in bytes. The byte address is:
-
-```text
-byte = addr * b
-```
-
-The bank is:
-
-```text
-bank = floor(byte / 4) mod 32
-```
-
-The 128-byte bank line is:
-
-```text
-line = floor(byte / 128)
-```
-
-For float16, `b = 2`, so the bank formula becomes:
-
-```text
-bank = floor(addr / 2) mod 32
-```
-
-This is the formula used in the worked example below.
-
-## Worked Example: 128B Swizzle on an `(8, 64)` float16 Tile
-
-Return to the row-major float16 tile:
+Continue with the 128-byte swizzle above. The row-major tile starts with linear element address:
 
 ```text
 m = 64 * i + j
 ```
 
-Use:
-
-```python
-SwizzleLayout(per_element=3, swizzle_len=3, atom_len=3)
-```
-
-The transform becomes:
-
-```text
-x    = m >> 3
-addr = ((x ^ ((x >> 3) & 7)) << 3) | (m & 7)
-```
-
-Since:
-
-```text
-m = 64 * i + j
-```
-
-we can write:
+Define:
 
 ```text
 q = floor(j / 8)
 r = j mod 8
 ```
 
-and the swizzled address is:
+Substituting into the swizzle transform gives:
 
 ```text
 addr = 64 * i + 8 * (q xor i) + r
 ```
 
-Now look at column `j = 0`. Then `q = 0` and `r = 0`, so:
+For column `j=0`, both `q` and `r` are zero:
 
 ```text
 addr = 72 * i
 ```
 
-For float16, the bank is:
+Shared memory has 32 banks, each with a 4-byte bank word. For float16:
 
 ```text
 bank = floor(addr / 2) mod 32
 ```
 
-So the eight rows map to:
+The eight rows therefore map to:
 
 ```text
 i = 0: bank 0
@@ -680,32 +521,14 @@ i = 6: bank 24
 i = 7: bank 28
 ```
 
-The column now touches eight distinct banks. The conflict is gone.
-
-Without swizzling, the same column has address:
-
-```text
-m = 64 * i
-```
-
-and therefore:
+This column access uses eight distinct banks. Without swizzling, the same column has address `m=64*i`, so:
 
 ```text
 bank = floor(64 * i / 2) mod 32 = 0
 ```
 
-Every row lands on bank 0, so the access is serialized. The swizzle changes only the physical placement, but that is enough to turn the column access into a conflict-free one.
+All eight rows land in bank 0. The swizzle leaves the logical tile unchanged but rearranges its physical addresses so that this access pattern no longer concentrates on one bank.
 
-This guarantee depends on using the swizzle in the way it was designed. The dtype, swizzle width, and access shape have to match the TMA and MMA descriptor modes. A 128-byte float16 swizzle is designed around the relevant 16-byte row chunks and Tensor Core access pattern. It is not a promise that arbitrary shared memory accesses become conflict free. The demo at the top of this chapter makes this visible: choose a dtype and swizzle mode, and watch a column collapse onto one bank with no swizzle, then scatter across the bank view once the matching swizzle is applied.
+This derivation only shows that this float16 column access is spread over eight banks. Whether another access is conflict-free still depends on the data type, access width, and hardware instruction's access shape. Change the data type and swizzle mode in the demo at the beginning of the chapter to compare their address mappings directly.
 
-## Design Rationale
-
-The layout API follows three design choices.
-
-First, it supports general shapes. Hardware tiles are not always powers of two. Global tensors, shared memory stages, TMEM accumulators, and scale-factor buffers often have shapes that come from capacity limits or algorithm choices. The layout model treats those shapes as normal.
-
-Second, the mapping goes from logical coordinates to physical coordinates. This direction is important because replication is common. One logical element may live in several physical places. A logical-to-physical map represents that directly as a set of coordinates.
-
-Third, hardware axes are explicit. The layout does not use anonymous dimensions and rely on context to explain them later. The difference between `tx`, `tid_in_wg`, `laneid`, `warpid`, `TLane`, and `TCol` is written into the layout itself.
-
-Legality and feasibility checks are not the job of the layout object alone. A layout can say where data is placed. Higher-level tile primitives decide whether a given operation can legally and efficiently use that placement. This separation keeps the layout API small while still giving the compiler enough information to dispatch real hardware operations.
+For `tcgen05` layouts covered by existing constructors, use helpers such as `tmem_datapath_layout` and `tcgen05_atom_layout`. Other affine layouts still use `S[...]`, `R[...]`, and an offset. When inspecting a `TileLayout`, remember that `apply()` computes only the base physical coordinate and does not enumerate replicas. Shared-memory swizzles are represented by `SwizzleLayout`; use `ComposeLayout(swizzle, tile)` when applying one to a tile layout that produces a linear `m` address.

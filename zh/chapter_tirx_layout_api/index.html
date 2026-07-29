@@ -597,13 +597,6 @@
 </div>
 <p>各分量乘以自己的 stride 后，基础坐标为 <code class="docutils literal notranslate"><span class="pre">laneid=5</span></code>、<code class="docutils literal notranslate"><span class="pre">warpid=0</span></code>、<code class="docutils literal notranslate"><span class="pre">m=1</span></code>；最后加入 <code class="docutils literal notranslate"><span class="pre">5&#64;warpid</span></code>，得到返回值中的 <code class="docutils literal notranslate"><span class="pre">warpid=5</span></code>。</p>
 <p><code class="docutils literal notranslate"><span class="pre">apply()</span></code> 不枚举 replica，所以返回值中只有这个基础位置。当前 layout 的 <code class="docutils literal notranslate"><span class="pre">R[2</span> <span class="pre">:</span> <span class="pre">4&#64;warpid]</span></code> 还会让使用该 layout 的 tile 操作处理 <code class="docutils literal notranslate"><span class="pre">warpid=5</span></code> 和 <code class="docutils literal notranslate"><span class="pre">warpid=9</span></code> 两个物理位置。</p>
-<p><code class="docutils literal notranslate"><span class="pre">apply()</span></code> 支持三种输入形式：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">linear_coord</span><span class="p">)</span>
-<span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="o">*</span><span class="n">shard_coord</span><span class="p">)</span>
-<span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="o">*</span><span class="n">logical_coord</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">input_shape</span><span class="p">)</span>
-</pre></div>
-</div>
-<p>第一种形式直接使用已经扁平化的索引；第二种形式为每个 shard iter 直接提供一个坐标；第三种形式先按 <code class="docutils literal notranslate"><span class="pre">input_shape</span></code> flatten，再按照 shard extents 拆分。</p>
 <p>对于整个 <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">16)</span></code> tile，基础映射为：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>laneid = 4 * i + (floor(j / 2) mod 4)
 warpid = floor(j / 8) + 5
