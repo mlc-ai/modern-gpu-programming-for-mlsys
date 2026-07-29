@@ -249,6 +249,7 @@ def hgemm_v7(M, N, K):
                 # Wait for MMA results
                 mma2ld.wait(wb_ps.stage, wb_ps.phase)
                 wb_ps.advance()
+                T.ptx.tcgen05.fence.after_thread_sync()
 
                 # Read TMEM -> registers (warpgroup scope)
                 reg = T.alloc_local((BLK_N,), acc_type)
@@ -292,12 +293,14 @@ To run any of these kernels, reuse the same compile / run / check harness we sho
 
 Step 7 can afford a pleasantly simple epilogue. With only `BLK_N=128` columns, the writeback warpgroup reads the whole TMEM tile into registers in a single pass and then issues one TMA store. Steps 8 and 9 will not have this luxury, which is precisely why they introduce the chunking we add later, but for now the sequence is:
 
-1. Wait for MMA: `mma2ld.wait(phase)`. Steps 8 and 9 in this tutorial add a `fence.after_thread_sync()` here as a conservative extra; the MMA-completion mbarrier already covers the ordering, and most kernels (including CUTLASS) omit it, so Step 7 does too.
+1. Wait for MMA with `mma2ld.wait(phase)`, then execute `T.ptx.tcgen05.fence.after_thread_sync()` to order the subsequent `tcgen05.ld` after this cross-thread completion signal.
 2. Read TMEM -> registers (128 fp32 per thread, warpgroup scope via `Tx.copy_async(reg_wg, tmem[:, :BLK_N])` followed by `T.ptx.tcgen05.wait.ld()`).
 3. Signal MMA: `ld2mma.arrive(0, cta_id=0, pred=True)` (all 128 threads arrive); TMEM is now free for the next tile. The two `arrive` kwargs recur in the clustered steps: `cta_id` names *which CTA's* copy of the barrier to signal (`0` = this CTA, the local barrier; in Step 8 the cooperative arrives target CTA-0 via `cta_mask` instead), and `pred` is a per-thread predicate gating whether this thread actually arrives (`True` here, so every writeback thread counts toward the arrival total).
 4. Cast fp32 -> fp16 in registers.
 5. Write registers -> Dsmem, then `fence.proxy_async("shared::cta") + warpgroup_sync(10)` to flush.
 6. TMA store Dsmem -> GMEM via `cp_async.bulk.commit_group() + wait_group(0)`.
+
+These synchronization operations cover different parts of the handoff. The mbarrier wait observes MMA completion, `fence.after_thread_sync()` establishes cross-thread `tcgen05` execution order, and `tcgen05.wait.ld()` waits until the asynchronous TMEM load has populated its destination registers.
 
 Step 8 (with `BLK_N=256`) and Step 9 (with `MMA_N=256` per consumer) cannot keep this one-pass form, and the reason is register pressure. Reading 256 fp32 values per thread means 256 × 4 = 1024 bytes have to live in each thread's registers at the same time, which risks spilling out to local memory and, on top of that, forces a larger Dsmem buffer. So those steps break the writeback into `EPI_N`-column chunks (`EPI_N=64`): each iteration keeps only `EPI_N` fp32 registers live and issues a correspondingly smaller TMA store, trading a few more store instructions for a register budget that stays comfortable.
 

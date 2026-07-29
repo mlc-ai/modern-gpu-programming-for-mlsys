@@ -497,7 +497,7 @@ tile_scheduler = ClusterPersistentScheduler2D(
 tile_scheduler.init(bx)
 ```
 
-Looping over tiles brings one correctness consequence that is easy to miss. Each tile runs its own fresh K-loop, which means its barrier phases have to start from a known state. In Step 5 a CTA handled exactly one tile, so initializing `phase_tma` and `phase_mma` a single time was perfectly fine. In Step 6 those initializers must move *inside* the `while tile_scheduler.valid()` loop, so that each tile begins with phase state matched to its own TMA and MMA work, rather than inheriting whatever the previous tile happened to leave behind:
+Looping over multiple output tiles requires careful barrier-phase handling. This example fixes `K=4096`, `BLK_K=64`, and `PIPE_DEPTH=2`, so each output tile runs 64 MMA iterations and reuses each TMA stage barrier 32 times. Every barrier therefore returns to its initial parity at the end of a tile, allowing the local phase variables to be reset inside the tile loop:
 
 ```python
 while tile_scheduler.valid():
@@ -505,6 +505,8 @@ while tile_scheduler.valid():
     phase_mma: T.int32 = 0
     ...
 ```
+
+This reset depends on those iteration counts. If changing `K`, `BLK_K`, or the pipeline depth makes any barrier run an odd number of phases per output tile, the kernel must carry the previous parity forward or compute the next parity from the completed iteration count. The wrapper below uses assertions to enforce the parameter constraint required by this implementation.
 
 ### Complete Kernel
 
@@ -533,7 +535,11 @@ def hgemm_v6(M, N, K):
     acc_type = tvm.DataType("float32")
     F16_SIZE = 2
     BLK_M, BLK_N, BLK_K = 128, 128, 64
+    assert K % BLK_K == 0, "K must be divisible by BLK_K"
     K_TILES = K // BLK_K
+    assert K_TILES % (2 * PIPE_DEPTH) == 0, (
+        "K_TILES must be divisible by 2 * PIPE_DEPTH"
+    )
 
     A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (PIPE_DEPTH, BLK_M, BLK_K))
