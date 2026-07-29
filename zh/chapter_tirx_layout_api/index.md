@@ -278,16 +278,6 @@ layout.apply(1, 3, shape=[8, 16])
 
 `apply()` 不枚举 replica，所以返回值中只有这个基础位置。当前 layout 的 `R[2 : 4@warpid]` 还会让使用该 layout 的 tile 操作处理 `warpid=5` 和 `warpid=9` 两个物理位置。
 
-`apply()` 支持三种输入形式：
-
-```python
-layout.apply(linear_coord)
-layout.apply(*shard_coord)
-layout.apply(*logical_coord, shape=input_shape)
-```
-
-第一种形式直接使用已经扁平化的索引；第二种形式为每个 shard iter 直接提供一个坐标；第三种形式先按 `input_shape` flatten，再按照 shard extents 拆分。
-
 对于整个 `(8, 16)` tile，基础映射为：
 
 ```text
