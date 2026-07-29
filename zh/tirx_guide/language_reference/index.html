@@ -2,12 +2,13 @@
 <!DOCTYPE html>
 
 
-<html lang="zh-CN" data-content_root="./" >
+<html lang="zh-CN" data-content_root="../../" >
 
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>索引 &#8212; 面向 MLSys 的现代 GPU 编程</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>TIRx 语言参考 &#8212; 面向 MLSys 的现代 GPU 编程</title>
   
   
   
@@ -26,42 +27,44 @@
   </noscript>
   
   <!-- Loaded before other Sphinx assets -->
-  <link href="_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
-<link href="_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
 
-    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
-    <link rel="stylesheet" type="text/css" href="_static/styles/sphinx-book-theme.css?v=4418a689" />
-    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
-    <link rel="stylesheet" type="text/css" href="_static/custom.css?v=5a4e551b" />
-    <link rel="stylesheet" type="text/css" href="_static/demo-embed.css?v=654c0d46" />
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/demo-embed.css?v=654c0d46" />
   
   <!-- So that users can add custom icons -->
-  <script defer src="_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
   <!-- Pre-loaded scripts that we'll load fully later -->
-  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
-<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
 
-    <script src="_static/documentation_options.js?v=eb1cd0b9"></script>
-    <script src="_static/doctools.js?v=9bcbadda"></script>
-    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
-    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
-    <script src="_static/copybutton.js?v=f281be69"></script>
-    <script src="_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
-    <script src="_static/translations.js?v=beaddf03"></script>
-    <script>DOCUMENTATION_OPTIONS.pagename = 'genindex';</script>
+    <script src="../../_static/documentation_options.js?v=eb1cd0b9"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../../_static/translations.js?v=beaddf03"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'tirx_guide/language_reference/index';</script>
     <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
-    <script src="_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
-    <link rel="icon" href="_static/mlc-favicon.ico"/>
-    <link rel="index" title="索引" href="#" />
-    <link rel="search" title="搜索" href="search.html" />
+    <script src="../../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <link rel="icon" href="../../_static/mlc-favicon.ico"/>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="搜索" href="../../search.html" />
+    <link rel="next" title="Parser 工具" href="cuda/parser_utils.html" />
+    <link rel="prev" title="TIRx Lowering Pipeline" href="../arch/lowering_pipeline.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="zh-CN"/>
   <meta name="docsearch:version" content="" />
   
     
-    <script src="_static/searchtools.js"></script>
-    <script src="_static/language_data.js"></script>
-    <script src="searchindex.js"></script>
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
   
   </head>
   <body data-default-mode="">
@@ -81,7 +84,7 @@
   <dialog id="pst-search-dialog">
     
 <form class="bd-search d-flex align-items-center"
-      action="search.html"
+      action="../../search.html"
       method="get">
   <i class="fa-solid fa-magnifying-glass"></i>
   <input type="search"
@@ -111,8 +114,6 @@
       
       
       
-        
-      
       <dialog id="pst-primary-sidebar-modal"></dialog>
       <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
         
@@ -132,7 +133,7 @@
     
   
 
-<a class="navbar-brand logo" href="index.html">
+<a class="navbar-brand logo" href="../../index.html">
   
   
   
@@ -143,8 +144,8 @@
       
     
     
-    <img src="_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
-    <img src="_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
   
   
 </a></div>
@@ -159,35 +160,35 @@
     <div class="bd-toc-item navbar-nav active">
         <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="chapter_background/index.html">GPU 执行模型</a></li>
-<li class="toctree-l1"><a class="reference internal" href="chapter_performance/index.html">Kernel 性能从何而来</a></li>
-<li class="toctree-l1"><a class="reference internal" href="chapter_data_layout/index.html">数据布局及其记号</a></li>
-<li class="toctree-l1"><a class="reference internal" href="chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
-<li class="toctree-l1"><a class="reference internal" href="chapter_tma/index.html">异步数据搬运：TMA</a></li>
-<li class="toctree-l1"><a class="reference internal" href="chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="chapter_tmem/index.html">Tensor Memory（TMEM）</a></li>
-<li class="toctree-l1"><a class="reference internal" href="chapter_async_barriers/index.html">异步协作：mbarrier</a></li>
-<li class="toctree-l1"><a class="reference internal" href="chapter_clc/index.html">进阶调度：Cluster Launch Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tma/index.html">异步数据搬运：TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tmem/index.html">Tensor Memory（TMEM）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_async_barriers/index.html">异步协作：mbarrier</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_clc/index.html">进阶调度：Cluster Launch Control</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">第二部分：TIRx 概览</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="chapter_intro_tirx/index.html">TIRx 入门</a></li>
-<li class="toctree-l1"><a class="reference internal" href="chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_intro_tirx/index.html">TIRx 入门</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
 </ul>
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
-<ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="appendix/index.html">参考资料</a></li>
-<li class="toctree-l1"><a class="reference internal" href="appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/index.html">参考资料</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="tirx_guide/language_reference/cuda/parser_utils.html">Parser 工具</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tirx_guide/language_reference/cuda/data_types.html">数据类型与表达式</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tirx_guide/language_reference/cuda/buffers.html">Buffer 与内存</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tirx_guide/language_reference/cuda/control_flow.html">控制流</a></li>
-<li class="toctree-l2"><a class="reference internal" href="tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
+<li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">TIRx 语言参考</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="cuda/parser_utils.html">Parser 工具</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cuda/data_types.html">数据类型与表达式</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cuda/buffers.html">Buffer 与内存</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cuda/control_flow.html">控制流</a></li>
+<li class="toctree-l2"><a class="reference internal" href="cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
 </ul>
@@ -254,7 +255,7 @@
 
 
 
-<button onclick="window.location.href='../index.html'"
+<button onclick="window.location.href='../../../index.html'"
   class="btn btn-sm btn-language-switch-button pst-navbar-icon"
   title="Switch to English"
   data-bs-placement="bottom" data-bs-toggle="tooltip"
@@ -297,7 +298,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1></h1>
+    <h1>TIRx 语言参考</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -311,12 +312,22 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-
-<h1 id="index">索引</h1>
-
-<div class="genindex-jumpbox">
- 
+  <section id="tirx">
+<span id="chap-language-reference"></span><h1>TIRx 语言参考<a class="headerlink" href="#tirx" title="Link to this heading">#</a></h1>
+<p>这里集中列出编写 TIRx device kernel 时会用到的语言特性，包括 parser
+工具、数据类型与表达式、buffer 与内存、控制流和 thread 同步。入门章节
+<a class="reference internal" href="../../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">TIRx 入门</span></a> 通过完整示例介绍常用写法；需要查询某项功能的准确
+语法或语义时，可以查阅本节。</p>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="cuda/parser_utils.html">Parser 工具</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cuda/data_types.html">数据类型与表达式</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cuda/buffers.html">Buffer 与内存</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cuda/control_flow.html">控制流</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
+</ul>
 </div>
+</section>
 
 
                 </article>
@@ -329,6 +340,24 @@
                 <footer class="prev-next-footer d-print-none">
                   
 <div class="prev-next-area">
+    <a class="left-prev"
+       href="../arch/lowering_pipeline.html"
+       title="上一页">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">TIRx Lowering Pipeline</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="cuda/parser_utils.html"
+       title="下一页">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">下一页</p>
+        <p class="prev-next-title">Parser 工具</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
 </div>
                 </footer>
               
@@ -379,8 +408,8 @@
   </div>
   
   <!-- Scripts loaded after <body> so the DOM is not blocked -->
-  <script defer src="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
-<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
 
   <footer class="bd-footer">
   </footer>

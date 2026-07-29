@@ -1,0 +1,899 @@
+
+<!DOCTYPE html>
+
+
+<html lang="zh-CN" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Buffer 与内存 &#8212; 面向 MLSys 的现代 GPU 编程</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/demo-embed.css?v=654c0d46" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../../_static/documentation_options.js?v=eb1cd0b9"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../../../_static/translations.js?v=beaddf03"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'tirx_guide/language_reference/cuda/buffers';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <link rel="icon" href="../../../_static/mlc-favicon.ico"/>
+    <link rel="index" title="索引" href="../../../genindex.html" />
+    <link rel="search" title="搜索" href="../../../search.html" />
+    <link rel="next" title="控制流" href="control_flow.html" />
+    <link rel="prev" title="数据类型与表达式" href="data_types.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="zh-CN"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../../_static/searchtools.js"></script>
+    <script src="../../../_static/language_data.js"></script>
+    <script src="../../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">跳转至主要内容</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>回到顶部</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="版本警告"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../../../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_tma/index.html">异步数据搬运：TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_tmem/index.html">Tensor Memory（TMEM）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_async_barriers/index.html">异步协作：mbarrier</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_clc/index.html">进阶调度：Cluster Launch Control</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第二部分：TIRx 概览</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_intro_tirx/index.html">TIRx 入门</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/index.html">参考资料</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="../index.html">TIRx 语言参考</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="parser_utils.html">Parser 工具</a></li>
+<li class="toctree-l2"><a class="reference internal" href="data_types.html">数据类型与表达式</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Buffer 与内存</a></li>
+<li class="toctree-l2"><a class="reference internal" href="control_flow.html">控制流</a></li>
+<li class="toctree-l2"><a class="reference internal" href="threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+<a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button"
+   title="源码库"
+   data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+
+</a>
+
+
+
+
+<button onclick="window.location.href='../../../../index.html'"
+  class="btn btn-sm btn-language-switch-button pst-navbar-icon"
+  title="Switch to English"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-language"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="亮色"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="暗色"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>亮色</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>暗色</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Buffer 与内存</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> 目录 </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">声明 Buffer</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#shared-memory">Shared Memory</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#static-shared-memory">Static Shared Memory</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dynamic-shared-memory">Dynamic Shared Memory</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#smempool">SMEMPool</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#registers">Registers</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#scalar">Scalar</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#let"><code class="docutils literal notranslate"><span class="pre">let</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tensor-memory">Tensor Memory</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#tmempool">TMEMPool</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#buffer-api">Buffer API</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="buffer">
+<h1>Buffer 与内存<a class="headerlink" href="#buffer" title="Link to this heading">#</a></h1>
+<p>Parameter buffer 通过 <code class="docutils literal notranslate"><span class="pre">T.match_buffer</span></code> 绑定，kernel body 中的临时 buffer
+则由下面介绍的两种 declaration API 创建。使用 <code class="docutils literal notranslate"><span class="pre">A[i,</span> <span class="pre">j]</span></code> 访问元素，
+<code class="docutils literal notranslate"><span class="pre">A[m0:m0+BM,</span> <span class="pre">0:BK]</span></code> 取得 <code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code>，<code class="docutils literal notranslate"><span class="pre">A.ptr_to([i,</span> <span class="pre">j])</span></code> 取得
+元素 pointer，<code class="docutils literal notranslate"><span class="pre">A.data</span></code> 取得原始 data pointer。</p>
+<section id="id1">
+<h2>声明 Buffer<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
+<p>创建 buffer 的两个基本 API 是：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">T.alloc_buffer(shape,</span> <span class="pre">dtype,</span> <span class="pre">scope=...,</span> <span class="pre">...)</span></code>：<strong>分配新的 storage</strong>，
+生成一个 <code class="docutils literal notranslate"><span class="pre">AllocBuffer</span></code> node，并返回对应的 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code>。
+<code class="docutils literal notranslate"><span class="pre">T.alloc_shared</span></code> 和 <code class="docutils literal notranslate"><span class="pre">T.alloc_local</span></code> 分别是
+<code class="docutils literal notranslate"><span class="pre">scope=&quot;shared&quot;</span></code> 和 <code class="docutils literal notranslate"><span class="pre">scope=&quot;local&quot;</span></code> 的简写。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">T.decl_buffer(shape,</span> <span class="pre">dtype,</span> <span class="pre">data=...,</span> <span class="pre">...)</span></code>：在已有 pointer <code class="docutils literal notranslate"><span class="pre">data</span></code>
+上**声明一个 view**，不会分配 storage。它可以为 pool 的一段区域或
+tensor-memory address 创建 alias，也可以重新解释已有 storage。
+<code class="docutils literal notranslate"><span class="pre">data=None</span></code> 时，它和 <code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code> 一样会分配 storage。</p></li>
+</ul>
+<p>Buffer 的 <code class="docutils literal notranslate"><span class="pre">data</span></code> pointer 是 immutable <code class="docutils literal notranslate"><span class="pre">Var</span></code>：<code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code> 创建它，
+<code class="docutils literal notranslate"><span class="pre">decl_buffer</span></code> 接收它。如果已有的是 pointer 表达式，需要先将表达式绑定为
+<code class="docutils literal notranslate"><span class="pre">Var</span></code>，详见 <a class="reference internal" href="data_types.html"><span class="doc">数据类型与表达式</span></a>。</p>
+<p>两种 API 使用同一个 buffer descriptor，主要参数如下：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 28.0%" />
+<col style="width: 72.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>参数</p></th>
+<th class="head"><p>含义</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">dtype</span></code></p></td>
+<td><p>元素类型，例如 <code class="docutils literal notranslate"><span class="pre">&quot;float32&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;float16&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;float4_e2m1fn&quot;</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">shape</span></code></p></td>
+<td><p>逻辑 shape，也就是各维 extents 组成的 tuple</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">layout</span></code></p></td>
+<td><p>物理映射，详见 <a class="reference internal" href="../../../chapter_tirx_layout_api/index.html#chap-tirx-layout-api"><span class="std std-ref">TileLayout</span></a>；
+<code class="docutils literal notranslate"><span class="pre">&quot;default&quot;</span></code> 表示 dense row-major</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">elem_offset</span></code> / <code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">elem_offset``（或</span> <span class="pre">``byte_offset</span></code>）将 view 放在 <code class="docutils literal notranslate"><span class="pre">data</span></code> 内的某个
+offset；<code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code> 保存预先分配的地址，用于 tensor memory</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">align</span></code></p></td>
+<td><p>Data pointer 的 byte alignment</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">scope</span></code> 参数选择 memory space：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 26.0%" />
+<col style="width: 22.0%" />
+<col style="width: 52.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Scope</p></th>
+<th class="head"><p>简写</p></th>
+<th class="head"><p>Memory</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;global&quot;</span></code></p></td>
+<td><p>默认值</p></td>
+<td><p>Device global memory</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;shared&quot;</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">T.alloc_shared</span></code></p></td>
+<td><p>Static shared memory（<code class="docutils literal notranslate"><span class="pre">__shared__</span></code>）</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;shared.dyn&quot;</span></code></p></td>
+<td><p>pool</p></td>
+<td><p>Dynamic shared memory，使用 pool 管理</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;local&quot;</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">T.alloc_local</span></code></p></td>
+<td><p>Per-thread registers</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">&quot;tmem&quot;</span></code></p></td>
+<td><p>TMEM pool</p></td>
+<td><p>Blackwell tensor memory</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">K</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>   <span class="c1"># parameter buffer</span>
+<span class="n">As</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_shared</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BK</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">)</span>                 <span class="c1"># new shared tile</span>
+<span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">4</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>                     <span class="c1"># register accumulator</span>
+<span class="n">view</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BK</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">As</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>  <span class="c1"># a view over As</span>
+</pre></div>
+</div>
+<p>对于非 TMEM buffer，基于 pointer 的 buffer 只是 pointer 加上一组 metadata。
+访问元素时，编译器根据 layout 计算地址：</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">addr</span><span class="p">(</span><span class="n">buffer</span><span class="p">[</span><span class="n">coord</span><span class="p">])</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">data</span> <span class="o">+</span> <span class="n">elem_offset</span> <span class="o">+</span> <span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">coord</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">shape</span><span class="p">)[</span><span class="s2">&quot;m&quot;</span><span class="p">]</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">layout.apply</span></code> 返回各个 physical axis 的映射，其中 <code class="docutils literal notranslate"><span class="pre">&quot;m&quot;</span></code> 分量是 element
+offset。因此，同一个逻辑访问会因为 buffer metadata 不同而生成不同的地址
+计算。下面都在 <code class="docutils literal notranslate"><span class="pre">4×8</span></code> 区域上执行 <code class="docutils literal notranslate"><span class="pre">B[i,</span> <span class="pre">j]</span> <span class="pre">=</span> <span class="pre">A[i,</span> <span class="pre">j]</span> <span class="pre">+</span> <span class="pre">1</span></code>，但用四种
+方式声明 <code class="docutils literal notranslate"><span class="pre">B</span></code>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">TileLayout</span><span class="p">,</span> <span class="n">S</span>
+
+<span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>                                       <span class="c1"># row-major</span>
+<span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">):(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">)]))</span>  <span class="c1"># column-major</span>
+<span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">elem_offset</span><span class="o">=</span><span class="mi">64</span><span class="p">)</span>                       <span class="c1"># shifted view</span>
+<span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">):(</span><span class="mi">16</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]))</span> <span class="c1"># row stride 16</span>
+</pre></div>
+</div>
+<p>生成的 CUDA 会为 <code class="docutils literal notranslate"><span class="pre">B[i,</span> <span class="pre">j]</span></code> 使用不同的 index。<code class="docutils literal notranslate"><span class="pre">A[i,</span> <span class="pre">j]</span></code> 的 load 始终
+保持 <code class="docutils literal notranslate"><span class="pre">i*8</span> <span class="pre">+</span> <span class="pre">j</span></code>，变化的只有 <code class="docutils literal notranslate"><span class="pre">B</span></code> 的 metadata：</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">B_ptr</span><span class="p">[((</span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">j</span><span class="p">)]</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w">   </span><span class="c1">// row-major:        i*8 + j</span>
+<span class="n">B_ptr</span><span class="p">[((</span><span class="n">j</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="p">)]</span><span class="w">        </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w">   </span><span class="c1">// column-major:     j*4 + i</span>
+<span class="n">B_ptr</span><span class="p">[(((</span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">j</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">64</span><span class="p">)]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w">   </span><span class="c1">// elem_offset=64:   i*8 + j + 64</span>
+<span class="n">B_ptr</span><span class="p">[((</span><span class="n">i</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">j</span><span class="p">)]</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="p">...;</span><span class="w">   </span><span class="c1">// row stride 16:    i*16 + j</span>
+</pre></div>
+</div>
+</section>
+<section id="shared-memory">
+<h2>Shared Memory<a class="headerlink" href="#shared-memory" title="Link to this heading">#</a></h2>
+<p>Shared memory 分为两种：<strong>static shared memory</strong> 的大小在编译期固定，
+<strong>dynamic shared memory</strong> 的大小在 launch 时确定。TIRx 还提供 pool helper
+管理 dynamic shared memory。</p>
+<section id="static-shared-memory">
+<h3>Static Shared Memory<a class="headerlink" href="#static-shared-memory" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">T.alloc_shared``（也就是</span> <span class="pre">``scope=&quot;shared&quot;</span></code>）创建最简单的 static shared
+buffer，其大小在编译期确定。下面先将数据写入 shared memory，通过
+<code class="docutils literal notranslate"><span class="pre">cta_sync</span></code> 确保整个 block 都能看到写入，再读出结果：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">smem_demo</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">,</span> <span class="n">B_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">128</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">128</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
+    <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">1</span><span class="p">])</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">thread_id</span><span class="p">([</span><span class="mi">128</span><span class="p">])</span>
+    <span class="n">sm</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_shared</span><span class="p">((</span><span class="mi">128</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>   <span class="c1"># static shared memory</span>
+    <span class="n">sm</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
+    <span class="n">B</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">sm</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>它会生成普通的 <code class="docutils literal notranslate"><span class="pre">__shared__</span></code> array。下面省略了无关的 CUDA 代码：</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span><span class="w"> </span><span class="s">&quot;C&quot;</span><span class="w"> </span><span class="n">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">__launch_bounds__</span><span class="p">(</span><span class="mi">128</span><span class="p">)</span>
+<span class="n">smem_demo_kernel</span><span class="p">(</span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">A_ptr</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">__restrict__</span><span class="w"> </span><span class="n">B_ptr</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">tx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">((</span><span class="kt">int</span><span class="p">)</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">);</span>
+<span class="w">  </span><span class="n">__shared__</span><span class="w"> </span><span class="nf">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">sm_ptr</span><span class="p">[</span><span class="mi">128</span><span class="p">];</span><span class="w">      </span><span class="c1">// T.alloc_shared</span>
+<span class="w">  </span><span class="n">sm_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">];</span>
+<span class="w">  </span><span class="n">__syncthreads</span><span class="p">();</span><span class="w">                               </span><span class="c1">// T.cuda.cta_sync()</span>
+<span class="w">  </span><span class="n">B_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">sm_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">2.0f</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+</section>
+<section id="dynamic-shared-memory">
+<h3>Dynamic Shared Memory<a class="headerlink" href="#dynamic-shared-memory" title="Link to this heading">#</a></h3>
+<p><strong>Dynamic shared memory**（``scope=&quot;shared.dyn&quot;``）的大小由 launch parameter
+``sharedMemBytes`` 指定，而不是在编译期写死。一个 kernel 只能有**一个</strong>
+dynamic-shared allocation，也就是 arena。因此需要先分配一次 arena，再用
+<code class="docutils literal notranslate"><span class="pre">T.decl_buffer</span></code> 在 arena pointer 的不同 <code class="docutils literal notranslate"><span class="pre">elem_offset</span></code> 上声明 views：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">arena</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_buffer</span><span class="p">((</span><span class="mi">128</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;shared.dyn&quot;</span><span class="p">)</span>   <span class="c1"># the one arena</span>
+<span class="n">As</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">((</span><span class="mi">64</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">arena</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;shared.dyn&quot;</span><span class="p">)</span>                 <span class="c1"># offset 0</span>
+<span class="n">Bs</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">((</span><span class="mi">64</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">arena</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">elem_offset</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;shared.dyn&quot;</span><span class="p">)</span> <span class="c1"># offset 64</span>
+<span class="n">As</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span>
+<span class="n">Bs</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">B</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span>
+<span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
+<span class="n">C</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">As</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">+</span> <span class="n">Bs</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span>
+</pre></div>
+</div>
+<p>两个 views 共用同一个 <code class="docutils literal notranslate"><span class="pre">extern</span> <span class="pre">__shared__</span></code> arena。下面为便于阅读，将 arena
+命名为 <code class="docutils literal notranslate"><span class="pre">smem</span></code>，并省略无关代码：</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">extern</span><span class="w"> </span><span class="n">__shared__</span><span class="w"> </span><span class="nf">__align__</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">smem</span><span class="p">[];</span><span class="w">   </span><span class="c1">// the one dynamic-shared arena</span>
+<span class="n">smem</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">];</span><span class="w">                       </span><span class="c1">// As — view at offset 0</span>
+<span class="n">smem</span><span class="p">[</span><span class="n">tx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">64</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">B_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">];</span><span class="w">                       </span><span class="c1">// Bs — view at offset 64</span>
+<span class="n">__syncthreads</span><span class="p">();</span>
+<span class="n">C_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">smem</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">smem</span><span class="p">[</span><span class="n">tx</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">64</span><span class="p">];</span>
+</pre></div>
+</div>
+<p>分别调用两次 <code class="docutils literal notranslate"><span class="pre">alloc_buffer(scope=&quot;shared.dyn&quot;)</span></code> 会报错，因为只允许一个
+dynamic shared memory allocation。Static shared memory 的大小在编译期
+确定，例如 <code class="docutils literal notranslate"><span class="pre">__shared__</span> <span class="pre">T</span> <span class="pre">x[N];</span></code>；dynamic shared memory 则是 launch 时
+指定大小的单个 arena，各个 buffer 是 arena 内不同 offset 上的 views。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><strong>TVM 如何记录 dynamic-shared 大小。</strong> Arena 的大小在编译期已知，本例中
+是 <code class="docutils literal notranslate"><span class="pre">128</span></code> 个 float，也就是 <code class="docutils literal notranslate"><span class="pre">512</span></code> bytes。Lowering 时，TVM 会在 device
+kernel 的 <code class="docutils literal notranslate"><span class="pre">tirx.kernel_launch_params</span></code> 中加入
+<code class="docutils literal notranslate"><span class="pre">&quot;tirx.use_dyn_shared_memory&quot;</span></code> tag。Host launcher 计算总 byte 数，并将
+它作为最后一个 launch argument：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># device kernel attribute:</span>
+<span class="s2">&quot;tirx.kernel_launch_params&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="s2">&quot;tirx.use_dyn_shared_memory&quot;</span><span class="p">]</span>
+
+<span class="c1"># host-side launch call  (..., gridDim.x, blockDim.x, dyn_shared_bytes):</span>
+<span class="n">T</span><span class="o">.</span><span class="n">call_packed</span><span class="p">(</span><span class="s2">&quot;dyn_kernel&quot;</span><span class="p">,</span> <span class="n">A</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">B</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">C</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>运行时，这里的 <code class="docutils literal notranslate"><span class="pre">512</span></code> 会成为 <code class="docutils literal notranslate"><span class="pre">cuLaunchKernelEx</span></code> 调用中的
+<code class="docutils literal notranslate"><span class="pre">config.sharedMemBytes</span></code>。用户不需要手工设置，它由 <code class="docutils literal notranslate"><span class="pre">shared.dyn</span></code>
+allocation 的大小推导得到。</p>
+</div>
+</section>
+<section id="smempool">
+<h3>SMEMPool<a class="headerlink" href="#smempool" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">T.SMEMPool</span></code> 自动管理 arena。它使用 bump allocation 计算 offset，因此
+不需要手工 <code class="docutils literal notranslate"><span class="pre">decl</span></code> 每个 view。除了 <code class="docutils literal notranslate"><span class="pre">alloc</span></code> 和 <code class="docutils literal notranslate"><span class="pre">commit</span></code>，它还支持
+per-buffer <code class="docutils literal notranslate"><span class="pre">align=</span></code>、创建 MMA-compatible swizzle layout 的 <code class="docutils literal notranslate"><span class="pre">alloc_mma</span></code>
+helper，以及将 cursor 回退以复用空间的 <code class="docutils literal notranslate"><span class="pre">move_base_to</span></code>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>                          <span class="c1"># bump allocator over shared.dyn</span>
+<span class="n">As</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BK</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>   <span class="c1"># carve a tile</span>
+<span class="n">Bs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BK</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>
+<span class="n">Cs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc_mma</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">)</span>     <span class="c1"># MMA-compatible, swizzle inferred</span>
+<span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>                                 <span class="c1"># finalize the pool&#39;s size</span>
+<span class="c1"># pool.move_base_to(offset) rewinds the cursor to reuse space</span>
+</pre></div>
+</div>
+<p>下方的 TMEM pool 建立在 <code class="docutils literal notranslate"><span class="pre">SMEMPool</span></code> 之上。</p>
+</section>
+</section>
+<section id="registers">
+<h2>Registers<a class="headerlink" href="#registers" title="Link to this heading">#</a></h2>
+<p>Per-thread 临时数据位于 registers 中。使用
+<code class="docutils literal notranslate"><span class="pre">T.alloc_local(shape,</span> <span class="pre">dtype)``（即</span> <span class="pre">``scope=&quot;local&quot;</span></code>）分配；它只属于当前
+thread，并会生成保存在 registers 中的 local array。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">r</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">4</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>   <span class="c1"># per-thread register array</span>
+<span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="mi">4</span><span class="p">):</span>
+    <span class="n">r</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">k</span><span class="p">]</span>
+<span class="c1"># ... compute on r[0..3] ...</span>
+</pre></div>
+</div>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">r_ptr</span><span class="p">[</span><span class="mi">4</span><span class="p">];</span><span class="w">          </span><span class="c1">// per-thread, register-resident</span>
+<span class="n">r_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">0</span><span class="p">];</span>
+<span class="n">r_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="mi">1</span><span class="p">];</span>
+<span class="c1">// ...</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><code class="docutils literal notranslate"><span class="pre">alignas(64)</span></code> 来自 buffer 的默认 alignment。<code class="docutils literal notranslate"><span class="pre">data_alignment</span></code> 默认为
+<code class="docutils literal notranslate"><span class="pre">runtime::kAllocAlignment</span></code>，也就是 64 bytes；CUDA codegen 会把它加到
+每个 allocation 上，包括 per-thread <code class="docutils literal notranslate"><span class="pre">local</span></code> array。对于保存在
+registers 中的 array，这个 alignment <strong>不会影响性能</strong>：只要 index 能在
+编译期解析，nvcc/ptxas 就会通过 scalar replacement of aggregates
+（SROA）将 thread-local array 提升为 registers，因而不会使用可寻址的
+local memory。只有使用动态 index 并 spill 到 local memory 的 array
+才会实际受到 over-alignment 影响，这种情况并不常见。Register local 的
+over-alignment 是一个已知问题，未来应为 <code class="docutils literal notranslate"><span class="pre">local</span></code> scope 使用 dtype 的
+natural alignment。</p>
+</div>
+<section id="scalar">
+<h3>Scalar<a class="headerlink" href="#scalar" title="Link to this heading">#</a></h3>
+<p>Scalar 本质上是只有**一个元素**的 register array。可以直接分配大小为 1
+的 <code class="docutils literal notranslate"><span class="pre">local</span></code> buffer，并通过 <code class="docutils literal notranslate"><span class="pre">[0]</span></code> 访问：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">phase</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;int32&quot;</span><span class="p">)</span>   <span class="c1"># 1-element register array</span>
+<span class="n">phase</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="k">while</span> <span class="n">phase</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
+    <span class="n">acc</span> <span class="o">=</span> <span class="n">acc</span> <span class="o">+</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">phase</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span>
+    <span class="n">phase</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+</pre></div>
+</div>
+<p>每次都写 <code class="docutils literal notranslate"><span class="pre">phase[0]</span></code> 比较繁琐，因此 TIRx 提供 scalar 语法，表示同一个
+单元素 register buffer，并允许直接通过名称读写：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">phase</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">int32</span> <span class="o">=</span> <span class="mi">0</span>                 <span class="c1"># mutable scalar (sugar for the above)</span>
+<span class="k">while</span> <span class="n">phase</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
+    <span class="n">acc</span> <span class="o">=</span> <span class="n">acc</span> <span class="o">+</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">phase</span><span class="p">]</span>
+    <span class="n">phase</span> <span class="o">+=</span> <span class="mi">1</span>
+
+<span class="n">s</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">local_scalar</span><span class="p">(</span><span class="s2">&quot;int32&quot;</span><span class="p">)</span>        <span class="c1"># explicit form; assign by name (s = ..., not s[0])</span>
+<span class="n">acc</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span> <span class="o">=</span> <span class="mf">0.0</span>               <span class="c1"># a type-annotated assignment also makes one</span>
+</pre></div>
+</div>
+<p>两种写法在 parse 后会得到结构完全相同的 TIRx。Parser 会将
+<code class="docutils literal notranslate"><span class="pre">phase:</span> <span class="pre">T.int32</span></code> 解析为单元素 <code class="docutils literal notranslate"><span class="pre">local</span></code> buffer，将 <code class="docutils literal notranslate"><span class="pre">phase</span></code> 和
+<code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">+=</span> <span class="pre">1</span></code> 解析为 <code class="docutils literal notranslate"><span class="pre">phase[0]</span></code> 和 <code class="docutils literal notranslate"><span class="pre">phase[0]</span> <span class="pre">+=</span> <span class="pre">1</span></code>。对两个 kernels
+调用 <code class="docutils literal notranslate"><span class="pre">tvm.ir.assert_structural_equal</span></code> 会通过；printer 甚至会把显式的
+<code class="docutils literal notranslate"><span class="pre">alloc_local</span></code> 加 <code class="docutils literal notranslate"><span class="pre">[0]</span></code> 重新输出为 scalar 语法。因此，parse 完成后两者
+没有区别，都会 lowering 为 <code class="docutils literal notranslate"><span class="pre">alignas(64)</span> <span class="pre">int</span> <span class="pre">phase_ptr[1];</span></code>。Scalar
+只是省去了 <code class="docutils literal notranslate"><span class="pre">[0]</span></code>。<code class="docutils literal notranslate"><span class="pre">T.local_scalar</span></code>、<code class="docutils literal notranslate"><span class="pre">T.shared_scalar</span></code> 和
+<code class="docutils literal notranslate"><span class="pre">T.alloc_scalar</span></code> 可以显式选择 scope。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><strong>为什么不使用</strong> <code class="docutils literal notranslate"><span class="pre">Var</span></code> <strong>？</strong> TIRx <code class="docutils literal notranslate"><span class="pre">Var</span></code> 是 immutable 的静态绑定，
+与下面的 <code class="docutils literal notranslate"><span class="pre">T.let</span></code> 相同。Scalar 必须是 mutable 的，例如在 loop 或
+accumulator 中重复赋值，因此需要由能够反复 store 的单元素 buffer
+支撑，不能使用 <code class="docutils literal notranslate"><span class="pre">Var</span></code>。</p>
+</div>
+</section>
+<section id="let">
+<h3><code class="docutils literal notranslate"><span class="pre">let</span></code><a class="headerlink" href="#let" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">T.let</span></code> 是 <strong>immutable</strong> binding，对应一个 <code class="docutils literal notranslate"><span class="pre">LetStmt</span></code>。它表示命名后的
+值，不是 buffer，适合保存派生常量：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">M</span> <span class="o">*</span> <span class="n">K</span>               <span class="c1"># immutable binding (LetStmt)</span>
+<span class="n">half</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span><span class="p">[</span><span class="n">T</span><span class="o">.</span><span class="n">int32</span><span class="p">]</span> <span class="o">=</span> <span class="n">N</span> <span class="o">//</span> <span class="mi">2</span>  <span class="c1"># ... with an explicit type</span>
+</pre></div>
+</div>
+<p>它会生成普通的 C scalar variable，而不是 array，也不需要 <code class="docutils literal notranslate"><span class="pre">[0]</span></code>。例如，
+运行时变量 <code class="docutils literal notranslate"><span class="pre">m</span></code> 上的 <code class="docutils literal notranslate"><span class="pre">half:</span> <span class="pre">T.let</span> <span class="pre">=</span> <span class="pre">m</span> <span class="pre">*</span> <span class="pre">2</span></code> 会生成：</p>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">half</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w">     </span><span class="c1">// the `let` -&gt; a const-like local</span>
+</pre></div>
+</div>
+<p>由于值不会改变，simplifier 可以自由执行 propagation 和 common
+subexpression elimination。因此在使用位置可能直接看到 <code class="docutils literal notranslate"><span class="pre">m</span> <span class="pre">*</span> <span class="pre">2</span></code>，也可能
+看到共享的 common-subexpression temporary，而不一定保留 <code class="docutils literal notranslate"><span class="pre">half</span></code>。</p>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p><strong>为什么需要 immutable binding？</strong> 因为值不会改变，arithmetic analyzer
+在简化 <code class="docutils literal notranslate"><span class="pre">LetStmt</span></code> 时可以调用 <code class="docutils literal notranslate"><span class="pre">analyzer.Bind(var,</span> <span class="pre">value)</span></code>，将关于这个
+值的结论传播到所有使用位置，包括 constant bounds、表示 divisibility 和
+alignment 的 modular set，以及 ranges。这些信息可用于简化 index、
+消除 bounds check，以及决定 alignment 和 vectorization。Mutable scalar
+是一次 memory load（<code class="docutils literal notranslate"><span class="pre">buf[0]</span></code>），analyzer 不能假设它保持不变，因此无法
+传播这些性质。<code class="docutils literal notranslate"><span class="pre">let</span></code> 还是一个不需要 allocation 的 pure value，可以自由
+inline、substitute 或 CSE；scalar 则是具有 load/store 语义的单元素 buffer。</p>
+</div>
+</section>
+</section>
+<section id="tensor-memory">
+<h2>Tensor Memory<a class="headerlink" href="#tensor-memory" title="Link to this heading">#</a></h2>
+<p>Blackwell <strong>tensor memory</strong> 不能像普通 scratch scope 那样直接分配。Kernel
+必须通过 warp-uniform <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.alloc</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.dealloc</span></code>
+intrinsics 显式申请和释放，再用
+<code class="docutils literal notranslate"><span class="pre">T.decl_buffer(...,</span> <span class="pre">scope=&quot;tmem&quot;,</span> <span class="pre">allocated_addr=&lt;column&gt;,</span> <span class="pre">layout=&lt;tmem</span> <span class="pre">layout&gt;)</span></code>
+在其中声明 tensor view。</p>
+<p><code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code> 表示 column offset，是必需参数；Tensor Core dispatch
+会检查它。因此，未设置 <code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code> 的
+<code class="docutils literal notranslate"><span class="pre">T.alloc_buffer(scope=&quot;tmem&quot;)</span></code> 无法使用。Tensor memory 也不能直接寻址，
+只能通过 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 的 <code class="docutils literal notranslate"><span class="pre">mma</span></code>、<code class="docutils literal notranslate"><span class="pre">ld</span></code>、<code class="docutils literal notranslate"><span class="pre">st</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cp</span></code> 访问。</p>
+<p>手工管理时，一个 warp 将 allocation 地址写入 shared slot，再在不同 column
+offset 上 <code class="docutils literal notranslate"><span class="pre">decl</span></code> tensor views，结束时由一个 warp 释放：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">addr</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_shared</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>             <span class="c1"># slot for the allocated base</span>
+<span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="n">alloc_warp</span><span class="p">:</span>                         <span class="c1"># tcgen05.alloc is warp-uniform</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">address_of</span><span class="p">(</span><span class="n">addr</span><span class="p">),</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
+<span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">((</span><span class="n">CTA_M</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span>
+                    <span class="n">allocated_addr</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">tmem_layout</span><span class="p">)</span>   <span class="c1"># view at column 0</span>
+<span class="c1"># ... use acc as a gemm_async / copy_async operand ...</span>
+<span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="n">alloc_warp</span><span class="p">:</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">relinquish_alloc_permit</span><span class="p">(</span><span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">dealloc</span><span class="p">(</span><span class="n">addr</span><span class="p">,</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>此时 column offsets 和 <code class="docutils literal notranslate"><span class="pre">tmem_layout</span></code> （datapath D/F layout）都需要手工
+管理。下面的 pool 会自动生成同样的步骤。</p>
+<section id="tmempool">
+<h3>TMEMPool<a class="headerlink" href="#tmempool" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">T.TMEMPool</span></code> 封装 warp-uniform alloc/dealloc、column bump allocation 和
+datapath layout：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>          <span class="c1"># pool = the kernel&#39;s smem pool</span>
+<span class="n">tmem_pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">TMEMPool</span><span class="p">(</span><span class="n">pool</span><span class="p">,</span> <span class="n">total_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">,</span>
+                       <span class="n">tmem_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">)</span>
+<span class="n">acc</span> <span class="o">=</span> <span class="n">tmem_pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">CTA_M</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>  <span class="c1"># allocated_addr set for you</span>
+<span class="n">tmem_pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>                               <span class="c1"># emits tcgen05.alloc (one warp)</span>
+<span class="c1"># ... use acc ...</span>
+<span class="n">tmem_pool</span><span class="o">.</span><span class="n">dealloc</span><span class="p">()</span>                              <span class="c1"># emits tcgen05.dealloc (one warp)</span>
+</pre></div>
+</div>
+<p>完整示例见第三部分的 GEMM kernels。</p>
+</section>
+</section>
+<section id="buffer-api">
+<h2>Buffer API<a class="headerlink" href="#buffer-api" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 是 pointer 上的一组 metadata，详见上方 <a class="reference internal" href="#id1">声明 Buffer</a>。因此，
+多数 methods 都是在编译期改变 shape、layout 或 index arithmetic，或者返回
+pointer，本身不会生成运行时操作。常用 methods 如下：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 34.0%" />
+<col style="width: 66.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>Method</p></th>
+<th class="head"><p>作用</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">B.data</span></code></p></td>
+<td><p>原始 data pointer（<code class="docutils literal notranslate"><span class="pre">Var</span></code>），输出为 <code class="docutils literal notranslate"><span class="pre">B_ptr</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">B.ptr_to([i,</span> <span class="pre">j])</span></code></p></td>
+<td><p>指向某个元素的 typed pointer（<code class="docutils literal notranslate"><span class="pre">address_of</span></code>），输出为 <code class="docutils literal notranslate"><span class="pre">&amp;B_ptr[…]</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">B.vload([i],</span> <span class="pre">dtype=&quot;float32x4&quot;)</span></code> / <code class="docutils literal notranslate"><span class="pre">B.vstore([i],</span> <span class="pre">v)</span></code></p></td>
+<td><p>Vectorized load/store，输出为 <code class="docutils literal notranslate"><span class="pre">*(float4*)(B_ptr</span> <span class="pre">+</span> <span class="pre">…)</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">B.view(*shape,</span> <span class="pre">layout=…)</span></code></p></td>
+<td><p>用新的 shape/layout 重新解释同一 storage，不复制数据</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">B.local(*shape,</span> <span class="pre">layout=…)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">local</span></code> buffer 中属于当前 thread 的 private register slice</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">B.permute(*dims)</span></code></p></td>
+<td><p>交换 axes 后的 view，也就是 transposed layout</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">B.access_ptr(mask,</span> <span class="pre">…)</span></code></p></td>
+<td><p>Masked access pointer，即 <code class="docutils literal notranslate"><span class="pre">tvm_access_ptr</span></code> builtin，用于将一个 region 传给 intrinsic</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>Pointer：``ptr_to`` / ``data``。</strong> <code class="docutils literal notranslate"><span class="pre">ptr_to</span></code> 将某个元素的地址传给
+intrinsic 或 inline function；<code class="docutils literal notranslate"><span class="pre">data</span></code> 则是 base pointer：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">B</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">func_call</span><span class="p">(</span><span class="s2">&quot;ld&quot;</span><span class="p">,</span> <span class="n">A</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="n">tx</span><span class="p">]),</span> <span class="n">source_code</span><span class="o">=</span><span class="n">SRC</span><span class="p">,</span> <span class="n">return_type</span><span class="o">=</span><span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">B_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ld</span><span class="p">(</span><span class="o">&amp;</span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]);</span><span class="w">          </span><span class="c1">// ptr_to([tx]) -&gt; &amp;A_ptr[tx];  A.data -&gt; A_ptr</span>
+</pre></div>
+</div>
+<p><strong>Vectorized access：``vload`` / ``vstore``。</strong> 一次 wide transfer 搬运多个
+元素，另见 <a class="reference internal" href="data_types.html"><span class="doc">数据类型与表达式</span></a>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">B</span><span class="o">.</span><span class="n">vstore</span><span class="p">([</span><span class="n">tx</span> <span class="o">*</span> <span class="mi">4</span><span class="p">],</span> <span class="n">A</span><span class="o">.</span><span class="n">vload</span><span class="p">([</span><span class="n">tx</span> <span class="o">*</span> <span class="mi">4</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">&quot;float32x4&quot;</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="o">*</span><span class="p">(</span><span class="n">float4</span><span class="o">*</span><span class="p">)(</span><span class="n">B_ptr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">tx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="p">(</span><span class="n">float4</span><span class="o">*</span><span class="p">)(</span><span class="n">A_ptr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">tx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="p">);</span>
+</pre></div>
+</div>
+<p><strong>Reshape / reinterpret：``view`` / ``permute``。</strong> 两者都只修改 metadata，
+data pointer 保持不变，变化的是 index arithmetic。<code class="docutils literal notranslate"><span class="pre">A.view(64,</span> <span class="pre">4)</span></code> 将包含
+256 个元素的 buffer 看作 <code class="docutils literal notranslate"><span class="pre">64×4</span></code>；<code class="docutils literal notranslate"><span class="pre">A.permute(1,</span> <span class="pre">0)</span></code> 交换两个 axes：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">A2</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">4</span><span class="p">);</span>     <span class="n">y</span> <span class="o">=</span> <span class="n">A2</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">A2</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>   <span class="c1"># A2[tx, j] -&gt; A_ptr[tx*4 + j]</span>
+<span class="n">At</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>   <span class="n">z</span> <span class="o">=</span> <span class="n">At</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>                <span class="c1"># At[i, j]  -&gt; A_ptr[j*4 + i]</span>
+</pre></div>
+</div>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">A2_ptr</span><span class="p">[</span><span class="n">tx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span><span class="w">  </span><span class="cm">/* +3 */</span><span class="w">                 </span><span class="c1">// view: row-major 64x4 index</span>
+<span class="n">At_ptr</span><span class="p">[(</span><span class="n">j</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">i</span><span class="p">]</span><span class="w">                       </span><span class="c1">// permute: swapped strides</span>
+</pre></div>
+</div>
+<p><strong>Register：``local``。</strong> 对带 thread axis 的 <code class="docutils literal notranslate"><span class="pre">local</span></code> layout 做分解，返回
+属于当前 thread 的 flat register bundle。Tile primitives 会频繁使用它：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">R</span>  <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_buffer</span><span class="p">((</span><span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;local&quot;</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span> <span class="o">@</span> <span class="n">laneid</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]))</span>
+<span class="n">Rl</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">local</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>          <span class="c1"># this lane&#39;s 8 registers</span>
+</pre></div>
+</div>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">Rl_ptr</span><span class="p">[</span><span class="mi">8</span><span class="p">];</span><span class="w">             </span><span class="c1">// the lane&#39;s private registers</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="data_types.html"
+       title="上一页">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">数据类型与表达式</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="control_flow.html"
+       title="下一页">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">下一页</p>
+        <p class="prev-next-title">控制流</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> 目录
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">声明 Buffer</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#shared-memory">Shared Memory</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#static-shared-memory">Static Shared Memory</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#dynamic-shared-memory">Dynamic Shared Memory</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#smempool">SMEMPool</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#registers">Registers</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#scalar">Scalar</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#let"><code class="docutils literal notranslate"><span class="pre">let</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tensor-memory">Tensor Memory</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#tmempool">TMEMPool</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#buffer-api">Buffer API</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+作者： MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

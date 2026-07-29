@@ -1,0 +1,813 @@
+
+<!DOCTYPE html>
+
+
+<html lang="zh-CN" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>调试 Warp-Specialized Kernel &#8212; 面向 MLSys 的现代 GPU 编程</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=654c0d46" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../_static/documentation_options.js?v=eb1cd0b9"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'appendix/debugging_warp_specialized';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <link rel="icon" href="../_static/mlc-favicon.ico"/>
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="搜索" href="../search.html" />
+    <link rel="next" title="编译器内部机制" href="../tirx_guide/arch/index.html" />
+    <link rel="prev" title="参考资料" href="index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="zh-CN"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">跳转至主要内容</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>回到顶部</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="版本警告"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">异步数据搬运：TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Tensor Memory（TMEM）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_async_barriers/index.html">异步协作：mbarrier</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">进阶调度：Cluster Launch Control</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第二部分：TIRx 概览</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">TIRx 入门</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="index.html">参考资料</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/parser_utils.html">Parser 工具</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/data_types.html">数据类型与表达式</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/buffers.html">Buffer 与内存</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/control_flow.html">控制流</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
+</ul>
+</details></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+<a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button"
+   title="源码库"
+   data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+
+</a>
+
+
+
+
+<button onclick="window.location.href='../../index.html'"
+  class="btn btn-sm btn-language-switch-button pst-navbar-icon"
+  title="Switch to English"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-language"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="亮色"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="暗色"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>亮色</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>暗色</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>调试 Warp-Specialized Kernel</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> 目录 </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">调试前先检查环境</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">调试步骤</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">先写清楚数据如何交接</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">编译失败</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">检查生成的代码</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7">Step 7 参考结构</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">根据现象定位问题</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#python">何时需要重启 Python</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#deadlock">Deadlock</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#crash-context-poisoning">Crash 与 Context Poisoning</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">结果错误</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">结果正确但性能较差</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">提交有效的问题报告</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="warp-specialized-kernel">
+<span id="chap-warp-spec-debug"></span><h1>调试 Warp-Specialized Kernel<a class="headerlink" href="#warp-specialized-kernel" title="Link to this heading">#</a></h1>
+<p>第三部分的 GEMM Step 7-9 将 TMA load、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA
+以及 TMEM/SMEM writeback 重叠执行。调试 Flash Attention 中的数据交接也可以
+使用同一套方法：先确定各个角色，再确定每个角色拥有的存储空间，最后检查
+生成的 CUDA 是否符合这个模型。</p>
+<p>不要一开始就重写 kernel。先确认运行环境和测试本身有效，再检查生成的
+CUDA。排除环境和编译问题后，这类 kernel 的运行时故障通常来自某次数据交接：
+barrier 没有初始化、arrival count 错误、collective 被放进了角色分支、
+barrier phase 过期，或者 producer 的写入还不可见时，存储空间就被提前复用。</p>
+<section id="id1">
+<h2>调试前先检查环境<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
+<p>先排除运行环境的问题：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import tvm, tvm.tirx; print(tvm.__file__, tvm.__version__)&quot;</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import torch; print(torch.cuda.get_device_name(), torch.cuda.get_device_capability())&quot;</span>
+</pre></div>
+</div>
+<p>这些 kernel 面向 Blackwell（<code class="docutils literal notranslate"><span class="pre">sm_100a</span></code>）。如果 Python 导入了旧的 TVM
+checkout，或者当前 GPU 不是 Blackwell 架构，应先修正环境，再修改 kernel。
+随后先运行最小的正确性测试，例如 <code class="docutils literal notranslate"><span class="pre">run_correctness()</span></code>；正确性通过后再看性能。</p>
+</section>
+<section id="id2">
+<h2>调试步骤<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
+<ol class="arabic simple">
+<li><p>用仍能复现问题的最小 shape 运行。如果发生 illegal memory access，下一次运行前先重启 Python。</p></li>
+<li><p>如果编译失败，先检查已安装的 API、target、<code class="docutils literal notranslate"><span class="pre">dispatch=</span></code> 和 buffer scope，再检查运行时同步代码。</p></li>
+<li><p>保存 <code class="docutils literal notranslate"><span class="pre">inspect_source(&quot;cuda&quot;)</span></code> 的输出。先搜索 role guard、<code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>、<code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code>，再回头阅读 Python。</p></li>
+<li><p>针对出错的 kernel 路径，写出 roles、storage、handoff 和 lifetime 表。</p></li>
+<li><p>根据这张表检查生成的 CUDA：barrier init 是否位于角色分支之前，TMA producer、MMA issuer 和 writeback group 是否符合预期，以及 CTA-wide collective 是否误放进了只由一个 warpgroup 执行的分支。</p></li>
+<li><p>将问题归类为 deadlock、crash、wrong result 或 correct-but-slow，再查看下方对应的小节。</p></li>
+<li><p>每次只修改一处交接：init count、arrive/wait phase、role guard、fence、TMA store drain、TMEM alloc/dealloc 或 tile scheduler 的推进。</p></li>
+<li><p>每次修改后先重新验证正确性，再测量性能。</p></li>
+</ol>
+</section>
+<section id="id3">
+<h2>先写清楚数据如何交接<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
+<p>调试异步 kernel 前，可以先填写一张简单的表：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>项目</p></th>
+<th class="head"><p>需要记录的内容</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Roles</p></td>
+<td><p>哪些 threads、warps、warpgroups 或 CTAs 发出每项异步操作。</p></td>
+</tr>
+<tr class="row-odd"><td><p>Storage</p></td>
+<td><p>每一步中 tile 所在的位置：GMEM、SMEM、TMEM 或 registers。</p></td>
+</tr>
+<tr class="row-even"><td><p>Handoff</p></td>
+<td><p>Producer、consumer、同步对象、arrival count、phase，以及使数据可见的 fence 或 drain。</p></td>
+</tr>
+<tr class="row-odd"><td><p>Lifetime</p></td>
+<td><p>每个存储位置最早何时可以复用、读回或释放。</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>再根据这张表检查生成的 CUDA：</p>
+<ul class="simple">
+<li><p>Role guard 与 roles 表一致。</p></li>
+<li><p>Barrier init 位于受 guard 保护的角色分支之前。</p></li>
+<li><p>Collective 没有被 lane、warp 或 warpgroup guard 意外缩小参与范围。</p></li>
+<li><p>Arrive/wait phase 与 handoff 表一致。</p></li>
+<li><p>只有 lifetime 表允许时，才执行 TMA store drain、TMEM dealloc 和 SMEM 复用。</p></li>
+</ul>
+<p>这张表既适用于 GEMM 的 TMA -&gt; MMA -&gt; writeback pipeline，也适用于
+Flash Attention 中 score、softmax、value 和 correction 之间的交接。</p>
+</section>
+<section id="id4">
+<h2>编译失败<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
+<p>先解决编译问题，再调试运行时同步：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>现象</p></th>
+<th class="head"><p>可能的位置</p></th>
+<th class="head"><p>首先检查</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>TIRx API 未知或发生 attribute error</p></td>
+<td><p>安装的 wheel 与教程代码不匹配</p></td>
+<td><p>输出 <code class="docutils literal notranslate"><span class="pre">tvm.__file__</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tvm.__version__</span></code>，并对照 <a class="reference internal" href="../tirx_guide/language_reference/index.html#chap-language-reference"><span class="std std-ref">TIRx 语言参考</span></a> 检查 API 名称。</p></td>
+</tr>
+<tr class="row-odd"><td><p>不支持指定的 <code class="docutils literal notranslate"><span class="pre">dispatch=</span></code></p></td>
+<td><p>当前 target 或 primitive 不支持这条路径</p></td>
+<td><p>检查 <code class="docutils literal notranslate"><span class="pre">dispatch</span></code> 参数和 target capability；本教程中的 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 路径需要 Blackwell。</p></td>
+</tr>
+<tr class="row-even"><td><p>Buffer scope 不匹配</p></td>
+<td><p>Buffer 通过错误的硬件路径使用</p></td>
+<td><p>检查表中的 storage：TMEM 必须通过 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 访问，TMA operand 必须使用兼容的 GMEM/SMEM layout。</p></td>
+</tr>
+<tr class="row-odd"><td><p>编译成功，但生成的 CUDA 中没有预期路径</p></td>
+<td><p>Dispatch 没有按预期 lowering</p></td>
+<td><p>修改算法前，先在生成的 CUDA 中搜索 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code>。</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="id5">
+<h2>检查生成的代码<a class="headerlink" href="#id5" title="Link to this heading">#</a></h2>
+<p>对于任意已编译的 kernel，都可以保存 CUDA 源码，便于搜索和比较：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<span class="n">Path</span><span class="p">(</span><span class="s2">&quot;artifacts&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">Path</span><span class="p">(</span><span class="s2">&quot;artifacts/my_kernel.cu&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>TIRx construct 与生成 CUDA 的对应关系如下：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>TIRx</p></th>
+<th class="head"><p>生成的 CUDA</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">wg_id</span> <span class="pre">==</span> <span class="pre">0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(warp_id_in_cta</span> <span class="pre">&gt;&gt;</span> <span class="pre">2)</span> <span class="pre">==</span> <span class="pre">0</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">wg_id</span> <span class="pre">==</span> <span class="pre">1</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(warp_id_in_cta</span> <span class="pre">&gt;&gt;</span> <span class="pre">2)</span> <span class="pre">==</span> <span class="pre">1</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(warp_id_in_cta</span> <span class="pre">&amp;</span> <span class="pre">3)</span> <span class="pre">==</span> <span class="pre">0</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">3</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(warp_id_in_cta</span> <span class="pre">&amp;</span> <span class="pre">3)</span> <span class="pre">==</span> <span class="pre">3</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">lane_id</span> <span class="pre">==</span> <span class="pre">0</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(((int)threadIdx.x)</span> <span class="pre">%</span> <span class="pre">32)</span> <span class="pre">==</span> <span class="pre">0</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">.init()</span></code> 内部的 guard</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">((int)threadIdx.x)</span> <span class="pre">&lt;</span> <span class="pre">1</span></code>（只允许 CTA thread 0）</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tvm_builtin_elect_one_sync_op()</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>阅读完整 kernel 前，先搜索下面这些字符串：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>生成的 CUDA</p></th>
+<th class="head"><p>检查内容</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code></p></td>
+<td><p>单个 CTA thread 的 guard，通常用于初始化 barrier</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code></p></td>
+<td><p>Barrier 是否存在，并且位于角色分支之前</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></p></td>
+<td><p>是否生成了 Tensor Core 路径</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code></p></td>
+<td><p>Copy 是否 lowering 为 TMA</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cta_sync();</span></code></p></td>
+<td><p>CTA-wide barrier；不能位于 <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> 分支内部</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="step-7">
+<h2>Step 7 参考结构<a class="headerlink" href="#step-7" title="Link to this heading">#</a></h2>
+<p>正确编译的 Step 7 kernel 顶层结构如下。为了便于阅读，这里用角色名称写
+guard；在生成的 CUDA 中，应搜索上表对应的表达式。</p>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// (1) Barrier inits: top level, CTA thread 0 only</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">tma2mma</span><span class="p">[</span><span class="mf">0..1</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">mma2tma</span><span class="p">[</span><span class="mf">0..1</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">mma2ld</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
+<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">ld2mma</span><span class="p">,</span><span class="w"> </span><span class="mi">128</span><span class="p">);</span><span class="w">   </span><span class="c1">// arrived by all 128 WG0 threads</span>
+<span class="p">}</span>
+
+<span class="c1">// (2) TMEM alloc: WG0 warp 0, all lanes of the issuing warp</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="n">tcgen05_alloc</span><span class="p">(...,</span><span class="w"> </span><span class="mi">512</span><span class="p">);</span>
+
+<span class="c1">// (3) Fences + cta_sync, then phase init: producer=1, consumer=0</span>
+
+<span class="c1">// (4) Warp-specialized loop</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">elect_sync</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* TMA  */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">elect_sync</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* MMA  */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w">                                </span><span class="p">{</span><span class="w"> </span><span class="cm">/* WB   */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+
+<span class="c1">// (5) Cleanup: issuing warp, no lane guard</span>
+<span class="n">cta_sync</span><span class="p">();</span>
+<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">tcgen05_relinquish_alloc_permit</span><span class="p">();</span><span class="w"> </span><span class="n">tcgen05_dealloc</span><span class="p">(...,</span><span class="w"> </span><span class="mi">512</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
+</pre></div>
+</div>
+<p>修改算法前，先检查：</p>
+<ul class="simple">
+<li><p>Barrier init 位于顶层，而不是 <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> guard 内。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tcgen05_alloc</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05_dealloc</span></code> 有 warp guard，但没有 lane guard；发出指令的 warp 中所有 lanes 都参与。</p></li>
+<li><p>TMA 和 MMA loop 都迭代 <code class="docutils literal notranslate"><span class="pre">K_TILES</span></code> 次。</p></li>
+<li><p>Producer 的初始 phase 为 <code class="docutils literal notranslate"><span class="pre">1</span></code>，consumer 的初始 phase 为 <code class="docutils literal notranslate"><span class="pre">0</span></code>。</p></li>
+</ul>
+</section>
+<section id="id6">
+<h2>根据现象定位问题<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
+<p>现象只能作为线索，不应直接当作最终诊断：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>线索</p></th>
+<th class="head"><p>可能的位置</p></th>
+<th class="head"><p>首先检查</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Kernel 卡住，随后 runtime 报告 unspecified launch failure</p></td>
+<td><p>Deadlock</p></td>
+<td><p>Barrier init 的位置、arrival count、<code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> 的位置和 <code class="docutils literal notranslate"><span class="pre">next_tile()</span></code> 的参与范围</p></td>
+</tr>
+<tr class="row-odd"><td><p>Illegal memory access、XID，或之后无关的 CUDA 调用也失败</p></td>
+<td><p>Crash / poisoned context</p></td>
+<td><p>重启 Python，再检查 pointer 范围、storage lifetime 和 collective 的参与范围</p></td>
+</tr>
+<tr class="row-even"><td><p>错误行以 128 行或一个 tile 为单位成条纹出现</p></td>
+<td><p>同步竞争或 tile index 不匹配</p></td>
+<td><p>Producer/consumer phase、scheduler 推进方式，以及每段 rows 属于哪个 warpgroup</p></td>
+</tr>
+<tr class="row-odd"><td><p>出现 <code class="docutils literal notranslate"><span class="pre">NaN</span></code> 或明显无效的数值</p></td>
+<td><p>Descriptor、operand 设置或 accumulator 未初始化</p></td>
+<td><p>SMEM/TMEM descriptor、swizzle/layout 和 accumulator 初始化</p></td>
+</tr>
+<tr class="row-even"><td><p>数值有限，但错误呈固定模式</p></td>
+<td><p>读取了旧数据或只完成一部分的数据</p></td>
+<td><p>是否缺少 fence 或 TMA store drain，storage 是否在 lifetime 允许前被复用</p></td>
+</tr>
+<tr class="row-odd"><td><p>结果正确，但没有预期加速</p></td>
+<td><p>Dispatch 或资源问题</p></td>
+<td><p>生成的 CUDA 路径、pipeline depth、occupancy 和 register spill</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="python">
+<h2>何时需要重启 Python<a class="headerlink" href="#python" title="Link to this heading">#</a></h2>
+<p>CUDA 错误不一定会自动恢复。发生 illegal memory access、XID 或
+“CUDA context poisoned” 后，后续无关调用（例如 <code class="docutils literal notranslate"><span class="pre">torch.randn</span></code>）也可能持续
+失败。测试下一项修改前先重启 Python process，否则你看到的可能仍是上一次
+crash 留下的状态。</p>
+</section>
+<section id="deadlock">
+<h2>Deadlock<a class="headerlink" href="#deadlock" title="Link to this heading">#</a></h2>
+<p>按下面的顺序检查：</p>
+<ul>
+<li><p><strong>Arrival count 与 init count 不匹配。</strong> 常见情况是 <code class="docutils literal notranslate"><span class="pre">MBarrier.init(128)</span></code>，但 <code class="docutils literal notranslate"><span class="pre">arrive</span></code> 位于 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0:</span> <span class="pre">if</span> <span class="pre">lane_id</span> <span class="pre">==</span> <span class="pre">0:</span></code> 中，最终只有一个 thread arrival，wait 永远不会返回。</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Barrier</p></th>
+<th class="head"><p>init(count)</p></th>
+<th class="head"><p>谁发出 arrival</p></th>
+<th class="head"><p>Arrivals</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TMABar</span></code>（tma-&gt;mma）</p></td>
+<td><p>1</p></td>
+<td><p>TMA engine 通过 <code class="docutils literal notranslate"><span class="pre">arrive(stage,</span> <span class="pre">bytes)</span></code></p></td>
+<td><p>1</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code>（mma-&gt;tma、mma-&gt;ld）</p></td>
+<td><p>1</p></td>
+<td><p>MMA warp 通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code></p></td>
+<td><p>1</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">MBarrier</span></code>（ld-&gt;mma）</p></td>
+<td><p>128</p></td>
+<td><p>WG0 的所有 threads 通过 <code class="docutils literal notranslate"><span class="pre">arrive</span></code></p></td>
+<td><p>128</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</li>
+<li><p><strong>Barrier init 位于 <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> guard 内。</strong> <code class="docutils literal notranslate"><span class="pre">.init()</span></code> 会 lowering 为 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1:</span></code>，也就是 CTA thread 0。CTA thread 0 位于 WG0，因此放在 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">wg_id</span> <span class="pre">==</span> <span class="pre">1:</span></code> 内会导致所有 threads 都无法执行 init。Init 必须位于顶层；可以在 <code class="docutils literal notranslate"><span class="pre">inspect_source()</span></code> 中搜索 <code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code> 验证。</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> 位于 warpgroup 分支中。</strong> <code class="docutils literal notranslate"><span class="pre">cta_sync</span></code> 对应 <code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code>，要求 CTA 的所有 threads 参与。放在 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">wg_id</span> <span class="pre">==</span> <span class="pre">0:</span></code> 中时，WG1 永远无法到达。只同步一个 warpgroup 时，应使用 <code class="docutils literal notranslate"><span class="pre">T.cuda.warpgroup_sync(10)</span></code>。</p></li>
+<li><p><strong>部分 consumer warpgroup threads 跳过了 <code class="docutils literal notranslate"><span class="pre">tile_scheduler.next_tile()</span></code>。</strong> Scheduler 保存 per-thread 状态；跳过调用的 threads 可能永远留在 loop 中。</p></li>
+<li><p><strong>TMA 与 MMA 的 K-tile 数量不一致。</strong> 如果 MMA 执行 <code class="docutils literal notranslate"><span class="pre">K_TILES</span> <span class="pre">-</span> <span class="pre">1</span></code> 次而不是 <code class="docutils literal notranslate"><span class="pre">K_TILES</span></code> 次，barrier phases 会逐渐错位，并在第二个 outer tile 上 deadlock。</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> 的初始 phase 错误。</strong> Producer 从 <code class="docutils literal notranslate"><span class="pre">phase=1</span></code> 开始，使第一次 wait 直接通过；consumer 从 <code class="docutils literal notranslate"><span class="pre">phase=0</span></code> 开始，使第一次 wait 阻塞。二者若从相同 phase 开始，第一次交接就可能立即 deadlock。</p></li>
+</ul>
+</section>
+<section id="crash-context-poisoning">
+<h2>Crash 与 Context Poisoning<a class="headerlink" href="#crash-context-poisoning" title="Link to this heading">#</a></h2>
+<p>常见原因包括：</p>
+<ul class="simple">
+<li><p><strong>在 <code class="docutils literal notranslate"><span class="pre">pool.commit()</span></code> 后调用 <code class="docutils literal notranslate"><span class="pre">pool.alloc</span></code>。</strong> Barrier wrapper 内部会调用 <code class="docutils literal notranslate"><span class="pre">alloc</span></code>。正确顺序是：<code class="docutils literal notranslate"><span class="pre">tmem_addr</span> <span class="pre">-&gt;</span> <span class="pre">barrier</span> <span class="pre">wrappers</span> <span class="pre">-&gt;</span> <span class="pre">move_base_to(1024)</span> <span class="pre">-&gt;</span> <span class="pre">Asmem</span> <span class="pre">/</span> <span class="pre">Bsmem</span> <span class="pre">/</span> <span class="pre">Dsmem</span> <span class="pre">-&gt;</span> <span class="pre">commit()</span></code>。</p></li>
+<li><p><strong>用 lane guard 包围 <code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 或 <code class="docutils literal notranslate"><span class="pre">tcgen05.dealloc</span></code>。</strong> 发出指令的 warp 必须由全部 lanes 参与。<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">lane_id</span> <span class="pre">==</span> <span class="pre">0:</span></code> 只执行一个 thread，属于未定义行为。</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">tcgen05.dealloc</span></code> 前缺少 <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code>。</strong> Writeback 仍在读取时，TMEM 就被释放。</p></li>
+<li><p><strong>GMEM 或 SMEM 越界访问。</strong> 将问题缩小到一个 tile，检查 scheduler 的 <code class="docutils literal notranslate"><span class="pre">m_idx</span></code> / <code class="docutils literal notranslate"><span class="pre">n_idx</span></code>，并确认当前 shape 是 kernel tile 或 cluster tile 的整数倍。</p></li>
+</ul>
+</section>
+<section id="id7">
+<h2>结果错误<a class="headerlink" href="#id7" title="Link to this heading">#</a></h2>
+<p>先根据错误模式分类，再推测原因。整行错误以 row stripe 出现，通常表示
+producer/consumer phase、tile index 或角色 ownership 不匹配。<code class="docutils literal notranslate"><span class="pre">NaN</span></code> 往往来自
+descriptor、operand 设置或未初始化的 accumulation。有限但呈固定模式的错误值，
+通常表示 consumer 读到了旧 tile、只写完一部分的 tile，或尚未 drain 的 store。</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> 位于 <code class="docutils literal notranslate"><span class="pre">elect_sync</span></code> 外。</strong> 32 个 threads 都会创建 commit group；其中 31 个空 group 会立即通知 mbarrier，使 TMA 在 MMA 读取前覆盖 SMEM。</p></li>
+<li><p><strong>TMA store 前缺少 <code class="docutils literal notranslate"><span class="pre">fence.proxy_async(&quot;shared::cta&quot;)</span></code>。</strong> TMA engine 可能看不到 threads 对 SMEM 的写入。</p></li>
+<li><p><strong>TMA store 后缺少 <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span></code> 和 <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code>。</strong> Store 尚未 drain，下一 tile 就复用了 Dsmem。</p></li>
+<li><p><strong>Persistent kernel 在 1024x1024 等较小 shape 上偶发失败。</strong> 更大的 shape 和更长的 K-loop 可能掩盖竞争。重新检查 tiles 之间的 phase reset 和 TMA store commit/wait。</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> 通常不是解决方法。</strong> MMA completion mbarrier 已经提供 release-acquire 语义。Step 8 和 9 只在 writeback edge 上保守地加入它：位置在 <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code> 之后、第一次 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 之前；不要例行加到 TMA-to-MMA edge。</p></li>
+</ul>
+</section>
+<section id="id8">
+<h2>结果正确但性能较差<a class="headerlink" href="#id8" title="Link to this heading">#</a></h2>
+<p>如果结果正确，但性能远低于预期，可以继续使用同一套检查流程：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>线索</p></th>
+<th class="head"><p>可能的位置</p></th>
+<th class="head"><p>首先检查</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>生成的 CUDA 中没有 <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code></p></td>
+<td><p>Copy 没有 lowering 为 TMA</p></td>
+<td><p>检查 <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tma&quot;</span></code>、target capability 和 operand layout</p></td>
+</tr>
+<tr class="row-odd"><td><p>生成的 CUDA 中没有 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></p></td>
+<td><p>MMA 没有 lowering 为 Blackwell Tensor Core 指令</p></td>
+<td><p>检查 <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tcgen05&quot;</span></code>、target capability 和 operand layout</p></td>
+</tr>
+<tr class="row-even"><td><p>TMA 与 MMA 没有重叠</p></td>
+<td><p>Pipeline 太浅，或者 phase 使 producer/consumer 串行执行</p></td>
+<td><p>检查生成 CUDA 中 wait、arrive 和 advance 的顺序</p></td>
+</tr>
+<tr class="row-odd"><td><p>小 shape 正确，但大 shape 性能差</p></td>
+<td><p>Register spill、occupancy 或 staging buffer 压力</p></td>
+<td><p>检查 compiler resource report；减小 tile、分块 writeback，或降低 pipeline depth</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="id9">
+<h2>提交有效的问题报告<a class="headerlink" href="#id9" title="Link to this heading">#</a></h2>
+<p>如果完成上述检查后问题仍然存在，请先缩小复现范围，再到
+<a class="reference external" href="https://github.com/apache/tvm/issues">Apache TVM GitHub 仓库</a>提交 issue。
+需要包含：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">tvm.__file__</span></code>、<code class="docutils literal notranslate"><span class="pre">tvm.__version__</span></code> 和 GPU capability；</p></li>
+<li><p>能复现问题的最小 shape；</p></li>
+<li><p>问题属于编译失败、deadlock、crash、wrong result 还是 correct-but-slow；</p></li>
+<li><p>最小 kernel 或 notebook cell，以及对应的正确性测试；</p></li>
+<li><p>保存的 <code class="docutils literal notranslate"><span class="pre">inspect_source(&quot;cuda&quot;)</span></code> 输出，或者能展示可疑 guard、barrier 或 dispatch 路径的最小片段。</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="index.html"
+       title="上一页">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">参考资料</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../tirx_guide/arch/index.html"
+       title="下一页">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">下一页</p>
+        <p class="prev-next-title">编译器内部机制</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> 目录
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">调试前先检查环境</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">调试步骤</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">先写清楚数据如何交接</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">编译失败</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">检查生成的代码</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7">Step 7 参考结构</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">根据现象定位问题</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#python">何时需要重启 Python</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#deadlock">Deadlock</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#crash-context-poisoning">Crash 与 Context Poisoning</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">结果错误</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">结果正确但性能较差</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">提交有效的问题报告</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+作者： MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
