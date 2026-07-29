@@ -777,11 +777,23 @@ columns and, in turn, different banks.</p>
 <iframe src="../demo/swizzle_8x8.html" title="8x8 XOR swizzle" loading="lazy"
         style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p>Click a column index to compare the bank mapping of the plain row-major layout with the XOR swizzle.
 The former takes eight cycles; the latter takes one.</p>
-<p>The figure above uses eight banks to illustrate the XOR rule. Real hardware applies the rule over a
-larger repeating unit. We call each contiguous 16 B region a <strong>sector</strong> and represent it with one
-colored block. In <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>, each row of an atom contains eight sectors, for a total width of
-128 B. At the common 4-byte bank granularity, that row spans 32 bank slots. The swizzle uses the row
-coordinate to XOR-permute the eight sector positions.</p>
+<p>For comparison, the following official NVIDIA PTX ISA figure shows the K-major 128B swizzling
+layout. It corresponds directly to the right-hand “With Swizzle (XOR)” panel above: both use the same
+XOR rule to permute the eight positions in each row.</p>
+<a class="reference internal image-reference" href="../_images/async-warpgroup-smem-layout-128B-k.png"><img alt="K-major 128B swizzling layout from the NVIDIA PTX documentation" class="align-center" src="../_images/async-warpgroup-smem-layout-128B-k.png" style="width: 760px;" />
+</a>
+<p><em>K-major 128B swizzling layout from the NVIDIA PTX ISA. Each cell represents one 128-bit element.
+Source: <a class="reference external" href="https://docs.nvidia.com/cuda/parallel-thread-execution/">NVIDIA PTX ISA</a>.</em></p>
+<p>The numbers look different only because the figures use different labeling schemes. In every row,
+our demo uses <code class="docutils literal notranslate"><span class="pre">0–7</span></code> to show each element’s original logical column. The official figure numbers the
+entire <code class="docutils literal notranslate"><span class="pre">8×8</span></code> matrix consecutively from <code class="docutils literal notranslate"><span class="pre">0</span></code> to <code class="docutils literal notranslate"><span class="pre">63</span></code>.</p>
+<p>For example, row 1 in our demo contains the logical column labels
+<code class="docutils literal notranslate"><span class="pre">1,</span> <span class="pre">0,</span> <span class="pre">3,</span> <span class="pre">2,</span> <span class="pre">5,</span> <span class="pre">4,</span> <span class="pre">7,</span> <span class="pre">6</span></code>. The official figure adds that row’s index offset of <code class="docutils literal notranslate"><span class="pre">8</span></code> to the same
+arrangement, producing <code class="docutils literal notranslate"><span class="pre">9,</span> <span class="pre">8,</span> <span class="pre">11,</span> <span class="pre">10,</span> <span class="pre">13,</span> <span class="pre">12,</span> <span class="pre">15,</span> <span class="pre">14</span></code>.</p>
+<p>We call each 128-bit cell in the figure a 16 B <strong>sector</strong>. In <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>, each row of an atom
+contains eight sectors, for a total width of 128 B. At the common 4-byte bank granularity, one sector
+spans four banks, so a full row covers all 32 banks. The swizzle uses the row coordinate to
+XOR-permute the eight sectors within that row.</p>
 <p>A <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> atom contains eight rows, so its total size is <code class="docutils literal notranslate"><span class="pre">8</span> <span class="pre">×</span> <span class="pre">128</span> <span class="pre">B</span> <span class="pre">=</span> <span class="pre">1024</span> <span class="pre">B</span></code>. Here,
 <code class="docutils literal notranslate"><span class="pre">128</span> <span class="pre">B</span></code> is the width of each atom row along the contiguous dimension, not the total atom size. The
 atom is the smallest repeating block of the address permutation; larger tiles are formed by tiling

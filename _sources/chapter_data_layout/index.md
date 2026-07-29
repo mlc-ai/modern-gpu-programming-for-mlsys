@@ -407,11 +407,31 @@ columns and, in turn, different banks.
 Click a column index to compare the bank mapping of the plain row-major layout with the XOR swizzle.
 The former takes eight cycles; the latter takes one.
 
-The figure above uses eight banks to illustrate the XOR rule. Real hardware applies the rule over a
-larger repeating unit. We call each contiguous 16 B region a **sector** and represent it with one
-colored block. In `SWIZZLE_128B`, each row of an atom contains eight sectors, for a total width of
-128 B. At the common 4-byte bank granularity, that row spans 32 bank slots. The swizzle uses the row
-coordinate to XOR-permute the eight sector positions.
+For comparison, the following official NVIDIA PTX ISA figure shows the K-major 128B swizzling
+layout. It corresponds directly to the right-hand “With Swizzle (XOR)” panel above: both use the same
+XOR rule to permute the eight positions in each row.
+
+```{image} ../img/async-warpgroup-smem-layout-128B-k.png
+:alt: K-major 128B swizzling layout from the NVIDIA PTX documentation
+:width: 760px
+:align: center
+```
+
+*K-major 128B swizzling layout from the NVIDIA PTX ISA. Each cell represents one 128-bit element.
+Source: [NVIDIA PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/).*
+
+The numbers look different only because the figures use different labeling schemes. In every row,
+our demo uses `0–7` to show each element's original logical column. The official figure numbers the
+entire `8×8` matrix consecutively from `0` to `63`.
+
+For example, row 1 in our demo contains the logical column labels
+`1, 0, 3, 2, 5, 4, 7, 6`. The official figure adds that row's index offset of `8` to the same
+arrangement, producing `9, 8, 11, 10, 13, 12, 15, 14`.
+
+We call each 128-bit cell in the figure a 16 B **sector**. In `SWIZZLE_128B`, each row of an atom
+contains eight sectors, for a total width of 128 B. At the common 4-byte bank granularity, one sector
+spans four banks, so a full row covers all 32 banks. The swizzle uses the row coordinate to
+XOR-permute the eight sectors within that row.
 
 A `SWIZZLE_128B` atom contains eight rows, so its total size is `8 × 128 B = 1024 B`. Here,
 `128 B` is the width of each atom row along the contiguous dimension, not the total atom size. The
