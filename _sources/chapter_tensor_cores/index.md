@@ -228,13 +228,17 @@ even CTA: SFA[0:128,   :]
 odd CTA:  SFA[128:256, :]
 ```
 
-The figure uses one common implementation: each CTA stages half of B's N columns in SMEM, and the cooperative MMA consumes the two halves as one complete B tile. Both sides therefore need the complete
+The figure uses a common implementation: each CTA moves half of B's N columns into its local SMEM, while the cooperative MMA consumes the complete B tile. The SFB entries for the full N dimension must therefore be available to both CTAs:
 
 ```text
 SFB[0:N, :]
 ```
 
-A common `cta_group::2` block-scaled kernel multicasts this SFB data to the CTA pair so that each CTA's TMEM can present a complete copy in the layout required by MMA. The figure therefore shards SFA along M and replicates all of SFB on both sides.
+A common implementation first multicasts SFB into the two SMEM allocations in the CTA pair. A `tcgen05.cp.cta_group::2` operation then copies the data from each CTA's local SMEM into its local TMEM.
+
+There is a second level of replication within each CTA. For both SFA and SFB, `tcgen05.cp.32x128b.warpx4` copies the packed 32-lane base layout into all four 32-lane TMEM partitions: `TLane 0-31`, `32-63`, `64-95`, and `96-127`.
+
+The figure therefore shows SFA sharded along M and a complete SFB copy in each CTA. Within each CTA, both scale-factor layouts are also replicated across its four 32-lane partitions.
 
 ![Data placement for block-scaled MMA: A and B are packed in SMEM; SFA, SFB, and C reside in TMEM; SFA is sharded along M, while SFB is multicast to the CTA pair](../img/mma_block_scaled.svg)
 

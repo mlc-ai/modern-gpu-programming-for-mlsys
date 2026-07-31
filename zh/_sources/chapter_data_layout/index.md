@@ -206,8 +206,6 @@ f_D(x) = (c0·4 + c1)@laneid + c2@reg
 
 ### TMEM 中 Scale Factors 的跨 Warp 广播
 
-先看一个发生在单个 kernel 内部的例子。Blackwell block-scaled MMA 会把 scale factors 存放在 TMEM 中，再通过 `.warpx4` broadcast 把它们提供给读取数据的四个 warps。结果是，同一个逻辑 scale factor 会出现在四个不同的 TMEM lane 位置。
-
 Block-scaled MMA 不是一种特定的数据类型，而是一类使用分块缩放因子的低精度 MMA。Blackwell 上常见的格式包括 MXFP8 和 NVFP4。就本节讨论的局部 block scale 而言，MXFP8 使用 FP8 数据，沿 K 维每 32 个元素共享一个 E8M0 scale factor；NVFP4 使用 E2M1 FP4 数据，每 16 个元素共享一个 E4M3 scale factor。
 
 无论采用哪种格式，基本思路都相同：沿 K 维将 A、B 划分为若干 scale blocks，并为每个 block 配置一个 scale factor，用来恢复该块的数值尺度。设每个 scale block 包含 `K_blk` 个 K 元素，那么元素 `k` 所属 block 的索引为：
@@ -224,9 +222,11 @@ B_real[k, n] = B_low[k, n] · SFB[n, k // K_blk]
 D = C + A_real × B_real
 ```
 
-`SFA[m, sfk]` 是 A 的第 `m` 行、第 `sfk` 个 K-scale block 对应的 scale factor；`SFB[n, sfk]` 是 B 的第 `n` 列、第 `sfk` 个 K-scale block 对应的 scale factor。下面的例子取 `M = 128`、`SF_K = 4`，因此 A 侧 scale-factor tensor 的逻辑形状为 `128×4`。
+`SFA[m, sfk]` 是 A 的第 `m` 行、第 `sfk` 个 K-scale block 对应的 scale factor；`SFB[n, sfk]` 是 B 的第 `n` 列、第 `sfk` 个 K-scale block 对应的 scale factor。
 
-固定一个 `sfk`，只看 `SFA[m, sfk]` 在 `m = 0…127` 上的 128 个元素。它们不会分别占用 128 条 TMEM lanes，而是先按下面的规则打包：
+下面用 SFA 说明 scale factors 如何放入 TMEM。例子取 `M = 128`、`SF_K = 4`，因此 A 侧 scale-factor tensor 的逻辑形状为 `128×4`。
+
+这 128 行不会直接占用 128 条 TMEM lanes。它们先被打包到一个 32-lane 基础布局中：
 
 ```text
 TLane  = m % 32
@@ -239,7 +239,20 @@ byte_offset = TCol·4 + byte
 
 `m = 0…31`、`32…63`、`64…95` 和 `96…127` 分别使用同样的 32 条 TMEM lanes。四个 `Mgroup` 对应 TCol `0`、`1`、`2` 和 `3`；每个 TCol 是一个 32-bit cell，`sfk = 0…3` 分别选择其中的四个 byte sub-columns。图中把这四个 TCol cells 展开成 16 个 byte 位置，因此 `byte_offset = TCol·4 + sfk`。
 
-随后，`.warpx4` broadcast 沿 `TLane` 轴复制这个 32-lane 布局。对于基础 lane `l`，同一个值会出现在 lanes `l`、`l+32`、`l+64` 和 `l+96` 中，TCol 保持不变。这样，warpgroup 中的四个 warps 都能在自己的 32-lane TMEM window 中读到它。
+上面的公式只给出了第一份 32-lane 基础布局。对于 block-scaled `tcgen05.mma`，[PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-mma-block-scaling) 规定 SFA 和 SFB 都要复制到 TMEM 的所有 32-lane partitions。TMEM 的 128 条 Lane rows 在这里分成四组：
+
+```text
+partition 0: TLane 0…31
+partition 1: TLane 32…63
+partition 2: TLane 64…95
+partition 3: TLane 96…127
+```
+
+`tcgen05.cp.32x128b.warpx4` 会把已经打包好的 32-lane 基础布局 multicast 到这四个 partitions。对于基础 lane `l`，同一个 scale factor 最终出现在 `l`、`l+32`、`l+64` 和 `l+96`，TCol 和 byte 位置保持不变。这是 `tcgen05.mma` 读取 scale factors 时规定的物理位置。
+
+这里有两个不同的步骤：`Mgroup = m // 32` 把 SFA 的 128 个逻辑行打包到不同的 TCols；`.warpx4` 再把整个打包结果沿 `TLane` 复制四份。交互图展示的正是这两步。
+
+SFB 遵循同样的硬件规定，只是逻辑索引换成 B 的列 `n`。在同一个 `SF_K = 4` 的例子中，SFB 的基础布局为 `TLane = n % 32`、`TCol = n // 32`、`byte = sfk`，随后也由 `.warpx4` 复制到四个 32-lane partitions。
 
 ### 用 Replication 捕获多个物理位置
 

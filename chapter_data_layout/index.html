@@ -617,12 +617,13 @@ f_D(x) = (c0·4 + c1)@laneid + c2@reg
 <h2>Replication and Offset<a class="headerlink" href="#replication-and-offset" title="Link to this heading">#</a></h2>
 <section id="broadcasting-scale-factors-across-warps-in-tmem">
 <h3>Broadcasting Scale Factors Across Warps in TMEM<a class="headerlink" href="#broadcasting-scale-factors-across-warps-in-tmem" title="Link to this heading">#</a></h3>
-<p>We begin with an example that occurs entirely within one kernel. Blackwell block-scaled MMA stores
-scale factors in TMEM and makes them available to the four reading warps through a <code class="docutils literal notranslate"><span class="pre">.warpx4</span></code>
-broadcast. As a result, one logical scale factor appears at four different TMEM lane positions.</p>
-<p>Block-scaled MMA operates on low-precision inputs. It divides A and B along the K dimension into
-scale blocks and associates one scale factor with each block to recover that block’s numerical
-scale. If each scale block contains <code class="docutils literal notranslate"><span class="pre">K_blk</span></code> elements along K, the block containing element <code class="docutils literal notranslate"><span class="pre">k</span></code> is:</p>
+<p>Block-scaled MMA is not a specific data type. It is a family of low-precision MMA operations that
+use per-block scale factors. Common Blackwell formats include MXFP8 and NVFP4. For the local block
+scaling discussed here, MXFP8 shares one E8M0 scale factor across every 32 elements along K, while
+NVFP4 shares one E4M3 scale factor across every 16 E2M1 FP4 elements.</p>
+<p>The underlying idea is the same in either case: divide A and B along K into scale blocks and assign
+one scale factor to each block. If each scale block contains <code class="docutils literal notranslate"><span class="pre">K_blk</span></code> elements along K, the block
+containing element <code class="docutils literal notranslate"><span class="pre">k</span></code> is:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>sfk = k // K_blk
 </pre></div>
 </div>
@@ -634,10 +635,11 @@ D = C + A_real × B_real
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">SFA[m,</span> <span class="pre">sfk]</span></code> is the scale factor for row <code class="docutils literal notranslate"><span class="pre">m</span></code> of A and K-scale block <code class="docutils literal notranslate"><span class="pre">sfk</span></code>; <code class="docutils literal notranslate"><span class="pre">SFB[n,</span> <span class="pre">sfk]</span></code> is the
-corresponding factor for column <code class="docutils literal notranslate"><span class="pre">n</span></code> of B. The example below uses <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">128</span></code> and <code class="docutils literal notranslate"><span class="pre">SF_K</span> <span class="pre">=</span> <span class="pre">4</span></code>, so the
-logical shape of the A-side scale-factor tensor is <code class="docutils literal notranslate"><span class="pre">128×4</span></code>.</p>
-<p>Fix one value of <code class="docutils literal notranslate"><span class="pre">sfk</span></code> and consider the 128 elements <code class="docutils literal notranslate"><span class="pre">SFA[m,</span> <span class="pre">sfk]</span></code> for <code class="docutils literal notranslate"><span class="pre">m</span> <span class="pre">=</span> <span class="pre">0…127</span></code>. They do not
-occupy 128 distinct TMEM lanes. Instead, they are first packed as:</p>
+corresponding factor for column <code class="docutils literal notranslate"><span class="pre">n</span></code> of B.</p>
+<p>The following SFA example shows how these scale factors are placed in TMEM. It uses <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">=</span> <span class="pre">128</span></code> and
+<code class="docutils literal notranslate"><span class="pre">SF_K</span> <span class="pre">=</span> <span class="pre">4</span></code>, so the logical shape of the A-side scale-factor tensor is <code class="docutils literal notranslate"><span class="pre">128×4</span></code>.</p>
+<p>The 128 rows do not directly occupy 128 distinct TMEM lanes. They are first packed into a 32-lane
+base layout:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TLane  = m % 32
 Mgroup = m // 32
 TCol   = Mgroup
@@ -650,9 +652,26 @@ byte_offset = TCol·4 + byte
 <code class="docutils literal notranslate"><span class="pre">sfk</span></code>, the four <code class="docutils literal notranslate"><span class="pre">Mgroup</span></code> values map to TCols <code class="docutils literal notranslate"><span class="pre">0</span></code>, <code class="docutils literal notranslate"><span class="pre">1</span></code>, <code class="docutils literal notranslate"><span class="pre">2</span></code>, and <code class="docutils literal notranslate"><span class="pre">3</span></code>. Within each 32-bit TCol cell,
 <code class="docutils literal notranslate"><span class="pre">sfk</span> <span class="pre">=</span> <span class="pre">0…3</span></code> selects one of its four byte sub-columns. The figure displays those cells as 16 byte
 positions, with <code class="docutils literal notranslate"><span class="pre">byte_offset</span> <span class="pre">=</span> <span class="pre">TCol·4</span> <span class="pre">+</span> <span class="pre">sfk</span></code>.</p>
-<p>The <code class="docutils literal notranslate"><span class="pre">.warpx4</span></code> broadcast then replicates this 32-lane layout along the <code class="docutils literal notranslate"><span class="pre">TLane</span></code> axis. For a base lane
-<code class="docutils literal notranslate"><span class="pre">l</span></code>, the same value appears in lanes <code class="docutils literal notranslate"><span class="pre">l</span></code>, <code class="docutils literal notranslate"><span class="pre">l+32</span></code>, <code class="docutils literal notranslate"><span class="pre">l+64</span></code>, and <code class="docutils literal notranslate"><span class="pre">l+96</span></code>, while TCol remains unchanged.
-Each of the four warps in the warpgroup can then read the value from its own 32-lane TMEM window.</p>
+<p>The mapping above describes only the first copy of this 32-lane base layout. The
+<a class="reference external" href="https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-mma-block-scaling">PTX ISA</a>
+requires both SFA and SFB for block-scaled <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> to be duplicated across every 32-lane
+partition of TMEM. The 128 TMEM Lane rows are divided here into four partitions:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>partition 0: TLane 0…31
+partition 1: TLane 32…63
+partition 2: TLane 64…95
+partition 3: TLane 96…127
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">tcgen05.cp.32x128b.warpx4</span></code> multicasts the packed 32-lane base layout into these four partitions.
+For a base lane <code class="docutils literal notranslate"><span class="pre">l</span></code>, the same scale factor appears at <code class="docutils literal notranslate"><span class="pre">l</span></code>, <code class="docutils literal notranslate"><span class="pre">l+32</span></code>, <code class="docutils literal notranslate"><span class="pre">l+64</span></code>, and <code class="docutils literal notranslate"><span class="pre">l+96</span></code>, while its
+TCol and byte positions remain unchanged. These are the physical locations from which
+<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> expects to obtain its scale factors.</p>
+<p>These are two separate steps. <code class="docutils literal notranslate"><span class="pre">Mgroup</span> <span class="pre">=</span> <span class="pre">m</span> <span class="pre">//</span> <span class="pre">32</span></code> packs the 128 logical SFA rows into different
+TCols; <code class="docutils literal notranslate"><span class="pre">.warpx4</span></code> then replicates the entire packed layout four times along <code class="docutils literal notranslate"><span class="pre">TLane</span></code>. The interactive
+figure shows both steps.</p>
+<p>SFB follows the same hardware rule, with B’s column index <code class="docutils literal notranslate"><span class="pre">n</span></code> replacing A’s row index <code class="docutils literal notranslate"><span class="pre">m</span></code>. In the
+same <code class="docutils literal notranslate"><span class="pre">SF_K</span> <span class="pre">=</span> <span class="pre">4</span></code> example, its base layout is <code class="docutils literal notranslate"><span class="pre">TLane</span> <span class="pre">=</span> <span class="pre">n</span> <span class="pre">%</span> <span class="pre">32</span></code>, <code class="docutils literal notranslate"><span class="pre">TCol</span> <span class="pre">=</span> <span class="pre">n</span> <span class="pre">//</span> <span class="pre">32</span></code>, and <code class="docutils literal notranslate"><span class="pre">byte</span> <span class="pre">=</span> <span class="pre">sfk</span></code>;
+<code class="docutils literal notranslate"><span class="pre">.warpx4</span></code> then replicates that layout into all four 32-lane partitions.</p>
 </section>
 <section id="representing-multiple-physical-locations-with-replication">
 <h3>Representing Multiple Physical Locations with Replication<a class="headerlink" href="#representing-multiple-physical-locations-with-replication" title="Link to this heading">#</a></h3>

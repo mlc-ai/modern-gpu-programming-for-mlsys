@@ -248,13 +248,14 @@ f_D(x) = (c0·4 + c1)@laneid + c2@reg
 
 ### Broadcasting Scale Factors Across Warps in TMEM
 
-We begin with an example that occurs entirely within one kernel. Blackwell block-scaled MMA stores
-scale factors in TMEM and makes them available to the four reading warps through a `.warpx4`
-broadcast. As a result, one logical scale factor appears at four different TMEM lane positions.
+Block-scaled MMA is not a specific data type. It is a family of low-precision MMA operations that
+use per-block scale factors. Common Blackwell formats include MXFP8 and NVFP4. For the local block
+scaling discussed here, MXFP8 shares one E8M0 scale factor across every 32 elements along K, while
+NVFP4 shares one E4M3 scale factor across every 16 E2M1 FP4 elements.
 
-Block-scaled MMA operates on low-precision inputs. It divides A and B along the K dimension into
-scale blocks and associates one scale factor with each block to recover that block's numerical
-scale. If each scale block contains `K_blk` elements along K, the block containing element `k` is:
+The underlying idea is the same in either case: divide A and B along K into scale blocks and assign
+one scale factor to each block. If each scale block contains `K_blk` elements along K, the block
+containing element `k` is:
 
 ```text
 sfk = k // K_blk
@@ -270,11 +271,13 @@ D = C + A_real × B_real
 ```
 
 `SFA[m, sfk]` is the scale factor for row `m` of A and K-scale block `sfk`; `SFB[n, sfk]` is the
-corresponding factor for column `n` of B. The example below uses `M = 128` and `SF_K = 4`, so the
-logical shape of the A-side scale-factor tensor is `128×4`.
+corresponding factor for column `n` of B.
 
-Fix one value of `sfk` and consider the 128 elements `SFA[m, sfk]` for `m = 0…127`. They do not
-occupy 128 distinct TMEM lanes. Instead, they are first packed as:
+The following SFA example shows how these scale factors are placed in TMEM. It uses `M = 128` and
+`SF_K = 4`, so the logical shape of the A-side scale-factor tensor is `128×4`.
+
+The 128 rows do not directly occupy 128 distinct TMEM lanes. They are first packed into a 32-lane
+base layout:
 
 ```text
 TLane  = m % 32
@@ -290,9 +293,30 @@ The ranges `m = 0…31`, `32…63`, `64…95`, and `96…127` reuse the same 32 
 `sfk = 0…3` selects one of its four byte sub-columns. The figure displays those cells as 16 byte
 positions, with `byte_offset = TCol·4 + sfk`.
 
-The `.warpx4` broadcast then replicates this 32-lane layout along the `TLane` axis. For a base lane
-`l`, the same value appears in lanes `l`, `l+32`, `l+64`, and `l+96`, while TCol remains unchanged.
-Each of the four warps in the warpgroup can then read the value from its own 32-lane TMEM window.
+The mapping above describes only the first copy of this 32-lane base layout. The
+[PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-mma-block-scaling)
+requires both SFA and SFB for block-scaled `tcgen05.mma` to be duplicated across every 32-lane
+partition of TMEM. The 128 TMEM Lane rows are divided here into four partitions:
+
+```text
+partition 0: TLane 0…31
+partition 1: TLane 32…63
+partition 2: TLane 64…95
+partition 3: TLane 96…127
+```
+
+`tcgen05.cp.32x128b.warpx4` multicasts the packed 32-lane base layout into these four partitions.
+For a base lane `l`, the same scale factor appears at `l`, `l+32`, `l+64`, and `l+96`, while its
+TCol and byte positions remain unchanged. These are the physical locations from which
+`tcgen05.mma` expects to obtain its scale factors.
+
+These are two separate steps. `Mgroup = m // 32` packs the 128 logical SFA rows into different
+TCols; `.warpx4` then replicates the entire packed layout four times along `TLane`. The interactive
+figure shows both steps.
+
+SFB follows the same hardware rule, with B's column index `n` replacing A's row index `m`. In the
+same `SF_K = 4` example, its base layout is `TLane = n % 32`, `TCol = n // 32`, and `byte = sfk`;
+`.warpx4` then replicates that layout into all four 32-lane partitions.
 
 ### Representing Multiple Physical Locations with Replication
 
