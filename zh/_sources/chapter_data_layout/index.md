@@ -224,22 +224,48 @@ D = C + A_real × B_real
 
 `SFA[m, sfk]` 是 A 的第 `m` 行、第 `sfk` 个 K-scale block 对应的 scale factor；`SFB[n, sfk]` 是 B 的第 `n` 列、第 `sfk` 个 K-scale block 对应的 scale factor。
 
-下面用 SFA 说明 scale factors 如何放入 TMEM。例子取 `M = 128`、`SF_K = 4`，因此 A 侧 scale-factor tensor 的逻辑形状为 `128×4`。
-
-这 128 行不会直接占用 128 条 TMEM lanes。它们先被打包到一个 32-lane 基础布局中：
+下面用 NVFP4 的 SFA 说明 scale factors 如何放入 TMEM。例子取 `M = 128`、`SF_K = 4`，每个 scale factor 占 1 byte，因此 SFA 的逻辑形状为 `128×4`，总大小为：
 
 ```text
-TLane  = m % 32
-Mgroup = m // 32
-TCol   = Mgroup
-byte   = sfk
+128 rows × 4 bytes/row = 512 bytes
+```
+
+负责搬运这组数据的 `tcgen05.cp.32x128b.warpx4` 以 `.32x128b` 为基础 shape：32 条 local lanes，每条 lane 搬运 128 bits，也就是 16 bytes。它的基础 tile 同样包含：
+
+```text
+32 local lanes × 16 bytes/lane = 512 bytes
+```
+
+数据量正好相等。不过，基础 tile 只有 32 个 lane 位置，不能让 128 个 `m` 各占一条 lane。因此要把 `m` 拆成两部分：
+
+```text
+local_lane = m % 32
+Mgroup     = m // 32
+```
+
+`local_lane` 选择 32 条 lanes 中的一条，`Mgroup` 再选择这条 lane 上的 TCol。对于固定的 local lane `l`，四组 SFA rows 按下面的方式并排存放：
+
+```text
+TCol 0: SFA[l,      0:4]
+TCol 1: SFA[l + 32, 0:4]
+TCol 2: SFA[l + 64, 0:4]
+TCol 3: SFA[l + 96, 0:4]
+```
+
+每一行 SFA 含有 4 个 1-byte scale factors，正好填满一个 32-bit TCol cell；`sfk = 0…3` 选择其中的 byte。因此，完整的打包规则为：
+
+```text
+local_lane = m % 32
+Mgroup     = m // 32
+TCol       = Mgroup
+byte       = sfk
 
 byte_offset = TCol·4 + byte
 ```
 
-`m = 0…31`、`32…63`、`64…95` 和 `96…127` 分别使用同样的 32 条 TMEM lanes。四个 `Mgroup` 对应 TCol `0`、`1`、`2` 和 `3`；每个 TCol 是一个 32-bit cell，`sfk = 0…3` 分别选择其中的四个 byte sub-columns。图中把这四个 TCol cells 展开成 16 个 byte 位置，因此 `byte_offset = TCol·4 + sfk`。
+例如，`SFA[64, 2]` 的 `local_lane = 0`、`Mgroup = 2`，所以它位于 local lane 0、TCol 2 的第 2 个 byte。`SFA[0, 2]`、`SFA[32, 2]`、`SFA[64, 2]` 和 `SFA[96, 2]` 都使用 local lane 0，但分别位于 TCol 0、1、2 和 3；它们不会占用同一个 TMEM cell。
 
-上面的公式只给出了第一份 32-lane 基础布局。对于 block-scaled `tcgen05.mma`，[PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-mma-block-scaling) 规定 SFA 和 SFB 都要复制到 TMEM 的所有 32-lane partitions。TMEM 的 128 条 Lane rows 在这里分成四组：
+到这里，一份完整的 `128×4` SFA 已经被打包成一个 32-lane 基础 tile。Block-scaled `tcgen05.mma` 将 TMEM lanes 按四个 32-lane partitions 读取，并要求每个 partition 都在相同的 local-lane、TCol 和 byte 位置上提供完整的 scale-factor tile。[PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-mma-block-scaling) 因此规定 SFA 和 SFB 要复制到所有四个 partitions：
 
 ```text
 partition 0: TLane 0…31
@@ -248,11 +274,17 @@ partition 2: TLane 64…95
 partition 3: TLane 96…127
 ```
 
-`tcgen05.cp.32x128b.warpx4` 会把已经打包好的 32-lane 基础布局 multicast 到这四个 partitions。对于基础 lane `l`，同一个 scale factor 最终出现在 `l`、`l+32`、`l+64` 和 `l+96`，TCol 和 byte 位置保持不变。这是 `tcgen05.mma` 读取 scale factors 时规定的物理位置。
+`.warpx4` 会把刚才的 32-lane 基础 tile multicast 到这四个 partitions。令 `p = 0…3` 表示 partition 编号，则物理 Lane 坐标为：
 
-这里有两个不同的步骤：`Mgroup = m // 32` 把 SFA 的 128 个逻辑行打包到不同的 TCols；`.warpx4` 再把整个打包结果沿 `TLane` 复制四份。交互图展示的正是这两步。
+```text
+TLane = local_lane + 32·p
+```
 
-SFB 遵循同样的硬件规定，只是逻辑索引换成 B 的列 `n`。在同一个 `SF_K = 4` 的例子中，SFB 的基础布局为 `TLane = n % 32`、`TCol = n // 32`、`byte = sfk`，随后也由 `.warpx4` 复制到四个 32-lane partitions。
+TCol 和 byte 不变。于是 `SFA[64, 2]` 最终出现在 `(TLane, TCol, byte)` 为 `(0,2,2)`、`(32,2,2)`、`(64,2,2)` 和 `(96,2,2)` 的四个位置。
+
+这里出现了两个互不相关的“四组”。四个 `Mgroup` 是对 128 个逻辑 `m` 的打包，它们沿 TCol 展开；四个 partitions 是同一份打包结果的物理副本，它们沿 TLane 展开。交互图把这两个方向同时画了出来。
+
+SFB 遵循同样的硬件规定，只是逻辑索引换成 B 的列 `n`。例如，当 `N = 128`、`SF_K = 4` 时，它使用 `local_lane = n % 32`、`TCol = n // 32`、`byte = sfk` 完成基础打包，再由 `.warpx4` 复制到四个 32-lane partitions。
 
 ### 用 Replication 捕获多个物理位置
 
@@ -266,14 +298,14 @@ S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
 
 这里的 `R[4 : 32@TLane]` 让 `r` 依次取 `0`、`1`、`2` 和 `3`，产生 `0`、`32`、`64` 和 `96` 四个 `TLane` 偏移。`R[...]` 不增加新的逻辑数据，只记录这些副本所在的位置。
 
-下图同时展示了这套打包映射，以及随后沿 `TLane` 轴的四份复制。
+下图同时展示了 SFA 如何压入一个 32-lane 基础 tile，以及 `.warpx4` 如何将这份 tile 复制到四个 TMEM partitions。
 
 ```{raw} html
 <iframe src="../demo_zh/sf_tmem.html?v=tcol-subcolumn-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
         style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
-*点击图中的任意 scale factor，可以查看它的 TMEM 坐标以及在四个 warp window 中的位置。*
+*点击任意 SFA cell，可以查看它在 32-lane 基础 tile 中的位置，以及 `.warpx4` 复制后所在的四个 TMEM partitions。*
 
 ### GPU Mesh 中的 Replication 与 Offset
 

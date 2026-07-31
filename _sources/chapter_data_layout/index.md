@@ -273,30 +273,59 @@ D = C + A_real × B_real
 `SFA[m, sfk]` is the scale factor for row `m` of A and K-scale block `sfk`; `SFB[n, sfk]` is the
 corresponding factor for column `n` of B.
 
-The following SFA example shows how these scale factors are placed in TMEM. It uses `M = 128` and
-`SF_K = 4`, so the logical shape of the A-side scale-factor tensor is `128×4`.
-
-The 128 rows do not directly occupy 128 distinct TMEM lanes. They are first packed into a 32-lane
-base layout:
+The following NVFP4 SFA example shows how these scale factors are placed in TMEM. It uses
+`M = 128` and `SF_K = 4`. Each scale factor occupies one byte, so the logical `128×4` SFA contains:
 
 ```text
-TLane  = m % 32
-Mgroup = m // 32
-TCol   = Mgroup
-byte   = sfk
+128 rows × 4 bytes/row = 512 bytes
+```
+
+The `tcgen05.cp.32x128b.warpx4` instruction that moves this data has a `.32x128b` base shape:
+32 local lanes, with 128 bits, or 16 bytes, per lane. Its base tile therefore also contains:
+
+```text
+32 local lanes × 16 bytes/lane = 512 bytes
+```
+
+The sizes match exactly. The base tile has only 32 lane positions, however, so the 128 values of
+`m` cannot each occupy a separate lane. Instead, split `m` into:
+
+```text
+local_lane = m % 32
+Mgroup     = m // 32
+```
+
+`local_lane` selects one of the 32 lanes, while `Mgroup` selects a TCol on that lane. For a fixed
+local lane `l`, the four groups of SFA rows are placed side by side:
+
+```text
+TCol 0: SFA[l,      0:4]
+TCol 1: SFA[l + 32, 0:4]
+TCol 2: SFA[l + 64, 0:4]
+TCol 3: SFA[l + 96, 0:4]
+```
+
+Each SFA row contains four one-byte scale factors, exactly filling one 32-bit TCol cell. The
+`sfk = 0…3` coordinate selects a byte within that cell. The complete packing rule is therefore:
+
+```text
+local_lane = m % 32
+Mgroup     = m // 32
+TCol       = Mgroup
+byte       = sfk
 
 byte_offset = TCol·4 + byte
 ```
 
-The ranges `m = 0…31`, `32…63`, `64…95`, and `96…127` reuse the same 32 TMEM lanes. For a fixed
-`sfk`, the four `Mgroup` values map to TCols `0`, `1`, `2`, and `3`. Within each 32-bit TCol cell,
-`sfk = 0…3` selects one of its four byte sub-columns. The figure displays those cells as 16 byte
-positions, with `byte_offset = TCol·4 + sfk`.
+For example, `SFA[64, 2]` has `local_lane = 0` and `Mgroup = 2`, so it occupies byte 2 of TCol 2
+on local lane 0. `SFA[0, 2]`, `SFA[32, 2]`, `SFA[64, 2]`, and `SFA[96, 2]` all use local lane 0,
+but occupy TCols 0, 1, 2, and 3 respectively. They do not share a TMEM cell.
 
-The mapping above describes only the first copy of this 32-lane base layout. The
+At this point, one complete `128×4` SFA has been packed into a 32-lane base tile. A block-scaled
+`tcgen05.mma` reads TMEM through four 32-lane partitions and expects every partition to provide
+the complete scale-factor tile at the same local-lane, TCol, and byte positions. The
 [PTX ISA](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#tcgen05-mma-block-scaling)
-requires both SFA and SFB for block-scaled `tcgen05.mma` to be duplicated across every 32-lane
-partition of TMEM. The 128 TMEM Lane rows are divided here into four partitions:
+therefore requires both SFA and SFB to be duplicated across all four partitions:
 
 ```text
 partition 0: TLane 0…31
@@ -305,18 +334,23 @@ partition 2: TLane 64…95
 partition 3: TLane 96…127
 ```
 
-`tcgen05.cp.32x128b.warpx4` multicasts the packed 32-lane base layout into these four partitions.
-For a base lane `l`, the same scale factor appears at `l`, `l+32`, `l+64`, and `l+96`, while its
-TCol and byte positions remain unchanged. These are the physical locations from which
-`tcgen05.mma` expects to obtain its scale factors.
+The `.warpx4` qualifier multicasts the packed base tile into those four partitions. If `p = 0…3`
+is the partition index, the physical Lane coordinate is:
 
-These are two separate steps. `Mgroup = m // 32` packs the 128 logical SFA rows into different
-TCols; `.warpx4` then replicates the entire packed layout four times along `TLane`. The interactive
-figure shows both steps.
+```text
+TLane = local_lane + 32·p
+```
 
-SFB follows the same hardware rule, with B's column index `n` replacing A's row index `m`. In the
-same `SF_K = 4` example, its base layout is `TLane = n % 32`, `TCol = n // 32`, and `byte = sfk`;
-`.warpx4` then replicates that layout into all four 32-lane partitions.
+The TCol and byte coordinates remain unchanged. `SFA[64, 2]` therefore appears at
+`(TLane, TCol, byte)` coordinates `(0,2,2)`, `(32,2,2)`, `(64,2,2)`, and `(96,2,2)`.
+
+Two unrelated groups of four appear here. The four `Mgroup` values pack the 128 logical `m` rows
+along TCol. The four partitions are physical copies of that packed tile along TLane. The
+interactive figure shows both directions.
+
+SFB follows the same hardware rule, with B's column index `n` replacing A's row index `m`. For
+example, when `N = 128` and `SF_K = 4`, its base packing uses `local_lane = n % 32`,
+`TCol = n // 32`, and `byte = sfk`; `.warpx4` then copies it into all four 32-lane partitions.
 
 ### Representing Multiple Physical Locations with Replication
 
@@ -335,15 +369,16 @@ In `R[4 : 32@TLane]`, `r` takes the values `0`, `1`, `2`, and `3`, producing `TL
 `0`, `32`, `64`, and `96`. The replication term does not add new logical data; it records the
 physical locations of the copies.
 
-The figure below shows both the packing rule and the four replicas along the `TLane` axis.
+The figure below shows how SFA is packed into one 32-lane base tile and how `.warpx4` copies that
+tile into the four TMEM partitions.
 
 ```{raw} html
 <iframe src="../demo/sf_tmem.html?v=tcol-subcolumn-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
         style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
-Click any scale factor to inspect its TMEM coordinate and its location in each of the four warp
-windows.
+Click any SFA cell to inspect its position in the 32-lane base tile and its location in each of the
+four TMEM partitions after `.warpx4`.
 
 ### Replication and Offset in a GPU Mesh
 
