@@ -206,7 +206,7 @@ f_D(x) = (c0·4 + c1)@laneid + c2@reg
 
 ### TMEM 中 Scale Factors 的跨 Warp 广播
 
-先看一个发生在单个 kernel 内部的例子。Blackwell block-scaled MMA 会把 scale factors 存放在 TMEM 中，再通过 `.warpx4` broadcast 把它们提供给读取数据的四个 warps。结果是，同一个逻辑 scale factor 会出现在四个不同的 TMEM lane 位置。
+先看一个发生在单个 kernel 内部的例子。Blackwell block-scaled MMA 从 TMEM 读取 scale factors。将它们写入 TMEM 时，`tcgen05.cp.32x128b.warpx4` 会把一个 `32-lane × 128-bit` 基础 tile multicast 到与四个 warp 对应的 32-lane partitions。同一份逻辑 scale-factor tile 因此会出现在四组不同的 TMEM Lane 位置。
 
 Block-scaled MMA 不是一种特定的数据类型，而是一类使用分块缩放因子的低精度 MMA。Blackwell 上常见的格式包括 MXFP8 和 NVFP4。就本节讨论的局部 block scale 而言，MXFP8 使用 FP8 数据，沿 K 维每 32 个元素共享一个 E8M0 scale factor；NVFP4 使用 E2M1 FP4 数据，每 16 个元素共享一个 E4M3 scale factor。
 
@@ -224,7 +224,9 @@ B_real[k, n] = B_low[k, n] · SFB[n, k // K_blk]
 D = C + A_real × B_real
 ```
 
-`SFA[m, sfk]` 是 A 的第 `m` 行、第 `sfk` 个 K-scale block 对应的 scale factor；`SFB[n, sfk]` 是 B 的第 `n` 列、第 `sfk` 个 K-scale block 对应的 scale factor。下面的例子取 `M = 128`、`SF_K = 4`，因此 A 侧 scale-factor tensor 的逻辑形状为 `128×4`。
+`SFA[m, sfk]` 是 A 的第 `m` 行、第 `sfk` 个 K-scale block 对应的 scale factor；`SFB[n, sfk]` 是 B 的第 `n` 列、第 `sfk` 个 K-scale block 对应的 scale factor。从下标可以看出，`SFA` 随输出行 `m` 变化，而 `SFB` 只取决于输出列 `n` 和 K-scale block。在 `M = 128` 的 data-path layout 中，M 方向上的四个 32-row 区域都会与同一个 B tile 相乘，因此使用同一组逻辑 SFB。
+
+下面用 SFA 具体说明这套 packing 和 replication。例子取 `M = 128`、`SF_K = 4`，因此 A 侧 scale-factor tensor 的逻辑形状为 `128×4`。
 
 固定一个 `sfk`，只看 `SFA[m, sfk]` 在 `m = 0…127` 上的 128 个元素。它们不会分别占用 128 条 TMEM lanes，而是先按下面的规则打包：
 
@@ -239,7 +241,9 @@ byte_offset = TCol·4 + byte
 
 `m = 0…31`、`32…63`、`64…95` 和 `96…127` 分别使用同样的 32 条 TMEM lanes。四个 `Mgroup` 对应 TCol `0`、`1`、`2` 和 `3`；每个 TCol 是一个 32-bit cell，`sfk = 0…3` 分别选择其中的四个 byte sub-columns。图中把这四个 TCol cells 展开成 16 个 byte 位置，因此 `byte_offset = TCol·4 + sfk`。
 
-随后，`.warpx4` broadcast 沿 `TLane` 轴复制这个 32-lane 布局。对于基础 lane `l`，同一个值会出现在 lanes `l`、`l+32`、`l+64` 和 `l+96` 中，TCol 保持不变。这样，warpgroup 中的四个 warps 都能在自己的 32-lane TMEM window 中读到它。
+随后，`.warpx4` broadcast 沿 `TLane` 轴复制这个 32-lane 布局。对于基础 lane `l`，同一个值会出现在 lanes `l`、`l+32`、`l+64` 和 `l+96` 中，TCol 保持不变。
+
+在同一个 `SF_K = 4` 的例子中，SFB 采用相同的 packing，只是用 B 的列索引 `n` 代替 A 的行索引 `m`：基础 `TLane = n % 32`，相对于 SFB 起始位置的 `TCol = n // 32`，`byte = sfk`。经过 `.warpx4` 后，最终的 Lane 位置为 `TLane = (n % 32) + 32w`，其中 `w = 0,1,2,3`。
 
 ### 用 Replication 捕获多个物理位置
 

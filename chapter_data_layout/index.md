@@ -248,9 +248,10 @@ f_D(x) = (c0·4 + c1)@laneid + c2@reg
 
 ### Broadcasting Scale Factors Across Warps in TMEM
 
-We begin with an example that occurs entirely within one kernel. Blackwell block-scaled MMA stores
-scale factors in TMEM and makes them available to the four reading warps through a `.warpx4`
-broadcast. As a result, one logical scale factor appears at four different TMEM lane positions.
+We begin with an example that occurs entirely within one kernel. Blackwell block-scaled MMA reads
+its scale factors from TMEM. To place them there, `tcgen05.cp.32x128b.warpx4` multicasts one
+`32-lane × 128-bit` base tile into the four 32-lane TMEM partitions associated with the four warps.
+The same logical scale-factor tile therefore appears in four different groups of TMEM Lane positions.
 
 Block-scaled MMA operates on low-precision inputs. It divides A and B along the K dimension into
 scale blocks and associates one scale factor with each block to recover that block's numerical
@@ -270,8 +271,13 @@ D = C + A_real × B_real
 ```
 
 `SFA[m, sfk]` is the scale factor for row `m` of A and K-scale block `sfk`; `SFB[n, sfk]` is the
-corresponding factor for column `n` of B. The example below uses `M = 128` and `SF_K = 4`, so the
-logical shape of the A-side scale-factor tensor is `128×4`.
+corresponding factor for column `n` of B. The subscripts show that SFA varies with output row `m`,
+whereas SFB depends only on output column `n` and the K-scale block. In the `M = 128` data-path
+layout, the four 32-row regions along M all multiply by the same B tile, so they use the same logical
+SFB tile.
+
+The following SFA example makes this packing and replication concrete. It uses `M = 128` and
+`SF_K = 4`, so the logical shape of the A-side scale-factor tensor is `128×4`.
 
 Fix one value of `sfk` and consider the 128 elements `SFA[m, sfk]` for `m = 0…127`. They do not
 occupy 128 distinct TMEM lanes. Instead, they are first packed as:
@@ -292,7 +298,11 @@ positions, with `byte_offset = TCol·4 + sfk`.
 
 The `.warpx4` broadcast then replicates this 32-lane layout along the `TLane` axis. For a base lane
 `l`, the same value appears in lanes `l`, `l+32`, `l+64`, and `l+96`, while TCol remains unchanged.
-Each of the four warps in the warpgroup can then read the value from its own 32-lane TMEM window.
+
+In the same `SF_K = 4` example, SFB uses the same packing with B's column index `n` in place of A's
+row index `m`: the base `TLane` is `n % 32`, the TCol relative to the start of SFB is `n // 32`, and
+`byte = sfk`. After `.warpx4`, the final Lane positions are `TLane = (n % 32) + 32w` for
+`w = 0,1,2,3`.
 
 ### Representing Multiple Physical Locations with Replication
 
