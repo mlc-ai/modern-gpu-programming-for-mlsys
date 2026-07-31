@@ -373,7 +373,7 @@ The figure below shows how SFA is packed into one 32-lane base tile and how `.wa
 tile into the four TMEM partitions.
 
 ```{raw} html
-<iframe src="../demo/sf_tmem.html?v=partition-explanation-20260731" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
+<iframe src="../demo/sf_tmem.html?v=tcol-subcolumn-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
         style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 

@@ -301,7 +301,7 @@ S[(32, …) : (1@TLane, …)] + R[4 : 32@TLane]
 下图同时展示了 SFA 如何压入一个 32-lane 基础 tile，以及 `.warpx4` 如何将这份 tile 复制到四个 TMEM partitions。
 
 ```{raw} html
-<iframe src="../demo_zh/sf_tmem.html?v=partition-explanation-20260731" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
+<iframe src="../demo_zh/sf_tmem.html?v=tcol-subcolumn-20260710" title="Scale factors in TMEM: packing and .warpx4 broadcast" loading="lazy"
         style="width:100%; height:560px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 ```
 
