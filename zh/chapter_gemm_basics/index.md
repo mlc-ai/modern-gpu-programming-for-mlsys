@@ -518,8 +518,6 @@ B[n_st : n_st + BLK_N, k : k + BLK_K]
 
 具有相同 `bx` 的 CTAs 会读取相同的 A tiles，具有相同 `by` 的 CTAs 则会读取相同的 B tiles。当前版本没有显式实现跨 CTA 的数据复用。
 
-**使用你的 agent 练习**：取 `M=N=K=256`、`BLK_M=BLK_N=128`、`BLK_K=64`，分别追踪 CTA `(1, 0)` 和 CTA `(0, 1)`。列出每个 CTA 的 `m_st`、`n_st`，每次 K iteration 加载的 A、B slices，以及最终写入的 D 区域。由于 kernel 计算 `D = A @ B.T`，B 的哪些 rows 会成为 D 的 columns？
-
 ### 完整 Kernel
 
 这个 kernel 只在第 2 步基础上修改两处：grid shape 和每个 CTA 的 offsets。内部 K-loop 与 writeback 保持不变。Imports 仍然相同：
@@ -628,4 +626,4 @@ def hgemm_v3(M, N, K):
 
 1. 在第 1 至第 3 步中，`Tx.copy` 会在 MMA 之前将 A、B tiles 搬入 SMEM。为什么 `Tx.gemm_async` 读取这些 tiles 前必须执行 `T.cuda.cta_sync()`？
 2. 在第 2 步中，如果从 K-loop 删除 `phase_mma ^= 1`，会发生什么？Kernel 仍会等待每次 MMA，还是后续 wait 可能提前通过？
-3. 当 `M=N=4096`、`BLK_M=BLK_N=128` 时，第 3 步会启动多少 CTAs？邻近 CTAs 在逻辑上复用了哪些 operand tiles？第 3 步是否真正利用了这种复用？
+3. 当 `M=N=4096`、`BLK_M=BLK_N=128` 时，第 3 步的 grid shape 是多少，共启动多少个 CTAs？对于 CTA `(bx, by)`，哪些 CTAs 会独立读取相同的 A tiles，哪些会独立读取相同的 B tiles？当前 kernel 是否显式共享了这些数据？
