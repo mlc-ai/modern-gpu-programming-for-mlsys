@@ -759,21 +759,9 @@ successive banks. For the bank width used in this chapter, the bank for a byte a
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank = (addr // 4) % 32
 </pre></div>
 </div>
-<p>Each bank contains many 32-bit words at different addresses. For the discussion below, call the
-position of each word within its bank a <strong>bank slot</strong>.</p>
-<p>Start with a concrete example. Suppose <code class="docutils literal notranslate"><span class="pre">smem</span></code> is an array of <code class="docutils literal notranslate"><span class="pre">float32</span></code>, and lane <code class="docutils literal notranslate"><span class="pre">l</span></code> reads it using
-each of the following access patterns:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>lane l reads smem[l]       -&gt; bank l, slot 0
-lane l reads smem[32 * l]  -&gt; bank 0, slot l
-</pre></div>
-</div>
-<p>In the first case, the 32 lanes access banks <code class="docutils literal notranslate"><span class="pre">0…31</span></code>, so all 32 words can be served in parallel. In
-the second, 32 different addresses all map to bank 0, so the request must be split into 32 batches:
-a 32-way bank conflict.</p>
-<p>Each bank can provide only one 32-bit word in a single processing batch. If accesses in that batch
-target different slots in the same bank, the hardware must serialize them. This is a bank conflict.</p>
-<p>A different case arises when multiple lanes read the same bank slot, and therefore the same word.
-The hardware reads the word once and broadcasts it to those lanes, so no conflict occurs.</p>
+<p>If accesses in the same processing batch target different addresses in one bank, the hardware must
+serialize them. This is a bank conflict. If multiple lanes read the same address, the hardware can
+broadcast the word to those lanes without a conflict.</p>
 <p>A warp instruction may be split into several processing batches according to its access width.
 Nsight Compute calls each batch a <strong>wavefront</strong>. For a contiguous, aligned access, one wavefront can
 move at most 128 bytes: 4 bytes from each of the 32 banks. A 4-byte access per lane therefore places
@@ -790,18 +778,15 @@ same bank. A column-major layout has the opposite tradeoff.</p>
 <p><strong>Swizzling</strong> mitigates this problem by changing the physical address arrangement while preserving
 the tile’s logical shape. A common technique XORs part of the row index into the column index so
 that the target access pattern spreads more evenly across the banks.</p>
-<p>To show this access pattern directly, the <code class="docutils literal notranslate"><span class="pre">8×8</span></code> example below reduces the 32 physical banks to eight
-and lets each cell represent one bank slot. The plain row-major layout on the left uses:</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">8×8</span></code> interactive example below reduces the 32 physical banks to eight. In the plain row-major
+layout on the left, the eight elements in one column occupy different addresses in the same bank:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank = logical_col
-slot = row
 </pre></div>
 </div>
-<p>Selecting column 3 therefore sends the eight accesses to slots <code class="docutils literal notranslate"><span class="pre">0…7</span></code> in bank 3, producing an 8-way
-bank conflict.</p>
+<p>Selecting column 3 therefore sends all eight accesses to bank 3, producing an 8-way bank conflict.</p>
 <p>The layout on the right applies an XOR swizzle:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>mapped_col = logical_col XOR row
 bank       = mapped_col
-slot       = row
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">XOR</span></code> is bitwise exclusive OR. It maps one logical column to different banks in different rows. For
