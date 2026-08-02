@@ -353,25 +353,22 @@ Element (1, 2, 3) → device (1, 1), local offset = 19
 
 本章最后要介绍的是 swizzle layout，它主要用于缓解 shared memory 中的 bank conflict。
 
-现代 NVIDIA GPU 的 shared memory 被划分为 32 个 memory banks，每个 bank 每个周期可以提供一个 32-bit word。连续的 32-bit words 依次映射到这 32 个 banks。对于字节地址 `addr`，本章使用的 bank 编号可以写成：
+现代 NVIDIA GPU 的 shared memory 被划分为 32 个 memory banks，连续的 32-bit words 依次映射到这 32 个 banks。对于字节地址 `addr`，本章使用的 bank 编号可以写成：
 
 ```text
 bank = (addr // 4) % 32
 ```
 
-Bank conflict 的判断范围是一个 warp 执行一条 shared-memory 指令时产生的 memory request。假设 `smem` 是一个 `float32` array，比较下面三种访问：
+当一个 warp 执行一条 shared-memory 指令时，如果两个或多个 lanes 访问不同的 32-bit words，而这些 words 又映射到同一个 bank，就发生了 bank conflict。一个 bank 每个周期只能提供一个 word，因此这些访问必须串行完成。多个 lanes 读取同一个 word 时可以使用 broadcast，不属于 bank conflict。
+
+假设 `smem` 是一个 `float32` array，比较下面两种访问：
 
 ```text
 lane l 读取 smem[l]       -> bank l
 lane l 读取 smem[32 * l]  -> bank 0
-所有 lane 读取 smem[0]    -> bank 0，同一个 word
 ```
 
-第一种情况下，32 个 lanes 分别访问 bank `0…31`，所有数据可以并行读取。第二种情况下，32 个地址虽然彼此不同，却都映射到 bank 0。Bank 0 每次只能提供其中一个 word，硬件必须把这次 request 分成 32 批处理，这就是 32-way bank conflict。第三种情况也只访问 bank 0，但所有 lanes 读取的是同一个 32-bit word，硬件可以通过 broadcast 返回数据，因此不会产生冲突。
-
-Nsight Compute 将硬件处理一个 request 的每个批次称为 wavefront。一个无冲突的 wavefront 可以让 32 个 banks 各提供一个 32-bit word，共处理 128 bytes；bank conflict 会让硬件产生额外的 wavefronts，并在不同周期依次处理。
-
-这里还需要区分由访问宽度决定的基础 wavefronts，以及 bank conflict 产生的额外 wavefronts。对于整个 warp 发起的连续且对齐访问，每个 lane 读取 4、8 或 16 bytes 时，总数据量分别是 128、256 或 512 bytes，对应的理想数量分别是 1、2 或 4 个 wavefronts。实际数量超出这个理想值的部分，才是 bank 映射带来的额外串行化。
+第一种情况下，32 个 lanes 分别访问 bank `0…31`，所有数据可以并行读取。第二种情况下，32 个不同地址都映射到 bank 0，只能分 32 次读取，因此产生 32-way bank conflict。
 
 在 tensor 程序中，同一个 tile 往往会被沿不同方向访问。处理矩阵时，我们既可能连续读取一行，也可能取出一列。但简单布局通常只能让其中一种访问方式高效。以 row-major tile 为例，同一行的相邻元素地址连续，通常会分散到不同 bank；而同一列的相邻元素之间隔着一个 row stride。如果这个 stride 与 bank 的映射周期重合，多个 lane 的访问就可能集中到同一个 bank，产生 bank conflict。Column-major layout 的情况则恰好相反。
 

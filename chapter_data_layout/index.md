@@ -431,39 +431,28 @@ Click any cell to see which devices hold the corresponding logical element.
 
 The final layout in this chapter addresses bank conflicts in shared memory.
 
-Modern NVIDIA GPUs divide shared memory into 32 memory banks, each of which can provide one 32-bit
-word per cycle. Successive 32-bit words map to successive banks. For the bank width used in this
-chapter, the bank for a byte address `addr` is:
+Modern NVIDIA GPUs divide shared memory into 32 memory banks. Successive 32-bit words map to
+successive banks. For the bank width used in this chapter, the bank for a byte address `addr` is:
 
 ```text
 bank = (addr // 4) % 32
 ```
 
-Bank conflicts are evaluated within the memory request generated when one warp executes one
-shared-memory instruction. Suppose `smem` is an array of `float32`. Compare these three access
-patterns:
+A bank conflict occurs when two or more lanes in the same warp execute one shared-memory
+instruction, access different 32-bit words, and those words map to the same bank. A bank can provide
+only one word per cycle, so those accesses must be serialized. Reads by multiple lanes from the same
+word can be broadcast and do not conflict.
+
+Suppose `smem` is an array of `float32`. Compare these two access patterns:
 
 ```text
 lane l reads smem[l]       -> bank l
 lane l reads smem[32 * l]  -> bank 0
-all lanes read smem[0]     -> bank 0, same word
 ```
 
 In the first case, the 32 lanes access banks `0…31`, so all 32 words can be served in parallel. In
-the second, the addresses are different but every address maps to bank 0. That bank can supply only
-one of those words at a time, so the hardware must split the request into 32 batches: a 32-way bank
-conflict. The third case also uses only bank 0, but every lane requests the same 32-bit word. The
-hardware broadcasts that word, so the access does not conflict.
-
-Nsight Compute calls each batch used to service a request a **wavefront**. A conflict-free wavefront
-can have all 32 banks provide one 32-bit word, for a total of 128 bytes. Bank conflicts create
-additional wavefronts, which the hardware processes on separate cycles.
-
-The baseline number of wavefronts set by the access width must be distinguished from the additional
-wavefronts caused by bank conflicts. For a contiguous, aligned access by a full warp, reading 4, 8,
-or 16 bytes per lane moves 128, 256, or 512 bytes in total, giving an ideal count of one, two, or four
-wavefronts, respectively. Any wavefronts beyond that ideal count represent extra serialization from
-the bank mapping.
+the second, 32 different addresses all map to bank 0, so the request must be split into 32 batches:
+a 32-way bank conflict.
 
 Tensor programs often access the same tile in more than one direction. Matrix code may read a
 contiguous row at one point and extract a column at another. A simple layout usually favors only one
