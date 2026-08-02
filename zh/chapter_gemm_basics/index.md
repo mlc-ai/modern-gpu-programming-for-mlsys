@@ -489,8 +489,7 @@ K-loop 已经解决 contraction dimension，但 M、N 仍然固定在一个 `128
 CTA `(bx, by)` 负责下面的输出区域：
 
 ```text
-D[bx * BLK_M : (bx + 1) * BLK_M,
-  by * BLK_N : (by + 1) * BLK_N]
+D[bx * BLK_M : (bx + 1) * BLK_M, by * BLK_N : (by + 1) * BLK_N]
 ```
 
 为了计算这块区域，CTA 的 K-loop 会依次加载 A 对应 row band 和 B 对应 row band 中的 K-slices：
