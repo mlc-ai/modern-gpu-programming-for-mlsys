@@ -380,13 +380,17 @@ lane l 读取 smem[32 * l]  -> bank 0, slot l
 
 Swizzling 通过改变元素的物理地址排列来缓解这一问题，同时保持 tile 的逻辑形状不变。常见做法是将行索引的一部分与列索引做 XOR，使目标访问模式下的元素更均匀地分布到不同 bank 上。
 
-为了把这个定义画出来，下面的 `8×8` 例子将 32 个 banks 简化为 8 个。选择一列表示同一批次中的 8 次并行访问：如果高亮的 8 个 cells 映射到重复的 bank，就会产生冲突；如果它们分别映射到 8 个 banks，访问就可以并行完成。
+为了把这个定义画出来，下面的 `8×8` 例子将 32 个 banks 简化为 8 个。在左侧普通布局中，同一列对应同一个 bank，而不同的 rows 对应该 bank 中不同的 slots。选择 column 3 时，8 次访问都落到 bank 3，但 slot 分别是 `0…7`，因此产生 8-way bank conflict。
+
+右侧的 XOR swizzle 会根据 row 改变 bank 编号。读取同一逻辑列时，8 个 rows 会分别映射到 8 个 banks，因而可以并行完成。
 
 在这个简化模型中，可以把逻辑坐标 `(row, logical_col)` 映射为：
 
 ```text
 mapped_col   = logical_col XOR row
 physical_addr = row·8 + mapped_col
+bank          = physical_addr % 8 = mapped_col
+slot          = physical_addr // 8 = row
 ```
 
 `XOR` 是按位异或。例如，当读取逻辑列 `logical_col = 0` 时，第 `0…7` 行会分别得到 `mapped_col = 0 XOR row = 0…7`。这样，同一逻辑列的元素在各行中会落到不同的物理列，从而分散到不同 bank。

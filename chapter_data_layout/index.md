@@ -479,13 +479,19 @@ the tile's logical shape. A common technique XORs part of the row index into the
 that the target access pattern spreads more evenly across the banks.
 
 The `8×8` example below makes this definition visible by reducing the 32 physical banks to eight.
-Selecting a column represents eight accesses in the same batch. Repeated bank assignments among the
-highlighted cells cause a conflict; assignments to all eight banks can proceed in parallel. In this
+In the plain layout on the left, one column maps to one bank, while different rows correspond to
+different slots in that bank. Selecting column 3 sends all eight accesses to bank 3 but to slots
+`0…7`, producing an 8-way bank conflict.
+
+The XOR swizzle on the right changes the bank according to the row. Reading one logical column then
+spreads the eight rows across all eight banks, allowing the accesses to proceed in parallel. In this
 simplified model, map logical coordinates `(row, logical_col)` as:
 
 ```text
 mapped_col    = logical_col XOR row
 physical_addr = row·8 + mapped_col
+bank          = physical_addr % 8 = mapped_col
+slot          = physical_addr // 8 = row
 ```
 
 `XOR` is bitwise exclusive OR. When reading logical column `logical_col = 0`, rows `0…7` produce
