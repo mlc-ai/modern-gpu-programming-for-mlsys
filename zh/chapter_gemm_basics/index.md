@@ -165,7 +165,6 @@ m_thr = T.meta_var(m_st + warp_id * 32 + lane_id)
 下面将四个部分组合成可运行的 kernel（`M=N=128, K=64`）。首先导入相关模块：
 
 ```python
-
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
@@ -372,7 +371,6 @@ phase_mma ^= 1
 下面的完整 kernel 在第 1 步基础上加入 K-loop 和 phase flip。Imports 与前面相同：
 
 ```python
-
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
@@ -513,7 +511,6 @@ B[by * BLK_N : (by + 1) * BLK_N, k : k + BLK_K]
 这个 kernel 只在第 2 步基础上修改两处：grid shape 和每个 CTA 的 offsets。内部 K-loop 与 writeback 保持不变。Imports 仍然相同：
 
 ```python
-
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
