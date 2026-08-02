@@ -516,7 +516,7 @@ B[n_st : n_st + BLK_N, k : k + BLK_K]
 
 这些索引来自 `D = A @ B.T`：`bx` 选择 A 和 D 的行，`by` 选择 B 的行；经过 `B.T` 后，这些 B rows 对应 D 的 columns。
 
-具有相同 `bx` 的 CTAs 会重复加载相同的 A tiles，具有相同 `by` 的 CTAs 则会重复加载相同的 B tiles。当前版本没有跨 CTA 复用这些数据。第 6 步会通过 persistent scheduling（{ref}`chap_gemm_async`）调整 tile 的处理顺序，改善 L2 cache locality。
+具有相同 `bx` 的 CTAs 会读取相同的 A tiles，具有相同 `by` 的 CTAs 则会读取相同的 B tiles。当前版本没有显式实现跨 CTA 的数据复用。
 
 **使用你的 agent 练习**：取 `M=N=K=256`、`BLK_M=BLK_N=128`、`BLK_K=64`，分别追踪 CTA `(1, 0)` 和 CTA `(0, 1)`。列出每个 CTA 的 `m_st`、`n_st`，每次 K iteration 加载的 A、B slices，以及最终写入的 D 区域。由于 kernel 计算 `D = A @ B.T`，B 的哪些 rows 会成为 D 的 columns？
 
