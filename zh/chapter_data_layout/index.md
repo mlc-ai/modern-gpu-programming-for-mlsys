@@ -359,9 +359,17 @@ Element (1, 2, 3) → device (1, 1), local offset = 19
 bank = (addr // 4) % 32
 ```
 
-当一个 warp 执行一条 shared-memory 指令时，如果两个或多个 lanes 访问不同的 32-bit words，而这些 words 又映射到同一个 bank，就发生了 bank conflict。一个 bank 每个周期只能提供一个 word，因此这些访问必须串行完成。多个 lanes 读取同一个 word 时可以使用 broadcast，不属于 bank conflict。
+一个 warp 执行一条 shared-memory 指令时，会产生一个 memory request。硬件再把这个 request 分成一个或多个不超过 128 bytes 的处理批次；Nsight Compute 将每个批次称为 wavefront，有些资料也称为 phase。Bank conflict 的准确判断范围是同一个 wavefront：如果其中两个或多个访问指向同一 bank 中不同的 32-bit words，这些访问就必须串行完成。多个 lanes 读取同一个 word 时可以使用 broadcast，不属于 bank conflict。
 
-假设 `smem` 是一个 `float32` array，比较下面两种访问：
+对于连续且对齐的 warp 访问，访问宽度决定了理想情况下的 wavefront 分组：
+
+| 每个 lane 的访问宽度 | Wavefront 数 | 同一 wavefront 中的 lanes |
+|---|---:|---|
+| 4 bytes | 1 | `0–31` |
+| 8 bytes | 2 | `0–15`，`16–31` |
+| 16 bytes | 4 | `0–7`，`8–15`，`16–23`，`24–31` |
+
+下面的 `float32` 例子中，每个 lane 访问 4 bytes，因此 32 个 lanes 属于同一个 wavefront。假设 `smem` 是一个 `float32` array，比较下面两种访问：
 
 ```text
 lane l 读取 smem[l]       -> bank l
