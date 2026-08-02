@@ -11,7 +11,11 @@
 
 上一章的 tiled GEMM 已经能够得到正确结果，但 Tensor Core 在大部分时间里仍处于空闲状态。Kernel 让各阶段轮流执行：threads 把 tile 搬入 shared memory，Tensor Core 完成计算；随后 threads 再搬下一块 tile，Tensor Core 只能等待。加载下一块 tile 与计算当前 tile 使用不同的硬件，本可以同时进行，却被当前顺序串行化了。
 
-这里不需要改变数据路径、tile layout 或数学计算，只需要改变工作何时发生，以及由谁调度。本章分三步完成这件事。第 4 步把大块 GMEM ↔ SMEM 搬运交给 TMA；第 5 步加入两级 software pipeline，使下一块 K tile 有独立的 SMEM stage 可以写入；第 6 步使用 tile scheduler 构建 persistent kernel，分摊每个 tile 的初始化开销，并选择更有利于 operand 复用的 tile 顺序。贯穿三步的新机制，是不同硬件单元之间的异步交接。
+本章继续优化上一章的 kernel，GEMM 的计算公式和 tile layout 保持不变。
+
+首先，我们用 TMA 代替 threads 搬运 A、B tiles。接着，为 shared memory 准备两个 stages：Tensor Core 计算当前 K tile 时，TMA 可以同时加载下一块。最后，让已经驻留的 CTAs 连续处理多个 output tiles，减少重复的初始化工作，并调整 tiles 的处理顺序。
+
+这三步依次解决数据搬运、K-loop 流水和 output tile 调度问题。
 
 (chap_tma_async)=
 ## 第 4 步：TMA Async Load
