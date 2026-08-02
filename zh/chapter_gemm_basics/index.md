@@ -343,19 +343,29 @@ print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 > - 同步：复用的 MMA barrier 必须在每个 K chunk 后进入正确 phase，否则后续 wait 可能误把上一轮完成当作当前轮完成。
 > - Dispatch：不变。
 
-### K-Loop 如何工作
+### 沿 K 维分块累加
 
-当 K 大于 64 时，kernel 以 `BLK_K=64` 为步长遍历 K。每个 iteration 将 A、B 的下一个 K-slice 加载到 SMEM，再执行 `Tx.gemm_async`。`accum` 参数把多个 chunks 连接成一次完整 dot product：第一个 chunk 使用 `accum=False` 初始化 TMEM accumulator；之后每个 chunk 使用 `accum=True`，将新的乘积加到 TMEM 中已有的 partial sum 上。
+当 `K > 64` 时，kernel 将 K 维切成多个宽度为 `BLK_K=64` 的 chunks。每个 iteration 加载 A、B 的一个 K-slice，然后执行 `Tx.gemm_async`。
 
-每次 MMA 都复用同一个 mbarrier，因此需要正确跟踪当前等待的 phase。mbarrier 的 phase 在 0 和 1 之间切换，每当预期的 arrival 到达后就进入另一 phase。`try_wait(bar, phase)` 会等待 barrier 的内部 phase 与参数 `phase` 不同。因此，传入的参数表示当前准备离开的 phase，而不是等待进入的 phase：
+`accum` 决定是否读取 TMEM 中已有的 accumulator。第一个 chunk 使用 `accum=False`，直接写入第一份 partial sum；后续 chunks 使用 `accum=True`，把新的乘积累加到已有结果上。
 
-| K iteration | wait 前的 `phase_mma` | `try_wait` 等待的状态 | wait 后的本地更新 |
-|---|---:|---|---:|
-| 0 | 0 | barrier 切换到 1 | `phase_mma = 1` |
-| 1 | 1 | barrier 切换到 0 | `phase_mma = 0` |
-| 2 | 0 | barrier 切换到 1 | `phase_mma = 1` |
+每次 MMA 都通过同一个 `mbarrier` 通知完成。`phase_mma` 记录当前要等待的 barrier phase：
 
-`phase_mma ^= 1` 用来在每轮之后翻转本地 phase。若删除这行，第二个 iteration 仍会调用 `try_wait(bar, 0)`；但 barrier 在第一次 MMA 后已经切换到 phase 1，因此 wait 立即观察到 phase 不同并返回，此时第二次 MMA 可能尚未完成。Kernel 随后会读取仍在更新的 accumulator，并得到错误结果。这个错误不会导致编译或运行失败，因此 phase flip 不能省略。
+| K iteration | 传给 `try_wait` 的 `phase_mma` | MMA 完成后的 barrier phase |
+|---|---:|---:|
+| 0 | 0 | 1 |
+| 1 | 1 | 0 |
+| 2 | 0 | 1 |
+
+`try_wait(bar, phase_mma)` 会等到 barrier 离开指定 phase 后返回。每次等待完成后，kernel 执行：
+
+```python
+phase_mma ^= 1
+```
+
+为下一次 MMA 更新等待值。
+
+如果不翻转 `phase_mma`，第二个 iteration 仍会等待 phase 0。但 barrier 在第一次 MMA 完成后已经进入 phase 1，这次等待可能立即返回，导致 kernel 在第二次 MMA 尚未完成时继续读取 accumulator。
 
 ### 完整 Kernel
 
