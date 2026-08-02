@@ -4,18 +4,18 @@
 :::{admonition} 本章概览
 :class: overview
 
-- 从单个输出 tile 开始，使用 TIRx tile primitives 构建一个正确的 tiled GEMM。
-- 第 1 步实现单 tile GEMM，第 2 步加入 K-loop 累加，第 3 步把完整矩阵的空间 tiles 分配给多个 CTAs。
-- 本章先保证正确性；后两章再逐步优化性能。
+- 本章使用 TIRx tile primitives，从一个输出 tile 开始构建 tiled GEMM。
+- 第 1 步完成单个 tile 的计算，第 2 步沿 K 维循环累加，第 3 步将完整输出矩阵划分为多个 tiles，并交给不同的 CTAs 计算。
+- 本章先保证结果正确，后两章再逐步优化性能。
 :::
 
-GEMM 是本书贯穿始终的核心工作负载。Linear layer、attention projection 和 convolution 的底层都离不开它，而这些计算往往占据 GPU 的大部分执行时间。因此，“能算对的 GEMM”和“足够快的 GEMM”之间差距很大：前者可能让大部分硬件处于空闲状态，后者则要尽量把芯片的计算能力利用起来。
+GEMM 是本书后续章节反复使用的核心计算。Linear layer、attention projection 和许多 convolution 实现都以矩阵乘法为基础，而这些运算通常占据 GPU 的大部分执行时间。要进一步优化 GEMM，首先需要一个结果正确、结构清楚的基线 kernel。
 
-我们不会一开始就实现最终版本。那样需要同时调试数据搬运、累加、tiling 和 Tensor Core 调度，而且缺少一个可靠的中间结果用于对照。更稳妥的做法是先写出最小的正确 kernel，再一次加入一个新机制。
+如果一开始就同时加入数据搬运、K 维累加、tiling 和 Tensor Core 调度，一旦结果出错，很难判断问题来自哪一步。因此，本章采用逐步扩展的方式：每个版本只增加一个主要机制，并保留上一版作为对照。
 
-本章实现第一个正确的 tiled GEMM。前面介绍了 TIRx 的 scope、layout 和 dispatch 模型，这里把它们用于真实 kernel。我们先计算一个 `128×128` 输出 tile，然后加入 K 维累加，最后把 M、N 方向的 tiles 分配给多个 CTAs，使 kernel 能够处理完整矩阵。
+我们先让一个 CTA 计算一个 `128×128` 输出 tile，再加入 K-loop 完成 K 维归约，最后沿 M、N 维划分输出矩阵，让多个 CTAs 共同覆盖整个问题。到本章结束时，kernel 已经可以处理完整矩阵，但暂不追求性能。
 
-阅读每一步时，可以关注三个问题：操作由哪个 **scope** 执行，operand tile 使用什么 **layout**，以及最终通过哪条 **dispatch** 路径执行。后面的 kernel 都会在当前版本上逐步修改，而不是从头重写。
+这些步骤也会把前面介绍的 TIRx 模型落实到具体代码中。阅读时可以关注三个问题：操作由哪个 **scope** 执行，operand tile 采用什么 **layout**，以及 tile operation 最终通过哪条 **dispatch** 路径执行。后两章会继续在这个基线 kernel 上加入异步搬运、流水线和其他性能优化。
 
 ## GEMM
 
@@ -26,7 +26,7 @@ GEMM 是稠密矩阵乘法，也是 linear layer、attention projection 和许�
 - $D$ 的 shape 为 $M \times N$。
 - $D[m,n] = \sum_k A[m,k] \cdot B[n,k]$.
 
-这里的 transpose 并不表示 kernel 会额外执行一次转置。示例把 $B$ 存成 $N$ 行、每行长度为 $K$，这也是 linear-layer weights 常见的存储方式。沿 K 维做 contraction 时，自然得到读取 $B^{\top}$ 的效果，不需要先重排数据。
+这里将 $B$ 按 $N \times K$ 存储，这是 linear-layer weights 常见的存储方式。计算时直接读取 $B[n,k]$；若写成矩阵形式，等价于 $D=AB^{\top}$，但 kernel 不会额外转置或重排 $B$。
 
 本章使用 TFLOPS 衡量 kernel throughput。一次 multiply-add 计作两次浮点运算，因此：
 
@@ -56,7 +56,7 @@ $$\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 
 (chap_single_tile)=
 ## 第 1 步：顺序执行的单 Tile GEMM
 
-能够走完整条硬件路径的最简单 GEMM，只需计算一个 output tile。第 1 步计算一个 `128×128` tile，并取 `K=64`。这个规模不需要循环，数据路径中的每一步只出现一次，便于逐段理解。
+第 1 步沿用“TIRx 入门”中的 `hgemm_v1`，详细拆解其数据路径，并将它作为后续版本的正确性基线。这个 kernel 只计算一个 `128×128` output tile，并取 `K=64`；该规模不需要循环，数据路径中的每一步只出现一次，便于逐段理解。
 
 > **这一步建立基线**
 > - Scope：一个包含 128 个 threads 的 warpgroup 按顺序执行整条数据路径。
@@ -89,7 +89,11 @@ Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout)  # 128×64 fp16
 pool.commit()
 ```
 
-`pool.move_base_to(1024)` 将 `Asmem` 和 `Bsmem` 的起点移到 offset 1024。较低的地址留给前面的少量 metadata，较大的 operand tiles 则从整齐的边界开始。`layout=A_layout` 使用 `tma_shared_layout` 生成 swizzled SMEM layout，使 TMA 和 `tcgen05.mma` 都能直接读取这块数据。这正是前文所说的 layout contract。
+`pool.move_base_to(1024)` 将 SMEM pool 的当前分配位置移动到 byte offset 1024。之后，`Asmem` 从这里开始分配，`Bsmem` 紧随其后；前面的区域留给 `tmem_addr`、`mma_bar` 等 metadata。
+
+`A_layout` 和 `B_layout` 由 `tma_shared_layout(dtype, swizzle_mode, shape)` 生成。这个函数根据数据类型、swizzle mode 和 tile shape 构造 shared-memory layout；这里选择 128-byte swizzle，得到与当前 `tcgen05.mma` dispatch 匹配的 SMEM 排列。`layout=A_layout` 和 `layout=B_layout` 再将这两个 layout 分别绑定到 `Asmem` 和 `Bsmem`。
+
+第 1 步由 `Tx.cta.copy` 按照这些 layout 写入数据，随后 `tcgen05.mma` 按照匹配的排列读取。
 
 **加载 operand tiles。** Buffer 分配完成后，由 CTA 中的 threads 把 operands 搬入 SMEM：
 
@@ -109,15 +113,19 @@ if warp_id == 0:
         Tx.gemm_async(tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
                       accum=False, dispatch="tcgen05", cta_group=1)
         T.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
+
+T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
 ```
 
 外层 `if warp_id == 0` 只保留 warpgroup 中的 warp 0；内层 `T.ptx.elect_sync()` 再从这个 warp 的 active lanes 中选出一个。最终只有一个 thread 执行 `Tx.gemm_async` 和 `tcgen05.commit`。
 
-只有一个 thread 发出指令，并不表示矩阵乘法由这个 thread 单独完成。硬件仍然根据 SMEM operand layouts 和 TMEM accumulator layout，对整个 tile 执行 MMA。如果 128 个 threads 都发出同一操作，整次计算反而会被重复启动 128 次。
+只有一个 thread 发出指令，并不表示矩阵乘法由这个 thread 单独完成。硬件仍然根据 SMEM operand layouts 和 TMEM accumulator layout，对整个 tile 执行 MMA。若让 128 个 threads 都发出同一操作，硬件反而会重复启动这次计算。
 
 `Tx.gemm_async` 表示一个 tile operation，而不是一条硬件指令。这里 `K=64`，大于硬件 MMA 的 K-atom（`MMA_K=16`），因此 TIRx 会沿 K 维将它 lower 成一小段 `tcgen05.mma` 指令序列。
 
-`accum=False` 表示当前乘积直接覆盖 TMEM destination，而不是累加到其中原有的值。当前是第一个 K tile，TMEM 中还没有 partial sum，因此这里使用 `False`。
+`tcgen05.mma` 是异步操作。`tcgen05.commit` 将前面发出的 MMA 与 `mma_bar` 关联；warpgroup 中的 threads 随后在外层执行 `mbarrier.try_wait`，等到 barrier 完成后才能读取 TMEM 中的结果。
+
+`accum=False` 表示这次 `gemm_async` 从新的 accumulator 开始，不读取 TMEM 中原有的 partial sum。本步骤只执行一次 tile operation，因此使用 `False`；第 2 步加入 K-loop 后，后续 iterations 会改用 `accum=True`。
 
 **写回结果。** 计算结果位于 TMEM，而输出 `D` 需要以 fp16 写回 GMEM。Epilogue 先将结果读入 registers，再完成类型转换：
 
@@ -144,13 +152,13 @@ TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)])
 
 `Tx.wg.copy_async(Dreg_wg, tmem)` 按照这个 view 读取 accumulator，并 lower 到 Blackwell 的 TMEM load 指令 `tcgen05.ld`。该 load 是异步的，因此必须先完成 `T.ptx.tcgen05.wait.ld()`，之后 threads 才能使用 `Dreg`；否则可能读取尚未填充完成的 registers。
 
-等待完成后，每个 thread 的 `Dreg[:]` 保存其逻辑输出行对应的 fp32 values。Thread 将它们转换到 `Dreg_f16`，并计算自己负责的 global row：
+等待完成后，每个 thread 的 `Dreg[:]` 保存其逻辑输出行对应的 fp32 值。每个 thread 将这些值转换到 `Dreg_f16`，并计算自己负责的全局输出行：
 
 ```python
 m_thr = T.meta_var(m_st + warp_id * 32 + lane_id)
 ```
 
-然后写入 `D[m_thr, n_st:n_st + BLK_N]`。四个 warps 分别负责连续的 32 行：warp 0 写 rows 0–31，warp 1 写 rows 32–63，warp 2 写 rows 64–95，warp 3 写 rows 96–127。
+然后写入 `D[m_thr, n_st:n_st + BLK_N]`。四个 warps 分别负责连续的 32 行：warp 0 写第 0–31 行，warp 1 写第 32–63 行，warp 2 写第 64–95 行，warp 3 写第 96–127 行。
 
 ### 完整 Kernel
 
