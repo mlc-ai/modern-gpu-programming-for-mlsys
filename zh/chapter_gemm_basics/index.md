@@ -475,33 +475,44 @@ def hgemm_v2(M, N, K):
 (chap_spatial_tiling)=
 ## 第 3 步：空间 Tiling（Multi-CTA）
 
-K-loop 已经解决 contraction dimension，但 M、N 仍然固定在一个 `128×128` tile。第 3 步使用多个 tiles 覆盖 M、N，并启动一个二维 CTA grid：每个 output tile 对应一个 CTA，GPU 可以并行计算这些 tiles。示例取 `M=N=K=256`，得到 `2×2` tile grid，足以展示索引关系，同时保持规模简单。
+第 2 步已经能够沿 K 维完成归约，但仍然只计算一个 `128×128` output tile。第 3 步启动二维 CTA grid，让每个 CTA 负责一个 output tile。示例取 `M=N=K=256`，因此 grid 中共有 `2×2` 个 CTAs。
 
 > **这一步改变 Scope**
-> - Scope：二维 CTA grid，每个 CTA 负责一个 `128×128` output tile。
-> - Layout：不变；CTA 内部仍使用第 2 步的 SMEM/TMEM/register 路径。
+> - Scope：二维 CTA grid，每个 CTA 计算一个 `128×128` output tile。
+> - Layout：不变，CTA 内部仍使用第 2 步的 SMEM、TMEM 和 register layouts。
 > - Dispatch：不变。
 
 ### Grid 映射
 
-每个 `128×128` output tile 对应一个 CTA，因此 grid shape 为 `[M // BLK_M, N // BLK_N]`。与第 2 步相比，新增的工作只是确定每个 CTA 负责哪些矩阵 slices。
-
-CTA `(bx, by)` 负责下面的输出区域：
+Grid shape 为：
 
 ```text
-D[bx * BLK_M : (bx + 1) * BLK_M, by * BLK_N : (by + 1) * BLK_N]
+[M // BLK_M, N // BLK_N]
 ```
 
-为了计算这块区域，CTA 的 K-loop 会依次加载 A 对应 row band 和 B 对应 row band 中的 K-slices：
+对于 CTA `(bx, by)`，定义：
 
 ```text
-A[bx * BLK_M : (bx + 1) * BLK_M, k : k + BLK_K]
-B[by * BLK_N : (by + 1) * BLK_N, k : k + BLK_K]
+m_st = bx * BLK_M
+n_st = by * BLK_N
 ```
 
-索引直接来自 `D = A @ B.T`：`bx` 选择 A 和 D 的 rows；`by` 选择 B 的 rows，这些 rows 在乘以 `B.T` 后对应 D 的 columns。
+它负责的输出区域为：
 
-每个 CTA 计算一个 tile 是最简单的映射，但会产生重复加载。同一 grid row 中的 CTAs 会从 GMEM 重复加载相同的 A tiles，同一 grid column 中的 CTAs 则会重复加载相同的 B tiles，邻近 CTAs 之间没有显式复用。第 6 步的 persistent scheduling（{ref}`chap_gemm_async`）会重新处理这个问题，使共享 operands 尽可能保留在 L2 中。
+```text
+D[m_st : m_st + BLK_M, n_st : n_st + BLK_N]
+```
+
+每次 K iteration 加载：
+
+```text
+A[m_st : m_st + BLK_M, k : k + BLK_K]
+B[n_st : n_st + BLK_N, k : k + BLK_K]
+```
+
+这些索引来自 `D = A @ B.T`：`bx` 选择 A 和 D 的行，`by` 选择 B 的行；经过 `B.T` 后，这些 B rows 对应 D 的 columns。
+
+具有相同 `bx` 的 CTAs 会重复加载相同的 A tiles，具有相同 `by` 的 CTAs 则会重复加载相同的 B tiles。当前版本没有跨 CTA 复用这些数据。第 6 步会通过 persistent scheduling（{ref}`chap_gemm_async`）调整 tile 的处理顺序，改善 L2 cache locality。
 
 **使用你的 agent 练习**：取 `M=N=K=256`、`BLK_M=BLK_N=128`、`BLK_K=64`，分别追踪 CTA `(1, 0)` 和 CTA `(0, 1)`。列出每个 CTA 的 `m_st`、`n_st`，每次 K iteration 加载的 A、B slices，以及最终写入的 D 区域。由于 kernel 计算 `D = A @ B.T`，B 的哪些 rows 会成为 D 的 columns？
 
