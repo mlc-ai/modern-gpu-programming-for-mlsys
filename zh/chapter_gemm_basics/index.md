@@ -475,9 +475,11 @@ def hgemm_v2(M, N, K):
 (chap_spatial_tiling)=
 ## 第 3 步：空间 Tiling（Multi-CTA）
 
-第 2 步已经能够沿 K 维完成归约，但仍然只计算一个 `128×128` output tile。要覆盖完整的 M、N 维，第 3 步需要启动多个 CTAs。一次 kernel launch 中的所有 CTAs 构成 grid；这里使用二维 grid，让每个 CTA 根据自己的 coordinate 选择一个 output tile。示例取 `M=N=K=256`，因此 grid shape 为 `2×2`，共包含 4 个 CTAs。
+第 2 步允许 K 大于 64，但仍要求 `M=N=128`，因此只能计算一个 `128×128` output tile。实际 GEMM 的 M、N 往往更大。第 3 步将 `M×N` 输出矩阵切成多个 `128×128` tiles，并为每个 tile 启动一个 CTA。
 
-Grid 描述的是任务在逻辑上的划分，硬件仍会把这些 CTAs 调度到可用的 SM 上执行。
+一次 kernel launch 中的所有 CTAs 共同组成 grid。由于 output tiles 沿 M、N 两个方向排列，这里使用二维 grid；CTA 的 coordinate `(bx, by)` 表示它负责第几行、第几列的 output tile。
+
+例如，取 `M=N=256, K=256` 时，输出矩阵被切成 `2×2` 个 tiles，因此 grid shape 为 `2×2`，共包含 4 个 CTAs。每个 CTA 负责一个 output tile，并在内部执行第 2 步的 K-loop。
 
 > **这一步改变 Scope**
 > - Scope：二维 CTA grid，每个 CTA 计算一个 `128×128` output tile。
