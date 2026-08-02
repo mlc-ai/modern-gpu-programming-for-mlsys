@@ -353,17 +353,31 @@ Element (1, 2, 3) → device (1, 1), local offset = 19
 
 本章最后要介绍的是 swizzle layout，它主要用于缓解 shared memory 中的 bank conflict。
 
-现代 NVIDIA GPU 的 shared memory 被划分为 32 个 memory banks，可以把每个 bank 理解为一条能够独立服务访问的存储通道。连续的 32-bit words 依次映射到这 32 个 banks，这样的设计与一个 warp 包含 32 个 lanes 相匹配：当各 lane 分别访问一个连续的 32-bit word 时，这些访问会落到不同的 banks，可以并行完成。
+现代 NVIDIA GPU 的 shared memory 被划分为 32 个 memory banks，每个 bank 每个周期可以提供一个 32-bit word。连续的 32-bit words 依次映射到这 32 个 banks。对于字节地址 `addr`，本章使用的 bank 编号可以写成：
 
-一条 warp-level shared-memory 指令会产生一个 memory request，硬件再分一个或多个批次处理它；Nsight Compute 将这样的处理批次称为 wavefront。理想情况下，一个 wavefront 可以让 32 个 banks 各提供一个 32-bit word，共处理 128 bytes。如果同一个 wavefront 中的多个访问落到同一 bank 的不同地址，就发生了 bank conflict，硬件必须增加 wavefronts 并串行处理。多个 lanes 读取同一个 32-bit word 时则可以使用 broadcast，不会产生冲突。
+```text
+bank = (addr // 4) % 32
+```
 
-访问宽度本身也可能让一条指令需要多个 wavefronts。对于整个 warp 发起的连续且对齐访问，每个 lane 读取 4、8 或 16 bytes 时，总数据量分别是 128、256 或 512 bytes，因此理想情况下分别需要 1、2 或 4 个 wavefronts。这种由数据量决定的拆分不是 bank conflict；只有 bank 映射使实际需要的 wavefronts 超过理想数量时，才产生了额外的串行化。
+Bank conflict 的判断范围是一个 warp 执行一条 shared-memory 指令时产生的 memory request。假设 `smem` 是一个 `float32` array，比较下面三种访问：
+
+```text
+lane l 读取 smem[l]       -> bank l
+lane l 读取 smem[32 * l]  -> bank 0
+所有 lane 读取 smem[0]    -> bank 0，同一个 word
+```
+
+第一种情况下，32 个 lanes 分别访问 bank `0…31`，所有数据可以并行读取。第二种情况下，32 个地址虽然彼此不同，却都映射到 bank 0。Bank 0 每次只能提供其中一个 word，硬件必须把这次 request 分成 32 批处理，这就是 32-way bank conflict。第三种情况也只访问 bank 0，但所有 lanes 读取的是同一个 32-bit word，硬件可以通过 broadcast 返回数据，因此不会产生冲突。
+
+Nsight Compute 将硬件处理一个 request 的每个批次称为 wavefront。一个无冲突的 wavefront 可以让 32 个 banks 各提供一个 32-bit word，共处理 128 bytes；bank conflict 会让硬件产生额外的 wavefronts，并在不同周期依次处理。
+
+这里还需要区分由访问宽度决定的基础 wavefronts，以及 bank conflict 产生的额外 wavefronts。对于整个 warp 发起的连续且对齐访问，每个 lane 读取 4、8 或 16 bytes 时，总数据量分别是 128、256 或 512 bytes，对应的理想数量分别是 1、2 或 4 个 wavefronts。实际数量超出这个理想值的部分，才是 bank 映射带来的额外串行化。
 
 在 tensor 程序中，同一个 tile 往往会被沿不同方向访问。处理矩阵时，我们既可能连续读取一行，也可能取出一列。但简单布局通常只能让其中一种访问方式高效。以 row-major tile 为例，同一行的相邻元素地址连续，通常会分散到不同 bank；而同一列的相邻元素之间隔着一个 row stride。如果这个 stride 与 bank 的映射周期重合，多个 lane 的访问就可能集中到同一个 bank，产生 bank conflict。Column-major layout 的情况则恰好相反。
 
 Swizzling 通过改变元素的物理地址排列来缓解这一问题，同时保持 tile 的逻辑形状不变。常见做法是将行索引的一部分与列索引做 XOR，使目标访问模式下的元素更均匀地分布到不同 bank 上。
 
-为了突出 layout 本身的影响，下面的 `8×8` 例子将每个 cell 简化为一个 bank 访问单位，只比较不同 layout 是否会因为 bank 映射产生额外的串行化。
+为了突出 layout 本身的影响，下面的 `8×8` 例子把实际的 32 个 banks 简化为 8 个，并用 8 次并行访问展示同样的映射规则。每个 cell 表示一个 bank 访问单位，图中只比较不同 layout 是否会因为 bank 映射产生额外的串行化。
 
 在这个简化模型中，可以把逻辑坐标 `(row, logical_col)` 映射为：
 
