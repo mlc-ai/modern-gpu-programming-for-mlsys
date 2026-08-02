@@ -368,9 +368,11 @@ lane l 读取 smem[32 * l]  -> bank 0
 
 第一种情况下，32 个 lanes 分别访问 bank `0…31`，所有数据可以并行读取。第二种情况下，32 个不同地址都映射到 bank 0，只能分 32 次读取，因此产生 32-way bank conflict。
 
-由此可以得到 bank conflict 的定义：在硬件并行处理的一批 shared-memory 访问中，如果多个访问指向同一 bank 中不同的 32-bit words，这些访问就会产生冲突并被串行处理。如果多个 lanes 读取的是同一个 word，硬件可以通过 broadcast 返回数据，不会产生冲突。
+每个 bank 在一个处理批次中只能提供一个 32-bit word。如果同一批访问需要从某个 bank 读取多个不同的 words，硬件就必须分批处理，这就是 bank conflict。
 
-这里强调“同一批访问”，是因为一条 warp 指令可能因访问宽度而被拆开。对于连续且对齐的访问，一个批次最多由 32 个 banks 各提供 4 bytes，共处理 128 bytes。因此，每个 lane 读取 4 bytes 时，32 个 lanes 属于同一批；读取 8 bytes 时，会分成 `0–15` 和 `16–31` 两批；读取 16 bytes 时，则每 8 个 lanes 为一批。在 8-byte 访问中，即使 lane 0 和 lane 16 访问同一个 bank，它们也不会相互产生 bank conflict，因为硬件会在不同批次中处理它们。Nsight Compute 将这种批次称为 wavefront。
+另一种情况是多个 lanes 读取同一个 word。此时硬件只需读取一次，再通过 broadcast 将数据发给这些 lanes，因此不会产生冲突。
+
+一条 warp 指令可能因访问宽度而分成多个处理批次，Nsight Compute 将这样的批次称为 wavefront。对于连续且对齐的访问，一个 wavefront 最多处理 128 bytes，也就是 32 个 banks 各提供 4 bytes。因此，每个 lane 读取 4 bytes 时，32 个 lanes 位于同一个 wavefront；读取 8 bytes 时，每 16 个 lanes 为一组；读取 16 bytes 时，每 8 个 lanes 为一组。Bank conflict 只在同一个 wavefront 内判断。例如，在 8-byte 访问中，lane 0 和 lane 16 即使访问同一个 bank，也不会相互冲突，因为它们属于不同的 wavefronts。
 
 在 tensor 程序中，同一个 tile 往往会被沿不同方向访问。处理矩阵时，我们既可能连续读取一行，也可能取出一列。但简单布局通常只能让其中一种访问方式高效。以 row-major tile 为例，同一行的相邻元素地址连续，通常会分散到不同 bank；而同一列的相邻元素之间隔着一个 row stride。如果这个 stride 与 bank 的映射周期重合，多个 lane 的访问就可能集中到同一个 bank，产生 bank conflict。Column-major layout 的情况则恰好相反。
 
