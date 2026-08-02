@@ -353,13 +353,19 @@ Element (1, 2, 3) → device (1, 1), local offset = 19
 
 本章最后要介绍的是 swizzle layout，它主要用于缓解 shared memory 中的 bank conflict。
 
-GPU 的 shared memory 由多个 memory bank 组成，可以把每个 bank 理解为一条能够独立服务访问的存储通道。当不同 lane 的访问分布到不同 bank 上时，这些访问可以并行完成；但如果多个 lane 同时访问同一个 bank 中的不同地址，硬件就必须将它们分批处理，从而产生 bank conflict。
+现代 NVIDIA GPU 的 shared memory 被划分为 32 个 memory banks，可以把每个 bank 理解为一条能够独立服务访问的存储通道。连续的 32-bit words 依次映射到这 32 个 banks，这正好与一个 warp 的 32 个 lanes 对应：当 32 个 lanes 各访问一个连续的 32-bit word 时，这些访问会分别落到 32 个 banks，可以并行完成。
+
+一条 warp-level shared-memory 指令会产生一个 memory request，硬件再分一个或多个批次处理它；Nsight Compute 将这样的处理批次称为 wavefront。理想情况下，一个 wavefront 可以让 32 个 banks 各提供一个 32-bit word，共处理 128 bytes。如果同一个 wavefront 中的多个访问落到同一 bank 的不同地址，硬件就需要增加 wavefronts 并串行处理，这部分额外工作就是 bank conflict。多个 lanes 读取同一个 32-bit word 时则可以使用 broadcast，不会产生冲突。
+
+访问宽度本身也可能让一条指令需要多个 wavefronts。对于连续且对齐的 full-warp 访问，每个 lane 读取 4、8 或 16 bytes 时，warp 总共分别读取 128、256 或 512 bytes，因此理想情况下分别需要 1、2 或 4 个 wavefronts。这种由数据量决定的拆分不是 bank conflict；只有 bank 映射使实际需要的 wavefronts 超过理想数量时，才产生了额外的串行化。
 
 在 tensor 程序中，同一个 tile 往往会被沿不同方向访问。处理矩阵时，我们既可能连续读取一行，也可能取出一列。但简单布局通常只能让其中一种访问方式高效。以 row-major tile 为例，同一行的相邻元素地址连续，通常会分散到不同 bank；而同一列的相邻元素之间隔着一个 row stride。如果这个 stride 与 bank 的映射周期重合，多个 lane 的访问就可能集中到同一个 bank，产生 bank conflict。Column-major layout 的情况则恰好相反。
 
 Swizzling 通过改变元素的物理地址排列来缓解这一问题，同时保持 tile 的逻辑形状不变。常见做法是将行索引的一部分与列索引做 XOR，使目标访问模式下的元素更均匀地分布到不同 bank 上。
 
-在下面的 `8×8` 例子中，可以把逻辑坐标 `(row, logical_col)` 映射为：
+下面的 `8×8` 例子先忽略访问宽度带来的基础 wavefront 数，只比较不同 layout 是否会因为 bank 映射产生额外的串行化。
+
+在这个简化模型中，可以把逻辑坐标 `(row, logical_col)` 映射为：
 
 ```text
 mapped_col   = logical_col XOR row
