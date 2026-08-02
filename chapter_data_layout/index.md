@@ -478,25 +478,28 @@ same bank. A column-major layout has the opposite tradeoff.
 the tile's logical shape. A common technique XORs part of the row index into the column index so
 that the target access pattern spreads more evenly across the banks.
 
-The `8×8` example below makes this definition visible by reducing the 32 physical banks to eight.
-In the plain layout on the left, one column maps to one bank, while different rows correspond to
-different slots in that bank. Selecting column 3 sends all eight accesses to bank 3 but to slots
-`0…7`, producing an 8-way bank conflict.
-
-The XOR swizzle on the right changes the bank according to the row. Reading one logical column then
-spreads the eight rows across all eight banks, allowing the accesses to proceed in parallel. In this
-simplified model, map logical coordinates `(row, logical_col)` as:
+To show this access pattern directly, the `8×8` example below reduces the 32 physical banks to eight
+and lets each cell represent one bank slot. The plain row-major layout on the left uses:
 
 ```text
-mapped_col    = logical_col XOR row
-physical_addr = row·8 + mapped_col
-bank          = physical_addr % 8 = mapped_col
-slot          = physical_addr // 8 = row
+bank = logical_col
+slot = row
 ```
 
-`XOR` is bitwise exclusive OR. When reading logical column `logical_col = 0`, rows `0…7` produce
-`mapped_col = 0 XOR row = 0…7`. Elements in one logical column therefore land in different physical
-columns and, in turn, different banks.
+Selecting column 3 therefore sends the eight accesses to slots `0…7` in bank 3, producing an 8-way
+bank conflict.
+
+The layout on the right applies an XOR swizzle:
+
+```text
+mapped_col = logical_col XOR row
+bank       = mapped_col
+slot       = row
+```
+
+`XOR` is bitwise exclusive OR. It maps one logical column to different banks in different rows. For
+example, reading `logical_col = 0` maps rows `0…7` to banks `0…7`, so all eight accesses can proceed
+in parallel.
 
 ```{raw} html
 <iframe src="../demo/swizzle_8x8.html" title="8x8 XOR swizzle" loading="lazy"
