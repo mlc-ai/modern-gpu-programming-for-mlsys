@@ -431,10 +431,23 @@ Click any cell to see which devices hold the corresponding logical element.
 
 The final layout in this chapter addresses bank conflicts in shared memory.
 
-GPU shared memory is divided into memory banks. Each bank can be viewed as an independent channel
-that serves memory accesses. Accesses to different banks can proceed in parallel. If several lanes
-access different addresses in the same bank at the same time, however, the hardware must serve those
-accesses in separate batches, producing a **bank conflict**.
+Modern NVIDIA GPUs divide shared memory into 32 memory banks. Each bank acts as an independent
+access channel, and successive 32-bit words map to successive banks. This organization matches the
+32 lanes in a warp: when the lanes access 32 consecutive 32-bit words, those accesses land in
+different banks and can proceed in parallel.
+
+A warp-level shared-memory instruction generates one memory request, which the hardware services in
+one or more batches called **wavefronts** in Nsight Compute. Ideally, one wavefront lets each of the
+32 banks provide one 32-bit word, for a total of 128 bytes. If a wavefront contains accesses to
+different addresses in the same bank, a **bank conflict** occurs and the hardware must issue
+additional serialized wavefronts. Reads by multiple lanes from the same 32-bit word can instead be
+broadcast and do not conflict.
+
+The access width alone may require more than one wavefront. For a contiguous, aligned access by a
+full warp, reading 4, 8, or 16 bytes per lane moves 128, 256, or 512 bytes in total and therefore
+requires at least one, two, or four wavefronts, respectively. This baseline work is not a bank
+conflict. A conflict occurs when the bank mapping raises the actual number of wavefronts above that
+ideal count.
 
 Tensor programs often access the same tile in more than one direction. Matrix code may read a
 contiguous row at one point and extract a column at another. A simple layout usually favors only one
@@ -447,7 +460,9 @@ same bank. A column-major layout has the opposite tradeoff.
 the tile's logical shape. A common technique XORs part of the row index into the column index so
 that the target access pattern spreads more evenly across the banks.
 
-In the `8×8` example below, map logical coordinates `(row, logical_col)` as:
+To isolate the effect of the layout, the `8×8` example below treats each cell as one bank access
+unit and compares only the extra serialization caused by the bank mapping. In this simplified model,
+map logical coordinates `(row, logical_col)` as:
 
 ```text
 mapped_col    = logical_col XOR row
