@@ -438,22 +438,8 @@ successive banks. For the bank width used in this chapter, the bank for a byte a
 bank = (addr // 4) % 32
 ```
 
-A shared-memory instruction executed by a warp generates one memory request. The hardware services
-that request in one or more batches of at most 128 bytes. Nsight Compute calls each batch a
-**wavefront**; some descriptions use the term *phase*. Bank conflicts are evaluated within one
-wavefront. If two or more accesses in that wavefront target different 32-bit words in the same bank,
-those accesses must be serialized. Reads from the same word can be broadcast and do not conflict.
-
-For a contiguous, aligned warp access, the access width determines the ideal wavefront grouping:
-
-| Access width per lane | Wavefronts | Lanes in each wavefront |
-|---|---:|---|
-| 4 bytes | 1 | `0–31` |
-| 8 bytes | 2 | `0–15`, `16–31` |
-| 16 bytes | 4 | `0–7`, `8–15`, `16–23`, `24–31` |
-
-In the following `float32` example, each lane accesses 4 bytes, so all 32 lanes belong to the same
-wavefront. Suppose `smem` is an array of `float32`. Compare these two access patterns:
+Start with a concrete example. Suppose `smem` is an array of `float32`, and lane `l` reads it using
+each of the following access patterns:
 
 ```text
 lane l reads smem[l]       -> bank l
@@ -463,6 +449,18 @@ lane l reads smem[32 * l]  -> bank 0
 In the first case, the 32 lanes access banks `0…31`, so all 32 words can be served in parallel. In
 the second, 32 different addresses all map to bank 0, so the request must be split into 32 batches:
 a 32-way bank conflict.
+
+This gives the definition of a bank conflict: within one batch of shared-memory accesses serviced in
+parallel, multiple accesses conflict if they target different 32-bit words in the same bank. The
+hardware must serialize those accesses. Reads of the same word can be broadcast and do not conflict.
+
+The phrase “one batch” matters because a warp instruction may be split according to its access
+width. For a contiguous, aligned access, one batch can receive 4 bytes from each of the 32 banks,
+for a total of 128 bytes. A 4-byte access per lane therefore places all 32 lanes in one batch. An
+8-byte access uses two batches, for lanes `0–15` and `16–31`; a 16-byte access uses groups of eight
+lanes. Thus, for an 8-byte access, lanes 0 and 16 do not conflict with each other even if they access
+the same bank, because the hardware services them in different batches. Nsight Compute calls each
+batch a **wavefront**; some descriptions use the term *phase*.
 
 Tensor programs often access the same tile in more than one direction. Matrix code may read a
 contiguous row at one point and extract a column at another. A simple layout usually favors only one
