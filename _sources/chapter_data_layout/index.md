@@ -431,10 +431,41 @@ Click any cell to see which devices hold the corresponding logical element.
 
 The final layout in this chapter addresses bank conflicts in shared memory.
 
-GPU shared memory is divided into memory banks. Each bank can be viewed as an independent channel
-that serves memory accesses. Accesses to different banks can proceed in parallel. If several lanes
-access different addresses in the same bank at the same time, however, the hardware must serve those
-accesses in separate batches, producing a **bank conflict**.
+Modern NVIDIA GPUs divide shared memory into 32 memory banks. Successive 32-bit words map to
+successive banks. For the bank width used in this chapter, the bank for a byte address `addr` is:
+
+```text
+bank = (addr // 4) % 32
+```
+
+Each bank contains many 32-bit words at different addresses. For the discussion below, call the
+position of each word within its bank a **bank slot**.
+
+Start with a concrete example. Suppose `smem` is an array of `float32`, and lane `l` reads it using
+each of the following access patterns:
+
+```text
+lane l reads smem[l]       -> bank l, slot 0
+lane l reads smem[32 * l]  -> bank 0, slot l
+```
+
+In the first case, the 32 lanes access banks `0…31`, so all 32 words can be served in parallel. In
+the second, 32 different addresses all map to bank 0, so the request must be split into 32 batches:
+a 32-way bank conflict.
+
+Each bank can provide only one 32-bit word in a single processing batch. If accesses in that batch
+target different slots in the same bank, the hardware must serialize them. This is a bank conflict.
+
+A different case arises when multiple lanes read the same bank slot, and therefore the same word.
+The hardware reads the word once and broadcasts it to those lanes, so no conflict occurs.
+
+A warp instruction may be split into several processing batches according to its access width.
+Nsight Compute calls each batch a **wavefront**. For a contiguous, aligned access, one wavefront can
+move at most 128 bytes: 4 bytes from each of the 32 banks. A 4-byte access per lane therefore places
+all 32 lanes in one wavefront; an 8-byte access uses groups of 16 lanes, and a 16-byte access uses
+groups of eight. Bank conflicts are evaluated only within a wavefront. For example, during an
+8-byte access, lanes 0 and 16 do not conflict with each other even if they access the same bank,
+because they belong to different wavefronts.
 
 Tensor programs often access the same tile in more than one direction. Matrix code may read a
 contiguous row at one point and extract a column at another. A simple layout usually favors only one
@@ -447,16 +478,28 @@ same bank. A column-major layout has the opposite tradeoff.
 the tile's logical shape. A common technique XORs part of the row index into the column index so
 that the target access pattern spreads more evenly across the banks.
 
-In the `8×8` example below, map logical coordinates `(row, logical_col)` as:
+To show this access pattern directly, the `8×8` example below reduces the 32 physical banks to eight
+and lets each cell represent one bank slot. The plain row-major layout on the left uses:
 
 ```text
-mapped_col    = logical_col XOR row
-physical_addr = row·8 + mapped_col
+bank = logical_col
+slot = row
 ```
 
-`XOR` is bitwise exclusive OR. When reading logical column `logical_col = 0`, rows `0…7` produce
-`mapped_col = 0 XOR row = 0…7`. Elements in one logical column therefore land in different physical
-columns and, in turn, different banks.
+Selecting column 3 therefore sends the eight accesses to slots `0…7` in bank 3, producing an 8-way
+bank conflict.
+
+The layout on the right applies an XOR swizzle:
+
+```text
+mapped_col = logical_col XOR row
+bank       = mapped_col
+slot       = row
+```
+
+`XOR` is bitwise exclusive OR. It maps one logical column to different banks in different rows. For
+example, reading `logical_col = 0` maps rows `0…7` to banks `0…7`, so all eight accesses can proceed
+in parallel.
 
 ```{raw} html
 <iframe src="../demo/swizzle_8x8.html" title="8x8 XOR swizzle" loading="lazy"

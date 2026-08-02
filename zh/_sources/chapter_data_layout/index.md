@@ -353,20 +353,51 @@ Element (1, 2, 3) → device (1, 1), local offset = 19
 
 本章最后要介绍的是 swizzle layout，它主要用于缓解 shared memory 中的 bank conflict。
 
-GPU 的 shared memory 由多个 memory bank 组成，可以把每个 bank 理解为一条能够独立服务访问的存储通道。当不同 lane 的访问分布到不同 bank 上时，这些访问可以并行完成；但如果多个 lane 同时访问同一个 bank 中的不同地址，硬件就必须将它们分批处理，从而产生 bank conflict。
+现代 NVIDIA GPU 的 shared memory 被划分为 32 个 memory banks，连续的 32-bit words 依次映射到这 32 个 banks。对于字节地址 `addr`，本章使用的 bank 编号可以写成：
+
+```text
+bank = (addr // 4) % 32
+```
+
+同一个 bank 中还包含许多位于不同地址的 32-bit words。为了方便说明，下面把这些 word 的位置称为 bank slots。
+
+先看一个具体例子。假设 `smem` 是一个 `float32` array，lane `l` 分别按下面两种方式读取数据：
+
+```text
+lane l 读取 smem[l]       -> bank l, slot 0
+lane l 读取 smem[32 * l]  -> bank 0, slot l
+```
+
+第一种情况下，32 个 lanes 分别访问 bank `0…31`，所有数据可以并行读取。第二种情况下，32 个不同地址都映射到 bank 0，只能分 32 次读取，因此产生 32-way bank conflict。
+
+每个 bank 在一个处理批次中只能提供一个 32-bit word。如果同一批访问落到同一个 bank 的不同 slots，硬件就必须分批处理，这就是 bank conflict。
+
+另一种情况是多个 lanes 读取同一个 bank slot，也就是读取同一个 word。此时硬件只需读取一次，再通过 broadcast 将数据发给这些 lanes，因此不会产生冲突。
+
+一条 warp 指令可能因访问宽度而分成多个处理批次，Nsight Compute 将这样的批次称为 wavefront。对于连续且对齐的访问，一个 wavefront 最多处理 128 bytes，也就是 32 个 banks 各提供 4 bytes。因此，每个 lane 读取 4 bytes 时，32 个 lanes 位于同一个 wavefront；读取 8 bytes 时，每 16 个 lanes 为一组；读取 16 bytes 时，每 8 个 lanes 为一组。Bank conflict 只在同一个 wavefront 内判断。例如，在 8-byte 访问中，lane 0 和 lane 16 即使访问同一个 bank，也不会相互冲突，因为它们属于不同的 wavefronts。
 
 在 tensor 程序中，同一个 tile 往往会被沿不同方向访问。处理矩阵时，我们既可能连续读取一行，也可能取出一列。但简单布局通常只能让其中一种访问方式高效。以 row-major tile 为例，同一行的相邻元素地址连续，通常会分散到不同 bank；而同一列的相邻元素之间隔着一个 row stride。如果这个 stride 与 bank 的映射周期重合，多个 lane 的访问就可能集中到同一个 bank，产生 bank conflict。Column-major layout 的情况则恰好相反。
 
 Swizzling 通过改变元素的物理地址排列来缓解这一问题，同时保持 tile 的逻辑形状不变。常见做法是将行索引的一部分与列索引做 XOR，使目标访问模式下的元素更均匀地分布到不同 bank 上。
 
-在下面的 `8×8` 例子中，可以把逻辑坐标 `(row, logical_col)` 映射为：
+为了直观展示上面的访问模式，下面把 32 个 banks 简化为 8 个，并让每个 cell 表示一个 bank slot。左侧采用普通 row-major layout：
 
 ```text
-mapped_col   = logical_col XOR row
-physical_addr = row·8 + mapped_col
+bank = logical_col
+slot = row
 ```
 
-`XOR` 是按位异或。例如，当读取逻辑列 `logical_col = 0` 时，第 `0…7` 行会分别得到 `mapped_col = 0 XOR row = 0…7`。这样，同一逻辑列的元素在各行中会落到不同的物理列，从而分散到不同 bank。
+因此，读取 column 3 时，8 次访问分别指向 bank 3 中的 slots `0…7`，产生 8-way bank conflict。
+
+右侧使用 XOR swizzle：
+
+```text
+mapped_col = logical_col XOR row
+bank       = mapped_col
+slot       = row
+```
+
+`XOR` 是按位异或。它让同一逻辑列在不同 rows 中映射到不同 banks。例如，读取 `logical_col = 0` 时，rows `0…7` 分别映射到 banks `0…7`，因此 8 次访问可以并行完成。
 
 ```{raw} html
 <iframe src="../demo_zh/swizzle_8x8.html" title="8x8 XOR swizzle" loading="lazy"
