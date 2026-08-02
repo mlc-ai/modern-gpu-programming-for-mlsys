@@ -460,7 +460,7 @@ for a total of 128 bytes. A 4-byte access per lane therefore places all 32 lanes
 8-byte access uses two batches, for lanes `0–15` and `16–31`; a 16-byte access uses groups of eight
 lanes. Thus, for an 8-byte access, lanes 0 and 16 do not conflict with each other even if they access
 the same bank, because the hardware services them in different batches. Nsight Compute calls each
-batch a **wavefront**; some descriptions use the term *phase*.
+batch a **wavefront**.
 
 Tensor programs often access the same tile in more than one direction. Matrix code may read a
 contiguous row at one point and extract a column at another. A simple layout usually favors only one
@@ -473,9 +473,9 @@ same bank. A column-major layout has the opposite tradeoff.
 the tile's logical shape. A common technique XORs part of the row index into the column index so
 that the target access pattern spreads more evenly across the banks.
 
-To isolate the effect of the layout, the `8×8` example below reduces the 32 physical banks to eight
-and uses eight parallel accesses to illustrate the same mapping rule. Each cell represents one bank
-access unit, so the figure compares only the extra serialization caused by the layout. In this
+The `8×8` example below makes this definition visible by reducing the 32 physical banks to eight.
+Selecting a column represents eight accesses in the same batch. Repeated bank assignments among the
+highlighted cells cause a conflict; assignments to all eight banks can proceed in parallel. In this
 simplified model, map logical coordinates `(row, logical_col)` as:
 
 ```text
