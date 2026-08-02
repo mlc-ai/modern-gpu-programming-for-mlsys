@@ -359,20 +359,7 @@ Element (1, 2, 3) → device (1, 1), local offset = 19
 bank = (addr // 4) % 32
 ```
 
-同一个 bank 中还包含许多位于不同地址的 32-bit words。为了方便说明，下面把这些 word 的位置称为 bank slots。
-
-先看一个具体例子。假设 `smem` 是一个 `float32` array，lane `l` 分别按下面两种方式读取数据：
-
-```text
-lane l 读取 smem[l]       -> bank l, slot 0
-lane l 读取 smem[32 * l]  -> bank 0, slot l
-```
-
-第一种情况下，32 个 lanes 分别访问 bank `0…31`，所有数据可以并行读取。第二种情况下，32 个不同地址都映射到 bank 0，只能分 32 次读取，因此产生 32-way bank conflict。
-
-每个 bank 在一个处理批次中只能提供一个 32-bit word。如果同一批访问落到同一个 bank 的不同 slots，硬件就必须分批处理，这就是 bank conflict。
-
-另一种情况是多个 lanes 读取同一个 bank slot，也就是读取同一个 word。此时硬件只需读取一次，再通过 broadcast 将数据发给这些 lanes，因此不会产生冲突。
+如果同一批访问指向同一个 bank 中的不同地址，硬件就必须分批处理，这就是 bank conflict。如果多个 lanes 读取同一个地址，硬件可以通过 broadcast 返回数据，不会产生冲突。
 
 一条 warp 指令可能因访问宽度而分成多个处理批次，Nsight Compute 将这样的批次称为 wavefront。对于连续且对齐的访问，一个 wavefront 最多处理 128 bytes，也就是 32 个 banks 各提供 4 bytes。因此，每个 lane 读取 4 bytes 时，32 个 lanes 位于同一个 wavefront；读取 8 bytes 时，每 16 个 lanes 为一组；读取 16 bytes 时，每 8 个 lanes 为一组。Bank conflict 只在同一个 wavefront 内判断。例如，在 8-byte 访问中，lane 0 和 lane 16 即使访问同一个 bank，也不会相互冲突，因为它们属于不同的 wavefronts。
 
@@ -380,21 +367,19 @@ lane l 读取 smem[32 * l]  -> bank 0, slot l
 
 Swizzling 通过改变元素的物理地址排列来缓解这一问题，同时保持 tile 的逻辑形状不变。常见做法是将行索引的一部分与列索引做 XOR，使目标访问模式下的元素更均匀地分布到不同 bank 上。
 
-为了直观展示上面的访问模式，下面把 32 个 banks 简化为 8 个，并让每个 cell 表示一个 bank slot。左侧采用普通 row-major layout：
+下面的 `8×8` 交互图把 32 个 banks 简化为 8 个。左侧采用普通 row-major layout，同一列的 8 个元素位于同一个 bank 的不同地址：
 
 ```text
 bank = logical_col
-slot = row
 ```
 
-因此，读取 column 3 时，8 次访问分别指向 bank 3 中的 slots `0…7`，产生 8-way bank conflict。
+因此，读取 column 3 时，8 次访问都指向 bank 3，产生 8-way bank conflict。
 
 右侧使用 XOR swizzle：
 
 ```text
 mapped_col = logical_col XOR row
 bank       = mapped_col
-slot       = row
 ```
 
 `XOR` 是按位异或。它让同一逻辑列在不同 rows 中映射到不同 banks。例如，读取 `logical_col = 0` 时，rows `0…7` 分别映射到 banks `0…7`，因此 8 次访问可以并行完成。

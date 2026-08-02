@@ -438,26 +438,9 @@ successive banks. For the bank width used in this chapter, the bank for a byte a
 bank = (addr // 4) % 32
 ```
 
-Each bank contains many 32-bit words at different addresses. For the discussion below, call the
-position of each word within its bank a **bank slot**.
-
-Start with a concrete example. Suppose `smem` is an array of `float32`, and lane `l` reads it using
-each of the following access patterns:
-
-```text
-lane l reads smem[l]       -> bank l, slot 0
-lane l reads smem[32 * l]  -> bank 0, slot l
-```
-
-In the first case, the 32 lanes access banks `0…31`, so all 32 words can be served in parallel. In
-the second, 32 different addresses all map to bank 0, so the request must be split into 32 batches:
-a 32-way bank conflict.
-
-Each bank can provide only one 32-bit word in a single processing batch. If accesses in that batch
-target different slots in the same bank, the hardware must serialize them. This is a bank conflict.
-
-A different case arises when multiple lanes read the same bank slot, and therefore the same word.
-The hardware reads the word once and broadcasts it to those lanes, so no conflict occurs.
+If accesses in the same processing batch target different addresses in one bank, the hardware must
+serialize them. This is a bank conflict. If multiple lanes read the same address, the hardware can
+broadcast the word to those lanes without a conflict.
 
 A warp instruction may be split into several processing batches according to its access width.
 Nsight Compute calls each batch a **wavefront**. For a contiguous, aligned access, one wavefront can
@@ -478,23 +461,20 @@ same bank. A column-major layout has the opposite tradeoff.
 the tile's logical shape. A common technique XORs part of the row index into the column index so
 that the target access pattern spreads more evenly across the banks.
 
-To show this access pattern directly, the `8×8` example below reduces the 32 physical banks to eight
-and lets each cell represent one bank slot. The plain row-major layout on the left uses:
+The `8×8` interactive example below reduces the 32 physical banks to eight. In the plain row-major
+layout on the left, the eight elements in one column occupy different addresses in the same bank:
 
 ```text
 bank = logical_col
-slot = row
 ```
 
-Selecting column 3 therefore sends the eight accesses to slots `0…7` in bank 3, producing an 8-way
-bank conflict.
+Selecting column 3 therefore sends all eight accesses to bank 3, producing an 8-way bank conflict.
 
 The layout on the right applies an XOR swizzle:
 
 ```text
 mapped_col = logical_col XOR row
 bank       = mapped_col
-slot       = row
 ```
 
 `XOR` is bitwise exclusive OR. It maps one logical column to different banks in different rows. For
