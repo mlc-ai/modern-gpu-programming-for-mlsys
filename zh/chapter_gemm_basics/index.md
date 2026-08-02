@@ -475,9 +475,9 @@ def hgemm_v2(M, N, K):
 (chap_spatial_tiling)=
 ## 第 3 步：空间 Tiling（Multi-CTA）
 
-一次 kernel launch 中的所有 CTAs 共同组成 grid，每个 CTA 通过自己的 grid coordinate 确定所负责的任务。Grid 是逻辑任务空间，不表示这些 CTAs 在物理 SM 上的排列。
+第 2 步已经能够沿 K 维完成归约，但仍然只计算一个 `128×128` output tile。要覆盖完整的 M、N 维，第 3 步需要启动多个 CTAs。一次 kernel launch 中的所有 CTAs 构成 grid；这里使用二维 grid，让每个 CTA 根据自己的 coordinate 选择一个 output tile。示例取 `M=N=K=256`，因此 grid shape 为 `2×2`，共包含 4 个 CTAs。
 
-第 2 步已经能够沿 K 维完成归约，但仍然只计算一个 `128×128` output tile。第 3 步启动二维 CTA grid，让每个 CTA 负责一个 output tile。示例取 `M=N=K=256`，因此 grid 中共有 `2×2` 个 CTAs。
+Grid 描述的是任务在逻辑上的划分，硬件仍会把这些 CTAs 调度到可用的 SM 上执行。
 
 > **这一步改变 Scope**
 > - Scope：二维 CTA grid，每个 CTA 计算一个 `128×128` output tile。
