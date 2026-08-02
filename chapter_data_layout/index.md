@@ -438,24 +438,26 @@ successive banks. For the bank width used in this chapter, the bank for a byte a
 bank = (addr // 4) % 32
 ```
 
+Each bank contains many 32-bit words at different addresses. For the discussion below, call the
+position of each word within its bank a **bank slot**.
+
 Start with a concrete example. Suppose `smem` is an array of `float32`, and lane `l` reads it using
 each of the following access patterns:
 
 ```text
-lane l reads smem[l]       -> bank l
-lane l reads smem[32 * l]  -> bank 0
+lane l reads smem[l]       -> bank l, slot 0
+lane l reads smem[32 * l]  -> bank 0, slot l
 ```
 
 In the first case, the 32 lanes access banks `0…31`, so all 32 words can be served in parallel. In
 the second, 32 different addresses all map to bank 0, so the request must be split into 32 batches:
 a 32-way bank conflict.
 
-Each bank can provide only one 32-bit word in a single processing batch. If that batch needs several
-different words from the same bank, the hardware must serialize the accesses. This is a bank
-conflict.
+Each bank can provide only one 32-bit word in a single processing batch. If accesses in that batch
+target different slots in the same bank, the hardware must serialize them. This is a bank conflict.
 
-A different case arises when multiple lanes read the same word. The hardware reads the word once
-and broadcasts it to those lanes, so no conflict occurs.
+A different case arises when multiple lanes read the same bank slot, and therefore the same word.
+The hardware reads the word once and broadcasts it to those lanes, so no conflict occurs.
 
 A warp instruction may be split into several processing batches according to its access width.
 Nsight Compute calls each batch a **wavefront**. For a contiguous, aligned access, one wavefront can
