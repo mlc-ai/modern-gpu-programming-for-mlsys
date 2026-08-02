@@ -321,7 +321,7 @@ print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 
 ### 单 Tile Kernel 的限制
 
-这个 kernel 已经能够算对，但适用范围很窄。当前有四项刻意保留的限制，后续步骤会逐一解决：
+这个 kernel 已经能够算对，但适用范围很窄。当前仍有以下限制：
 
 - 只处理一个 K tile，无法对较大的 K 做 contraction。
 - 只处理一个 output tile，因此 M、N 固定为 128。
