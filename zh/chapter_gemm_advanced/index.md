@@ -877,13 +877,13 @@ def hgemm_v9(M, N, K):
 
 ![GEMM 的逐步优化结果](../../img/gemm_perf.png)
 
-回看整个第三部分，九个版本依次解决了三个层次的问题。第 1 至第 3 步先建立正确的计算结构：从单个 output tile 出发，加入 K-loop 完成归约，再沿 M、N 维划分 tiles，使多个 CTAs 覆盖完整矩阵。到这里，kernel 已经能够完成 $D=A B^{\mathsf T}$，但 load、compute 和 writeback 仍然大多按顺序执行。
+回头看这九个版本，优化目标其实只有两个：让 Tensor Core 少等数据，并让搬到片上的数据参与更多计算。
 
-第 4 至第 6 步开始调整数据搬运和调度。TMA 取代 threads 执行 GMEM 与 SMEM 之间的 tile copy；双缓冲 software pipeline 让下一块 K tile 的加载与当前 tile 的 MMA 重叠；persistent scheduler 则让已经驻留的 CTAs 连续处理多个 output tiles，并选择更有利于 L2 locality 的处理顺序。
+第 1 至第 3 步先从一个 $128\times128$ output tile 出发，补上 K-loop 和 M、N 方向的 tiling，得到能够处理完整矩阵的 GEMM。接下来的第 4 至第 7 步逐步解决数据供应问题：TMA 负责搬运 tiles，双缓冲隐藏下一块数据的加载时间，persistent scheduler 让 CTAs 连续工作，warp specialization 则让 load、MMA 和 writeback 由不同角色同时推进。到第 7 步，Tensor Core 已经不必等整条 load 或 writeback 路径结束后才继续计算。
 
-第 7 至第 9 步继续扩大协作与复用范围。Warp specialization 将 TMA load、MMA 和 writeback 分配给不同角色，使三条硬件路径能够并行推进；two-CTA cluster 让两侧 operands 共同生成更大的 output tile；第二个 MMA consumer 再让两组 A blocks 共享同一份 B tile。随着这些机制加入，同一份片上数据参与了更多计算，各阶段也通过 barriers 明确交接 SMEM 和 TMEM buffers。
+最后两步提高的是数据复用。Two-CTA cluster 让两个 CTAs 共同计算一个更大的 tile，使每份 A、B tile 参与更多乘加；第二个 MMA consumer 又让两组 A blocks 共用同一份 B tile。数据从 GMEM 搬到片上一次，能够完成的计算随之增加。
 
-这九步始终计算同一个 GEMM，变化的是工作由谁执行、数据如何移动，以及片上 tiles 能被复用多少次。在本次 B200 测试中，完整矩阵 baseline 从 70 ms 降到 0.094 ms，最终结果与本次 cuBLAS reference 相同。这条演进路线也给出了优化 tiled kernel 的基本顺序：先保证 tile mapping 与累加正确，再重叠数据搬运和计算，最后扩大并发范围与数据复用。
+在本次 B200 测试中，这条路线将完整矩阵 GEMM 从 70 ms 降到 0.094 ms，与本次 cuBLAS reference 相同。比最终数字更重要的是优化顺序：先把 tile mapping 和累加做对，再让数据搬运与计算重叠，最后设法提高片上数据的复用率。
 
 
 ## 练习
