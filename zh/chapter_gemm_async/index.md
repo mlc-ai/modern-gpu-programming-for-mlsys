@@ -466,28 +466,28 @@ Persistent kernel 则只启动固定数量的 CTAs，让每个 CTA 依次处理�
 
 ### Persistent Scheduling
 
-Persistent kernel 的 grid 大小由硬件规模决定，而不是由 output tile 数量决定。这里启动 `SM_COUNT` 个 CTAs，目标是让每个 SM 大致对应一个长期运行的 CTA，并持续从 scheduler 获取工作。实际是否严格一一对应，还取决于 occupancy 和硬件调度。
+Persistent kernel 使用一个较小的一维 grid。本例设置 `SM_COUNT=148`，因此启动 148 个 persistent CTAs。每个 CTA 从 scheduler 获取一个 output tile，完成后再获取下一个，直到所有 tiles 都处理完毕。`SM_COUNT` 控制同时工作的 CTAs 数量，并不表示这些 CTAs 会与 SM 固定绑定。
 
-示例将 `SM_COUNT` 设为 148，因此启动 148 个 persistent CTAs，分别循环处理 `ClusterPersistentScheduler2D` 分配的 tiles。
+由于一个 CTA 会连续处理多个 tiles，它只需申请一次 TMEM、初始化一次 barriers，并创建一次 scheduler state。这些资源可以一直保留到该 CTA 完成全部任务。
 
-首先，TMEM allocation、barrier initialization 和 scheduler state 只需为每个 persistent CTA 建立一次，随后可供它处理的多个 tiles 复用，不必由 1024 个短生命周期 CTAs 分别重复完成。
-
-其次，scheduler 可以调整 tiles 的处理顺序。设置 `l2_group_size=8` 后，相邻 tiles 会被分到同一组：共享 row band 的 tiles 可以复用 A row tiles，共享 column band 的 tiles 可以复用 B tiles。连续处理这些 tiles，有助于让 operands 留在 L2 中，减少从 HBM 重复读取的数据量。这正是第 3 步尚未利用的跨 tile 复用。
+Scheduler 还会调整 tiles 的处理顺序。`l2_group_size=8` 表示把 M 方向上连续 8 行 output tiles 分为一组。组内先固定一个 N tile column，依次处理这 8 行，再移动到下一个 N tile column。这样，读取同一个 B tile 的任务会相邻出现，同一组 A tiles 也会在较短时间内再次被访问。各 CTA 仍然独立搬运数据，但这种顺序更有利于 L2 cache 命中。
 
 ```python
-bx = T.cta_id([SM_COUNT])  # 1D grid, one CTA per SM
+bx = T.cta_id([SM_COUNT])  # 1D persistent grid
 
 tile_scheduler = ClusterPersistentScheduler2D(
     "ts",
     num_m_tiles=M // BLK_M,
     num_n_tiles=N // BLK_N,
-    l2_group_size=8,       # Group 8 nearby tiles together
+    l2_group_size=8,
     num_clusters=SM_COUNT
 )
 tile_scheduler.init(bx)
 ```
 
-循环处理多个 tiles 时，还要注意 barrier phase。当前示例固定使用 `K=4096`、`BLK_K=64` 和 `PIPE_DEPTH=2`：每个 output tile 包含 64 次 MMA，两个 TMA stage barriers 各被复用 32 次。因此一个 tile 结束后，相关 barriers 都恰好回到初始 parity，可以在下一轮把本地 phase variables 重新设为 0：
+CTA 开始处理下一块 output tile 时，还会继续使用同一组 TMA 和 MMA barriers，因此本地记录的 phase parity 必须与 barrier 的当前状态一致。
+
+当前参数下，每个 output tile 包含 64 次 K iterations。`mma_bar` 使用 64 次，两个 TMA stage barriers 各使用 32 次。由于这些次数都是偶数，处理完一个 tile 后，各 barrier 都回到初始 parity，下一块 tile 可以重新从 0 开始：
 
 ```python
 while tile_scheduler.valid():
@@ -496,7 +496,7 @@ while tile_scheduler.valid():
     ...
 ```
 
-这个重置依赖上述 iteration 次数。若修改 `K`、`BLK_K` 或 pipeline depth，使某个 barrier 在一个 output tile 内被使用奇数次，就不能直接重置为 0；kernel 必须保留上一块 tile 结束时的 parity，或者根据已执行的轮数计算下一次应等待的值。下面的 wrapper 用 assertion 限定当前实现支持的参数组合。
+如果修改 `K`、`BLK_K` 或 `PIPE_DEPTH`，使某个 barrier 的使用次数变为奇数，就不能直接将对应的 phase parity 重置为 0。当前 wrapper 使用 assertion 限定了支持的参数组合。
 
 ### 完整 Kernel
 
