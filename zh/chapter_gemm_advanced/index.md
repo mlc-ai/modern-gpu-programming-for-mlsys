@@ -300,11 +300,23 @@ def hgemm_v7(M, N, K):
     return kernel
 ```
 
-### 第 7 步的常见错误
+### 检查 Barrier 交接
 
-第 7 步首次让 TMA load、`tcgen05` MMA 和 writeback 同时在途。第 8、9 步也会遇到相同类型的错误：barrier count 不匹配、role guard 放错位置、缺少 fence，或者 TMA store 尚未完成就复用 staging buffer。排查时应先确认每个 barrier 的等待者、通知者和 arrival count，再检查 buffer 复用前的 wait 与 fence 是否完整。
+第 7 步用四条 barriers 连接三个角色。若 kernel 一直等待，先逐条确认 barrier 的两端：谁在执行 `wait`，谁负责 `arrive`，初始化时设置的 arrival count 是否与实际通知次数一致。若 kernel 能结束但结果错误，则应检查 consumer 是否在 wait 和 fence 完成前读取数据。
 
-**调整 pipeline depth。** 第 7 步使用最小可用深度 `PIPE_DEPTH=2`。增加到 4 或 6，可以让 TMA producer 更早准备后续数据，从而隐藏更多 memory latency，但也会消耗更多 SMEM。B200 的每个 SM 提供 228 KB SMEM。取 `BLK_M=BLK_N=128`、`BLK_K=64` 和 fp16 时，每个 stage 中 A、B 合计占用 `(128*64 + 128*64) * 2 = 32 KB`，`Dsmem` writeback buffer 还需 32 KB。因此，`PIPE_DEPTH=4` 大约使用 160 KB，`PIPE_DEPTH=6` 则约为 224 KB，已经接近容量上限。若继续增加深度，就需要重新设计 writeback staging。
+还要确认每块存储何时可以复用：TMA 只能在 `mma2tma` 完成后覆盖当前 `Asmem`、`Bsmem` stage；MMA 只能在 `ld2mma` 完成后覆盖 TMEM accumulator；下一轮 writeback 也必须等前一次 TMA store 完成后才能复用 `Dsmem`。这样可以把一次 deadlock 或错误结果定位到具体的数据交接，而不必同时检查整条 pipeline。
+
+### Pipeline Depth 的 SMEM 成本
+
+`PIPE_DEPTH=2` 包含两组 A、B stages：MMA 读取其中一组时，TMA 可以填充另一组。增加 depth 可以让 producer 提前准备更多 tiles，但每增加一个 stage 都要多分配一组 `Asmem` 和 `Bsmem`。
+
+当前 tile shape 为 `BLK_M=BLK_N=128`、`BLK_K=64`，元素类型为 fp16，因此每个 stage 占用：
+
+```text
+(128×64 + 128×64) × 2 bytes = 32 KB
+```
+
+此外，`Dsmem` writeback buffer 还需要 32 KB。于是 `PIPE_DEPTH=4` 共使用约 `4×32+32=160 KB`，`PIPE_DEPTH=6` 则约为 `6×32+32=224 KB`，尚未计入 barriers 等少量 metadata。B200 每个 SM 提供 228 KB shared memory，因此 depth 6 已经几乎用完可用容量。更深的 pipeline 不一定更快，还可能因 SMEM 不足而无法使用当前 tile shape。
 
 (chap_cta_cluster)=
 ## 第 8 步：Two-CTA Cluster
