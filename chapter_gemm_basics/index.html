@@ -400,7 +400,7 @@
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-2-k-loop-accumulation">Step 2: K-Loop Accumulation</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#k-loop-mechanics">K-Loop Mechanics</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#accumulating-along-k">Accumulating Along K</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">Complete Kernel</a></li>
 </ul>
 </li>
@@ -426,79 +426,74 @@
 <div class="overview admonition">
 <p class="admonition-title">Overview</p>
 <ul class="simple">
-<li><p>Builds a correct tiled GEMM from the TIRx tile primitives, starting from a single output tile.</p></li>
-<li><p>Step 1 is a single-tile GEMM, Step 2 adds the K-loop accumulation, Step 3 tiles spatially across CTAs for full matrices.</p></li>
-<li><p>Correctness comes first; performance is the job of the next two chapters.</p></li>
+<li><p>Step 1 computes one <span class="math notranslate nohighlight">\(128\times128\)</span> output tile, with load, MMA, and writeback performed in sequence. A and B move from GMEM to SMEM, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> writes the accumulator to TMEM, and the result is read back and stored.</p></li>
+<li><p>Step 2 partitions K and accumulates the partial sums in one TMEM accumulator. Reusing the MMA barrier requires the phase to advance in step with the loop.</p></li>
+<li><p>Step 3 assigns the output tiles along M and N to a two-dimensional CTA grid, producing a correctness baseline that covers the full matrix.</p></li>
 </ul>
 </div>
-<p>GEMM is the workload this entire book is built around. It sits under the linear layers, attention projections, and convolutions that dominate a GPU’s time, so the difference between a correct GEMM and a fast one is the difference between leaving most of the chip idle and saturating it.</p>
-<p>That gap is too large to cross in one jump. A saturating kernel makes you debug memory movement, accumulation, tiling, and Tensor Core scheduling all at once, with nothing trustworthy to compare against. The safer path is to start from the smallest kernel that produces a correct answer, then grow it one decision at a time.</p>
-<p>This chapter writes that first correct tiled GEMM. The previous chapters introduced the TIRx scope / layout / dispatch model in the abstract; here we apply it to a real kernel. We begin with one 128 x 128 output tile and grow it into a kernel that handles full-size matrices, adding K-dimension accumulation and then spatial tiling across many CTAs.</p>
-<p>This is the first of three chapters that walk a single GEMM optimization path from end to end. In this one we build a correct tiled kernel and stop there. The next chapter (<a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">Pipelining GEMM with TMA</span></a>) replaces the thread copies with TMA and overlaps data movement with compute through pipelining, and <a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> goes further still with warp specialization and CTA clusters. Each chapter builds on the one before it, so the kernels accumulate features rather than start over.</p>
-<p>It helps to read each step as an edit to a single contract with three terms: which <strong>scope</strong> runs the operation, which <strong>layout</strong> the operand tiles use, and which <strong>dispatch</strong> path executes it. Most steps have one primary change, so we open them with a small card that names that change and calls out any synchronization detail needed to make the reuse safe. Step 1 establishes the baseline that the rest of the path edits.</p>
+<p>GEMM is a core computation used throughout this book. Linear layers, attention projections, and many convolution implementations are built on matrix multiplication, and these operations often account for much of a GPU’s execution time. Before optimizing GEMM, we need a correct baseline kernel whose structure is easy to follow.</p>
+<p>Introducing data movement, K-dimension accumulation, tiling, and Tensor Core scheduling all at once would make failures difficult to localize. We therefore extend the kernel one mechanism at a time and keep each earlier version as a reference.</p>
+<p>We begin with one CTA computing a <span class="math notranslate nohighlight">\(128\times128\)</span> output tile. We then add a K-loop to complete the reduction and partition the output along M and N so that multiple CTAs cover the full problem. By the end of the chapter, the kernel handles complete matrices, but performance is not yet the goal.</p>
+<p>These steps also apply the TIRx model from the preceding chapters to concrete code. As you read, keep track of three questions: which <strong>scope</strong> executes an operation, which <strong>layout</strong> an operand tile uses, and which <strong>dispatch</strong> path implements the tile operation. The next two chapters continue from this baseline with asynchronous data movement, pipelining, and further performance optimizations.</p>
 <section id="gemm">
 <h2>GEMM<a class="headerlink" href="#gemm" title="Link to this heading">#</a></h2>
-<p>GEMM is the dense matrix multiply that sits underneath linear layers, attention projections, and many convolution implementations, which is why a fast GEMM kernel pays off almost everywhere you look. The examples in this tutorial use <span class="math notranslate nohighlight">\(D = A B^{\top}\)</span>:</p>
+<p>GEMM is dense matrix multiplication, the operation behind linear layers, attention projections, and many convolution implementations. This chapter uses the following convention:</p>
 <ul class="simple">
 <li><p><span class="math notranslate nohighlight">\(A\)</span> has shape <span class="math notranslate nohighlight">\(M \times K\)</span>.</p></li>
 <li><p><span class="math notranslate nohighlight">\(B\)</span> has shape <span class="math notranslate nohighlight">\(N \times K\)</span>.</p></li>
 <li><p><span class="math notranslate nohighlight">\(D\)</span> has shape <span class="math notranslate nohighlight">\(M \times N\)</span>.</p></li>
 <li><p><span class="math notranslate nohighlight">\(D[m,n] = \sum_k A[m,k] \cdot B[n,k]\)</span>.</p></li>
 </ul>
-<p>The transpose is not an extra operation we choose to perform; it falls out of how the data is stored. The examples keep <span class="math notranslate nohighlight">\(B\)</span> as <span class="math notranslate nohighlight">\(N\)</span> rows of length <span class="math notranslate nohighlight">\(K\)</span>, which is the layout linear-layer weights usually come in, so contracting along <span class="math notranslate nohighlight">\(K\)</span> naturally reads <span class="math notranslate nohighlight">\(B^{\top}\)</span> without any rearrangement.</p>
-<p>Throughout the tutorial we measure a kernel by its throughput in TFLOPS, counting the two floating-point operations per multiply-add against the wall-clock time:</p>
+<p>We store <span class="math notranslate nohighlight">\(B\)</span> with shape <span class="math notranslate nohighlight">\(N\times K\)</span>, a common layout for linear-layer weights. The kernel reads <span class="math notranslate nohighlight">\(B[n,k]\)</span> directly. In matrix notation, this is equivalent to <span class="math notranslate nohighlight">\(D=AB^{\top}\)</span>, but the kernel does not transpose or rearrange <span class="math notranslate nohighlight">\(B\)</span> at runtime.</p>
+<p>We measure kernel throughput in TFLOPS. Each multiply-add counts as two floating-point operations, so:</p>
 <div class="math notranslate nohighlight">
 \[\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 10^{12}}\]</div>
 <section id="gemm-data-path">
 <h3>GEMM Data Path<a class="headerlink" href="#gemm-data-path" title="Link to this heading">#</a></h3>
-<p>Every optimization in this tutorial comes down to where the data lives and how it moves, so it is worth mapping that out before we write any code. At heart, a Blackwell GEMM kernel is organized around just two activities: moving tiles between memories, and computing on them. The figure below traces a tile through every memory it touches on its way from input to output:</p>
+<p>Every later optimization depends on where data lives and how it moves, so we begin with the basic Blackwell GEMM data path. The kernel performs two kinds of work: moving tiles between memory spaces and computing with those tiles. The figure below follows the data from input to output:</p>
 <p><img alt="Memory Data Flow" src="../_images/memory_dataflow.png" /></p>
-<p>The figure above shows the baseline path that every later optimization edits but never replaces.
-Read it from left to right: operand tiles first move from GMEM to SMEM; <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> then
-consumes the SMEM operands and writes accumulators to TMEM; and finally the epilogue reads TMEM
-back into registers before storing the result to GMEM. Keep this chain in mind, because every step
-below changes <em>how</em> one of these hops happens; it never changes the hops themselves.</p>
+<p>Read the figure from left to right. Operand tiles first move from GMEM to SMEM. <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> reads the operands from SMEM and writes the accumulator to TMEM. The epilogue then reads the result from TMEM into registers and stores it to GMEM. Later optimizations change how a step in this path executes, while the path itself remains the same.</p>
 </section>
 </section>
 <section id="optimization-path">
 <h2>Optimization Path<a class="headerlink" href="#optimization-path" title="Link to this heading">#</a></h2>
-<p>The plain data path above is enough to get a correct answer, but it leaves most of the hardware idle. The rest of the tutorial closes that gap by adding Blackwell features one at a time, each one expressed through a TIRx tile primitive. The path we will follow visits these features in turn:</p>
+<p>The basic data path is sufficient for correctness, but it does not yet use the hardware efficiently. The following chapters add these mechanisms through TIRx tile primitives:</p>
 <ul class="simple">
 <li><p><strong>TMA async movement</strong> moves GMEM &lt;-&gt; SMEM tiles through Blackwell’s hardware copy path, with barriers tracking completion.</p></li>
 <li><p><strong>Software pipelining</strong> uses multiple SMEM stages so that the data movement for the next K tile can overlap Tensor Core compute on the current one.</p></li>
 <li><p><strong>Persistent scheduling</strong> keeps a fixed pool of CTAs, each processing many output tiles through a tile scheduler, instead of launching one CTA per tile.</p></li>
-<li><p><strong>Warp specialization</strong> splits the producer, MMA consumer, and writeback roles across separate warpgroups.</p></li>
+<li><p><strong>Warp specialization</strong> assigns the producer, MMA consumer, and writeback roles to dedicated warps or warpgroups.</p></li>
 <li><p><strong>CTA clusters</strong> let two CTAs cooperate on a single, larger Blackwell MMA tile.</p></li>
-<li><p><strong>Multi-consumer execution</strong> uses multiple consumer warpgroups to compute different parts of the tile at once, raising compute density.</p></li>
+<li><p><strong>Multi-consumer execution</strong> uses multiple MMA consumer warps, each paired with a writeback warpgroup, to compute different row ranges while sharing a staged B tile.</p></li>
 </ul>
 <hr class="docutils" />
 </section>
 <section id="step-1-sequential-single-tile-gemm">
 <span id="chap-single-tile"></span><h2>Step 1: Sequential Single-Tile GEMM<a class="headerlink" href="#step-1-sequential-single-tile-gemm" title="Link to this heading">#</a></h2>
-<p>The simplest GEMM that still exercises the full hardware path is one that computes a single output tile. So that is where we begin. Step 1 computes one 128 x 128 output tile with K = 64, small enough that nothing has to loop, and every piece of the data path appears exactly once. With nothing repeated, we can see each hop in isolation before we ever have to reason about a loop.</p>
+<p>Step 1 reuses <code class="docutils literal notranslate"><span class="pre">hgemm_v1</span></code> from <a class="reference internal" href="../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">Introduction to TIRx</span></a>. Rather than introducing a new kernel, this section walks through its data path in detail and uses it as the correctness baseline for every later version. The kernel computes one <span class="math notranslate nohighlight">\(128\times128\)</span> output tile with <span class="math notranslate nohighlight">\(K=64\)</span>. At this size no loop is needed, so each part of the path appears only once.</p>
 <blockquote>
-<div><p><strong>What this step establishes: the baseline</strong></p>
+<div><p><strong>This step establishes the baseline</strong></p>
 <ul class="simple">
-<li><p>Scope: a single warpgroup of 128 threads walks the whole path in order, one stage after another.</p></li>
-<li><p>Layout: the A and B tiles live in SMEM, the accumulator in TMEM, and the result is staged out through registers.</p></li>
-<li><p>Dispatch: synchronous <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> carries the loads, and <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> runs the MMA.</p></li>
+<li><p>Scope: one warpgroup of 128 threads executes the full path sequentially.</p></li>
+<li><p>Layout: A and B tiles reside in SMEM, the accumulator resides in TMEM, and the result is written through registers.</p></li>
+<li><p>Dispatch: synchronous <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> performs the loads, and <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> performs the MMA.</p></li>
 </ul>
 </div></blockquote>
 <section id="single-tile-dataflow">
 <h3>Single-Tile Dataflow<a class="headerlink" href="#single-tile-dataflow" title="Link to this heading">#</a></h3>
-<p>With the baseline contract fixed, the next thing to pin down is the order in which one tile travels through it. This first kernel walks the core GEMM data path exactly once, the same GMEM -&gt; SMEM -&gt; TMEM -&gt; registers -&gt; GMEM chain from the data-flow figure, with no loop wrapped around it. It allocates its working memory, loads the operands, computes the product, writes the result back, and cleans up after itself:</p>
+<p>This kernel follows the <code class="docutils literal notranslate"><span class="pre">GMEM</span> <span class="pre">-&gt;</span> <span class="pre">SMEM</span> <span class="pre">-&gt;</span> <span class="pre">TMEM</span> <span class="pre">-&gt;</span> <span class="pre">registers</span> <span class="pre">-&gt;</span> <span class="pre">GMEM</span></code> path once, without a loop:</p>
 <ol class="arabic simple">
-<li><p><strong>Allocate</strong>: SMEM (pool allocator), TMEM (<code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code>), mbarrier</p></li>
-<li><p><strong>Load</strong>: All 128 threads cooperatively copy A and B tiles from GMEM to SMEM (sync <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code>)</p></li>
-<li><p><strong>Compute</strong>: Single elected thread issues <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> + <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>; all threads wait on mbarrier</p></li>
-<li><p><strong>Writeback</strong>: Warpgroup reads TMEM → registers; each thread casts fp32→fp16 and writes to GMEM</p></li>
-<li><p><strong>Deallocate</strong>: TMEM deallocation</p></li>
+<li><p><strong>Allocate</strong>: allocate SMEM through the pool allocator, allocate TMEM with <code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code>, and prepare an mbarrier.</p></li>
+<li><p><strong>Load</strong>: all 128 threads cooperatively copy A and B tiles from GMEM to SMEM with synchronous <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code>.</p></li>
+<li><p><strong>Compute</strong>: one elected thread issues <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> and <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>; the warpgroup waits on the mbarrier.</p></li>
+<li><p><strong>Write back</strong>: the warpgroup reads TMEM into registers; each thread converts fp32 to fp16 and stores its row to GMEM.</p></li>
+<li><p><strong>Release</strong>: release the TMEM allocation.</p></li>
 </ol>
 </section>
 <section id="four-pieces-of-the-first-kernel">
 <h3>Four Pieces of the First Kernel<a class="headerlink" href="#four-pieces-of-the-first-kernel" title="Link to this heading">#</a></h3>
-<p>The full kernel is only a few dozen lines, but it is easier to digest in parts. We will read it in four pieces (memory allocation, the synchronous load, the MMA dispatch, and the writeback) and assemble them into one kernel only afterward. The API names that appear along the way are the TIRx tile-primitive vocabulary introduced in Part II (<a class="reference internal" href="../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">Introduction to TIRx</span></a>, <a class="reference internal" href="../chapter_tirx_layout_api/index.html#chap-tirx-layout-api"><span class="std std-ref">TIRx Layout API</span></a>).</p>
-<p><strong>Memory allocation.</strong> The kernel begins by carving out shared memory for the operands, along with a slot for the TMEM address and an mbarrier:</p>
+<p>We first examine allocation, operand loading, MMA issue, and writeback separately, then combine them into the complete kernel. The relevant APIs were introduced in Part II (<a class="reference internal" href="../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">Introduction to TIRx</span></a>, <a class="reference internal" href="../chapter_tirx_layout_api/index.html#chap-tirx-layout-api"><span class="std std-ref">TIRx Layout API</span></a>).</p>
+<p><strong>Allocate storage.</strong> The kernel allocates shared memory for the operands and reserves space for the TMEM address and mbarrier:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>
 <span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>           <span class="c1"># TMEM address (4 bytes)</span>
 <span class="n">mma_bar</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint64&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>    <span class="c1"># mbarrier (8 bytes)</span>
@@ -508,25 +503,32 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
 <span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
 </pre></div>
 </div>
-<p>Two details here are worth pausing on. The <code class="docutils literal notranslate"><span class="pre">pool.move_base_to(1024)</span></code> pushes Asmem and Bsmem out to offset 1024, reserving the low addresses for the small pieces of metadata above them so that the bulky operand tiles land on a clean boundary. And <code class="docutils literal notranslate"><span class="pre">layout=A_layout</span></code> asks <code class="docutils literal notranslate"><span class="pre">tma_shared_layout</span></code> for a swizzled SMEM placement that both TMA and <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> can read directly, exactly the kind of layout-as-contract obligation Part II described.</p>
-<p><strong>Synchronous load.</strong> With the buffers in place, the operands still have to reach SMEM. In this first version we let the CTA’s own threads do the copying:</p>
+<p><code class="docutils literal notranslate"><span class="pre">pool.move_base_to(1024)</span></code> moves the current SMEM allocation point to byte offset 1024. <code class="docutils literal notranslate"><span class="pre">Asmem</span></code> begins there and <code class="docutils literal notranslate"><span class="pre">Bsmem</span></code> follows it; the lower addresses remain available for metadata such as <code class="docutils literal notranslate"><span class="pre">tmem_addr</span></code> and <code class="docutils literal notranslate"><span class="pre">mma_bar</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">tma_shared_layout(dtype,</span> <span class="pre">swizzle_mode,</span> <span class="pre">shape)</span></code> constructs a shared-memory layout from the data type, swizzle mode, and tile shape. Here it produces a 128-byte-swizzled arrangement that matches the current <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> dispatch. Passing <code class="docutils literal notranslate"><span class="pre">layout=A_layout</span></code> and <code class="docutils literal notranslate"><span class="pre">layout=B_layout</span></code> binds those layouts to <code class="docutils literal notranslate"><span class="pre">Asmem</span></code> and <code class="docutils literal notranslate"><span class="pre">Bsmem</span></code>.</p>
+<p>In Step 1, <code class="docutils literal notranslate"><span class="pre">Tx.cta.copy</span></code> writes data according to these layouts and <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> reads the matching arrangement.</p>
+<p><strong>Load the operand tiles.</strong> Once the buffers are allocated, the CTA threads move the operands into SMEM:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">A</span><span class="p">[:,</span> <span class="p">:])</span>
 <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">B</span><span class="p">[:,</span> <span class="p">:])</span>
 <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
 </pre></div>
 </div>
-<p>Because there is only one tile here (M=N=128, K=64), copying the whole of A and B is the entire load. <code class="docutils literal notranslate"><span class="pre">Tx.cta.copy(...)</span></code> makes the CTA cooperate on that copy, with each thread responsible for its own slice of the data. The <code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code> that follows does double duty: it waits for every thread to finish and it publishes their shared-memory writes, so that when the MMA later reads <code class="docutils literal notranslate"><span class="pre">Asmem</span></code> and <code class="docutils literal notranslate"><span class="pre">Bsmem</span></code> it sees complete tiles rather than a half-filled buffer. This thread-driven copy is also the very first thing we will replace; the next chapter (<a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">Pipelining GEMM with TMA</span></a>) swaps it out for TMA.</p>
-<p><strong>MMA dispatch.</strong> With the operands now sitting in SMEM, we can issue the MMA, and we do so from a single elected thread:</p>
+<p>There is only one tile (<code class="docutils literal notranslate"><span class="pre">M=N=128,</span> <span class="pre">K=64</span></code>), so the kernel copies all of A and B. <code class="docutils literal notranslate"><span class="pre">Tx.cta.copy(...)</span></code> distributes the copy across the CTA threads. <code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code> then waits for every thread and makes their shared-memory writes visible to the later MMA, ensuring that <code class="docutils literal notranslate"><span class="pre">Asmem</span></code> and <code class="docutils literal notranslate"><span class="pre">Bsmem</span></code> are complete before they are read. The next chapter (<a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">Pipelining GEMM with TMA</span></a>) replaces this thread-driven copy with TMA.</p>
+<p><strong>Issue the MMA.</strong> With both operands in SMEM, one elected thread issues the MMA:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
     <span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span><span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">],</span> <span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span>
                       <span class="n">accum</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">dispatch</span><span class="o">=</span><span class="s2">&quot;tcgen05&quot;</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
         <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">commit</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">phase_mma</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>The two nested guards narrow the issuer down in two steps. The outer <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0</span></code> keeps only warp 0 of the warpgroup, and the inner <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">T.ptx.elect_sync():</span></code> then elects a single active lane within that warp. Together they leave exactly one thread to run <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> and <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>.</p>
-<p>It is worth being clear about what that single thread does and does not mean, because the natural reading is misleading. A single issuing thread does <em>not</em> imply a single-threaded multiply. The computation is still a full tile-level MMA: the hardware performs the cooperative multiply for the tile described by the SMEM operand layouts and the TMEM accumulator layout. The key is that <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> is one <em>tile operation</em>, not one hardware instruction. The K = 64 tile is wider than the hardware MMA K-atom (<code class="docutils literal notranslate"><span class="pre">MMA_K</span> <span class="pre">=</span> <span class="pre">16</span></code>), so this one tile op lowers to a short sequence of raw <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> instructions stepped along K, and the warpgroup drives each of them cooperatively. The reason only one thread issues the tile op is that each underlying <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> is itself a <em>single-instruction</em> cooperative op: one launch drives that K-atom of the tile MMA. If all 128 threads issued the sequence, the same work would simply be launched 128 times over. Finally, the <code class="docutils literal notranslate"><span class="pre">accum=False</span></code> flag tells the MMA to overwrite the TMEM destination rather than add into it, which is what we want here, since there is no prior partial sum to extend.</p>
-<p><strong>Writeback.</strong> The product now sits in TMEM, but the caller wants it back in GMEM as fp16. The epilogue therefore has to bring the result down through registers and cast it along the way:</p>
+<p>The outer <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0</span></code> keeps only warp 0, and <code class="docutils literal notranslate"><span class="pre">T.ptx.elect_sync()</span></code> selects one active lane from that warp. Exactly one thread therefore executes <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> and <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>.</p>
+<p>Having one issuing thread does not make this a single-threaded matrix multiplication. The hardware still performs the tile-level MMA described by the SMEM operand layouts and the TMEM accumulator layout. If all 128 threads issued the same operation, the computation would be launched 128 times.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> represents a tile operation rather than one hardware instruction. Because <code class="docutils literal notranslate"><span class="pre">K=64</span></code> is larger than the hardware K-atom (<code class="docutils literal notranslate"><span class="pre">MMA_K=16</span></code>), TIRx lowers this operation to a short sequence of <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> instructions along K.</p>
+<p><code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> is asynchronous. <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> associates the issued MMA operations with <code class="docutils literal notranslate"><span class="pre">mma_bar</span></code>, and the warpgroup waits on the mbarrier before reading the result from TMEM.</p>
+<p><code class="docutils literal notranslate"><span class="pre">accum=False</span></code> starts a new accumulator instead of reading a previous partial sum from TMEM. This step performs only one tile operation, so no earlier sum exists. Step 2 uses <code class="docutils literal notranslate"><span class="pre">accum=True</span></code> for the later K iterations.</p>
+<p><strong>Write back the result.</strong> The result is in TMEM, while <code class="docutils literal notranslate"><span class="pre">D</span></code> must be stored to GMEM as fp16. The epilogue first reads the accumulator into registers and performs the conversion there:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Dreg</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">acc_type</span><span class="p">)</span>        <span class="c1"># per-thread fp32 register row</span>
 <span class="n">Dreg_f16</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">d_type</span><span class="p">)</span>      <span class="c1"># same row, cast to fp16</span>
 <span class="n">Dreg_wg</span> <span class="o">=</span> <span class="n">Dreg</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@tid_in_wg</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]))</span>
@@ -537,24 +539,23 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
 <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">D</span><span class="p">[</span><span class="n">m_thr</span><span class="p">,</span> <span class="n">n_st</span> <span class="p">:</span> <span class="n">n_st</span> <span class="o">+</span> <span class="n">BLK_N</span><span class="p">],</span> <span class="n">Dreg_f16</span><span class="p">[:])</span>
 </pre></div>
 </div>
-<p>The MMA leaves a 128 x 128 fp32 accumulator tile in TMEM. The fp32 is deliberate: GEMM sums many products along K, and keeping the running sum in higher precision holds down the rounding error that would otherwise accumulate. But <code class="docutils literal notranslate"><span class="pre">D</span></code> is fp16, so the values cannot go straight out. They first land in registers, are narrowed to fp16 there, and only then reach GMEM.</p>
-<p>The two register buffers play distinct roles. <code class="docutils literal notranslate"><span class="pre">Dreg</span></code> is a per-thread buffer of <code class="docutils literal notranslate"><span class="pre">BLK_N</span></code> elements, while <code class="docutils literal notranslate"><span class="pre">Dreg_wg</span></code> is a warpgroup-wide <em>view</em> of those same registers under a chosen layout:</p>
+<p>The MMA leaves a <span class="math notranslate nohighlight">\(128\times128\)</span> fp32 accumulator tile in TMEM. Accumulating along K in fp32 reduces rounding error. Because <code class="docutils literal notranslate"><span class="pre">D</span></code> is fp16, the result must pass through registers, where it is converted before being stored to GMEM.</p>
+<p>The two register buffers serve different purposes. <code class="docutils literal notranslate"><span class="pre">Dreg</span></code> is a private <code class="docutils literal notranslate"><span class="pre">BLK_N</span></code>-element buffer for each thread. <code class="docutils literal notranslate"><span class="pre">Dreg_wg</span></code> applies a layout to those same registers and exposes them as a warpgroup-wide view:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@tid_in_wg</span><span class="p">,</span> <span class="mi">1</span><span class="p">)])</span>
 </pre></div>
 </div>
-<p>This layout maps the tile’s first dimension onto the warpgroup’s threads: thread 0 owns row 0, thread 1 owns row 1, and so on through row 127. The second dimension stays inside each thread’s own register buffer, so a single thread holds all the columns of its one row. With 128 threads in the warpgroup and 128 rows in the tile, the 128 x 128 output divides neatly into one row per thread.</p>
-<p>Reading the accumulator out under that view is precisely what <code class="docutils literal notranslate"><span class="pre">Tx.wg.copy_async(Dreg_wg,</span> <span class="pre">tmem)</span></code> does, and it lowers to the Blackwell TMEM load path, <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. Because that load is asynchronous, <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.wait.ld()</span></code> has to complete before any thread touches <code class="docutils literal notranslate"><span class="pre">Dreg</span></code>; otherwise a thread would read registers the load has not yet filled.</p>
-<p>Once the wait returns, each thread’s private <code class="docutils literal notranslate"><span class="pre">Dreg[:]</span></code> holds the fp32 values for its one logical output row. The thread narrows those to fp16 in <code class="docutils literal notranslate"><span class="pre">Dreg_f16</span></code>, works out which global row it is responsible for,</p>
+<p>The layout maps the first tile dimension to the warpgroup threads: thread 0 owns row 0, thread 1 owns row 1, and so on through row 127. The second dimension remains within each thread’s register buffer, so every thread holds one complete row. The 128 threads therefore match the 128 output rows one-to-one.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Tx.wg.copy_async(Dreg_wg,</span> <span class="pre">tmem)</span></code> reads the accumulator through this view and lowers to the Blackwell TMEM load instruction <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. The load is asynchronous, so <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.wait.ld()</span></code> must complete before any thread uses <code class="docutils literal notranslate"><span class="pre">Dreg</span></code>.</p>
+<p>After the wait, each thread’s <code class="docutils literal notranslate"><span class="pre">Dreg[:]</span></code> contains the fp32 values for its logical output row. The thread converts them into <code class="docutils literal notranslate"><span class="pre">Dreg_f16</span></code> and computes its global row:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">m_thr</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">m_st</span> <span class="o">+</span> <span class="n">warp_id</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">+</span> <span class="n">lane_id</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>and writes <code class="docutils literal notranslate"><span class="pre">D[m_thr,</span> <span class="pre">n_st:n_st</span> <span class="pre">+</span> <span class="pre">BLK_N]</span></code>. The rows partition cleanly across the four warps: warp 0 writes rows 0-31, warp 1 writes rows 32-63, warp 2 writes rows 64-95, and warp 3 writes rows 96-127.</p>
+<p>It then writes <code class="docutils literal notranslate"><span class="pre">D[m_thr,</span> <span class="pre">n_st:n_st</span> <span class="pre">+</span> <span class="pre">BLK_N]</span></code>. The four warps cover consecutive groups of 32 rows: warp 0 writes rows 0-31, warp 1 writes rows 32-63, warp 2 writes rows 64-95, and warp 3 writes rows 96-127.</p>
 </section>
 <section id="complete-kernel">
 <h3>Complete Kernel<a class="headerlink" href="#complete-kernel" title="Link to this heading">#</a></h3>
 <p>Now we stitch the four pieces back together into one runnable kernel (M=N=128, K=64). The imports come first:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script.tirx</span><span class="w"> </span><span class="kn">import</span> <span class="n">tile</span> <span class="k">as</span> <span class="n">Tx</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.cuda.operator.tile_primitive.tma_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">tma_shared_layout</span><span class="p">,</span> <span class="n">SwizzleMode</span>
@@ -591,7 +592,7 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
         <span class="n">wg_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warpgroup_id</span><span class="p">([</span><span class="mi">1</span><span class="p">])</span>      <span class="c1"># single warpgroup, so wg_id is always 0 (unused below)</span>
         <span class="n">warp_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warp_id_in_wg</span><span class="p">([</span><span class="mi">4</span><span class="p">])</span>
         <span class="n">lane_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">lane_id</span><span class="p">([</span><span class="mi">32</span><span class="p">])</span>
-    
+
         <span class="c1"># --- SMEM allocation ---</span>
         <span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>
         <span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>
@@ -600,33 +601,33 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
         <span class="n">Asmem</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">),</span> <span class="n">a_type</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">A_layout</span><span class="p">)</span>
         <span class="n">Bsmem</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">),</span> <span class="n">b_type</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">B_layout</span><span class="p">)</span>
         <span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
-    
+
         <span class="c1"># --- Barrier + TMEM init (warp 0 only) ---</span>
         <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">lane_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
                 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="mi">1</span><span class="p">)</span>
             <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">address_of</span><span class="p">(</span><span class="n">tmem_addr</span><span class="p">),</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-    
+
         <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">proxy_async</span><span class="p">(</span><span class="s2">&quot;shared::cta&quot;</span><span class="p">)</span>
         <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">mbarrier_init</span><span class="p">()</span>
         <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-    
+
         <span class="n">tmem</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
             <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span> <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
             <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)])</span>
         <span class="p">)</span>
-    
+
         <span class="n">m_st</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">bx</span> <span class="o">*</span> <span class="n">BLK_M</span><span class="p">)</span>
         <span class="n">n_st</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">by</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>
         <span class="n">phase_mma</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">int32</span> <span class="o">=</span> <span class="mi">0</span>
-    
+
         <span class="c1"># --- Load: all threads copy global -&gt; shared (synchronous).</span>
         <span class="c1"># With M=BLK_M and N=BLK_N the slices below cover the full matrices;</span>
         <span class="c1"># the slice form is kept so the diff to Step 3 (multi-tile) is minimal.</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">A</span><span class="p">[</span><span class="n">m_st</span><span class="p">:</span><span class="n">m_st</span> <span class="o">+</span> <span class="n">BLK_M</span><span class="p">,</span> <span class="p">:])</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">B</span><span class="p">[</span><span class="n">n_st</span><span class="p">:</span><span class="n">n_st</span> <span class="o">+</span> <span class="n">BLK_N</span><span class="p">,</span> <span class="p">:])</span>
         <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
-    
+
         <span class="c1"># --- Compute: single elected thread issues MMA ---</span>
         <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
@@ -635,9 +636,9 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
                     <span class="n">accum</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">dispatch</span><span class="o">=</span><span class="s2">&quot;tcgen05&quot;</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span>
                 <span class="p">)</span>
                 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">commit</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-    
+
         <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">phase_mma</span><span class="p">)</span>
-    
+
         <span class="c1"># --- Writeback: TMEM -&gt; RF -&gt; GMEM ---</span>
         <span class="n">Dreg</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">acc_type</span><span class="p">)</span>
         <span class="n">Dreg_f16</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">d_type</span><span class="p">)</span>
@@ -648,7 +649,7 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
         <span class="n">Tx</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">Dreg_f16</span><span class="p">[:],</span> <span class="n">Dreg</span><span class="p">[:])</span>
         <span class="n">m_thr</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">m_st</span> <span class="o">+</span> <span class="n">warp_id</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">+</span> <span class="n">lane_id</span><span class="p">)</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">D</span><span class="p">[</span><span class="n">m_thr</span><span class="p">,</span> <span class="n">n_st</span> <span class="p">:</span> <span class="n">n_st</span> <span class="o">+</span> <span class="n">BLK_N</span><span class="p">],</span> <span class="n">Dreg_f16</span><span class="p">[:])</span>
-    
+
         <span class="c1"># --- Deallocate TMEM ---</span>
         <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
         <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
@@ -703,11 +704,10 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Performance: </span><span class="si">{</span><span class="n">ms</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> ms, </span><span class="si">{</span><span class="n">tflops</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> TFLOPS&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>Steps 1 through 3 run at deliberately small sizes (128×128 here, 256³ in Step 3) to keep these first walkthroughs simple to follow. The cross-step <em>End-to-End Result</em> table at the end of <a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> takes the opposite approach: it measures every step, including this Step 1 algorithm, at a single M=N=K=4096 size, so that its speedup ratios are directly comparable.</p>
 </section>
 <section id="limits-of-the-single-tile-kernel">
 <h3>Limits of the Single-Tile Kernel<a class="headerlink" href="#limits-of-the-single-tile-kernel" title="Link to this heading">#</a></h3>
-<p>This kernel is correct, which was the whole point of Step 1, but it is correct only in a very narrow setting. Four limitations are baked in on purpose, and the rest of the optimization path lifts them one at a time:</p>
+<p>The kernel is correct, but it still has a narrow operating range:</p>
 <ul class="simple">
 <li><p>It handles only a single K tile, so it cannot contract over a large K.</p></li>
 <li><p>It handles only a single output tile, so M and N are pinned to 128.</p></li>
@@ -719,8 +719,8 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
 </section>
 <section id="step-2-k-loop-accumulation">
 <span id="chap-k-loop"></span><h2>Step 2: K-Loop Accumulation<a class="headerlink" href="#step-2-k-loop-accumulation" title="Link to this heading">#</a></h2>
-<p>The first limit to remove is the smallest one. Step 1 handles only a single 64-wide K tile, yet real matrices contract over far more than that. In Step 2 we keep the single output tile but let K span many 64-wide chunks.</p>
-<p>The idea is straightforward: repeat the load -&gt; MMA -&gt; wait sequence once per chunk, and let each MMA accumulate into the same TMEM slot. The real work, it turns out, is in the synchronization. Reusing one mbarrier across iterations introduces this chapter’s first genuine correctness hazard. If the code tracks the wrong phase, a wait can return <em>before</em> its MMA has actually finished, silently corrupting the result. The mechanics below show exactly how that goes wrong, and how to avoid it.</p>
+<p>We first remove the restriction on K. Step 1 handles only one K tile of width 64, while real matrices often have a much larger K dimension. Step 2 still computes one output tile, but K may now span several 64-wide chunks.</p>
+<p>For each chunk, the kernel repeats <code class="docutils literal notranslate"><span class="pre">load</span> <span class="pre">-&gt;</span> <span class="pre">MMA</span> <span class="pre">-&gt;</span> <span class="pre">wait</span></code> and accumulates every MMA into the same TMEM location. Synchronization now requires more care: when several iterations reuse one mbarrier, incorrect phase tracking can let a wait return before the current MMA has finished, silently corrupting the result.</p>
 <blockquote>
 <div><p><strong>What this step changes: Layout reuse</strong></p>
 <ul class="simple">
@@ -730,44 +730,45 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
 <li><p>Dispatch: unchanged.</p></li>
 </ul>
 </div></blockquote>
-<section id="k-loop-mechanics">
-<h3>K-Loop Mechanics<a class="headerlink" href="#k-loop-mechanics" title="Link to this heading">#</a></h3>
-<p>Step 1 contracted over a single 64-wide K tile; here we keep its single output tile but let K run as long as the matrices demand. To cover a K larger than 64, we walk K in chunks of <code class="docutils literal notranslate"><span class="pre">BLK_K=64</span></code>. Each iteration loads the next A and B K-slice into SMEM and issues <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code>. The <code class="docutils literal notranslate"><span class="pre">accum</span></code> flag is what stitches these chunks together into one dot product: on the first chunk, <code class="docutils literal notranslate"><span class="pre">accum=False</span></code> initializes the TMEM accumulator, and on every later chunk, <code class="docutils literal notranslate"><span class="pre">accum=True</span></code> adds that chunk’s product into the running sum already sitting in TMEM.</p>
-<p>Synchronization is where the care is needed. We reuse a single mbarrier for every MMA completion, and reusing it safely comes down to tracking which barrier phase we are waiting on. An mbarrier carries a 1-bit phase, either 0 or 1, and it flips to the other value each time the expected arrival lands. The subtle part is the wait condition itself: <code class="docutils literal notranslate"><span class="pre">try_wait(bar,</span> <span class="pre">phase)</span></code> blocks until the barrier’s internal phase <em>differs</em> from the <code class="docutils literal notranslate"><span class="pre">phase</span></code> argument. So the argument we pass has to name the phase we expect to leave behind, not the one we are waiting to reach:</p>
+<section id="accumulating-along-k">
+<h3>Accumulating Along K<a class="headerlink" href="#accumulating-along-k" title="Link to this heading">#</a></h3>
+<p>When <code class="docutils literal notranslate"><span class="pre">K</span> <span class="pre">&gt;</span> <span class="pre">64</span></code>, the kernel divides K into chunks of width <code class="docutils literal notranslate"><span class="pre">BLK_K=64</span></code>. Each iteration loads one K-slice from A and B, then issues <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code>.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">accum</span></code> argument controls whether the MMA reads the existing accumulator from TMEM. The first chunk uses <code class="docutils literal notranslate"><span class="pre">accum=False</span></code> to write the initial partial sum. Every later chunk uses <code class="docutils literal notranslate"><span class="pre">accum=True</span></code> to add its product to the running result.</p>
+<p>Every MMA reports completion through the same mbarrier. <code class="docutils literal notranslate"><span class="pre">phase_mma</span></code> records the barrier phase that the current iteration must wait for:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>K iteration</p></th>
-<th class="head text-right"><p>Local <code class="docutils literal notranslate"><span class="pre">phase_mma</span></code> before wait</p></th>
-<th class="head"><p>What <code class="docutils literal notranslate"><span class="pre">try_wait</span></code> waits for</p></th>
-<th class="head text-right"><p>Local update after wait</p></th>
+<th class="head text-right"><p><code class="docutils literal notranslate"><span class="pre">phase_mma</span></code> passed to <code class="docutils literal notranslate"><span class="pre">try_wait</span></code></p></th>
+<th class="head text-right"><p>Barrier phase after MMA completes</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>0</p></td>
 <td class="text-right"><p>0</p></td>
-<td><p>barrier flips to 1</p></td>
-<td class="text-right"><p><code class="docutils literal notranslate"><span class="pre">phase_mma</span> <span class="pre">=</span> <span class="pre">1</span></code></p></td>
+<td class="text-right"><p>1</p></td>
 </tr>
 <tr class="row-odd"><td><p>1</p></td>
 <td class="text-right"><p>1</p></td>
-<td><p>barrier flips to 0</p></td>
-<td class="text-right"><p><code class="docutils literal notranslate"><span class="pre">phase_mma</span> <span class="pre">=</span> <span class="pre">0</span></code></p></td>
+<td class="text-right"><p>0</p></td>
 </tr>
 <tr class="row-even"><td><p>2</p></td>
 <td class="text-right"><p>0</p></td>
-<td><p>barrier flips to 1</p></td>
-<td class="text-right"><p><code class="docutils literal notranslate"><span class="pre">phase_mma</span> <span class="pre">=</span> <span class="pre">1</span></code></p></td>
+<td class="text-right"><p>1</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>The single line <code class="docutils literal notranslate"><span class="pre">phase_mma</span> <span class="pre">^=</span> <span class="pre">1</span></code> is what keeps that table honest. Drop it, and the second iteration still calls <code class="docutils literal notranslate"><span class="pre">try_wait(bar,</span> <span class="pre">0)</span></code>, but the barrier already flipped to phase 1 after the first MMA, so the wait sees a mismatch and returns immediately, before the second MMA has finished. The kernel then reads a half-computed accumulator and reports a wrong answer with no error at all. This is a bug that compiles and runs perfectly, which is exactly why the phase flip is worth this much attention.</p>
+<p><code class="docutils literal notranslate"><span class="pre">try_wait(bar,</span> <span class="pre">phase_mma)</span></code> returns after the barrier leaves the specified phase. After each successful wait, the kernel executes:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">phase_mma</span> <span class="o">^=</span> <span class="mi">1</span>
+</pre></div>
+</div>
+<p>This updates the wait value for the next MMA.</p>
+<p>Without the flip, the second iteration would still wait for phase 0. Because the barrier entered phase 1 after the first MMA, that wait could return immediately and allow the kernel to read the accumulator before the second MMA finishes.</p>
 </section>
 <section id="id1">
 <h3>Complete Kernel<a class="headerlink" href="#id1" title="Link to this heading">#</a></h3>
-<p>The full kernel below is simply Step 1 with the K-loop and the phase flip folded in. The imports are the same as before:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
+<p>The Step 2 kernel keeps the structure of Step 1 and adds the K-loop and phase update described above. The imports are unchanged:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script.tirx</span><span class="w"> </span><span class="kn">import</span> <span class="n">tile</span> <span class="k">as</span> <span class="n">Tx</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.cuda.operator.tile_primitive.tma_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">tma_shared_layout</span><span class="p">,</span> <span class="n">SwizzleMode</span>
@@ -817,8 +818,8 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
         <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
 
         <span class="n">tmem</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
-        <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span> <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
-        <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]))</span>
+            <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span> <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+            <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]))</span>
 
         <span class="n">phase_mma</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">int32</span> <span class="o">=</span> <span class="mi">0</span>
         <span class="n">m_st</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">bx</span> <span class="o">*</span> <span class="n">BLK_M</span><span class="p">)</span>
@@ -869,7 +870,9 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
 </section>
 <section id="step-3-spatial-tiling-multi-cta">
 <span id="chap-spatial-tiling"></span><h2>Step 3: Spatial Tiling (Multi-CTA)<a class="headerlink" href="#step-3-spatial-tiling-multi-cta" title="Link to this heading">#</a></h2>
-<p>The K-loop took care of the contraction dimension, but M and N are still pinned to a single 128 x 128 tile. A real output is far larger than one tile, so the last piece of the basic kernel is to cover M and N with many tiles at once. Step 3 launches a 2D grid of CTAs, one per output tile, and lets the GPU compute all the tiles in parallel. The example uses M=N=K=256, which gives a 2x2 grid of tiles, just enough to make the indexing non-trivial without burying it.</p>
+<p>Step 2 allows K to exceed 64, but it still requires <code class="docutils literal notranslate"><span class="pre">M=N=128</span></code> and therefore computes only one <span class="math notranslate nohighlight">\(128\times128\)</span> output tile. Real GEMMs usually have larger M and N dimensions. Step 3 partitions the <span class="math notranslate nohighlight">\(M\times N\)</span> output into <span class="math notranslate nohighlight">\(128\times128\)</span> tiles and launches one CTA for each tile.</p>
+<p>All CTAs launched by one kernel form a <strong>grid</strong>. Because the output tiles are arranged along both M and N, this kernel uses a two-dimensional grid. A CTA’s coordinate <code class="docutils literal notranslate"><span class="pre">(bx,</span> <span class="pre">by)</span></code> identifies the output tile row and column that it computes.</p>
+<p>For example, with <code class="docutils literal notranslate"><span class="pre">M=N=256,</span> <span class="pre">K=256</span></code>, the output contains a <span class="math notranslate nohighlight">\(2\times2\)</span> array of tiles. The grid therefore has shape <span class="math notranslate nohighlight">\(2\times2\)</span> and contains four CTAs. Each CTA computes one output tile and runs the K-loop from Step 2 internally.</p>
 <blockquote>
 <div><p><strong>What this step changes: Scope</strong></p>
 <ul class="simple">
@@ -880,26 +883,31 @@ below changes <em>how</em> one of these hops happens; it never changes the hops 
 </div></blockquote>
 <section id="grid-mapping">
 <h3>Grid Mapping<a class="headerlink" href="#grid-mapping" title="Link to this heading">#</a></h3>
-<p>The grid shape follows directly from the tiling: with one CTA per 128 x 128 output tile, we need <code class="docutils literal notranslate"><span class="pre">[M</span> <span class="pre">//</span> <span class="pre">BLK_M,</span> <span class="pre">N</span> <span class="pre">//</span> <span class="pre">BLK_N]</span></code> CTAs in total. The only genuinely new work compared to Step 2 is teaching each CTA which slice of the matrices is <em>its</em> slice to compute.</p>
-<p>CTA <code class="docutils literal notranslate"><span class="pre">(bx,</span> <span class="pre">by)</span></code> owns this output region:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>D[bx * BLK_M : (bx + 1) * BLK_M,
-  by * BLK_N : (by + 1) * BLK_N]
+<p>The grid shape is:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>[M // BLK_M, N // BLK_N]
 </pre></div>
 </div>
-<p>and to produce it, the CTA’s K-loop repeatedly loads the matching K-slices of its own row band of A and column band of B:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A[bx * BLK_M : (bx + 1) * BLK_M, k : k + BLK_K]
-B[by * BLK_N : (by + 1) * BLK_N, k : k + BLK_K]
+<p>For CTA <code class="docutils literal notranslate"><span class="pre">(bx,</span> <span class="pre">by)</span></code>, define:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>m_st = bx * BLK_M
+n_st = by * BLK_N
 </pre></div>
 </div>
-<p>The indexing follows straight from the <code class="docutils literal notranslate"><span class="pre">D</span> <span class="pre">=</span> <span class="pre">A</span> <span class="pre">&#64;</span> <span class="pre">B.T</span></code> convention: <code class="docutils literal notranslate"><span class="pre">bx</span></code> selects rows of A and D, while <code class="docutils literal notranslate"><span class="pre">by</span></code> selects rows of B, which become the columns of D once the transpose is applied.</p>
-<p>One tile per CTA is the simplest mapping that works, but it is also wasteful. Every CTA in a row reloads the same A tiles from GMEM, and every CTA in a column reloads the same B tiles, so nothing reuses the data that neighboring CTAs have already pulled in. We will leave that waste in place for now; persistent scheduling (Step 6 in <a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">Pipelining GEMM with TMA</span></a>) comes back to it and keeps those shared operands hot in L2.</p>
-<p><strong>Try with your agent</strong>: With <code class="docutils literal notranslate"><span class="pre">M=N=K=256</span></code>, <code class="docutils literal notranslate"><span class="pre">BLK_M=BLK_N=128</span></code>, and <code class="docutils literal notranslate"><span class="pre">BLK_K=64</span></code>, ask it to trace CTA <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">0)</span></code> and CTA <code class="docutils literal notranslate"><span class="pre">(0,</span> <span class="pre">1)</span></code>. For each CTA, list <code class="docutils literal notranslate"><span class="pre">m_st</span></code>, <code class="docutils literal notranslate"><span class="pre">n_st</span></code>, the A and B slices loaded for each K iteration, and the D region written. Which B rows become D columns because the kernel computes <code class="docutils literal notranslate"><span class="pre">D</span> <span class="pre">=</span> <span class="pre">A</span> <span class="pre">&#64;</span> <span class="pre">B.T</span></code>?</p>
+<p>The CTA computes:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>D[m_st : m_st + BLK_M, n_st : n_st + BLK_N]
+</pre></div>
+</div>
+<p>At each K iteration, it loads:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A[m_st : m_st + BLK_M, k : k + BLK_K]
+B[n_st : n_st + BLK_N, k : k + BLK_K]
+</pre></div>
+</div>
+<p>These indices follow from <code class="docutils literal notranslate"><span class="pre">D</span> <span class="pre">=</span> <span class="pre">A</span> <span class="pre">&#64;</span> <span class="pre">B.T</span></code>: <code class="docutils literal notranslate"><span class="pre">bx</span></code> selects rows of A and D, while <code class="docutils literal notranslate"><span class="pre">by</span></code> selects rows of B. After <code class="docutils literal notranslate"><span class="pre">B.T</span></code>, those rows correspond to columns of D.</p>
+<p>CTAs with the same <code class="docutils literal notranslate"><span class="pre">bx</span></code> read the same A tiles, while CTAs with the same <code class="docutils literal notranslate"><span class="pre">by</span></code> read the same B tiles. This version does not explicitly share those tiles across CTAs.</p>
 </section>
 <section id="id2">
 <h3>Complete Kernel<a class="headerlink" href="#id2" title="Link to this heading">#</a></h3>
 <p>The kernel is once again Step 2, this time with just two changes: the grid shape and the per-CTA offsets. The inner K-loop and the writeback are untouched. The imports are the same:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script.tirx</span><span class="w"> </span><span class="kn">import</span> <span class="n">tile</span> <span class="k">as</span> <span class="n">Tx</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.cuda.operator.tile_primitive.tma_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">tma_shared_layout</span><span class="p">,</span> <span class="n">SwizzleMode</span>
@@ -950,8 +958,8 @@ B[by * BLK_N : (by + 1) * BLK_N, k : k + BLK_K]
         <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
 
         <span class="n">tmem</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
-        <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span> <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
-        <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]))</span>
+            <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span> <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+            <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]))</span>
 
         <span class="n">phase_mma</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">int32</span> <span class="o">=</span> <span class="mi">0</span>
 
@@ -1003,7 +1011,7 @@ B[by * BLK_N : (by + 1) * BLK_N, k : k + BLK_K]
 <ol class="arabic simple">
 <li><p>In Steps 1-3, <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> moves A and B tiles into SMEM before MMA. Why does the kernel need <code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code> before <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> reads those SMEM tiles?</p></li>
 <li><p>In Step 2, what happens if <code class="docutils literal notranslate"><span class="pre">phase_mma</span> <span class="pre">^=</span> <span class="pre">1</span></code> is removed from the K-loop? Does the kernel wait for every MMA, or can a later wait pass too early?</p></li>
-<li><p>For M=N=4096 with BLK_M=BLK_N=128, how many CTAs are launched in Step 3? Which operand tiles are logically reused across neighboring CTAs, and does Step 3 exploit that reuse?</p></li>
+<li><p>For <code class="docutils literal notranslate"><span class="pre">M=N=4096</span></code> and <code class="docutils literal notranslate"><span class="pre">BLK_M=BLK_N=128</span></code>, what is the Step 3 grid shape, and how many CTAs does it launch? For CTA <code class="docutils literal notranslate"><span class="pre">(bx,</span> <span class="pre">by)</span></code>, which other CTAs independently read the same A tiles, and which independently read the same B tiles? Does the current kernel explicitly share that data?</p></li>
 </ol>
 </section>
 </section>
@@ -1068,7 +1076,7 @@ B[by * BLK_N : (by + 1) * BLK_N, k : k + BLK_K]
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-2-k-loop-accumulation">Step 2: K-Loop Accumulation</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#k-loop-mechanics">K-Loop Mechanics</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#accumulating-along-k">Accumulating Along K</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">Complete Kernel</a></li>
 </ul>
 </li>

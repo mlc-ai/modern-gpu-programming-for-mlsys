@@ -11,7 +11,7 @@
 
 上一章的 kernel 按照固定顺序处理每个 K tile：threads 先把 A、B 搬入 shared memory，等待所有写入完成，再发起 MMA 并等待计算结束；之后才开始加载下一块。这个执行顺序容易理解，也能得到正确结果，但数据搬运和 Tensor Core 计算无法重叠。
 
-本章将在前面三步完成的 kernel 上继续优化。第 4 步用 TMA 代替 threads 搬运 A、B tiles；第 5 步为 shared memory 准备两个 stages，使 TMA 加载下一块 K tile 时，Tensor Core 可以计算当前 tile；第 6 步再加入 tile scheduler，让已经驻留的 CTAs 连续处理多个 output tiles。经过这三步，kernel 将从串行执行的 tiled GEMM 逐步变成 pipelined persistent GEMM。
+本章将在前面三步完成的 kernel 上继续优化。第 4 步用 TMA 代替 threads 搬运 A、B tiles；第 5 步为 shared memory 准备两个 stages，建立预取和后续并发所需的 buffer 结构；第 6 步再加入 tile scheduler，让已经驻留的 CTAs 连续处理多个 output tiles。本章结束时，kernel 已经具备异步 tile 搬运、可循环复用的 SMEM stages 和 persistent scheduling。下一章会把这些阶段分配给不同的 warp 角色，使它们真正并发执行。
 
 (chap_tma_async)=
 ## 第 4 步：TMA Async Load
@@ -46,7 +46,7 @@ T.ptx.mbarrier.try_wait(tma_bar, phase)                  # wait before MMA reads
 
 `tid` 将 warp ID 和 lane ID 合并为 warpgroup 内的 thread ID，因此 `tid == 0` 只会选中一个 thread。若四个 warps 都直接执行 `elect_sync()`，每个 warp 都会选出一个 active lane，共有四个 threads 发起 TMA。也可以先限制 `warp_id == 0` 再使用 `elect_sync()`；这里使用 `tid == 0`，写法更直接。
 
-第 4 步仍然在每次 TMA load 后立即等待，因此 load 和 compute 还没有重叠。此时的变化只是将地址生成和 tile 搬运从 CTA threads 转交给 TMA engine，从而减少 threads 执行的搬运指令。第 5 步会加入第二个 SMEM stage，真正让 TMA load 与 MMA 同时进行。
+第 4 步仍然在每次 TMA load 后立即等待，因此 load 和 compute 还没有重叠。此时的变化只是将地址生成和 tile 搬运从 CTA threads 转交给 TMA engine，从而减少 threads 执行的搬运指令。第 5 步会加入第二个 SMEM stage，用于预取和循环复用；真正的角色级重叠会在第 7 步实现。
 
 ### 等待 TMA Load 和 Store 完成
 
@@ -290,7 +290,7 @@ if stage == PIPE_DEPTH - 1:
 
 ### 完整 Kernel
 
-完整 kernel 保留第 4 步的 TMA load/store path，并加入 staged buffers 和 phase logic。Imports 不变：
+完整 kernel 保留第 4 步的 TMA load/store path，并加入上面介绍的 staged buffers 和 phase logic。Imports 不变：
 
 ```python
 import tvm
@@ -466,11 +466,11 @@ Persistent kernel 则只启动固定数量的 CTAs，让每个 CTA 依次处理�
 
 ### Persistent Scheduling
 
-Persistent kernel 使用一个较小的一维 grid。本例设置 `SM_COUNT=148`，因此启动 148 个 persistent CTAs。每个 CTA 从 scheduler 获取一个 output tile，完成后再获取下一个，直到所有 tiles 都处理完毕。`SM_COUNT` 控制同时工作的 CTAs 数量，并不表示这些 CTAs 会与 SM 固定绑定。
+Persistent kernel 使用一个较小的一维 grid。本例设置 `SM_COUNT=148`，因此启动 148 个 persistent CTAs。每个 CTA 从 scheduler 获取一个 output tile，完成后再获取下一个，直到所有 tiles 都处理完毕。`SM_COUNT` 决定这个 worker pool 的大小；任一时刻有哪些 CTAs 实际驻留，由 occupancy 和硬件调度决定，CTA 也不会与某个 SM 固定绑定。
 
 由于一个 CTA 会连续处理多个 tiles，它只需申请一次 TMEM、初始化一次 barriers，并创建一次 scheduler state。这些资源可以一直保留到该 CTA 完成全部任务。
 
-Scheduler 还会调整 tiles 的处理顺序。`l2_group_size=8` 表示把 M 方向上连续 8 行 output tiles 分为一组。组内先固定一个 N tile column，依次处理这 8 行，再移动到下一个 N tile column。这样，读取同一个 B tile 的任务会相邻出现，同一组 A tiles 也会在较短时间内再次被访问。各 CTA 仍然独立搬运数据，但这种顺序更有利于 L2 cache 命中。
+Scheduler 还会调整 tiles 的逻辑编号顺序。`l2_group_size=8` 表示把 M 方向上连续 8 行 output tiles 分为一组。组内先固定一个 N tile column，让 tile IDs 沿这 8 行递增，再移动到下一个 N tile column。这样，共用同一个 B tile 的任务在调度顺序中彼此接近，同一组 A tiles 也会在较短区间内再次出现。各 CTA 仍然独立搬运数据，硬件实际执行顺序也可能不同，但这种编号方式更有利于 L2 cache 复用。
 
 ```python
 bx = T.cta_id([SM_COUNT])  # 1D persistent grid
@@ -500,7 +500,7 @@ while tile_scheduler.valid():
 
 ### 完整 Kernel
 
-从结构上看，这个 kernel 只是在第 5 步的 pipeline 外增加了一层 tile loop。新增的依赖只有 scheduler：
+第 6 步保留第 5 步的 staged K-loop，并在外层加入 output-tile loop。新增的依赖只有 scheduler：
 
 ```python
 import tvm
@@ -511,7 +511,7 @@ from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, S
 from tvm.tirx.lang.tile_scheduler import ClusterPersistentScheduler2D
 ```
 
-Grid dimension 由 `(M//BLK_M, N//BLK_N)` 改为 `SM_COUNT`，每个 CTA 要处理的 tile 则由 `ClusterPersistentScheduler2D` 分配：
+Launch grid 不再为每个 `(M, N)` output tile 启动一个 CTA，而是只包含 `SM_COUNT` 个 CTAs。`ClusterPersistentScheduler2D` 负责为这些 persistent CTAs 分配 tiles：
 
 ```python
 SM_COUNT = 148  # Number of SMs on NVIDIA B200 GPU

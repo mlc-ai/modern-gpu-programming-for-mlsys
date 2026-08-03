@@ -367,7 +367,7 @@
 </ul>
 </div>
 <p>上一章的 pipelined GEMM（<a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">使用 TMA 为 GEMM 建立 Pipeline</span></a>）已经引入 TMA、software pipeline 和 persistent scheduling，但 kernel 中仍然只有一个 warpgroup。它既要发起 TMA load，也要等待 A、B tiles 准备完成并发起 MMA，最后还要完成结果写回。虽然这些操作由不同的硬件单元执行，它们的控制与同步仍集中在同一个 warpgroup 中。</p>
-<p>Software pipeline 已经让部分 load 与 compute 发生重叠，但各阶段的推进仍然相互牵制。这个 warpgroup 等待某个阶段完成或执行 writeback 时，无法独立推进其他阶段。要让数据搬运、矩阵计算和结果写回持续并行，需要让不同 warps 分别负责固定的工作。</p>
+<p>SMEM ring 和 prefetch 结构已经建立，但所有阶段仍由同一个 warpgroup 控制。它等待数据、发起 MMA 或执行 writeback 时，无法独立推进 pipeline 的其他部分。要让数据搬运、矩阵计算和结果写回持续并行，需要让不同 warps 分别负责固定的工作。</p>
 <p>本章分三步扩大 kernel 的协作范围：第 7 步将 TMA、MMA 和 writeback 分配给不同的 warp roles；第 8 步让两个 CTAs 协作计算一个更大的 output tile；第 9 步增加第二个 MMA consumer。GEMM 的数学计算保持不变，重点转向不同 warps 和 CTAs 如何分工，以及它们如何通过 barriers 交接数据和资源。</p>
 <section id="warp-specialization-pipeline">
 <span id="chap-warp-specialization"></span><h2>第 7 步：Warp Specialization 与 Pipeline<a class="headerlink" href="#warp-specialization-pipeline" title="Link to this heading">#</a></h2>
@@ -380,7 +380,7 @@
 <li><p>Dispatch：不变，仍使用 TMA loads 和 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA。</p></li>
 </ul>
 </div></blockquote>
-<p>多级 SMEM pipeline 和 persistent <code class="docutils literal notranslate"><span class="pre">ClusterPersistentScheduler2D</span></code> 沿用第 5、6 步的实现，这里只改变工作分配方式。</p>
+<p>多级 SMEM pipeline 和 persistent <code class="docutils literal notranslate"><span class="pre">ClusterPersistentScheduler2D</span></code> 沿用第 5、6 步的实现；第 7 步改变的是这些工作如何分配给不同 warps，以及各个角色如何同步。</p>
 <section id="pipeline">
 <h3>从串行执行到并发 Pipeline<a class="headerlink" href="#pipeline" title="Link to this heading">#</a></h3>
 <p>下图比较 warp specialization 前后的调度方式。上半部分用第 4 步的串行时间线概括第 4 至 6 步尚未拆分角色时的执行方式，下半部分则表示第 7 步的并发调度。</p>
@@ -457,7 +457,7 @@
 </table>
 </div>
 <p>Barrier 类型取决于 producer 如何报告完成。<strong>TMA load</strong> 使用带 byte counting 的 <code class="docutils literal notranslate"><span class="pre">TMABar</span></code>，传输完成后由 TMA hardware 更新 barrier。<strong>TMA store</strong> 的完成状态则由发起指令的 thread 通过 async group 跟踪：先执行 <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span></code>，再用 <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code> 等待写入完成。<strong>MMA operation</strong> 使用 <code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code>，<code class="docutils literal notranslate"><span class="pre">tcgen05.commit()</span></code> 会在 MMA 完成后更新该 barrier。</p>
-<p>这里的 <code class="docutils literal notranslate"><span class="pre">arrive</span></code> 调用传入 <code class="docutils literal notranslate"><span class="pre">cta_mask=0</span></code>，因为当前 kernel 只涉及一个 CTA。第 8 步组成 cluster 后，这个参数会用来通知另一个 CTA。</p>
+<p>这里的 <code class="docutils literal notranslate"><span class="pre">cta_mask=0</span></code> 选择单 CTA kernel 使用的 non-multicast 形式。第 8 步组成 cluster 后，代码会改用 <code class="docutils literal notranslate"><span class="pre">cta_mask=3</span></code>，把完成通知 multicast 到两个 CTAs。</p>
 </section>
 <section id="pipelinestate">
 <h3>PipelineState<a class="headerlink" href="#pipelinestate" title="Link to this heading">#</a></h3>
@@ -765,7 +765,7 @@
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tma2mma_cta0</span> <span class="o">=</span> <span class="n">tma2mma</span><span class="o">.</span><span class="n">remote_view</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>两侧的 TMA loads 都将完成状态报告到这份 barrier，CTA 0 则通过一次 <code class="docutils literal notranslate"><span class="pre">arrive</span></code> 登记两侧 operands 的总字节数。每个 CTA 加载一份 <code class="docutils literal notranslate"><span class="pre">BLK_M×BLK_K</span></code> 的 A 和一份 <code class="docutils literal notranslate"><span class="pre">BLK_N×BLK_K</span></code> 的 B，因此登记的 byte count 为：</p>
+<p>两侧的 TMA loads 都将完成状态报告到这份 barrier，CTA 0 中选出的 producer thread 则通过一次 <code class="docutils literal notranslate"><span class="pre">arrive</span></code> 登记两个 CTAs 搬运的总字节数。每个 CTA 加载一份 <code class="docutils literal notranslate"><span class="pre">BLK_M×BLK_K</span></code> 的 A 和一份 <code class="docutils literal notranslate"><span class="pre">BLK_N×BLK_K</span></code> 的 B，因此登记的 byte count 为：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">CTA_GROUP</span> <span class="o">*</span> <span class="p">(</span><span class="n">BLK_M</span> <span class="o">*</span> <span class="n">BLK_K</span> <span class="o">+</span> <span class="n">BLK_N</span> <span class="o">*</span> <span class="n">BLK_K</span><span class="p">)</span> <span class="o">*</span> <span class="n">F16_SIZE</span>
 </pre></div>
 </div>
@@ -783,7 +783,7 @@
 <span class="n">mma2ld</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">cta_mask</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">cta_mask=3</span></code> 的二进制形式是 <code class="docutils literal notranslate"><span class="pre">11</span></code>，表示 CTA 0 和 CTA 1 都是通知目标。每次 MMA 完成后，<code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 允许两侧 TMA producer 复用已经读完的 SMEM stage；整个 K-loop 完成后，<code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> 则通知两侧 writeback warpgroups，TMEM accumulator 已经可以读取。</p>
+<p><code class="docutils literal notranslate"><span class="pre">cta_mask=3</span></code> 的二进制形式是 <code class="docutils literal notranslate"><span class="pre">11</span></code>，表示 CTA 0 和 CTA 1 都是通知目标。每次 MMA 完成后，<code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 允许两侧 TMA producer 复用已经读完的 SMEM stage；整个 K-loop 完成后，<code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> 则通知每个 CTA 中的 writeback warpgroup，TMEM accumulator 已经可以读取。</p>
 <p><strong>Writeback → 下一块 tile 的 MMA。</strong> 两侧 writeback warpgroups 使用完 TMEM 后，各有 128 个 threads 向 CTA 0 的 <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> barrier 报告 arrival。该 barrier 因此初始化为 <code class="docutils literal notranslate"><span class="pre">128</span> <span class="pre">*</span> <span class="pre">CTA_GROUP</span></code>，也就是 256。收到全部 arrivals 后，CTA 0 才能让下一块 output tile 的 MMA 复用这片 TMEM。</p>
 <p>TMEM 的申请和释放同样使用 <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code>。释放前执行 <code class="docutils literal notranslate"><span class="pre">cluster_sync()</span></code>，确保两个 CTAs 都已结束当前访问。Writeback 则将 256 列结果拆成两个 128-column chunks，每轮只读回一半 TMEM 数据并完成一次 TMA store，避免每个 thread 同时保存 256 个 fp32 values。</p>
 </section>
@@ -1029,7 +1029,7 @@
 </pre></div>
 </div>
 <p>两个 MMA warps 使用 <code class="docutils literal notranslate"><span class="pre">warp_id</span></code> 选择自己的 A block，并分别写入 TMEM cols <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code> 和 <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code>。</p>
-<p><strong>更新 barriers。</strong> 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 的 expected arrival count 改为 <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER</span></code>。<code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> 则各自包含两个 slots：slot 0 连接 MMA consumer 0 与两侧 CTA 的 WG 0，slot 1 连接 MMA consumer 1 与两侧 CTA 的 WG 1。MMA 侧使用 <code class="docutils literal notranslate"><span class="pre">warp_id</span></code> 选择 slot，writeback 侧使用 <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> 选择同一个 slot。</p>
+<p><strong>更新 barriers。</strong> 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 的 expected arrival count 改为 <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER</span></code>。<code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> 各自包含两个 slots。对于 <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code>，consumer 0 通过 slot 0 向两个 CTAs 的 WG 0 multicast 完成通知，consumer 1 则通过 slot 1 通知 WG 1。随后，对应的 <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> slot 会收集两侧 writeback threads 的 arrivals；全部到达后，该 consumer 才能复用自己的 TMEM range。MMA 侧使用 <code class="docutils literal notranslate"><span class="pre">warp_id</span></code> 选择 slot，writeback 侧使用 <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> 选择同一个 slot。</p>
 <p><strong>调整 scheduler 和 writeback。</strong> Cluster output tile 的 shape 现在是 <span class="math notranslate nohighlight">\(512\times256\)</span>，因此 scheduler 使用：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">num_m_tiles</span> <span class="o">=</span> <span class="n">M</span> <span class="o">//</span> <span class="p">(</span><span class="n">NUM_CONSUMER</span> <span class="o">*</span> <span class="n">CTA_GROUP</span> <span class="o">*</span> <span class="n">BLK_M</span><span class="p">)</span>  <span class="c1"># M // 512</span>
 <span class="n">num_n_tiles</span> <span class="o">=</span> <span class="n">N</span> <span class="o">//</span> <span class="p">(</span><span class="n">CTA_GROUP</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>                 <span class="c1"># N // 256</span>
@@ -1294,7 +1294,7 @@
 </tbody>
 </table>
 </div>
-<p>表中给出具体时间的版本都在相同的 <code class="docutils literal notranslate"><span class="pre">M=N=K=4096</span></code> 规模下测量，因此可以直接比较。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">构建 Tiled GEMM</span></a> 中只计算一个 <span class="math notranslate nohighlight">\(128\times128\)</span> tile 的 <code class="docutils literal notranslate"><span class="pre">hgemm_v1</span></code>。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。</p>
+<p>表中给出具体时间的版本都在相同的 <code class="docutils literal notranslate"><span class="pre">M=N=K=4096</span></code> 规模下测量，因此可以直接比较。表中的时间经过四舍五入，加速比则根据未舍入的测量值计算。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">构建 Tiled GEMM</span></a> 中只计算一个 <span class="math notranslate nohighlight">\(128\times128\)</span> tile 的 <code class="docutils literal notranslate"><span class="pre">hgemm_v1</span></code>。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。</p>
 <p>第 2 步仍然只计算一个 output tile，不能与表中的完整矩阵结果直接比较。第 5、6 步则是从 TMA load 逐步过渡到 warp specialization 的中间版本，相关机制都包含在第 7 步中；表格只保留这一段的起点和终点。因此，第 2、5、6 步以横线表示，也不计算对应的单步加速比。</p>
 <p>这些数字来自同一次 B200 reference run，只用于比较本章各版本在相同条件下的相对变化，不代表其他输入规模或测试环境下的硬件峰值。</p>
 <p>从已经测量的版本可以作四组比较：</p>

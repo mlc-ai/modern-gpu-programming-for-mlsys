@@ -11,7 +11,7 @@
 
 上一章的 pipelined GEMM（{ref}`chap_gemm_async`）已经引入 TMA、software pipeline 和 persistent scheduling，但 kernel 中仍然只有一个 warpgroup。它既要发起 TMA load，也要等待 A、B tiles 准备完成并发起 MMA，最后还要完成结果写回。虽然这些操作由不同的硬件单元执行，它们的控制与同步仍集中在同一个 warpgroup 中。
 
-Software pipeline 已经让部分 load 与 compute 发生重叠，但各阶段的推进仍然相互牵制。这个 warpgroup 等待某个阶段完成或执行 writeback 时，无法独立推进其他阶段。要让数据搬运、矩阵计算和结果写回持续并行，需要让不同 warps 分别负责固定的工作。
+SMEM ring 和 prefetch 结构已经建立，但所有阶段仍由同一个 warpgroup 控制。它等待数据、发起 MMA 或执行 writeback 时，无法独立推进 pipeline 的其他部分。要让数据搬运、矩阵计算和结果写回持续并行，需要让不同 warps 分别负责固定的工作。
 
 本章分三步扩大 kernel 的协作范围：第 7 步将 TMA、MMA 和 writeback 分配给不同的 warp roles；第 8 步让两个 CTAs 协作计算一个更大的 output tile；第 9 步增加第二个 MMA consumer。GEMM 的数学计算保持不变，重点转向不同 warps 和 CTAs 如何分工，以及它们如何通过 barriers 交接数据和资源。
 
@@ -26,7 +26,7 @@ Software pipeline 已经让部分 load 与 compute 发生重叠，但各阶段�
 > - Layout：不变，继续使用第 6 步中的 SMEM stages 和 TMEM accumulator。
 > - Dispatch：不变，仍使用 TMA loads 和 `tcgen05` MMA。
 
-多级 SMEM pipeline 和 persistent `ClusterPersistentScheduler2D` 沿用第 5、6 步的实现，这里只改变工作分配方式。
+多级 SMEM pipeline 和 persistent `ClusterPersistentScheduler2D` 沿用第 5、6 步的实现；第 7 步改变的是这些工作如何分配给不同 warps，以及各个角色如何同步。
 
 ### 从串行执行到并发 Pipeline
 
@@ -68,7 +68,7 @@ Load 与 MMA 之间通过两个 barriers 交接 SMEM buffer：
 
 Barrier 类型取决于 producer 如何报告完成。**TMA load** 使用带 byte counting 的 `TMABar`，传输完成后由 TMA hardware 更新 barrier。**TMA store** 的完成状态则由发起指令的 thread 通过 async group 跟踪：先执行 `cp_async.bulk.commit_group()`，再用 `wait_group(0)` 等待写入完成。**MMA operation** 使用 `TCGen05Bar`，`tcgen05.commit()` 会在 MMA 完成后更新该 barrier。
 
-这里的 `arrive` 调用传入 `cta_mask=0`，因为当前 kernel 只涉及一个 CTA。第 8 步组成 cluster 后，这个参数会用来通知另一个 CTA。
+这里的 `cta_mask=0` 选择单 CTA kernel 使用的 non-multicast 形式。第 8 步组成 cluster 后，代码会改用 `cta_mask=3`，把完成通知 multicast 到两个 CTAs。
 
 ### PipelineState
 
@@ -385,7 +385,7 @@ n_st_epi = n_base + no * BLK_N
 tma2mma_cta0 = tma2mma.remote_view(0)
 ```
 
-两侧的 TMA loads 都将完成状态报告到这份 barrier，CTA 0 则通过一次 `arrive` 登记两侧 operands 的总字节数。每个 CTA 加载一份 `BLK_M×BLK_K` 的 A 和一份 `BLK_N×BLK_K` 的 B，因此登记的 byte count 为：
+两侧的 TMA loads 都将完成状态报告到这份 barrier，CTA 0 中选出的 producer thread 则通过一次 `arrive` 登记两个 CTAs 搬运的总字节数。每个 CTA 加载一份 `BLK_M×BLK_K` 的 A 和一份 `BLK_N×BLK_K` 的 B，因此登记的 byte count 为：
 
 ```python
 CTA_GROUP * (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE
@@ -410,7 +410,7 @@ for k in range(K_TILES):
 mma2ld.arrive(0, cta_group=2, cta_mask=3)
 ```
 
-`cta_mask=3` 的二进制形式是 `11`，表示 CTA 0 和 CTA 1 都是通知目标。每次 MMA 完成后，`mma2tma` 允许两侧 TMA producer 复用已经读完的 SMEM stage；整个 K-loop 完成后，`mma2ld` 则通知两侧 writeback warpgroups，TMEM accumulator 已经可以读取。
+`cta_mask=3` 的二进制形式是 `11`，表示 CTA 0 和 CTA 1 都是通知目标。每次 MMA 完成后，`mma2tma` 允许两侧 TMA producer 复用已经读完的 SMEM stage；整个 K-loop 完成后，`mma2ld` 则通知每个 CTA 中的 writeback warpgroup，TMEM accumulator 已经可以读取。
 
 **Writeback → 下一块 tile 的 MMA。** 两侧 writeback warpgroups 使用完 TMEM 后，各有 128 个 threads 向 CTA 0 的 `ld2mma` barrier 报告 arrival。该 barrier 因此初始化为 `128 * CTA_GROUP`，也就是 256。收到全部 arrivals 后，CTA 0 才能让下一块 output tile 的 MMA 复用这片 TMEM。
 
@@ -639,7 +639,7 @@ CTA_GROUP * (
 
 两个 MMA warps 使用 `warp_id` 选择自己的 A block，并分别写入 TMEM cols `[0:256]` 和 `[256:512]`。
 
-**更新 barriers。** 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 `mma2tma` 的 expected arrival count 改为 `NUM_CONSUMER`。`mma2ld` 和 `ld2mma` 则各自包含两个 slots：slot 0 连接 MMA consumer 0 与两侧 CTA 的 WG 0，slot 1 连接 MMA consumer 1 与两侧 CTA 的 WG 1。MMA 侧使用 `warp_id` 选择 slot，writeback 侧使用 `wg_id` 选择同一个 slot。
+**更新 barriers。** 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 `mma2tma` 的 expected arrival count 改为 `NUM_CONSUMER`。`mma2ld` 和 `ld2mma` 各自包含两个 slots。对于 `mma2ld`，consumer 0 通过 slot 0 向两个 CTAs 的 WG 0 multicast 完成通知，consumer 1 则通过 slot 1 通知 WG 1。随后，对应的 `ld2mma` slot 会收集两侧 writeback threads 的 arrivals；全部到达后，该 consumer 才能复用自己的 TMEM range。MMA 侧使用 `warp_id` 选择 slot，writeback 侧使用 `wg_id` 选择同一个 slot。
 
 **调整 scheduler 和 writeback。** Cluster output tile 的 shape 现在是 $512\times256$，因此 scheduler 使用：
 
@@ -860,7 +860,7 @@ def hgemm_v9(M, N, K):
 | 9 | Multi-consumer | 0.094 ms | ~744× |
 | --- | cuBLAS（参考） | 0.094 ms | ~744× |
 
-表中给出具体时间的版本都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的 `hgemm_v1`。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。
+表中给出具体时间的版本都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。表中的时间经过四舍五入，加速比则根据未舍入的测量值计算。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的 `hgemm_v1`。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。
 
 第 2 步仍然只计算一个 output tile，不能与表中的完整矩阵结果直接比较。第 5、6 步则是从 TMA load 逐步过渡到 warp specialization 的中间版本，相关机制都包含在第 7 步中；表格只保留这一段的起点和终点。因此，第 2、5、6 步以横线表示，也不计算对应的单步加速比。
 
