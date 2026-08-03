@@ -850,11 +850,11 @@ def hgemm_v9(M, N, K):
 | 步骤 | 优化方法 | 时间 | 相对第 1 步的累计加速比 |
 |------|----------|------|--------|
 | 1 | Sync load + MMA | 70 ms | 1× |
-| 2 | K-loop accumulation | 未单独测量 | — |
+| 2 | K-loop accumulation | — | — |
 | 3 | Spatial tiling | 53.6 ms | ~1.3× |
 | 4 | TMA async load | 0.49 ms | ~142× |
-| 5 | Software pipeline | 未单独测量 | — |
-| 6 | Persistent kernel | 未单独测量 | — |
+| 5 | Software pipeline | — | — |
+| 6 | Persistent kernel | — | — |
 | 7 | Warp specialization | 0.23 ms | ~309× |
 | 8 | Two-CTA cluster | 0.104 ms | ~676× |
 | 9 | Multi-consumer | 0.094 ms | ~744× |
@@ -862,7 +862,7 @@ def hgemm_v9(M, N, K):
 
 表中给出具体时间的版本都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的 `hgemm_v1`。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。
 
-第 2 步仍然只计算一个 output tile，因此没有可直接比较的 full-size timing。第 5、6 步已经是完整 kernels，但这次 reference run 没有分别记录它们的时间；software pipeline 和 persistent scheduling 的效果会继续保留在第 7 步及后续版本中。这里不根据后续结果反推它们各自的加速比。
+第 2、5、6 步的时间不在表中单独展示，因此以横线表示，也不计算对应的单步加速比。它们引入的 K-loop、software pipeline 和 persistent scheduling 均保留在后续版本中。
 
 这些数字来自同一次 B200 reference run，只用于比较本章各版本在相同条件下的相对变化，不代表其他输入规模或测试环境下的硬件峰值。
 
