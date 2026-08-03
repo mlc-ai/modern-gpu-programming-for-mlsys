@@ -330,9 +330,9 @@ def hgemm_v7(M, N, K):
 
 ### A、B 的 CTA 分工
 
-先看 $256\times256$ output tile 的 M 维。A 沿 M 维分成两个 $128\times K$ slices，每个 CTA 加载其中一份；两份合起来覆盖全部 256 个 output rows。
+下图把一个 $256\times256$ output tile 分到左右两个 CTAs。先看两侧的 `Asmem`：CTA 0 加载 A 的 rows 0–127，CTA 1 加载 rows 128–255。这两份 A slices 决定各自负责的 output rows，因此图中的两个橙色区域分别是 `D[0:128, 0:256]` 和 `D[128:256, 0:256]`。
 
-B 则沿 N 维切分。B 在内存中的 shape 为 `N×K`，每个 CTA 同样加载一个 $128\times K$ row slice。计算使用 `B.T`，因此这两份 rows 转置后分别对应 128 个 output columns，合起来覆盖完整的 N 维。下图展示了这四个 operand slices 如何参与同一次 cooperative MMA：
+再看两侧的 `Bsmem`。B 在内存中的 shape 为 `N×K`，所以 CTA 0 和 CTA 1 加载的两组 stored-B rows 经过 `B.T` 后，分别对应 output 的前 128 列和后 128 列。每个 CTA 都要计算自己 128 行上的全部 256 列，因此 cooperative MMA 还会通过图中央的跨 CTA 读取取得另一侧的 `Bsmem`。这样，每份 A slice 都会同时与两份 B slices 相乘。
 
 ```{raw} html
 <div style="overflow-x:auto;">
@@ -340,7 +340,7 @@ B 则沿 N 维切分。B 在内存中的 shape 为 `N×K`，每个 CTA 同样加
         style="width:100%; min-width:720px; height:580px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 ```
-*两个 CTAs 各自提供一个 A row slice 和一个 stored-B row slice。Cooperative MMA 从两侧 SMEM 读取这些数据，并将结果写入两侧的 TMEM。*
+*点击两侧的 `Asmem`、`Bsmem` 或图中央的跨 CTA 读取，可以查看各部分在 cooperative MMA 中的作用。*
 
 令 `m_base = m_idx * 256`、`n_base = n_idx * 256`。两个 CTAs 的分工如下：
 
