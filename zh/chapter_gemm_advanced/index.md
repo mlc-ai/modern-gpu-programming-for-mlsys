@@ -115,14 +115,6 @@ bar.sync 10, 128
 
 这里的 mbarrier wait 和 `tcgen05.wait.ld()` 负责等待两项不同的工作：前者确认 MMA 已经完成，`fence.after_thread_sync()` 建立跨 thread 的 `tcgen05` 执行顺序，后者再确认异步 TMEM load 已经写入目标 registers。
 
-实现中还保留了以下两点：
-
-- **Persistent kernel**：`bx = T.cta_id([SM_COUNT])`，每个 CTA 循环处理多个 tiles。
-
-- **有利于 L2 locality 的调度**：`ClusterPersistentScheduler2D` 调整 tiles 的处理顺序。
-
-Warp specialization 与 software pipelining 的组合也常见于 CUTLASS 等高性能 GEMM 实现。
-
 ### 完整 Kernel
 
 下面把前面的角色分工、四个 barriers、`PipelineState` 和 writeback path 组合成第 7 步的完整实现。Kernel 沿用第 6 步的 persistent scheduler，并使用 `PIPE_DEPTH=2`；这是能够让 load 与 compute 重叠的最小深度。更深的 pipeline 可以隐藏更多 memory latency，但也会占用更多 SMEM。
