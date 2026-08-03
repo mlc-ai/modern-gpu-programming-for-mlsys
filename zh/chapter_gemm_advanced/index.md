@@ -615,7 +615,7 @@ def hgemm_v8(M, N, K):
 
 两个 consumers 需要不同的 A blocks，是因为它们计算不同的 output rows；它们使用同一组 B slices，是因为两组结果覆盖相同的 output columns。这样，同一组 staged B slices 可以参与两次 cooperative MMA，B 相对于计算量的加载成本也近似减半。
 
-### 相比第 8 步的改动
+### 如何加入第二个 MMA Consumer
 
 这些改动可以分成三组。
 
