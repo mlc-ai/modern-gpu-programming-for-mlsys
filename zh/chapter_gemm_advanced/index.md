@@ -373,29 +373,36 @@ n_st_epi = n_base + no * BLK_N
 
 ### Cluster 中的数据交接
 
-两个 CTAs 各自拥有 SMEM 和 barriers，但 cooperative MMA 必须等两侧的 A、B slices 都准备好。当前实现选择 CTA 0 的 `tma2mma` 作为共同的 completion barrier，两个 CTAs 都通过同一个 remote view 引用它：
+两个 CTAs 各自拥有 SMEM 和 barriers。为了让一次 cooperative MMA 等到两侧的数据都准备好，并在完成后通知两侧继续执行，这里需要完成三次交接。
+
+**TMA → MMA。** 当前实现使用 CTA 0 的 `tma2mma` 作为共同的 completion barrier，两个 CTAs 都通过同一个 remote view 引用它：
 
 ```python
 tma2mma_cta0 = tma2mma.remote_view(0)
 ```
 
-两侧的 TMA loads 都将完成状态报告到这份 barrier。CTA 0 再通过一次 `arrive` 登记两侧 operands 的总字节数；只有全部传输完成后，MMA consumer 才能继续。
+两侧的 TMA loads 都将完成状态报告到这份 barrier，CTA 0 则通过一次 `arrive` 登记两侧 operands 的总字节数。只有所有 A、B slices 都传输完成，CTA 0 中的 MMA consumer 才能通过 wait。
 
-Cooperative MMA 也只发起一次。代码用 `if cbx == 0:` 选出 CTA 0 中的 MMA thread，并设置 `cta_group=2`：
+**MMA → TMA 和 writeback。** Cooperative MMA 只需发起一次。代码用 `if cbx == 0:` 保留 CTA 0 的 MMA path，其中选出的一个 thread 使用 `cta_group=2` 发出指令：
 
 ```python
 if cbx == 0:
     Tx.gemm_async(..., cta_group=2)
 ```
 
-硬件随后读取两个 CTAs 的 SMEM，并更新两侧的 TMEM accumulator。MMA 完成后，CTA 0 使用 `cta_mask=3` 将通知同时发送给 CTA 0 和 CTA 1：
+硬件会读取两个 CTAs 的 SMEM，并更新两侧的 TMEM accumulator。每次 K iteration 发出异步 MMA 后，同一个 thread 都通过 `mma2tma` 登记完成通知；整个 K-loop 发完后，再通过 `mma2ld` 登记最终 accumulator 的完成通知：
 
 ```python
-mma2tma.arrive(mma_ps.stage, cta_group=2, cta_mask=3)
+for k in range(K_TILES):
+    Tx.gemm_async(..., cta_group=2)
+    mma2tma.arrive(mma_ps.stage, cta_group=2, cta_mask=3)
+
 mma2ld.arrive(0, cta_group=2, cta_mask=3)
 ```
 
-这里的 `3` 即二进制 `11`，表示 cluster 中的两个 CTAs 都是通知目标。Writeback 完成后，两侧各有 128 个 threads 向 CTA 0 的 `ld2mma` barrier 报告 arrival，因此该 barrier 初始化为 `128 * CTA_GROUP`。
+`cta_mask=3` 的二进制形式是 `11`，表示 CTA 0 和 CTA 1 都是通知目标。每次 MMA 完成后，`mma2tma` 允许两侧 TMA producer 复用已经读完的 SMEM stage；整个 K-loop 完成后，`mma2ld` 则通知两侧 writeback warpgroups，TMEM accumulator 已经可以读取。
+
+**Writeback → 下一块 tile 的 MMA。** 两侧 writeback warpgroups 使用完 TMEM 后，各有 128 个 threads 向 CTA 0 的 `ld2mma` barrier 报告 arrival。该 barrier 因此初始化为 `128 * CTA_GROUP`，也就是 256。收到全部 arrivals 后，CTA 0 才能让下一块 output tile 的 MMA 复用这片 TMEM。
 
 TMEM 的申请和释放同样使用 `cta_group=2`。释放前执行 `cluster_sync()`，确保两个 CTAs 都已结束当前访问。Writeback 则将 256 列结果拆成两个 128-column chunks，每轮只读回一半 TMEM 数据并完成一次 TMA store，避免每个 thread 同时保存 256 个 fp32 values。
 
