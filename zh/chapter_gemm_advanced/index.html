@@ -2,13 +2,13 @@
 <!DOCTYPE html>
 
 
-<html lang="en" data-content_root="../" >
+<html lang="zh-CN" data-content_root="../" >
 
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>Scaling GEMM with Warp Specialization and Clusters &#8212; Modern GPU Programming For MLSys</title>
+    <title>使用 Warp Specialization 和 Cluster 扩展 GEMM &#8212; 面向 MLSys 的现代 GPU 编程</title>
   
   
   
@@ -42,22 +42,25 @@
   <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
 <link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
 
-    <script src="../_static/documentation_options.js?v=e645c8fa"></script>
+    <script src="../_static/documentation_options.js?v=eb1cd0b9"></script>
     <script src="../_static/doctools.js?v=9bcbadda"></script>
     <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
     <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
     <script src="../_static/copybutton.js?v=f281be69"></script>
     <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../_static/translations.js?v=beaddf03"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <script>DOCUMENTATION_OPTIONS.pagename = 'chapter_gemm_advanced/index';</script>
     <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
-    <script src="../_static/demo-embed.js?v=2d63667d"></script>
+    <script src="../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
     <link rel="icon" href="../_static/mlc-favicon.ico"/>
-    <link rel="index" title="Index" href="../genindex.html" />
-    <link rel="search" title="Search" href="../search.html" />
-    <link rel="next" title="Flash Attention 4" href="../chapter_flash_attention/index.html" />
-    <link rel="prev" title="Pipelining GEMM with TMA" href="../chapter_gemm_async/index.html" />
+    <link rel="index" title="索引" href="../genindex.html" />
+    <link rel="search" title="搜索" href="../search.html" />
+    <link rel="next" title="概览" href="../appendix/index.html" />
+    <link rel="prev" title="使用 TMA 为 GEMM 建立 Pipeline" href="../chapter_gemm_async/index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:language" content="zh-CN"/>
   <meta name="docsearch:version" content="" />
   
     
@@ -69,13 +72,13 @@
   <body data-default-mode="">
   
   
-  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">跳转至主要内容</a></div>
 
   
   <div id="pst-scroll-pixel-helper"></div>
   
   <button type="button" class="btn rounded-pill" id="pst-back-to-top">
-    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+    <i class="fa-solid fa-arrow-up"></i>回到顶部</button>
   
   
   
@@ -100,7 +103,7 @@
   </dialog>
 
   <div class="pst-async-banner-revealer d-none">
-  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="版本警告"></aside>
 </div>
 
   
@@ -143,61 +146,57 @@
       
     
     
-    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="Modern GPU Programming For MLSys - Home"/>
-    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="Modern GPU Programming For MLSys - Home"/>
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
   
   
 </a></div>
         <div class="sidebar-primary-item">
 
-<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
  <i class="fa-solid fa-magnifying-glass"></i>
- <span class="search-button__default-text">Search</span>
+ <span class="search-button__default-text">搜索</span>
  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
 </button></div>
         <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
     <div class="bd-toc-item navbar-nav active">
-        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I, Understanding the GPU</span></p>
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout and Its Notation</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">The Evolution of Tensor Core Data Layouts</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Blackwell Tensor Core: <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Tensor Memory (TMEM)</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_async_barriers/index.html">Async Coordination: mbarrier</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">Advanced Scheduling: Cluster Launch Control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">异步数据搬运：TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Tensor Memory（TMEM）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_async_barriers/index.html">异步协作：mbarrier</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">进阶调度：Cluster Launch Control</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II, TIRx Overview</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第二部分：TIRx 概览</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">Introduction to TIRx</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">TIRx 入门</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III, GEMM: Tiled to SOTA</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第三部分：GEMM：从 Tiled 到 SOTA</span></p>
 <ul class="current nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_basics/index.html">Building a Tiled GEMM</a></li>
-<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_async/index.html">Pipelining GEMM with TMA</a></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">Scaling GEMM with Warp Specialization and Clusters</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_basics/index.html">构建 Tiled GEMM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_async/index.html">使用 TMA 为 GEMM 建立 Pipeline</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">使用 Warp Specialization 和 Cluster 扩展 GEMM</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV, Flash Attention 4</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
 <ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
-</ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Reference</span></p>
-<ul class="nav bd-sidenav">
-<li class="toctree-l1"><a class="reference internal" href="../appendix/index.html">Overview</a></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx Language Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/parser_utils.html">Parser utilities</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/data_types.html">Data types and expressions</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/buffers.html">Buffers and memory</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/control_flow.html">Control flow</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/index.html">概览</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/parser_utils.html">Parser 工具</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/data_types.html">数据类型与表达式</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/buffers.html">Buffer 与内存</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/control_flow.html">控制流</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx lowering pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
 </details></li>
 </ul>
@@ -248,91 +247,25 @@
 <div class="article-header-buttons">
 
 
-
-
-
-<div class="dropdown dropdown-source-buttons">
-  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
-    <i class="fab fa-github"></i>
-  </button>
-  <ul class="dropdown-menu">
-      
-      
-      
-      <li><a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
-   class="btn btn-sm btn-source-repository-button dropdown-item"
-   title="Source repository"
-   data-bs-placement="left" data-bs-toggle="tooltip"
+<a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button"
+   title="源码库"
+   data-bs-placement="bottom" data-bs-toggle="tooltip"
 >
   
 
 <span class="btn__icon-container">
   <i class="fab fa-github"></i>
   </span>
-<span class="btn__text-container">Repository</span>
+
 </a>
-</li>
-      
-      
-      
-      
-      <li><a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys/blob/main/./chapter_gemm_advanced/index.md?plain=1" target="_blank"
-   class="btn btn-sm btn-source-file-button dropdown-item"
-   title="Show source"
-   data-bs-placement="left" data-bs-toggle="tooltip"
->
-  
-
-<span class="btn__icon-container">
-  <i class="fas fa-code"></i>
-  </span>
-<span class="btn__text-container">Show source</span>
-</a>
-</li>
-      
-      
-      
-      
-      <li><a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys/edit/main/./chapter_gemm_advanced/index.md" target="_blank"
-   class="btn btn-sm btn-source-edit-button dropdown-item"
-   title="Suggest edit"
-   data-bs-placement="left" data-bs-toggle="tooltip"
->
-  
-
-<span class="btn__icon-container">
-  <i class="fas fa-pencil-alt"></i>
-  </span>
-<span class="btn__text-container">Suggest edit</span>
-</a>
-</li>
-      
-      
-      
-      
-      <li><a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys/issues/new?title=Issue%20on%20page%20%2Fchapter_gemm_advanced/index.html&body=Your%20issue%20content%20here." target="_blank"
-   class="btn btn-sm btn-source-issues-button dropdown-item"
-   title="Open an issue"
-   data-bs-placement="left" data-bs-toggle="tooltip"
->
-  
-
-<span class="btn__icon-container">
-  <i class="fas fa-lightbulb"></i>
-  </span>
-<span class="btn__text-container">Open issue</span>
-</a>
-</li>
-      
-  </ul>
-</div>
 
 
 
 
-<button onclick="window.location.href='../zh/index.html'"
+<button onclick="window.location.href='../../index.html'"
   class="btn btn-sm btn-language-switch-button pst-navbar-icon"
-  title="切换到中文版"
+  title="Switch to English"
   data-bs-placement="bottom" data-bs-toggle="tooltip"
 >
   
@@ -347,19 +280,19 @@
 
 <div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
   <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
-    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
-    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="亮色"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="暗色"></i>
     <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
   </button>
   <ul class="dropdown-menu dropdown-menu-end">
     <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
-    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
-    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>亮色</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>暗色</button></li>
   </ul>
 </div>
 
 
-<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
     <i class="fa-solid fa-magnifying-glass fa-lg"></i>
 </button>
 <button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
@@ -375,40 +308,43 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>Scaling GEMM with Warp Specialization and Clusters</h1>
+    <h1>使用 Warp Specialization 和 Cluster 扩展 GEMM</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
             
             <div>
-                <h2> Contents </h2>
+                <h2> 目录 </h2>
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7-warp-specialization-pipeline">Step 7: Warp Specialization + Pipeline</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#from-sequential-to-concurrent">From Sequential to Concurrent</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-roles">Warp Roles</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#barriers">4 Barriers</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-specialization-pipeline">第 7 步：Warp Specialization 与 Pipeline</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipeline">从串行执行到并发 Pipeline</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warp">Warp 角色</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#barriers">四个 Barriers</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipelinestate">PipelineState</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warpgroup-sync-barrier-ids"><code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> Barrier IDs</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#epilogue-writeback-details">Epilogue (Writeback) Details</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-step-7-misbehaves">When Step 7 Misbehaves</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#named-barrier-warpgroup">使用 Named Barrier 同步一个 Warpgroup</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#epilogue-writeback">Epilogue（Writeback）</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#kernel">完整 Kernel</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#barrier">检查 Barrier 交接</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipeline-depth-smem">Pipeline Depth 的 SMEM 成本</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-8-2-cta-cluster">Step 8: 2-CTA Cluster</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster-tile-shape">Cluster Tile Shape</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-address-calculation">Tile Address Calculation</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#code-changes-from-step-7">Code Changes from Step 7</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster-scope-changes">Cluster-Scope Changes</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#two-cta-cluster">第 8 步：Two-CTA Cluster</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ab-cta">A、B 的 CTA 分工</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#tile">Tile 地址计算</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster">Cluster 中的数据交接</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">完整 Kernel</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-9-multi-consumer-warp-specialization">Step 9: Multi-Consumer Warp Specialization</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#multi-consumer-structure">Multi-Consumer Structure</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#changes-from-step-8">Changes from Step 8</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#multi-consumer-warp-specialization">第 9 步：Multi-Consumer Warp Specialization</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#multi-consumer">Multi-Consumer 结构</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#mma-consumer">如何加入第二个 MMA Consumer</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">完整 Kernel</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#end-to-end-result">End-to-End Result</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#exercises">Exercises</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">完整优化结果</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">练习</a></li>
 </ul>
             </nav>
         </div>
@@ -420,137 +356,151 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section class="tex2jax_ignore mathjax_ignore" id="scaling-gemm-with-warp-specialization-and-clusters">
-<span id="chap-gemm-advanced"></span><h1>Scaling GEMM with Warp Specialization and Clusters<a class="headerlink" href="#scaling-gemm-with-warp-specialization-and-clusters" title="Link to this heading">#</a></h1>
+  <section class="tex2jax_ignore mathjax_ignore" id="warp-specialization-cluster-gemm">
+<span id="chap-gemm-advanced"></span><h1>使用 Warp Specialization 和 Cluster 扩展 GEMM<a class="headerlink" href="#warp-specialization-cluster-gemm" title="Link to this heading">#</a></h1>
 <div class="overview admonition">
-<p class="admonition-title">Overview</p>
+<p class="admonition-title">概览</p>
 <ul class="simple">
-<li><p>The pipelined GEMM still has one warpgroup doing load, MMA, and writeback in sequence, the bottleneck this chapter removes.</p></li>
-<li><p>Step 7 specializes warps into roles, Step 8 adds a 2-CTA cluster, Step 9 adds multiple consumers.</p></li>
-<li><p>Each step removes a serial bottleneck, ending near state-of-the-art throughput.</p></li>
+<li><p>第 7 步将 TMA load、MMA 和 writeback 分配给不同的 warp roles，并用四个 barriers 连接数据准备与 buffer 复用。</p></li>
+<li><p>第 8 步让两个 CTAs 通过 cooperative MMA 共同计算一个更大的 output tile，并处理跨 CTA 的 operand 读取与 barrier 交接。</p></li>
+<li><p>第 9 步增加第二个 MMA consumer，让两组 A blocks 共享同一份 staged B tile；最终版本在本章测试条件下达到 cuBLAS reference 的性能。</p></li>
 </ul>
 </div>
-<p>The pipelined GEMM from the previous chapter (<a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">Pipelining GEMM with TMA</span></a>) is fast, but it still asks one warpgroup to do everything: issue the load, run the MMA, then write the result back. Even with a software pipeline, that one team of threads becomes the place where all three engines meet.</p>
-<p>The symptom is easy to see. The TMA unit goes quiet while the Tensor Cores run, the Tensor Cores go quiet while the result drains to memory, and each engine waits on the others through one set of threads. The way past this is to stop making one team do everything.</p>
-<p>We pursue that idea in three steps of widening cooperation. Step 7 (<a class="reference internal" href="#chap-warp-specialization"><span class="std std-ref">Step 7: Warp Specialization + Pipeline</span></a>) specializes warps into producer, consumer, and writeback roles. Step 8 (<a class="reference internal" href="#chap-cta-cluster"><span class="std std-ref">Step 8: 2-CTA Cluster</span></a>) joins two CTAs into a cluster that shares operands across their shared memory. Step 9 (<a class="reference internal" href="#chap-multi-consumer"><span class="std std-ref">Step 9: Multi-Consumer Warp Specialization</span></a>) adds a second MMA consumer so one staged tile feeds twice the math.</p>
-<p>It helps to see the three steps as one pattern at different scales. Step 7 keeps the full pipeline inside one CTA: TMA and MMA share one warpgroup, while writeback runs in another. Step 8 widens cooperation across CTAs, producing a 256×256 tile that spans both of them. Step 9 pushes the compute density further still: the cluster output grows to 512×256, each staged B tile is reused by both consumers, and we arrive at the densest variant in the tutorial.</p>
-<p>One thing stays constant through all of this. The SMEM, TMEM, and register layouts still honor the contracts we built in the previous two chapters; what changes is <em>who cooperates</em>, not how data is laid out. Step 8 is the first time the cooperating scope widens past a single CTA, so its operand tiles are split across two CTAs’ shared memory and one layout spans both CTAs along the <code class="docutils literal notranslate"><span class="pre">cbx</span></code> cluster axis.</p>
-<section id="step-7-warp-specialization-pipeline">
-<span id="chap-warp-specialization"></span><h2>Step 7: Warp Specialization + Pipeline<a class="headerlink" href="#step-7-warp-specialization-pipeline" title="Link to this heading">#</a></h2>
-<p>The single-warpgroup kernel leaves performance on the table for a simple reason: every thread walks the same path, load, then compute, then write, and so while it is loading, the Tensor Cores have nothing to do, and while it is computing, the TMA engine has nothing to do. The fix is <em>warp specialization</em>. Instead of asking one team of threads to do every job in turn, we hand each job to a dedicated warp and let those warps run at the same time, stitched together by a software pipeline. This is the biggest architectural change in the GEMM path, and the rest of the chapter builds on top of it. The benchmarks here use M=N=K=4096.</p>
+<p>上一章的 pipelined GEMM（<a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">使用 TMA 为 GEMM 建立 Pipeline</span></a>）已经引入 TMA、software pipeline 和 persistent scheduling，但 kernel 中仍然只有一个 warpgroup。它既要发起 TMA load，也要等待 A、B tiles 准备完成并发起 MMA，最后还要完成结果写回。虽然这些操作由不同的硬件单元执行，它们的控制与同步仍集中在同一个 warpgroup 中。</p>
+<p>Software pipeline 已经让部分 load 与 compute 发生重叠，但各阶段的推进仍然相互牵制。这个 warpgroup 等待某个阶段完成或执行 writeback 时，无法独立推进其他阶段。要让数据搬运、矩阵计算和结果写回持续并行，需要让不同 warps 分别负责固定的工作。</p>
+<p>本章分三步扩大 kernel 的协作范围：第 7 步将 TMA、MMA 和 writeback 分配给不同的 warp roles；第 8 步让两个 CTAs 协作计算一个更大的 output tile；第 9 步增加第二个 MMA consumer。GEMM 的数学计算保持不变，重点转向不同 warps 和 CTAs 如何分工，以及它们如何通过 barriers 交接数据和资源。</p>
+<section id="warp-specialization-pipeline">
+<span id="chap-warp-specialization"></span><h2>第 7 步：Warp Specialization 与 Pipeline<a class="headerlink" href="#warp-specialization-pipeline" title="Link to this heading">#</a></h2>
+<p>单 warpgroup kernel 中，所有 threads 都沿着 load、compute、writeback 的同一条路径执行。加载数据时 Tensor Cores 无事可做，执行计算时 TMA engine 也可能空闲。Warp specialization 将这些工作交给不同 warps，再用 software pipeline 在它们之间传递数据，使多个阶段可以同时运行。</p>
 <blockquote>
-<div><p><strong>What this step changes: Scope</strong></p>
+<div><p><strong>这一步改变 Scope</strong></p>
 <ul class="simple">
-<li><p>Scope: one warpgroup walking load → MMA → writeback in order becomes three concurrent roles (TMA producer, MMA consumer, writeback) connected by full/empty barriers.</p></li>
-<li><p>Layout: unchanged, same SMEM stages and TMEM accumulator as Step 6.</p></li>
-<li><p>Dispatch: unchanged, TMA loads, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA.</p></li>
+<li><p>Scope：一个 warpgroup 依次执行 load → MMA → writeback，改为由 TMA producer、MMA consumer 和 writeback 三个角色并行工作，并通过 full/empty barriers 交接数据。</p></li>
+<li><p>Layout：不变，继续使用第 6 步中的 SMEM stages 和 TMEM accumulator。</p></li>
+<li><p>Dispatch：不变，仍使用 TMA loads 和 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA。</p></li>
 </ul>
 </div></blockquote>
-<p><strong>Topics.</strong></p>
+<p>多级 SMEM pipeline 和 persistent <code class="docutils literal notranslate"><span class="pre">ClusterPersistentScheduler2D</span></code> 沿用第 5、6 步的实现，这里只改变工作分配方式。</p>
+<section id="pipeline">
+<h3>从串行执行到并发 Pipeline<a class="headerlink" href="#pipeline" title="Link to this heading">#</a></h3>
+<p>下图比较 warp specialization 前后的调度方式。上半部分用第 4 步的串行时间线概括第 4 至 6 步尚未拆分角色时的执行方式，下半部分则表示第 7 步的并发调度。</p>
+<p><img alt="Warp specialization 前后的执行时间线" src="../_images/warp_specialization_timeline.png" /></p>
+<p>在上半部分，同一组 threads 同时负责 load 和 MMA，一条路径工作时，另一条路径很容易空闲。第 5、6 步虽然加入了 double buffering 和 persistent scheduling，但尚未把 load 与 compute 拆成独立的 producer 和 consumer。下半部分中，TMA producer 会在 MMA consumer 计算当前 tile 时预取下一个 tile，writeback 也独立执行。Producer warp 3 发起下一次 load 时，consumer warp 0 仍可继续当前 MMA。</p>
+<p>图中的 <code class="docutils literal notranslate"><span class="pre">smem_pipe.full</span></code> 和 <code class="docutils literal notranslate"><span class="pre">smem_pipe.empty</span></code>，在下面的实现中分别对应 <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code> 和 <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code>。</p>
+<p>Load 与 MMA 之间通过两个 barriers 交接 SMEM buffer：</p>
 <ul class="simple">
-<li><p>Warp specialization: dedicating different warps/warpgroups to different tasks</p></li>
-<li><p>High-level barrier abstractions: <code class="docutils literal notranslate"><span class="pre">TMABar</span></code>, <code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code>, <code class="docutils literal notranslate"><span class="pre">MBarrier</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> for automatic stage/phase management</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> barrier IDs for per-warpgroup synchronization</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">tma2mma</span></code></strong>（TMA → MMA）：表示 SMEM data 已经加载完成，可以由 MMA 读取。</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">mma2tma</span></code></strong>（MMA → TMA）：表示 MMA 已经读完当前 buffer，TMA 可以用它加载下一块数据。</p></li>
 </ul>
-<p>(The multi-stage SMEM pipeline and the persistent <code class="docutils literal notranslate"><span class="pre">ClusterPersistentScheduler2D</span></code> are reused unchanged from Steps 5–6; only the scope split is new here.)</p>
-<section id="from-sequential-to-concurrent">
-<h3>From Sequential to Concurrent<a class="headerlink" href="#from-sequential-to-concurrent" title="Link to this heading">#</a></h3>
-<p>Before introducing the roles and barriers, it helps to isolate the scheduling bottleneck that warp specialization removes. The figure below uses a Step-4-style sequential timeline as a compact reference for the pre-specialization kernels in Steps 4-6, then puts it above the Step 7 warp-specialized schedule so the difference in engine utilization is visible at a glance.</p>
-<p><img alt="Warp Specialization Timeline" src="../_images/warp_specialization_timeline.png" /></p>
-<p>On top is the pre-specialization single-warpgroup pattern: the same unspecialized thread group owns both the load path and the MMA path, so one engine can easily go idle while the other is active. Steps 5 and 6 improve that baseline with double buffering and persistent scheduling, but they do not yet split loading and compute into independent producer and consumer roles. On the bottom, specialization breaks that turn-taking. The TMA producer prefetches the next tile while the MMA consumer is busy computing, and writeback proceeds on its own. Producer warp 3 issues the next load while consumer warp 0 is still working through the current MMA, so neither engine has to wait on the other. The load/MMA handoff uses two barriers:</p>
-<ul class="simple">
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">tma2mma</span></code></strong> (TMA → MMA): signals that the loaded SMEM data is ready for MMA to consume.</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">mma2tma</span></code></strong> (MMA → TMA): signals that MMA has finished reading a buffer, so TMA can reuse it for the next load.</p></li>
-</ul>
-<p>One detail in the figure can look like a mistake at first: the <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> arrows skip ahead by a stage. The reason is the ring buffer. With <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=2</span></code> there are two SMEM buffers, stage 0 and stage 1; TMA Load k=0 fills buffer 0, and TMA Load k=1 fills buffer 1. When MMA Compute k=0 finishes reading buffer 0, it signals <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> to say the buffer is free, but the load that actually wants buffer 0 back is TMA Load k=2, not k=1 (which is using buffer 1). That is why the <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> arrow from MMA Compute k=0 reaches all the way to TMA Load k=2. The release jumps a stage simply because the ring has two slots.</p>
+<p>图中的 <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 箭头会跨过一个 stage，这是由 ring buffer 的复用顺序决定的。<code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=2</span></code> 时，TMA Load k=0 填充 stage 0，TMA Load k=1 填充 stage 1。MMA Compute k=0 读完 stage 0 后，真正需要复用该位置的是 TMA Load k=2，而不是正在使用 stage 1 的 k=1。因此，从 MMA Compute k=0 发出的 <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 信号会对应到 TMA Load k=2。</p>
 </section>
-<section id="warp-roles">
-<h3>Warp Roles<a class="headerlink" href="#warp-roles" title="Link to this heading">#</a></h3>
-<p>The timeline showed <em>why</em> we split the work; the next question is <em>who</em> does each part. Specialization assigns the three jobs (load, compute, writeback) to specific warps so they can run at once. With <code class="docutils literal notranslate"><span class="pre">WG_NUMBER=2</span></code>, the kernel uses two warpgroups (abbreviated WG in the role table):</p>
+<section id="warp">
+<h3>Warp 角色<a class="headerlink" href="#warp" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">WG_NUMBER=2</span></code> 时，kernel 使用两个 warpgroups，并将 load、compute 和 writeback 分配如下：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
-<tr class="row-odd"><th class="head"><p>Actor</p></th>
-<th class="head"><p>Location</p></th>
-<th class="head"><p>Job</p></th>
+<tr class="row-odd"><th class="head"><p>角色</p></th>
+<th class="head"><p>位置</p></th>
+<th class="head"><p>工作</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><strong>TMA Producer</strong></p></td>
-<td><p>Warpgroup 1, warp 3</p></td>
-<td><p>Continuously loads A and B tiles via TMA</p></td>
+<td><p>Warpgroup 1，warp 3</p></td>
+<td><p>持续通过 TMA 加载 A、B tiles</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>MMA Consumer</strong></p></td>
-<td><p>Warpgroup 1, warp 0</p></td>
-<td><p>Runs MMA as soon as data is ready</p></td>
+<td><p>Warpgroup 1，warp 0</p></td>
+<td><p>数据准备好后执行 MMA</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>Writeback</strong></p></td>
-<td><p>Warpgroup 0 (all warps)</p></td>
-<td><p>Reads TMEM results, writes to GMEM</p></td>
+<td><p>Warpgroup 0（全部 warps）</p></td>
+<td><p>从 TMEM 读取结果并写回 GMEM</p></td>
 </tr>
 </tbody>
 </table>
 </div>
 </section>
 <section id="barriers">
-<h3>4 Barriers<a class="headerlink" href="#barriers" title="Link to this heading">#</a></h3>
-<p>Three concurrent actors need four barriers, and the four sort neatly into two opposite directions. The forward path (TMA → MMA → Writeback) signals data <em>readiness</em>; its message is “the tile you were waiting for is here.” The backward path (Writeback → MMA → TMA) signals buffer <em>release</em>: “the slot you wanted is free again.” Once you know the naming convention the names read themselves: each is <code class="docutils literal notranslate"><span class="pre">source2destination</span></code>, so <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code> is simply the barrier on which TMA signals MMA.</p>
+<h3>四个 Barriers<a class="headerlink" href="#barriers" title="Link to this heading">#</a></h3>
+<p>三个并发角色之间需要四个 barriers。正向路径 TMA → MMA → Writeback 表示数据已经准备好；反向路径 Writeback → MMA → TMA 表示 buffer 已经释放。Barrier 名称采用 <code class="docutils literal notranslate"><span class="pre">source2destination</span></code>，例如 <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code> 表示 TMA 向 MMA 发送通知。</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Barrier</p></th>
-<th class="head"><p>Type</p></th>
-<th class="head"><p>Direction</p></th>
-<th class="head"><p>Meaning</p></th>
+<th class="head"><p>类型</p></th>
+<th class="head"><p>方向</p></th>
+<th class="head"><p>含义</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><strong>tma2mma</strong></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">TMABar</span></code></p></td>
-<td><p>TMA -&gt; MMA</p></td>
-<td><p>“SMEM data is ready”</p></td>
+<td><p>TMA → MMA</p></td>
+<td><p>SMEM data 已准备好</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>mma2tma</strong></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code></p></td>
-<td><p>MMA -&gt; TMA</p></td>
-<td><p>“SMEM buffer can be reused”</p></td>
+<td><p>MMA → TMA</p></td>
+<td><p>SMEM buffer 可以复用</p></td>
 </tr>
 <tr class="row-even"><td><p><strong>mma2ld</strong></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code></p></td>
-<td><p>MMA -&gt; Writeback</p></td>
-<td><p>“TMEM results are ready”</p></td>
+<td><p>MMA → Writeback</p></td>
+<td><p>TMEM results 已准备好</p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>ld2mma</strong></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">MBarrier</span></code></p></td>
-<td><p>Writeback -&gt; MMA</p></td>
-<td><p>“TMEM is free for next tile”</p></td>
+<td><p>Writeback → MMA</p></td>
+<td><p>TMEM 可以供下一个 tile 使用</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Why does each barrier have the <em>type</em> it does? The type follows from how the producer announces that it is done. <strong>TMA Loads</strong> use <code class="docutils literal notranslate"><span class="pre">TMABar</span></code>, an mbarrier with byte counting: the TMA hardware itself arrives on the barrier once the transfer’s bytes have landed, so the consumer learns the data is ready without any thread having to poll. <strong>TMA Stores</strong> cannot use this (a store has nobody to notify), so they fall back to <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span></code> + <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code>, where the issuing thread simply waits for its own write to drain. <strong>MMA operations</strong> use <code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code>, on which the <code class="docutils literal notranslate"><span class="pre">tcgen05.commit()</span></code> instruction signals the barrier when the MMA finishes.</p>
-<p>One small detail here will pay off in Step 8. The <code class="docutils literal notranslate"><span class="pre">arrive</span></code> calls pass <code class="docutils literal notranslate"><span class="pre">cta_mask=0</span></code>, because in a single-CTA kernel there is no other CTA to signal. When Step 8 forms a cluster, this very argument turns nonzero and becomes the mechanism for waking the cooperating CTAs.</p>
+<p>Barrier 类型取决于 producer 如何报告完成。<strong>TMA load</strong> 使用带 byte counting 的 <code class="docutils literal notranslate"><span class="pre">TMABar</span></code>，传输完成后由 TMA hardware 更新 barrier。<strong>TMA store</strong> 的完成状态则由发起指令的 thread 通过 async group 跟踪：先执行 <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span></code>，再用 <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code> 等待写入完成。<strong>MMA operation</strong> 使用 <code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code>，<code class="docutils literal notranslate"><span class="pre">tcgen05.commit()</span></code> 会在 MMA 完成后更新该 barrier。</p>
+<p>这里的 <code class="docutils literal notranslate"><span class="pre">arrive</span></code> 调用传入 <code class="docutils literal notranslate"><span class="pre">cta_mask=0</span></code>，因为当前 kernel 只涉及一个 CTA。第 8 步组成 cluster 后，这个参数会用来通知另一个 CTA。</p>
 </section>
 <section id="pipelinestate">
 <h3>PipelineState<a class="headerlink" href="#pipelinestate" title="Link to this heading">#</a></h3>
-<p>The four barriers tell the roles <em>when</em> a buffer is ready; something still has to track <em>which</em> buffer each role is on as the pipeline cycles. That bookkeeping is what <code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> manages. A ring buffer carries two pieces of bookkeeping at once: which slot we are currently on, and which “phase” of that slot’s barrier we are waiting for. Tracking both by hand across a pipelined loop is exactly the kind of thing that breeds off-by-one errors, and an off-by-one here deadlocks the whole kernel. <code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> exists to keep the two together so you do not have to:</p>
+<p>四个 barriers 说明 buffer 何时可用，<code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> 则记录每个角色当前使用哪个 stage，以及应该等待该 stage 的哪个 phase。手工同时维护这两个值容易产生 off-by-one error，并导致整个 kernel deadlock。<code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> 将它们放在同一个状态对象中：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tma_ps</span> <span class="o">=</span> <span class="n">PipelineState</span><span class="p">(</span><span class="n">PIPE_DEPTH</span><span class="p">,</span> <span class="n">phase</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># Producer starts ready (phase=1)</span>
 <span class="c1"># tma_ps.stage = current stage index</span>
 <span class="c1"># tma_ps.phase = current phase (0 or 1)</span>
 <span class="n">tma_ps</span><span class="o">.</span><span class="n">advance</span><span class="p">()</span>                          <span class="c1"># Advance to next stage</span>
 </pre></div>
 </div>
-<p>The initial <code class="docutils literal notranslate"><span class="pre">phase</span></code> is what decides whether a role’s very first <code class="docutils literal notranslate"><span class="pre">wait</span></code> lets it run or makes it block, and the right answer is opposite at the two ends of the pipe, which is the part that trips people up:</p>
+<p>初始 <code class="docutils literal notranslate"><span class="pre">phase</span></code> 决定一个角色的第一次 <code class="docutils literal notranslate"><span class="pre">wait</span></code> 是直接通过还是等待。Pipeline 两端的初始状态正好相反：</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">phase=1</span></code> (producer) -&gt; the first <code class="docutils literal notranslate"><span class="pre">wait(phase=1)</span></code> sees the barrier still at phase 0, and since 0 != 1 it <strong>passes immediately</strong>. That is exactly what we want, because the buffers start empty and the producer should be free to start filling them right away.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">phase=0</span></code> (consumer) -&gt; the first <code class="docutils literal notranslate"><span class="pre">wait(phase=0)</span></code> sees the barrier at phase 0, and since 0 == 0 it <strong>blocks</strong>. Again what we want, because there is no data yet and the consumer has nothing to read until the producer arrives.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">phase=1</span></code>（producer）：第一次 <code class="docutils literal notranslate"><span class="pre">wait(phase=1)</span></code> 看到 barrier 仍处于 phase 0，因此会直接通过。Buffer 初始为空，producer 可以立即开始填充。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">phase=0</span></code>（consumer）：第一次 <code class="docutils literal notranslate"><span class="pre">wait(phase=0)</span></code> 看到 barrier 处于 phase 0，因此会等待。此时尚无数据，必须等 producer 完成加载后才能继续。</p></li>
 </ul>
-<p>Give both ends the same starting phase and you get a deadlock or, worse, silent corruption, so this one choice is worth getting right.</p>
+<p>如果两端使用相同的初始 phase，kernel 可能 deadlock，也可能在数据尚未准备好时继续执行。</p>
 </section>
-<section id="warpgroup-sync-barrier-ids">
-<h3><code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> Barrier IDs<a class="headerlink" href="#warpgroup-sync-barrier-ids" title="Link to this heading">#</a></h3>
-<p>Specialization introduces a synchronization hazard that is easy to walk into. Once each warpgroup runs a different code path, the familiar <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> will deadlock: it uses hardware barrier #0 and insists that <em>every</em> CTA thread arrive, yet inside a warpgroup branch only some of those threads are present. What we need instead is a barrier scoped to a single warpgroup. The GPU gives us 16 named barriers (IDs 0–15), so the kernels reach for <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(10)</span></code>, which synchronizes only the threads within one warpgroup. When several warpgroups each need to sync on their own, as happens in the multi-consumer Step 9, they take distinct IDs via <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(wg_id</span> <span class="pre">+</span> <span class="pre">10)</span></code> so that they never collide on the same hardware barrier.</p>
-<p><strong>Implementation.</strong></p>
-<p>We use <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=2</span></code> here, the smallest depth that still lets load and compute overlap at all. Going deeper hides more memory latency, up to the limit of the SMEM budget; the <em>When Step 7 misbehaves</em> discussion below works through that trade-off in detail. With all the pieces now in hand (the roles, the four barriers, <code class="docutils literal notranslate"><span class="pre">PipelineState</span></code>, and warpgroup-scoped sync), we can put together the full kernel:</p>
+<section id="named-barrier-warpgroup">
+<h3>使用 Named Barrier 同步一个 Warpgroup<a class="headerlink" href="#named-barrier-warpgroup" title="Link to this heading">#</a></h3>
+<p>第 7 步的 writeback 由 Warpgroup 0 的 128 个 threads 完成。它们先分别把 registers 写入 <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code>，等整块 tile 都写完后，再由其中一个 thread 发起 TMA store。这里需要同步 Warpgroup 0，但不能使用 <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code>：CTA 中的另一个 warpgroup 正在执行 producer 和 MMA consumer 分支，不会到达这个同步点。如果 Warpgroup 0 在分支内等待整个 CTA，kernel 就会 deadlock。</p>
+<p><code class="docutils literal notranslate"><span class="pre">warpgroup_sync(10)</span></code> 会 lower 为：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bar.sync 10, 128
+</pre></div>
+</div>
+<p>其中 <code class="docutils literal notranslate"><span class="pre">10</span></code> 是 named barrier ID，<code class="docutils literal notranslate"><span class="pre">128</span></code> 是这次同步需要收到的 thread arrivals。该指令不会自动识别当前 warpgroup；这里之所以只同步 Warpgroup 0，是因为只有它的 128 个 threads 会执行这段代码，并且全部使用相同的 barrier ID。第一次 <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(10)</span></code> 保证 <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> 已经写完整，第二次则保证 selected thread 已经等待 TMA store 完成，其他 threads 才进入下一轮。</p>
+<p>每个 CTA 有 16 个 named barrier slots，ID 范围为 0–15。参与同一次同步的 threads 必须使用相同 ID，彼此独立的同步则应使用不同 ID。第 7 步只有 Warpgroup 0 执行 writeback，因此固定使用 ID 10；第 9 步有两个 writeback warpgroups，使用 <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(wg_id</span> <span class="pre">+</span> <span class="pre">10)</span></code> 后，它们分别使用 IDs 10 和 11，避免两组 arrivals 被计入同一轮同步。</p>
+</section>
+<section id="epilogue-writeback">
+<h3>Epilogue（Writeback）<a class="headerlink" href="#epilogue-writeback" title="Link to this heading">#</a></h3>
+<p>第 7 步中 <code class="docutils literal notranslate"><span class="pre">BLK_N=128</span></code>，writeback warpgroup 可以一次将整个 TMEM tile 读入 registers，再发起一次 TMA store。执行顺序如下：</p>
+<ol class="arabic simple">
+<li><p>使用 <code class="docutils literal notranslate"><span class="pre">mma2ld.wait(phase)</span></code> 等待 MMA 完成，再执行 <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code>，将后续的 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 排在这次跨 thread 的完成通知之后。</p></li>
+<li><p>将 TMEM 读入 registers。每个 thread 接收 128 个 fp32 values；warpgroup 先执行 <code class="docutils literal notranslate"><span class="pre">Tx.copy_async(reg_wg,</span> <span class="pre">tmem[:,</span> <span class="pre">:BLK_N])</span></code>，再使用 <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.wait.ld()</span></code> 等待 load 完成。</p></li>
+<li><p>所有 128 个 writeback threads 执行 <code class="docutils literal notranslate"><span class="pre">ld2mma.arrive(0,</span> <span class="pre">cta_id=0,</span> <span class="pre">pred=True)</span></code>，通知 MMA 当前 TMEM 已经可以供下一个 tile 使用。<code class="docutils literal notranslate"><span class="pre">cta_id=0</span></code> 表示更新当前 CTA 的 local barrier；<code class="docutils literal notranslate"><span class="pre">pred=True</span></code> 表示每个 writeback thread 都执行 arrival。第 8 步会改用 <code class="docutils literal notranslate"><span class="pre">cta_mask</span></code> 通知 cluster 中的 CTAs。</p></li>
+<li><p>在 registers 中将 fp32 转换为 fp16。</p></li>
+<li><p>将 registers 写入 <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code>，再执行 <code class="docutils literal notranslate"><span class="pre">fence.proxy_async(&quot;shared::cta&quot;)</span></code> 和 <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(10)</span></code>。</p></li>
+<li><p>使用 <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span></code> 和 <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code>，通过 TMA 将 <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> 写回 GMEM。</p></li>
+</ol>
+<p>这里的 mbarrier wait 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.wait.ld()</span></code> 负责等待两项不同的工作：前者确认 MMA 已经完成，<code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> 建立跨 thread 的 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 执行顺序，后者再确认异步 TMEM load 已经写入目标 registers。</p>
+</section>
+<section id="kernel">
+<h3>完整 Kernel<a class="headerlink" href="#kernel" title="Link to this heading">#</a></h3>
+<p>下面把前面的角色分工、四个 barriers、<code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> 和 writeback path 组合成第 7 步的完整实现。Kernel 沿用第 6 步的 persistent scheduler，并使用 <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=2</span></code>；这是能够让 load 与 compute 重叠的最小深度。更深的 pipeline 可以隐藏更多 memory latency，但也会占用更多 SMEM。</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script.tirx</span><span class="w"> </span><span class="kn">import</span> <span class="n">tile</span> <span class="k">as</span> <span class="n">Tx</span>
@@ -731,120 +681,115 @@
     <span class="k">return</span> <span class="n">kernel</span>
 </pre></div>
 </div>
-<p>To run any of these kernels, reuse the same compile / run / check harness we showed once in Step 1 (<a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a>): swap <code class="docutils literal notranslate"><span class="pre">hgemm_v1</span></code> for <code class="docutils literal notranslate"><span class="pre">hgemm_v7</span></code>, <code class="docutils literal notranslate"><span class="pre">hgemm_v8</span></code>, or <code class="docutils literal notranslate"><span class="pre">hgemm_v9</span></code>, and pick a problem size such as <code class="docutils literal notranslate"><span class="pre">M=N=K=4096</span></code>. Keep in mind that the clustered steps need <code class="docutils literal notranslate"><span class="pre">M</span></code> and <code class="docutils literal notranslate"><span class="pre">N</span></code> to be multiples of their cluster tile (<code class="docutils literal notranslate"><span class="pre">256×256</span></code> for Step 8, <code class="docutils literal notranslate"><span class="pre">512×256</span></code> for Step 9), so a tiny <code class="docutils literal notranslate"><span class="pre">128×128</span></code> size produces no tiles at all. Compile one step per fresh Python session, restarting the kernel before you switch steps, because the kernels reuse inner names and the compiler holds per-session state. The per-step timings are collected in <em>End-to-End Result</em> below.</p>
 </section>
-<section id="epilogue-writeback-details">
-<h3>Epilogue (Writeback) Details<a class="headerlink" href="#epilogue-writeback-details" title="Link to this heading">#</a></h3>
-<p>Step 7 can afford a pleasantly simple epilogue. With only <code class="docutils literal notranslate"><span class="pre">BLK_N=128</span></code> columns, the writeback warpgroup reads the whole TMEM tile into registers in a single pass and then issues one TMA store. Steps 8 and 9 will not have this luxury, which is precisely why they introduce the chunking we add later, but for now the sequence is:</p>
-<ol class="arabic simple">
-<li><p>Wait for MMA with <code class="docutils literal notranslate"><span class="pre">mma2ld.wait(phase)</span></code>, then execute <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code> to order the subsequent <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> after this cross-thread completion signal.</p></li>
-<li><p>Read TMEM -&gt; registers (128 fp32 per thread, warpgroup scope via <code class="docutils literal notranslate"><span class="pre">Tx.copy_async(reg_wg,</span> <span class="pre">tmem[:,</span> <span class="pre">:BLK_N])</span></code> followed by <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.wait.ld()</span></code>).</p></li>
-<li><p>Signal MMA: <code class="docutils literal notranslate"><span class="pre">ld2mma.arrive(0,</span> <span class="pre">cta_id=0,</span> <span class="pre">pred=True)</span></code> (all 128 threads arrive); TMEM is now free for the next tile. The two <code class="docutils literal notranslate"><span class="pre">arrive</span></code> kwargs recur in the clustered steps: <code class="docutils literal notranslate"><span class="pre">cta_id</span></code> names <em>which CTA’s</em> copy of the barrier to signal (<code class="docutils literal notranslate"><span class="pre">0</span></code> = this CTA, the local barrier; in Step 8 the cooperative arrives target CTA-0 via <code class="docutils literal notranslate"><span class="pre">cta_mask</span></code> instead), and <code class="docutils literal notranslate"><span class="pre">pred</span></code> is a per-thread predicate gating whether this thread actually arrives (<code class="docutils literal notranslate"><span class="pre">True</span></code> here, so every writeback thread counts toward the arrival total).</p></li>
-<li><p>Cast fp32 -&gt; fp16 in registers.</p></li>
-<li><p>Write registers -&gt; Dsmem, then <code class="docutils literal notranslate"><span class="pre">fence.proxy_async(&quot;shared::cta&quot;)</span> <span class="pre">+</span> <span class="pre">warpgroup_sync(10)</span></code> to flush.</p></li>
-<li><p>TMA store Dsmem -&gt; GMEM via <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span> <span class="pre">+</span> <span class="pre">wait_group(0)</span></code>.</p></li>
-</ol>
-<p>These synchronization operations cover different parts of the handoff. The mbarrier wait observes MMA completion, <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> establishes cross-thread <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> execution order, and <code class="docutils literal notranslate"><span class="pre">tcgen05.wait.ld()</span></code> waits until the asynchronous TMEM load has populated its destination registers.</p>
-<p>Step 8 (with <code class="docutils literal notranslate"><span class="pre">BLK_N=256</span></code>) and Step 9 (with <code class="docutils literal notranslate"><span class="pre">MMA_N=256</span></code> per consumer) cannot keep this one-pass form, and the reason is register pressure. Reading 256 fp32 values per thread means 256 × 4 = 1024 bytes have to live in each thread’s registers at the same time, which risks spilling out to local memory and, on top of that, forces a larger Dsmem buffer. So those steps break the writeback into <code class="docutils literal notranslate"><span class="pre">EPI_N</span></code>-column chunks (<code class="docutils literal notranslate"><span class="pre">EPI_N=64</span></code>): each iteration keeps only <code class="docutils literal notranslate"><span class="pre">EPI_N</span></code> fp32 registers live and issues a correspondingly smaller TMA store, trading a few more store instructions for a register budget that stays comfortable.</p>
-<p><strong>Implementation notes.</strong></p>
-<ul class="simple">
-<li><p><strong>Persistent kernel</strong>: <code class="docutils literal notranslate"><span class="pre">bx</span> <span class="pre">=</span> <span class="pre">T.cta_id([SM_COUNT])</span></code> — one CTA per SM, loops over tiles</p></li>
-<li><p><strong>L2-friendly scheduling</strong>: <code class="docutils literal notranslate"><span class="pre">ClusterPersistentScheduler2D</span></code> orders tiles for cache locality</p></li>
-<li><p>This pattern — warp specialization plus software pipelining — is common in high-performance GEMM kernels, including CUTLASS-style designs.</p></li>
-</ul>
+<section id="barrier">
+<h3>检查 Barrier 交接<a class="headerlink" href="#barrier" title="Link to this heading">#</a></h3>
+<p>第 7 步用四条 barriers 连接三个角色。若 kernel 一直等待，先逐条确认 barrier 的两端：谁在执行 <code class="docutils literal notranslate"><span class="pre">wait</span></code>，谁负责 <code class="docutils literal notranslate"><span class="pre">arrive</span></code>，初始化时设置的 arrival count 是否与实际通知次数一致。若 kernel 能结束但结果错误，则应检查 consumer 是否在 wait 和 fence 完成前读取数据。</p>
+<p>还要确认每块存储何时可以复用：TMA 只能在 <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 完成后覆盖当前 <code class="docutils literal notranslate"><span class="pre">Asmem</span></code>、<code class="docutils literal notranslate"><span class="pre">Bsmem</span></code> stage；MMA 只能在 <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> 完成后覆盖 TMEM accumulator；下一轮 writeback 也必须等前一次 TMA store 完成后才能复用 <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code>。这样可以把一次 deadlock 或错误结果定位到具体的数据交接，而不必同时检查整条 pipeline。</p>
+<p><strong>Barrier 推演</strong>：追踪一个 K tile 依次经过 <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code>、<code class="docutils literal notranslate"><span class="pre">mma2tma</span></code>、<code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> 的过程。对于每个 barrier，说明谁执行 wait、谁执行 arrival、哪份数据随后可以安全读取，以及哪个 buffer 可以复用。</p>
 </section>
-<section id="when-step-7-misbehaves">
-<h3>When Step 7 Misbehaves<a class="headerlink" href="#when-step-7-misbehaves" title="Link to this heading">#</a></h3>
-<p>Step 7 is the first GEMM kernel where TMA load, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA, and writeback are all in flight at once. The same failure patterns come back in Steps 8 and 9: mismatched barrier counts, role guards in the wrong place, missing fences, or a staging buffer reused before the TMA store has drained. The debugging checklist for these cases is collected in <a class="reference internal" href="../appendix/debugging_warp_specialized.html#chap-warp-spec-debug"><span class="std std-ref">Debugging Warp-Specialized Kernels</span></a>.</p>
-<p><strong>Pipeline depth tuning.</strong> The Step 7 kernel runs at <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=2</span></code>, the minimum. Pushing it to 4 or 6 lets the TMA producer race further ahead of the MMA consumer and hide more memory latency, but it does so by spending more SMEM, and SMEM is finite. The B200 offers 228 KB per SM. With <code class="docutils literal notranslate"><span class="pre">BLK_M=BLK_N=128,</span> <span class="pre">BLK_K=64,</span> <span class="pre">fp16</span></code>, each pipeline stage costs <code class="docutils literal notranslate"><span class="pre">(128*64</span> <span class="pre">+</span> <span class="pre">128*64)</span> <span class="pre">*</span> <span class="pre">2</span> <span class="pre">=</span> <span class="pre">32</span> <span class="pre">KB</span></code> for A and B together, and the <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> writeback staging buffer adds another 32 KB on top. That puts <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=4</span></code> at roughly 160 KB and <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=6</span></code> at roughly 224 KB, right up against the budget. To go any deeper than that, you would have to rethink the writeback staging strategy.</p>
-<hr class="docutils" />
-<p>Warp specialization got the threads of one CTA cooperating. The next step widens that cooperation across the boundary of the CTA itself, putting two of them to work on a single larger tile.</p>
+<section id="pipeline-depth-smem">
+<h3>Pipeline Depth 的 SMEM 成本<a class="headerlink" href="#pipeline-depth-smem" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=2</span></code> 包含两组 A、B stages：MMA 读取其中一组时，TMA 可以填充另一组。增加 depth 可以让 producer 提前准备更多 tiles，但每增加一个 stage 都要多分配一组 <code class="docutils literal notranslate"><span class="pre">Asmem</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Bsmem</span></code>。</p>
+<p>当前 tile shape 为 <code class="docutils literal notranslate"><span class="pre">BLK_M=BLK_N=128</span></code>、<code class="docutils literal notranslate"><span class="pre">BLK_K=64</span></code>，元素类型为 fp16，因此每个 stage 占用：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>(128×64 + 128×64) × 2 bytes = 32 KB
+</pre></div>
+</div>
+<p>此外，<code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> writeback buffer 还需要 32 KB。于是 <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=4</span></code> 共使用约 <code class="docutils literal notranslate"><span class="pre">4×32+32=160</span> <span class="pre">KB</span></code>，<code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=6</span></code> 则约为 <code class="docutils literal notranslate"><span class="pre">6×32+32=224</span> <span class="pre">KB</span></code>，尚未计入 barriers 等少量 metadata。B200 每个 SM 提供 228 KB shared memory，因此 depth 6 已经几乎用完可用容量。更深的 pipeline 不一定更快，还可能因 SMEM 不足而无法使用当前 tile shape。</p>
 </section>
 </section>
-<section id="step-8-2-cta-cluster">
-<span id="chap-cta-cluster"></span><h2>Step 8: 2-CTA Cluster<a class="headerlink" href="#step-8-2-cta-cluster" title="Link to this heading">#</a></h2>
-<p>Step 7 got the engines overlapping, but each CTA was still off computing its own 128×128 tile in isolation, reloading operands that no neighbor could borrow. Step 8 breaks that isolation. Two CTAs join into a cluster and gain the ability to reach into each other’s shared memory, so a single cooperative <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA produces one 256×256 tile that spans both of them, and one load of B now feeds twice as much MMA work. As before, M=N=K=4096.</p>
+<section id="two-cta-cluster">
+<span id="chap-cta-cluster"></span><h2>第 8 步：Two-CTA Cluster<a class="headerlink" href="#two-cta-cluster" title="Link to this heading">#</a></h2>
+<p>第 7 步的协作范围仍然局限在一个 CTA 内。第 8 步把这个范围扩展到由两个 CTAs 组成的 cluster。</p>
 <blockquote>
-<div><p><strong>What this step changes: Scope + Layout + Dispatch</strong></p>
+<div><p><strong>这一步改变 Scope、Layout 和 Dispatch</strong></p>
 <ul class="simple">
-<li><p>Scope: the cooperating scope now spans two CTAs in a cluster, not one.</p></li>
-<li><p>Layout: operand tiles are split across the two CTAs’ SMEM; CTA 0 owns the shared completion barrier (<code class="docutils literal notranslate"><span class="pre">remote_view</span></code>).</p></li>
-<li><p>Dispatch: the MMA gains <code class="docutils literal notranslate"><span class="pre">cta_group</span></code> / <code class="docutils literal notranslate"><span class="pre">cta_mask</span></code> so <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> runs as a 2-CTA cooperative op.</p></li>
+<li><p>Scope：协作范围由一个 CTA 扩展到 cluster 中的两个 CTAs。</p></li>
+<li><p>Layout：A、B slices 分布在两个 CTAs 的 SMEM 中，accumulator 也分布在两侧的 TMEM 中。</p></li>
+<li><p>Dispatch：<code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 使用 <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code> 发起 two-CTA cooperative MMA；完成通知通过 <code class="docutils literal notranslate"><span class="pre">cta_mask=3</span></code> 同时发送到两侧。</p></li>
 </ul>
 </div></blockquote>
-<p><strong>Topics.</strong></p>
-<ul class="simple">
-<li><p>CTA clusters: multiple CTAs cooperating on a larger tile</p></li>
-<li><p>Cross-CTA SMEM access via <code class="docutils literal notranslate"><span class="pre">map_shared_rank</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code> for cooperative MMA over a 256x256 cluster tile</p></li>
-<li><p>Cross-CTA barrier signaling with <code class="docutils literal notranslate"><span class="pre">cta_mask</span></code></p></li>
-</ul>
-<section id="cluster-tile-shape">
-<h3>Cluster Tile Shape<a class="headerlink" href="#cluster-tile-shape" title="Link to this heading">#</a></h3>
-<p>The whole optimization rests on a single hardware capability: with <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code>, the MMA is allowed to read operand tiles staged by <em>both</em> CTAs, not just the one it lives on. Each CTA loads one 128-row slice of stored B, which, after the transpose, becomes 128 logical output columns, and the cooperative MMA stitches the two slices back together into one operand. The figure below traces how the two CTAs’ A and B slices combine into the single 256×256 cluster tile:</p>
+<section id="ab-cta">
+<h3>A、B 的 CTA 分工<a class="headerlink" href="#ab-cta" title="Link to this heading">#</a></h3>
+<p>下图把一个 <span class="math notranslate nohighlight">\(256\times256\)</span> output tile 分到左右两个 CTAs。先看两侧的 <code class="docutils literal notranslate"><span class="pre">Asmem</span></code>：CTA 0 加载 A 的 rows 0–127，CTA 1 加载 rows 128–255。这两份 A slices 决定各自负责的 output rows，因此图中的两个橙色区域分别是 <code class="docutils literal notranslate"><span class="pre">D[0:128,</span> <span class="pre">0:256]</span></code> 和 <code class="docutils literal notranslate"><span class="pre">D[128:256,</span> <span class="pre">0:256]</span></code>。</p>
+<p>再看两侧的 <code class="docutils literal notranslate"><span class="pre">Bsmem</span></code>。B 在内存中的 shape 为 <code class="docutils literal notranslate"><span class="pre">N×K</span></code>，所以 CTA 0 和 CTA 1 加载的两组 stored-B rows 经过 <code class="docutils literal notranslate"><span class="pre">B.T</span></code> 后，分别对应 output 的前 128 列和后 128 列。每个 CTA 都要计算自己 128 行上的全部 256 列，因此 cooperative MMA 还会通过图中央的跨 CTA 读取取得另一侧的 <code class="docutils literal notranslate"><span class="pre">Bsmem</span></code>。这样，每份 A slice 都会同时与两份 B slices 相乘。</p>
 <div style="overflow-x:auto;">
-<iframe src="../demo/cta_cluster.html" title="A 2-CTA cluster: cooperative MMA via cross-CTA SMEM read" loading="lazy"
+<iframe src="../demo_zh/cta_cluster.html" title="A 2-CTA cluster: cooperative MMA via cross-CTA SMEM read" loading="lazy"
         style="width:100%; min-width:720px; height:580px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
-</div><p><em>Interactive: each CTA owns one A row slice and one stored-B row slice, then reads the other CTA’s stored-B slice across the cluster (DSMEM). After <code class="docutils literal notranslate"><span class="pre">B.T</span></code>, the two stored-B slices cover the full output-column span, so the pair produces one 256×256 output tile.</em></p>
-<p><strong>Why A and B are split across the cluster</strong>: To see how the 256×256 tile gets partitioned, recall that the tutorial stores GEMM as <code class="docutils literal notranslate"><span class="pre">D</span> <span class="pre">=</span> <span class="pre">A</span> <span class="pre">&#64;</span> <span class="pre">B.T</span></code>, where stored B has shape <code class="docutils literal notranslate"><span class="pre">N</span> <span class="pre">x</span> <span class="pre">K</span></code>. With two CTAs in a cluster, the split falls out cleanly:</p>
-<ul class="simple">
-<li><p><strong>A is split vertically</strong>: CTA-0 holds A0 (rows 0-127), CTA-1 holds A1 (rows 128-255). Stacked: <code class="docutils literal notranslate"><span class="pre">[A0;</span> <span class="pre">A1]</span></code> (256 rows).</p></li>
-<li><p><strong>Stored B is split by rows</strong>: CTA-0 loads B rows 0-127, CTA-1 loads B rows 128-255. Because the math uses <code class="docutils literal notranslate"><span class="pre">B.T</span></code>, those two stored row slices become two 128-column slices of the logical right-hand operand.</p></li>
-<li><p>With <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code>, the MMA hardware reads B from <strong>both</strong> CTAs’ SMEM via cross-CTA shared memory access, so it sees the full logical output-column span.</p></li>
-<li><p>Result: the two CTAs cooperate on one 256x256 output tile. Each CTA writes a 128x256 row stripe of that tile.</p></li>
-</ul>
-<p>It is worth pausing to see why this is a real win and not just a reshuffle of work. Each CTA still loads only 128×K of A and 128×K of B, so the cluster as a whole stages about 2× a single CTA’s operands, and yet it produces a 256×256 tile, which carries about 4× the output FLOPs of a 128×128 tile. The MMA therefore does roughly twice the work per staged-operand byte, because each CTA’s B slice is reused against the other CTA’s A slice through the cooperative MMA. In other words, arithmetic intensity roughly doubles, and that is exactly the lever a still memory-leaning kernel needs: the ~2.2× speedup in the End-to-End table comes from feeding the same bytes to more math.</p>
+</div><p><em>点击两侧的 <code class="docutils literal notranslate"><span class="pre">Asmem</span></code>、<code class="docutils literal notranslate"><span class="pre">Bsmem</span></code> 或图中央的跨 CTA 读取，可以查看各部分在 cooperative MMA 中的作用。</em></p>
+<p>Tile scheduler 返回的 <code class="docutils literal notranslate"><span class="pre">(m_idx,</span> <span class="pre">n_idx)</span></code> 表示一个 <span class="math notranslate nohighlight">\(256\times256\)</span> cluster output tile。令它的左上角为 <code class="docutils literal notranslate"><span class="pre">m_base</span> <span class="pre">=</span> <span class="pre">m_idx</span> <span class="pre">*</span> <span class="pre">256</span></code>、<code class="docutils literal notranslate"><span class="pre">n_base</span> <span class="pre">=</span> <span class="pre">n_idx</span> <span class="pre">*</span> <span class="pre">256</span></code>，两个 CTAs 的分工如下：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>CTA</p></th>
+<th class="head"><p>加载的 A slice</p></th>
+<th class="head"><p>加载的 stored-B slice</p></th>
+<th class="head"><p>写回的 D 区域</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>CTA 0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">A[m_base:m_base+128,</span> <span class="pre">:]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">B[n_base:n_base+128,</span> <span class="pre">:]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">D[m_base:m_base+128,</span> <span class="pre">n_base:n_base+256]</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>CTA 1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">A[m_base+128:m_base+256,</span> <span class="pre">:]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">B[n_base+128:n_base+256,</span> <span class="pre">:]</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">D[m_base+128:m_base+256,</span> <span class="pre">n_base:n_base+256]</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>第 7 步的单个 CTA 加载一份 <span class="math notranslate nohighlight">\(128\times K\)</span> 的 A 和一份 <span class="math notranslate nohighlight">\(128\times K\)</span> 的 B，计算一个 <span class="math notranslate nohighlight">\(128\times128\)</span> output tile。这里的 cluster 加载两份 A 和两份 B，operand data 增加到两倍；output tile 则扩大为 <span class="math notranslate nohighlight">\(256\times256\)</span>，元素数量增加到四倍。两份 A slices 都会分别与两份 B slices 相乘，因此每份 staged operand 参与的计算量约为原来的两倍。</p>
 </section>
-<section id="tile-address-calculation">
-<h3>Tile Address Calculation<a class="headerlink" href="#tile-address-calculation" title="Link to this heading">#</a></h3>
-<p>Now that the cluster is the unit of work, the tile scheduler has to count in cluster tiles too. Each <code class="docutils literal notranslate"><span class="pre">(m_idx,</span> <span class="pre">n_idx)</span></code> it hands back names a full 256×256 region, and the two CTAs inside the cluster split that region between them. Translating a cluster coordinate into the per-CTA slice that each one actually loads looks like this:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">m_st</span> <span class="o">=</span> <span class="p">(</span><span class="n">m_idx</span> <span class="o">*</span> <span class="n">CTA_GROUP</span> <span class="o">+</span> <span class="n">cbx</span><span class="p">)</span> <span class="o">*</span> <span class="n">BLK_M</span>
-<span class="n">n_st</span> <span class="o">=</span> <span class="p">(</span><span class="n">n_idx</span> <span class="o">*</span> <span class="n">CTA_GROUP</span> <span class="o">+</span> <span class="n">cbx</span><span class="p">)</span> <span class="o">*</span> <span class="n">BLK_N</span>
+<section id="tile">
+<h3>Tile 地址计算<a class="headerlink" href="#tile" title="Link to this heading">#</a></h3>
+<p>因为 scheduler 以 <span class="math notranslate nohighlight">\(256\times256\)</span> cluster tile 为单位，所以 M、N 方向的 tile 数量分别是 <code class="docutils literal notranslate"><span class="pre">M</span> <span class="pre">//</span> <span class="pre">256</span></code> 和 <code class="docutils literal notranslate"><span class="pre">N</span> <span class="pre">//</span> <span class="pre">256</span></code>。</p>
+<p><code class="docutils literal notranslate"><span class="pre">cbx</span></code> 表示 CTA 在 cluster 中的位置，取值为 0 或 1。基于上面的 <code class="docutils literal notranslate"><span class="pre">m_base</span></code> 和 <code class="docutils literal notranslate"><span class="pre">n_base</span></code>，两个 CTAs 使用 <code class="docutils literal notranslate"><span class="pre">cbx</span></code> 选择各自负责加载的 A、B slices：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">cbx</span><span class="p">,</span> <span class="n">cby</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id_in_cluster</span><span class="p">([</span><span class="n">CTA_GROUP</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>
+<span class="n">m_st</span> <span class="o">=</span> <span class="n">m_base</span> <span class="o">+</span> <span class="n">cbx</span> <span class="o">*</span> <span class="n">BLK_M</span>
+<span class="n">n_st</span> <span class="o">=</span> <span class="n">n_base</span> <span class="o">+</span> <span class="n">cbx</span> <span class="o">*</span> <span class="n">BLK_N</span>
 </pre></div>
 </div>
-<p>Both CTAs work on the <em>same</em> 256×256 cluster tile, and the single coordinate <code class="docutils literal notranslate"><span class="pre">cbx</span></code> (the CTA’s position within the cluster, either 0 or 1) is what picks out this CTA’s contribution along both axes. <code class="docutils literal notranslate"><span class="pre">m_st</span></code> selects the output row stripe this CTA owns, <code class="docutils literal notranslate"><span class="pre">n_st</span></code> selects the stored-B slice it feeds into the cooperative MMA, and the writeback later emits both 128-column halves of the 256-column output span. Note as well that <code class="docutils literal notranslate"><span class="pre">num_m_tiles</span> <span class="pre">=</span> <span class="pre">M</span> <span class="pre">//</span> <span class="pre">256</span></code> and <code class="docutils literal notranslate"><span class="pre">num_n_tiles</span> <span class="pre">=</span> <span class="pre">N</span> <span class="pre">//</span> <span class="pre">256</span></code> count cluster tiles, not individual CTA tiles.</p>
-<p>At a glance <code class="docutils literal notranslate"><span class="pre">cbx</span></code> appears in both <code class="docutils literal notranslate"><span class="pre">m_st</span></code> and <code class="docutils literal notranslate"><span class="pre">n_st</span></code>, as though a row offset had somehow leaked into the column, but both uses are correct, and it is worth untangling why. On the writeback path, <code class="docutils literal notranslate"><span class="pre">cbx</span></code> belongs to the M axis alone: each CTA owns a distinct 128-row stripe (<code class="docutils literal notranslate"><span class="pre">m_st</span> <span class="pre">=</span> <span class="pre">(m_idx</span> <span class="pre">*</span> <span class="pre">CTA_GROUP</span> <span class="pre">+</span> <span class="pre">cbx)</span> <span class="pre">*</span> <span class="pre">BLK_M</span></code>, so CTA-0 writes rows <code class="docutils literal notranslate"><span class="pre">m_idx*256</span> <span class="pre">..</span> <span class="pre">+128</span></code> and CTA-1 the next 128), and yet both CTAs write the <em>full</em> 256 output columns of the cluster tile. That is exactly why the store derives its column from the cluster’s <code class="docutils literal notranslate"><span class="pre">n_idx</span></code> (<code class="docutils literal notranslate"><span class="pre">n_st_epi</span> <span class="pre">=</span> <span class="pre">n_idx</span> <span class="pre">*</span> <span class="pre">256</span> <span class="pre">+</span> <span class="pre">no</span> <span class="pre">*</span> <span class="pre">128</span></code>, with no <code class="docutils literal notranslate"><span class="pre">cbx</span></code> in sight) rather than from the per-CTA <code class="docutils literal notranslate"><span class="pre">n_st</span></code>. The reason <code class="docutils literal notranslate"><span class="pre">n_st</span></code> carries <code class="docutils literal notranslate"><span class="pre">cbx</span></code> at all is that each CTA loads a different stored-B row slice into the MMA: there, <code class="docutils literal notranslate"><span class="pre">cbx</span></code> is a <em>load</em> offset, not the CTA’s output-column offset.</p>
-</section>
-<section id="code-changes-from-step-7">
-<h3>Code Changes from Step 7<a class="headerlink" href="#code-changes-from-step-7" title="Link to this heading">#</a></h3>
-<p>The diff against Step 7 has six edits, each one encoding a single piece of the cluster contract we just described:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># 1. Cluster launch</span>
-<span class="n">cbx</span><span class="p">,</span> <span class="n">cby</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id_in_cluster</span><span class="p">([</span><span class="n">CTA_GROUP</span><span class="p">,</span> <span class="mi">1</span><span class="p">])</span>   <span class="c1"># cbx = CTA index within cluster (0 or 1)</span>
-
-<span class="c1"># 2. Cooperative MMA (was cta_group=1)</span>
-<span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-
-<span class="c1"># 3. Cross-CTA shared memory access</span>
-<span class="n">B_remote</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">map_shared_rank</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">,</span> <span class="n">cta_id</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
-
-<span class="c1"># 4. Cross-CTA barrier</span>
-<span class="n">tma2mma_cta0</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
-    <span class="p">[</span><span class="n">CTA_GROUP</span><span class="p">],</span> <span class="s2">&quot;uint64&quot;</span><span class="p">,</span>
-    <span class="n">data</span><span class="o">=</span><span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">map_shared_rank</span><span class="p">(</span><span class="n">tma2mma</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="mi">0</span><span class="p">),</span>
-    <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;shared&quot;</span>
-<span class="p">)</span>
-
-<span class="c1"># 5. mma2tma / mma2ld arrives go from cta_mask=0 (single CTA, Step 7)</span>
-<span class="c1">#    to cta_mask=3 (signal both CTAs in the cluster)</span>
-<span class="n">mma2tma</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">CTA_GROUP</span><span class="p">,</span> <span class="n">cta_mask</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-<span class="n">mma2ld</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">CTA_GROUP</span><span class="p">,</span> <span class="n">cta_mask</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-
-<span class="c1"># 6. Cluster sync replaces cta_sync at the end</span>
-<span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cluster_sync</span><span class="p">()</span>
+<p>因此，CTA 0 从 <code class="docutils literal notranslate"><span class="pre">m_base</span></code> 和 <code class="docutils literal notranslate"><span class="pre">n_base</span></code> 开始加载，CTA 1 则分别向后移动 128 行。<code class="docutils literal notranslate"><span class="pre">m_st</span></code> 同时也是该 CTA 最终写回的 output row 起点；<code class="docutils literal notranslate"><span class="pre">n_st</span></code> 只用于选择它提供给 cooperative MMA 的 stored-B rows。</p>
+<p>两份 B slices 会共同参与 MMA，所以每个 CTA 都会得到自己 128 行上的全部 256 个 output columns。Epilogue 分两次写回这 256 列，<code class="docutils literal notranslate"><span class="pre">no=0,1</span></code> 分别选择前后两个 128-column chunks：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n_st_epi</span> <span class="o">=</span> <span class="n">n_base</span> <span class="o">+</span> <span class="n">no</span> <span class="o">*</span> <span class="n">BLK_N</span>
 </pre></div>
 </div>
+<p>这里不使用 <code class="docutils literal notranslate"><span class="pre">cbx</span></code>，因为 <code class="docutils literal notranslate"><span class="pre">cbx</span></code> 选择的是当前 CTA 加载的 B slice，而不是它最终写回的 output columns。</p>
 </section>
-<section id="cluster-scope-changes">
-<h3>Cluster-Scope Changes<a class="headerlink" href="#cluster-scope-changes" title="Link to this heading">#</a></h3>
-<p>Those six edits all stem from the same shift: the cooperating scope is now the cluster rather than a single CTA. The points below spell out what that widening means in practice: how each CTA finds its place, whose barriers the cluster coordinates on, and which CTA actually issues the cooperative MMA.</p>
-<ul class="simple">
-<li><p><strong>Cluster CTA ID</strong>: <code class="docutils literal notranslate"><span class="pre">cbx</span></code> tells each CTA its position in the cluster (0 or 1). CTA-0 handles A rows 0-127, CTA-1 handles rows 128-255.</p></li>
-<li><p><strong>Remote barrier view</strong>: In a cluster, each CTA has its own SMEM and its own barriers, which raises an obvious question: if CTA-1 needs to wait on something CTA-0 produces, whose barrier does it actually touch? The answer is to nominate CTA-0’s barriers as the single coordination point and let any CTA in the cluster reach them. <code class="docutils literal notranslate"><span class="pre">map_shared_rank(tma2mma.ptr_to([0]),</span> <span class="pre">0)</span></code> returns a cluster-wide pointer to CTA-0’s barrier, with the TIRx wrapper <code class="docutils literal notranslate"><span class="pre">tma2mma.remote_view(0)</span></code>, and from then on every arrive and wait targets CTA-0’s copy.</p></li>
-<li><p><strong>MMA dispatch from CTA-0 only</strong>: It is tempting to read <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code> as firing two engines in parallel, but that is not what happens. CTA-0 issues exactly one <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>, and the hardware then drives a <em>single cooperative</em> MMA that spans both CTAs, reading operands from both SMs’ SMEM and writing the accumulator across both SMs’ TMEM. CTA-1 issues no MMA at all. (Each SM has only one <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> engine, so <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code> is one cross-SM MMA, not two engines running side by side.) This is why the code guards the MMA with <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">cbx</span> <span class="pre">==</span> <span class="pre">0:</span></code>.</p></li>
-<li><p><strong>Multicast arrive</strong>: <code class="docutils literal notranslate"><span class="pre">tcgen05.commit(...,</span> <span class="pre">cta_group=2,</span> <span class="pre">cta_mask=3)</span></code> is issued only by CTA-0 but signals both CTAs’ barriers. <code class="docutils literal notranslate"><span class="pre">cta_mask=3</span></code> (binary <code class="docutils literal notranslate"><span class="pre">11</span></code>) means both CTA-0 and CTA-1 are targeted.</p></li>
-<li><p><strong>ld2mma init count</strong>: <code class="docutils literal notranslate"><span class="pre">init(128</span> <span class="pre">*</span> <span class="pre">CTA_GROUP)</span></code> — both CTAs’ writeback warpgroups (128 threads each) arrive.</p></li>
-</ul>
-<p><strong>Implementation.</strong></p>
+<section id="cluster">
+<h3>Cluster 中的数据交接<a class="headerlink" href="#cluster" title="Link to this heading">#</a></h3>
+<p>两个 CTAs 各自拥有 SMEM 和 barriers。为了让一次 cooperative MMA 等到两侧的数据都准备好，并在完成后通知两侧继续执行，这里需要完成三次交接。</p>
+<p><strong>TMA → MMA。</strong> 当前实现使用 CTA 0 的 <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code> 统一记录两侧 TMA loads 的完成状态，两个 CTAs 都通过同一个 remote view 引用它：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tma2mma_cta0</span> <span class="o">=</span> <span class="n">tma2mma</span><span class="o">.</span><span class="n">remote_view</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>两侧的 TMA loads 都将完成状态报告到这份 barrier，CTA 0 则通过一次 <code class="docutils literal notranslate"><span class="pre">arrive</span></code> 登记两侧 operands 的总字节数。每个 CTA 加载一份 <code class="docutils literal notranslate"><span class="pre">BLK_M×BLK_K</span></code> 的 A 和一份 <code class="docutils literal notranslate"><span class="pre">BLK_N×BLK_K</span></code> 的 B，因此登记的 byte count 为：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">CTA_GROUP</span> <span class="o">*</span> <span class="p">(</span><span class="n">BLK_M</span> <span class="o">*</span> <span class="n">BLK_K</span> <span class="o">+</span> <span class="n">BLK_N</span> <span class="o">*</span> <span class="n">BLK_K</span><span class="p">)</span> <span class="o">*</span> <span class="n">F16_SIZE</span>
+</pre></div>
+</div>
+<p>只有这些 bytes 全部传输完成，CTA 0 中的 MMA consumer 才能通过 wait。</p>
+<p><strong>MMA → TMA 和 writeback。</strong> Cooperative MMA 只需发起一次。代码用 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">cbx</span> <span class="pre">==</span> <span class="pre">0:</span></code> 保留 CTA 0 的 MMA path，其中选出的一个 thread 使用 <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code> 发出指令：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">cbx</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>硬件会读取两个 CTAs 的 SMEM，并更新两侧的 TMEM accumulator。每次 K iteration 发出异步 MMA 后，同一个 thread 都通过 <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 登记完成通知；整个 K-loop 发完后，再通过 <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> 登记最终 accumulator 的完成通知：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>
+    <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">mma2tma</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">cta_mask</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="n">mma2ld</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">cta_mask</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">cta_mask=3</span></code> 的二进制形式是 <code class="docutils literal notranslate"><span class="pre">11</span></code>，表示 CTA 0 和 CTA 1 都是通知目标。每次 MMA 完成后，<code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 允许两侧 TMA producer 复用已经读完的 SMEM stage；整个 K-loop 完成后，<code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> 则通知两侧 writeback warpgroups，TMEM accumulator 已经可以读取。</p>
+<p><strong>Writeback → 下一块 tile 的 MMA。</strong> 两侧 writeback warpgroups 使用完 TMEM 后，各有 128 个 threads 向 CTA 0 的 <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> barrier 报告 arrival。该 barrier 因此初始化为 <code class="docutils literal notranslate"><span class="pre">128</span> <span class="pre">*</span> <span class="pre">CTA_GROUP</span></code>，也就是 256。收到全部 arrivals 后，CTA 0 才能让下一块 output tile 的 MMA 复用这片 TMEM。</p>
+<p>TMEM 的申请和释放同样使用 <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code>。释放前执行 <code class="docutils literal notranslate"><span class="pre">cluster_sync()</span></code>，确保两个 CTAs 都已结束当前访问。Writeback 则将 256 列结果拆成两个 128-column chunks，每轮只读回一半 TMEM 数据并完成一次 TMA store，避免每个 thread 同时保存 256 个 fp32 values。</p>
+</section>
+<section id="id1">
+<h3>完整 Kernel<a class="headerlink" href="#id1" title="Link to this heading">#</a></h3>
+<p>下面将 tile 分工、cooperative MMA 和跨 CTA barrier 协议组合成完整 kernel：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">hgemm_v8</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">K</span><span class="p">):</span>
     <span class="n">a_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
     <span class="n">b_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
@@ -1015,87 +960,86 @@
     <span class="k">return</span> <span class="n">kernel</span>
 </pre></div>
 </div>
-<p><strong>What changes for 2 CTAs.</strong></p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span> <span class="pre">=</span> <span class="pre">2</span></code>, <code class="docutils literal notranslate"><span class="pre">MMA_N</span> <span class="pre">=</span> <span class="pre">BLK_N</span> <span class="pre">*</span> <span class="pre">CTA_GROUP</span> <span class="pre">=</span> <span class="pre">256</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">ld2mma.init(128</span> <span class="pre">*</span> <span class="pre">CTA_GROUP)</span></code> — both CTAs’ writeback WGs arrive</p></li>
-<li><p>TMA arrive byte count includes both CTAs: <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">(BLK_M</span> <span class="pre">*</span> <span class="pre">BLK_K</span> <span class="pre">+</span> <span class="pre">BLK_N</span> <span class="pre">*</span> <span class="pre">BLK_K)</span> <span class="pre">*</span> <span class="pre">F16_SIZE</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> and <code class="docutils literal notranslate"><span class="pre">tcgen05.dealloc</span></code> must use <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code></p></li>
-<li><p>Writeback splits the 256 output columns into two 128-column chunks — reading all 256 TMEM columns at once exceeds register capacity. Step 9 shrinks the chunk further to <code class="docutils literal notranslate"><span class="pre">EPI_N=64</span></code></p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">cluster_sync()</span></code> replaces <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> at the end (ensures all CTAs are done before TMEM dealloc)</p></li>
-</ul>
-<p>All that extra arithmetic intensity shows up directly on the wall clock: Step 8 reaches <strong>0.104 ms</strong> at 4096³, about 676× over the 70 ms Step-1 algorithm at the same size (see the End-to-End table). The kernel is now leaning toward compute-bound, and that is precisely what sets up Step 9, where we add a second MMA consumer to keep even more Tensor Core work in flight.</p>
-<p>If Step 8 comes out <em>slower</em> than Step 7, the culprit is almost always one of the new cluster contracts entered slightly wrong. Three things are worth checking first: that the TMA arrive byte count is <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">(BLK_M*BLK_K</span> <span class="pre">+</span> <span class="pre">BLK_N*BLK_K)</span> <span class="pre">*</span> <span class="pre">F16_SIZE</span></code>; that the scheduler dimensions are <code class="docutils literal notranslate"><span class="pre">num_m_tiles=M//256,</span> <span class="pre">num_n_tiles=N//256</span></code> for the 256×256 cluster tile; and that writeback issues two TMA stores, one per 128-column chunk, each of which drains before Dsmem is reused.</p>
-<hr class="docutils" />
-<p>Clusters raised reuse <em>across</em> CTAs. The final step turns inward and raises compute density <em>within</em> each CTA, by giving the producer a second MMA consumer to keep fed.</p>
 </section>
 </section>
-<section id="step-9-multi-consumer-warp-specialization">
-<span id="chap-multi-consumer"></span><h2>Step 9: Multi-Consumer Warp Specialization<a class="headerlink" href="#step-9-multi-consumer-warp-specialization" title="Link to this heading">#</a></h2>
-<p>By Step 8 the MMA is genuinely busy, but a single consumer warp can only chew through a staged B tile so fast, and that B tile is just sitting there in SMEM the whole time, available to anyone who cares to read it. The final optimization takes advantage of that: it adds a second MMA consumer that multiplies a <em>different</em> A block against the <em>same</em> B tile. The compute density per CTA doubles, and the cluster output grows from 256×256 to 512×256. As before, M=N=K=4096.</p>
+<section id="multi-consumer-warp-specialization">
+<span id="chap-multi-consumer"></span><h2>第 9 步：Multi-Consumer Warp Specialization<a class="headerlink" href="#multi-consumer-warp-specialization" title="Link to this heading">#</a></h2>
+<p>第 8 步中，一个 MMA consumer 使用两侧 CTA 提供的 A slices 和 B slices，计算一个 <span class="math notranslate nohighlight">\(256\times256\)</span> cluster output tile。第 9 步保留同一份 B，再为每个 CTA 多加载一份 A，并增加第二个 MMA consumer。Consumer 0 计算 output 的前 256 行，consumer 1 计算接下来的 256 行；两者覆盖相同的 256 列。因此，cluster output 沿 M 维从 <span class="math notranslate nohighlight">\(256\times256\)</span> 扩展为 <span class="math notranslate nohighlight">\(512\times256\)</span>，而每个 stage 的 B load 不变。</p>
 <blockquote>
-<div><p><strong>What this step changes: Scope + Layout</strong></p>
+<div><p><strong>这一步改变 Scope 和 Layout</strong></p>
 <ul class="simple">
-<li><p>Scope: one MMA consumer becomes two, selected by <code class="docutils literal notranslate"><span class="pre">warp_id</span></code>.</p></li>
-<li><p>Layout: one staged B tile is reused by both consumers; A gains a consumer axis.</p></li>
-<li><p>Dispatch: unchanged.</p></li>
+<li><p>Scope：CTA 0 中负责发起 MMA 的 consumer warps 由一个增加到两个，并通过 <code class="docutils literal notranslate"><span class="pre">warp_id</span></code> 区分。</p></li>
+<li><p>Layout：A layout 增加 consumer axis，TMEM 也分成两个独立的 accumulator ranges；两个 consumers 复用同一个 staged B tile。</p></li>
+<li><p>Dispatch：仍使用 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code>，但现在会为两个 consumers 分别发起一次 cooperative MMA。</p></li>
 </ul>
 </div></blockquote>
-<p><strong>Topics.</strong></p>
-<ul class="simple">
-<li><p>Multiple MMA warps (consumers) for higher throughput</p></li>
-<li><p>Multiple writeback warpgroups with independent barrier slots</p></li>
-<li><p>The structure used by the most optimized GEMM variant in this tutorial</p></li>
-</ul>
-<section id="multi-consumer-structure">
-<h3>Multi-Consumer Structure<a class="headerlink" href="#multi-consumer-structure" title="Link to this heading">#</a></h3>
-<p>Adding a second consumer means the kernel now has more distinct roles to lay out: two MMA warps instead of one, and a matching second writeback warpgroup to drain the extra accumulator. With <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER=2</span></code> and <code class="docutils literal notranslate"><span class="pre">WG_NUMBER=3</span></code>, the kernel now spans three warpgroups (abbreviated WG in the role table):</p>
+<section id="multi-consumer">
+<h3>Multi-Consumer 结构<a class="headerlink" href="#multi-consumer" title="Link to this heading">#</a></h3>
+<p>增加第二个 consumer 后，kernel 需要两个 MMA issue warps，以及两个分别负责对应 accumulator 的 writeback warpgroups。每个 MMA warp 中仍然只有 <code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code> 选出的一个 thread 发出指令。设置 <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER=2</span></code> 和 <code class="docutils literal notranslate"><span class="pre">WG_NUMBER=3</span></code> 后，各个角色分配如下：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Warpgroup</p></th>
 <th class="head"><p>Warp</p></th>
-<th class="head"><p>Role</p></th>
+<th class="head"><p>角色</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><strong>WG 2</strong></p></td>
 <td><p>warp 0</p></td>
-<td><p>MMA consumer 0: <code class="docutils literal notranslate"><span class="pre">Asmem[...,</span> <span class="pre">0]</span> <span class="pre">x</span> <span class="pre">B</span></code> -&gt; TMEM cols <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code></p></td>
+<td><p>MMA consumer 0：CTA 0 中选出的 thread 发起 <code class="docutils literal notranslate"><span class="pre">Asmem[...,</span> <span class="pre">0]</span> <span class="pre">×</span> <span class="pre">B</span></code>，写入 TMEM cols <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>WG 2</strong></p></td>
 <td><p>warp 1</p></td>
-<td><p>MMA consumer 1: <code class="docutils literal notranslate"><span class="pre">Asmem[...,</span> <span class="pre">1]</span> <span class="pre">x</span> <span class="pre">B</span></code> -&gt; TMEM cols <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code></p></td>
+<td><p>MMA consumer 1：CTA 0 中选出的 thread 发起 <code class="docutils literal notranslate"><span class="pre">Asmem[...,</span> <span class="pre">1]</span> <span class="pre">×</span> <span class="pre">B</span></code>，写入 TMEM cols <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><strong>WG 2</strong></p></td>
+<td><p>warp 2</p></td>
+<td><p>当前版本未使用</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>WG 2</strong></p></td>
 <td><p>warp 3</p></td>
-<td><p>TMA producer: loads 2x A blocks + 1x B block per stage</p></td>
+<td><p>TMA producer：两个 CTAs 各自加载本地的 2 个 A blocks 和 1 个 B block</p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>WG 0</strong></p></td>
-<td><p>all</p></td>
-<td><p>Writeback for consumer 0: reads TMEM <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code></p></td>
+<tr class="row-even"><td><p><strong>WG 0</strong></p></td>
+<td><p>全部 warps</p></td>
+<td><p>两个 CTAs 分别写回 consumer 0 的本地 output rows，读取 TMEM <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code></p></td>
 </tr>
-<tr class="row-even"><td><p><strong>WG 1</strong></p></td>
-<td><p>all</p></td>
-<td><p>Writeback for consumer 1: reads TMEM <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code></p></td>
+<tr class="row-odd"><td><p><strong>WG 1</strong></p></td>
+<td><p>全部 warps</p></td>
+<td><p>两个 CTAs 分别写回 consumer 1 的本地 output rows，读取 TMEM <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code></p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>The whole arrangement hinges on one asymmetry. Each consumer multiplies its own A block against the <em>same</em> staged B tile, so a single B load now feeds 2× the MMA work, and B’s load cost per useful FLOP is effectively halved. The reason we share B and not A is that the two consumers cover different M-row stripes: their A blocks are genuinely different data, while B is identical for both. Exercise 3 asks you to convince yourself this is the only sharing that works.</p>
+<p>两个 consumers 需要不同的 A blocks，是因为它们计算不同的 output rows；它们使用同一组 B slices，是因为两组结果覆盖相同的 output columns。这样，同一组 staged B slices 可以参与两次 cooperative MMA，B 相对于计算量的加载成本也近似减半。</p>
 </section>
-<section id="changes-from-step-8">
-<h3>Changes from Step 8<a class="headerlink" href="#changes-from-step-8" title="Link to this heading">#</a></h3>
-<p>Concretely, supporting the second consumer touches the kernel in a handful of places, and every change traces back to one fact: there are now two A blocks and two TMEM ranges to feed and drain per stage, while B stays shared. The edits below stage an extra A block, give each consumer its own barrier slot, and adjust the tile addressing for the taller 512×256 cluster tile.</p>
-<ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">Asmem</span> <span class="pre">=</span> <span class="pre">pool.alloc((PIPE_DEPTH,</span> <span class="pre">NUM_CONSUMER,</span> <span class="pre">BLK_M,</span> <span class="pre">BLK_K),</span> <span class="pre">...)</span></code> — 2 A blocks per stage, one per consumer</p></li>
-<li><p>TMA loads both <code class="docutils literal notranslate"><span class="pre">Asmem[stage,</span> <span class="pre">0]</span></code> and <code class="docutils literal notranslate"><span class="pre">Asmem[stage,</span> <span class="pre">1]</span></code>, with TMA arrive bytes now <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">(NUM_CONSUMER</span> <span class="pre">*</span> <span class="pre">BLK_M</span> <span class="pre">*</span> <span class="pre">BLK_K</span> <span class="pre">+</span> <span class="pre">BLK_N</span> <span class="pre">*</span> <span class="pre">BLK_K)</span> <span class="pre">*</span> <span class="pre">F16_SIZE</span></code> (extra A block)</p></li>
-<li><p>MMA warp <code class="docutils literal notranslate"><span class="pre">warp_id</span></code> selects which A block and TMEM range</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">mma2tma.init(NUM_CONSUMER)</span></code> — both consumers signal TMA per stage</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> and <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> have <code class="docutils literal notranslate"><span class="pre">depth=NUM_CONSUMER</span></code> — each consumer uses its own barrier slot (<code class="docutils literal notranslate"><span class="pre">warp_id</span></code> for MMA side, <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> for writeback side)</p></li>
-<li><p>Tile address: <code class="docutils literal notranslate"><span class="pre">m_st</span> <span class="pre">=</span> <span class="pre">(m_idx</span> <span class="pre">*</span> <span class="pre">NUM_CONSUMER</span> <span class="pre">*</span> <span class="pre">CTA_GROUP</span> <span class="pre">+</span> <span class="pre">cbx)</span> <span class="pre">*</span> <span class="pre">BLK_M</span></code> — M direction has the extra <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER</span></code> factor because each cluster tile now spans <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER</span></code> consumers in M. Tile scheduler uses <code class="docutils literal notranslate"><span class="pre">num_m_tiles</span> <span class="pre">=</span> <span class="pre">M</span> <span class="pre">//</span> <span class="pre">256</span> <span class="pre">//</span> <span class="pre">NUM_CONSUMER</span></code> (cluster tile is 512x256)</p></li>
-<li><p>Writeback uses chunked <code class="docutils literal notranslate"><span class="pre">EPI_N</span></code> so each iteration keeps fewer TMEM-readback values live in registers</p></li>
-</ul>
-<p><strong>Implementation.</strong></p>
+<section id="mma-consumer">
+<h3>如何加入第二个 MMA Consumer<a class="headerlink" href="#mma-consumer" title="Link to this heading">#</a></h3>
+<p>加入第二个 MMA consumer，需要同时调整 layout、barriers 和 tile 调度。</p>
+<p><strong>扩展 operand 和 accumulator layout。</strong> <code class="docutils literal notranslate"><span class="pre">Asmem</span></code> 增加一个长度为 <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER</span></code> 的维度，使每个 stage 能够保存两份 A blocks：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Asmem</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span>
+    <span class="p">(</span><span class="n">PIPE_DEPTH</span><span class="p">,</span> <span class="n">NUM_CONSUMER</span><span class="p">,</span> <span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">),</span> <span class="o">...</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>两个 CTAs 的 TMA producers 每轮都加载 <code class="docutils literal notranslate"><span class="pre">Asmem[stage,</span> <span class="pre">0]</span></code>、<code class="docutils literal notranslate"><span class="pre">Asmem[stage,</span> <span class="pre">1]</span></code> 和本地的 <code class="docutils literal notranslate"><span class="pre">Bsmem[stage]</span></code>。两个 consumers 会复用这组 B slices，因此无需再增加 B block。两侧 TMA loads 登记的总 byte count 为：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">CTA_GROUP</span> <span class="o">*</span> <span class="p">(</span>
+    <span class="n">NUM_CONSUMER</span> <span class="o">*</span> <span class="n">BLK_M</span> <span class="o">*</span> <span class="n">BLK_K</span> <span class="o">+</span> <span class="n">BLK_N</span> <span class="o">*</span> <span class="n">BLK_K</span>
+<span class="p">)</span> <span class="o">*</span> <span class="n">F16_SIZE</span>
+</pre></div>
+</div>
+<p>两个 MMA warps 使用 <code class="docutils literal notranslate"><span class="pre">warp_id</span></code> 选择自己的 A block，并分别写入 TMEM cols <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code> 和 <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code>。</p>
+<p><strong>更新 barriers。</strong> 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> 的 expected arrival count 改为 <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER</span></code>。<code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> 则各自包含两个 slots：slot 0 连接 MMA consumer 0 与两侧 CTA 的 WG 0，slot 1 连接 MMA consumer 1 与两侧 CTA 的 WG 1。MMA 侧使用 <code class="docutils literal notranslate"><span class="pre">warp_id</span></code> 选择 slot，writeback 侧使用 <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> 选择同一个 slot。</p>
+<p><strong>调整 scheduler 和 writeback。</strong> Cluster output tile 的 shape 现在是 <span class="math notranslate nohighlight">\(512\times256\)</span>，因此 scheduler 使用：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">num_m_tiles</span> <span class="o">=</span> <span class="n">M</span> <span class="o">//</span> <span class="p">(</span><span class="n">NUM_CONSUMER</span> <span class="o">*</span> <span class="n">CTA_GROUP</span> <span class="o">*</span> <span class="n">BLK_M</span><span class="p">)</span>  <span class="c1"># M // 512</span>
+<span class="n">num_n_tiles</span> <span class="o">=</span> <span class="n">N</span> <span class="o">//</span> <span class="p">(</span><span class="n">CTA_GROUP</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>                 <span class="c1"># N // 256</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">m_st</span></code> 指向 consumer 0 的 A rows；consumer <code class="docutils literal notranslate"><span class="pre">c</span></code> 的起点为 <code class="docutils literal notranslate"><span class="pre">m_st</span> <span class="pre">+</span> <span class="pre">c</span> <span class="pre">*</span> <span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">BLK_M</span></code>，所以 consumer 1 会再向后移动 256 行。Writeback 时，每个 consumer 的 256 列按 <code class="docutils literal notranslate"><span class="pre">EPI_N=64</span></code> 分成四轮。每个 thread 一轮只处理其中 64 列，完成转换和写回后再进入下一轮。</p>
+</section>
+<section id="id2">
+<h3>完整 Kernel<a class="headerlink" href="#id2" title="Link to this heading">#</a></h3>
+<p>下面的完整实现继续沿用第 8 步的 two-CTA cluster，并加入第二组 A tile、MMA consumer 和 writeback warpgroup。两个 consumers 共享同一份 B tile，分别更新各自的 TMEM accumulator range。</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">hgemm_v9</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">K</span><span class="p">):</span>
     <span class="n">a_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
     <span class="n">b_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
@@ -1283,21 +1227,17 @@
     <span class="k">return</span> <span class="n">kernel</span>
 </pre></div>
 </div>
-<p><strong>Implementation notes.</strong></p>
-<ul class="simple">
-<li><p>In this Step 9 design, <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> and <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> are each a single shared object with <code class="docutils literal notranslate"><span class="pre">depth=NUM_CONSUMER</span></code>, rather than separate per-consumer objects. Slot 0 connects MMA warp 0 to Warpgroup 0, and slot 1 connects MMA warp 1 to Warpgroup 1; the MMA side indexes by <code class="docutils literal notranslate"><span class="pre">warp_id</span></code>, the writeback side by <code class="docutils literal notranslate"><span class="pre">wg_id</span></code>.</p></li>
-</ul>
 </section>
 </section>
-<section id="end-to-end-result">
-<h2>End-to-End Result<a class="headerlink" href="#end-to-end-result" title="Link to this heading">#</a></h2>
-<p>The table below reports the measured milestones from the naive baseline through the warp-specialized cluster kernel, alongside the cuBLAS reference. Reference numbers on NVIDIA B200, M=N=K=4096, fp16, locked clocks, 1000-iteration timed benchmark:</p>
+<section id="id3">
+<h2>完整优化结果<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
+<p>下表列出从朴素 baseline 到 warp-specialized cluster kernel 的各个阶段，并给出 cuBLAS 作为参考。测试使用 NVIDIA B200、<code class="docutils literal notranslate"><span class="pre">M=N=K=4096</span></code>、fp16 和固定 clocks，每个版本计时 1000 次：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
-<tr class="row-odd"><th class="head"><p>Step</p></th>
-<th class="head"><p>Technique</p></th>
-<th class="head"><p>Time</p></th>
-<th class="head"><p>Speedup</p></th>
+<tr class="row-odd"><th class="head"><p>步骤</p></th>
+<th class="head"><p>优化方法</p></th>
+<th class="head"><p>时间</p></th>
+<th class="head"><p>相对第 1 步的累计加速比</p></th>
 </tr>
 </thead>
 <tbody>
@@ -1309,7 +1249,7 @@
 <tr class="row-odd"><td><p>2</p></td>
 <td><p>K-loop accumulation</p></td>
 <td><p>—</p></td>
-<td><p>Handle K larger than one tile</p></td>
+<td><p>—</p></td>
 </tr>
 <tr class="row-even"><td><p>3</p></td>
 <td><p>Spatial tiling</p></td>
@@ -1324,12 +1264,12 @@
 <tr class="row-even"><td><p>5</p></td>
 <td><p>Software pipeline</p></td>
 <td><p>—</p></td>
-<td><p>Overlap load + compute</p></td>
+<td><p>—</p></td>
 </tr>
 <tr class="row-odd"><td><p>6</p></td>
 <td><p>Persistent kernel</p></td>
 <td><p>—</p></td>
-<td><p>L2 cache locality</p></td>
+<td><p>—</p></td>
 </tr>
 <tr class="row-even"><td><p>7</p></td>
 <td><p>Warp specialization</p></td>
@@ -1337,7 +1277,7 @@
 <td><p>~309×</p></td>
 </tr>
 <tr class="row-odd"><td><p>8</p></td>
-<td><p>2-CTA cluster</p></td>
+<td><p>Two-CTA cluster</p></td>
 <td><p>0.104 ms</p></td>
 <td><p>~676×</p></td>
 </tr>
@@ -1346,36 +1286,38 @@
 <td><p>0.094 ms</p></td>
 <td><p>~744×</p></td>
 </tr>
-<tr class="row-odd"><td><p>—</p></td>
-<td><p>cuBLAS (reference)</p></td>
+<tr class="row-odd"><td><p>---</p></td>
+<td><p>cuBLAS（参考）</p></td>
 <td><p>0.094 ms</p></td>
 <td><p>~744×</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Every time in this table, the 70 ms Step 1 baseline included, is measured at the same M=N=K=4096 size, which is what makes the speedup chain comparable end to end. It is worth being precise about what that 70 ms actually is, since it is easy to misread. It is <em>not</em> the single-tile Step-1 kernel from <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a> run at 4096³; that kernel only ever computes one 128×128 tile and only runs at small sizes. The 70 ms is instead a naive full-size baseline that takes the same sequential, single-tile approach and scales it up to the full 4096³ problem. Steps 1–3 are introduced in <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a> at small sizes (128×128 and 256³) to keep those first walkthroughs simple; the Step 1 and Step 3 rows here are their full-size benchmark counterparts. The remaining dashes (Steps 2, 5, 6) mark steps shown for structure but not timed on their own.</p>
-<p>Read these numbers as a single B200 reference run under controlled conditions, not as a leaderboard entry. The <code class="docutils literal notranslate"><span class="pre">{.python</span> <span class="pre">.input}</span></code> benchmark cells embedded in each step are smoke benchmarks: they are good for spotting trends, not for claiming peak performance.</p>
-<p>Four techniques account for nearly all of the gain:</p>
+<p>表中给出具体时间的版本都在相同的 <code class="docutils literal notranslate"><span class="pre">M=N=K=4096</span></code> 规模下测量，因此可以直接比较。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">构建 Tiled GEMM</span></a> 中只计算一个 <span class="math notranslate nohighlight">\(128\times128\)</span> tile 的 <code class="docutils literal notranslate"><span class="pre">hgemm_v1</span></code>。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。</p>
+<p>第 2 步仍然只计算一个 output tile，不能与表中的完整矩阵结果直接比较。第 5、6 步则是从 TMA load 逐步过渡到 warp specialization 的中间版本，相关机制都包含在第 7 步中；表格只保留这一段的起点和终点。因此，第 2、5、6 步以横线表示，也不计算对应的单步加速比。</p>
+<p>这些数字来自同一次 B200 reference run，只用于比较本章各版本在相同条件下的相对变化，不代表其他输入规模或测试环境下的硬件峰值。</p>
+<p>从已经测量的版本可以作四组比较：</p>
 <ol class="arabic simple">
-<li><p><strong>TMA Async Data Movement</strong>: a hardware copy engine replaces the software copy (~142× from Step 1 → Step 4). It is important to read this 142× correctly: it reflects going from a single 128×128-tile kernel (grid 1×1) all the way to a full tiled-and-parallel kernel with a K-loop, spatial tiling, and many CTAs, <em>together with</em> TMA; it is not TMA’s contribution in isolation. Isolating TMA would mean comparing two full-size kernels that differ only in the copy mechanism.</p></li>
-<li><p><strong>Software Pipelining + Warp Specialization</strong>: overlap load and compute by giving each its own dedicated role (~2.2× from Step 4 → Step 7).</p></li>
-<li><p><strong>CTA Clusters</strong>: a 2-SM cooperative MMA improves B-tile reuse across CTAs (~2.2× from Step 7 → Step 8 in this benchmark).</p></li>
-<li><p><strong>Multi-Consumer</strong>: two MMA warps for higher compute density (~10% from Step 8 → Step 9).</p></li>
+<li><p><strong>第 1 步 → 第 4 步</strong>：时间从 70 ms 降到 0.49 ms，累计约快 142 倍。这一区间同时加入了 K-loop、spatial tiling、多 CTA 并行和 TMA，不能把全部提升单独归因于 TMA。</p></li>
+<li><p><strong>第 4 步 → 第 7 步</strong>：software pipeline、persistent scheduling 和 warp specialization 将时间从 0.49 ms 降到 0.23 ms，约快 2.2 倍。</p></li>
+<li><p><strong>第 7 步 → 第 8 步</strong>：two-CTA cooperative MMA 提高 staged operands 的复用，时间从 0.23 ms 降到 0.104 ms，约快 2.2 倍。</p></li>
+<li><p><strong>第 8 步 → 第 9 步</strong>：第二个 MMA consumer 复用同一组 staged B slices，时间从 0.104 ms 降到 0.094 ms，约快 10%。</p></li>
 </ol>
-<p>Plotted at the measured milestones, those same four contributions trace the descent from the synchronous tiled kernel toward the cuBLAS reference. The figure below shows the selected measured points:</p>
-<p><img alt="GEMM Optimization Journey" src="../_images/gemm_perf.png" /></p>
-<p>Notice that the gains shrink as we go down the list, and there is a structural reason for it rather than any weakening of effort. The early steps go after <em>memory</em> bottlenecks (TMA replaces software copies, clusters raise arithmetic intensity), and that is where most of the 70 ms was actually being spent, so those steps pay off the most. By Step 8 the kernel is already within ~10% of cuBLAS (0.104 vs 0.094 ms) and is close to <em>compute-bound</em>, which means there is very little memory stall left to hide; Step 9’s multi-consumer overlap recovers most of what little remains. A roughly 10% final gain is exactly what to expect near the compute ceiling: it is the diminishing return of a problem that is nearly solved, not the sign of a weak optimization.</p>
-<p>Everything we built in this chapter (TMA loads, the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA, TMEM readback, and warp-specialized barriers) carries straight over into the next one. Flash Attention reuses all of it, and then raises the difficulty by wedging an online-softmax step between two MMA phases rather than simply repeating a single one.</p>
+<p>下图将已测量的几个版本与 cuBLAS reference 放在一起：</p>
+<p><img alt="GEMM 的逐步优化结果" src="../_images/gemm_perf.png" /></p>
+<p>回头看这九个版本，优化目标其实只有两个：让 Tensor Core 少等数据，并让搬到片上的数据参与更多计算。</p>
+<p>第 1 至第 3 步先从一个 <span class="math notranslate nohighlight">\(128\times128\)</span> output tile 出发，补上 K-loop 和 M、N 方向的 tiling，得到能够处理完整矩阵的 GEMM。接下来的第 4 至第 7 步逐步解决数据供应问题：TMA 负责搬运 tiles，双缓冲隐藏下一块数据的加载时间，persistent scheduler 让 CTAs 连续工作，warp specialization 则让 load、MMA 和 writeback 由不同角色同时推进。到第 7 步，Tensor Core 已经不必等整条 load 或 writeback 路径结束后才继续计算。</p>
+<p>最后两步提高的是数据复用。Two-CTA cluster 让两个 CTAs 共同计算一个更大的 tile，使每份 A、B tile 参与更多乘加；第二个 MMA consumer 又让两组 A blocks 共用同一份 B tile。数据从 GMEM 搬到片上一次，能够完成的计算随之增加。</p>
+<p>在这组 B200 测试中，我们从顺序执行的 baseline 出发，逐步加入 TMA、software pipeline、persistent scheduling、warp specialization 和 cluster 等优化，最终将运行时间从 70 ms 降到 0.094 ms，达到相同测试条件下的 cuBLAS 水平。这个结果也说明，高性能 GEMM 并不依赖某一个单独的技巧，而是来自数据搬运、计算重叠和片上数据复用等多项优化的配合。</p>
 </section>
-<section id="exercises">
-<h2>Exercises<a class="headerlink" href="#exercises" title="Link to this heading">#</a></h2>
+<section id="id4">
+<h2>练习<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
 <ol class="arabic simple">
-<li><p>What happens if you set the initial <code class="docutils literal notranslate"><span class="pre">phase</span></code> to <code class="docutils literal notranslate"><span class="pre">0</span></code> for both the TMA and MMA <code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> in Step 7? Draw the deadlock scenario.</p></li>
-<li><p>With <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code> in Step 8, the TMA arrive byte count is <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">(BLK_M*BLK_K</span> <span class="pre">+</span> <span class="pre">BLK_N*BLK_K)</span> <span class="pre">*</span> <span class="pre">F16_SIZE</span></code>. Why multiply by <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span></code> when each CTA loads its own data?</p></li>
-<li><p>In Step 9, each consumer handles different M rows but the same B tile. Why is sharing B (not A) the right choice?</p></li>
+<li><p>第 7 步中，如果 TMA 和 MMA 的 <code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> 都将初始 <code class="docutils literal notranslate"><span class="pre">phase</span></code> 设为 <code class="docutils literal notranslate"><span class="pre">0</span></code>，会发生什么？画出 deadlock 过程。</p></li>
+<li><p>第 8 步使用 <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code> 时，TMA arrival byte count 为 <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">(BLK_M*BLK_K</span> <span class="pre">+</span> <span class="pre">BLK_N*BLK_K)</span> <span class="pre">*</span> <span class="pre">F16_SIZE</span></code>。既然每个 CTA 分别加载自己的数据，为什么还要乘以 <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span></code>？</p></li>
+<li><p>第 9 步中，每个 consumer 处理不同的 M rows，但使用相同的 B tile。为什么应该共享 B，而不是 A？</p></li>
 </ol>
-<p><strong>Try with your agent</strong>: Paste the Step 7 kernel and ask it to trace one K-tile through the four barriers (<code class="docutils literal notranslate"><span class="pre">tma2mma</span></code>, <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code>, <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code>, <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code>). For each, ask who waits, who arrives, what tile becomes safe to read, and which buffer becomes reusable afterward.</p>
 </section>
 </section>
 
@@ -1392,19 +1334,19 @@
 <div class="prev-next-area">
     <a class="left-prev"
        href="../chapter_gemm_async/index.html"
-       title="previous page">
+       title="上一页">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
-        <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Pipelining GEMM with TMA</p>
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">使用 TMA 为 GEMM 建立 Pipeline</p>
       </div>
     </a>
     <a class="right-next"
-       href="../chapter_flash_attention/index.html"
-       title="next page">
+       href="../appendix/index.html"
+       title="下一页">
       <div class="prev-next-info">
-        <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Flash Attention 4</p>
+        <p class="prev-next-subtitle">下一页</p>
+        <p class="prev-next-title">概览</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
@@ -1422,34 +1364,37 @@
   <div class="sidebar-secondary-item"><div
     id="pst-page-navigation-heading-2"
     class="page-toc tocsection onthispage">
-    <i class="fa-solid fa-list"></i> Contents
+    <i class="fa-solid fa-list"></i> 目录
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7-warp-specialization-pipeline">Step 7: Warp Specialization + Pipeline</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#from-sequential-to-concurrent">From Sequential to Concurrent</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-roles">Warp Roles</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#barriers">4 Barriers</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-specialization-pipeline">第 7 步：Warp Specialization 与 Pipeline</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipeline">从串行执行到并发 Pipeline</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warp">Warp 角色</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#barriers">四个 Barriers</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipelinestate">PipelineState</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warpgroup-sync-barrier-ids"><code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code> Barrier IDs</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#epilogue-writeback-details">Epilogue (Writeback) Details</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#when-step-7-misbehaves">When Step 7 Misbehaves</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#named-barrier-warpgroup">使用 Named Barrier 同步一个 Warpgroup</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#epilogue-writeback">Epilogue（Writeback）</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#kernel">完整 Kernel</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#barrier">检查 Barrier 交接</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipeline-depth-smem">Pipeline Depth 的 SMEM 成本</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-8-2-cta-cluster">Step 8: 2-CTA Cluster</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster-tile-shape">Cluster Tile Shape</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-address-calculation">Tile Address Calculation</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#code-changes-from-step-7">Code Changes from Step 7</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster-scope-changes">Cluster-Scope Changes</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#two-cta-cluster">第 8 步：Two-CTA Cluster</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ab-cta">A、B 的 CTA 分工</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#tile">Tile 地址计算</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#cluster">Cluster 中的数据交接</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">完整 Kernel</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-9-multi-consumer-warp-specialization">Step 9: Multi-Consumer Warp Specialization</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#multi-consumer-structure">Multi-Consumer Structure</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#changes-from-step-8">Changes from Step 8</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#multi-consumer-warp-specialization">第 9 步：Multi-Consumer Warp Specialization</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#multi-consumer">Multi-Consumer 结构</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#mma-consumer">如何加入第二个 MMA Consumer</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">完整 Kernel</a></li>
 </ul>
 </li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#end-to-end-result">End-to-End Result</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#exercises">Exercises</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">完整优化结果</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">练习</a></li>
 </ul>
   </nav></div>
 
@@ -1464,7 +1409,7 @@
   <div class="footer-item">
     
 <p class="component-author">
-By MLC Community
+作者： MLC Community
 </p>
 
   </div>

@@ -45,6 +45,15 @@ chapter_tirx_layout_api/index
 ```
 
 ```{toctree}
+:caption: 第三部分：GEMM：从 Tiled 到 SOTA
+:maxdepth: 1
+
+chapter_gemm_basics/index
+chapter_gemm_async/index
+chapter_gemm_advanced/index
+```
+
+```{toctree}
 :caption: 参考资料
 :maxdepth: 1
 
