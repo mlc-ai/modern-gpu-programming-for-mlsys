@@ -321,16 +321,18 @@ def hgemm_v7(M, N, K):
 (chap_cta_cluster)=
 ## 第 8 步：Two-CTA Cluster
 
-第 7 步完成了单个 CTA 内部的角色分工。第 8 步进一步让两个 CTAs 组成 cluster：它们分别准备一部分 operands，再由一条 cooperative `tcgen05` MMA 读取两侧的数据，共同计算一个 $256\times256$ output tile。
+第 7 步的协作范围仍然局限在一个 CTA 内。第 8 步把这个范围扩展到由两个 CTAs 组成的 cluster。
 
 > **这一步改变 Scope、Layout 和 Dispatch**
 > - Scope：协作范围由一个 CTA 扩展到 cluster 中的两个 CTAs。
 > - Layout：A、B slices 分布在两个 CTAs 的 SMEM 中，accumulator 也分布在两侧的 TMEM 中。
 > - Dispatch：`Tx.gemm_async` 使用 `cta_group=2` 发起 two-CTA cooperative MMA；完成通知通过 `cta_mask=3` 同时发送到两侧。
 
-### 两个 CTA 如何组成 Cluster Tile
+### A、B 的 CTA 分工
 
-B 在内存中按 `N×K` 存储，因此 B 的一行会在 `B.T` 中成为一列。对于一个 $256\times256$ cluster tile，每个 CTA 加载 A 的 128 行和 stored B 的 128 行。两份 A slices 合起来覆盖 256 个 output rows，两份 B slices 经过转置后覆盖 256 个 output columns。下图展示了这四个 operand slices 如何参与同一次 cooperative MMA：
+先看 $256\times256$ output tile 的 M 维。A 沿 M 维分成两个 $128\times K$ slices，每个 CTA 加载其中一份；两份合起来覆盖全部 256 个 output rows。
+
+B 则沿 N 维切分。B 在内存中的 shape 为 `N×K`，每个 CTA 同样加载一个 $128\times K$ row slice。计算使用 `B.T`，因此这两份 rows 转置后分别对应 128 个 output columns，合起来覆盖完整的 N 维。下图展示了这四个 operand slices 如何参与同一次 cooperative MMA：
 
 ```{raw} html
 <div style="overflow-x:auto;">
