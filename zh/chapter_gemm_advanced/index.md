@@ -115,8 +115,6 @@ bar.sync 10, 128
 
 这里的 mbarrier wait 和 `tcgen05.wait.ld()` 负责等待两项不同的工作：前者确认 MMA 已经完成，`fence.after_thread_sync()` 建立跨 thread 的 `tcgen05` 执行顺序，后者再确认异步 TMEM load 已经写入目标 registers。
 
-第 8 步的 `BLK_N=256`，第 9 步中每个 consumer 的 `MMA_N=256`。若仍一次读取整个 tile，每个 thread 需要同时保存 256 个 fp32 values，也就是 1024 bytes，不仅会增加 register pressure，甚至可能 spill 到 local memory，还会要求更大的 `Dsmem`。因此，后面两个版本将 writeback 拆成 `EPI_N=64` 列的 chunks。每轮只保留 `EPI_N` 个 fp32 registers，并发起一次较小的 TMA store，以更多 store instructions 换取可控的 register 用量。
-
 实现中还保留了以下两点：
 
 - **Persistent kernel**：`bx = T.cta_id([SM_COUNT])`，每个 CTA 循环处理多个 tiles。
@@ -419,6 +417,8 @@ T.cuda.cluster_sync()
 
 - **Cluster-wide resource accounting**：TMA arrival byte count 要包含两个 CTAs 搬运的数据，`tcgen05.alloc` 和 `tcgen05.dealloc` 都使用 `cta_group=2`；释放 TMEM 前还要执行 `cluster_sync()`，确认两侧 CTA 都已经完成访问。
 
+- **分块 writeback**：cooperative MMA 生成 256 列结果。若一次读回全部列，每个 writeback thread 需要同时保存 256 个 fp32 values。这里将 N 维拆成两个 128 列的 chunks，每次从 TMEM 读回一半并完成一次 TMA store，从而限制同时占用的 registers 数量。
+
 
 ### 完整 Kernel
 
@@ -648,7 +648,7 @@ Cluster 提高了 CTAs 之间的数据复用。最后一步会增加第二个 MM
 
 - Tile address 改为 `m_st = (m_idx * NUM_CONSUMER * CTA_GROUP + cbx) * BLK_M`。每个 cluster tile 沿 M 维包含 `NUM_CONSUMER` 组 consumers，因此 M offset 多出这个因子。Cluster tile 的 shape 为 $512\times256$，scheduler 使用 `num_m_tiles = M // 256 // NUM_CONSUMER`
 
-- Writeback 按 `EPI_N` 分块，使每轮只有较少的 TMEM readback values 同时保存在 registers 中
+- Writeback 将每个 consumer 的 256 列结果按 `EPI_N=64` 分成四轮。每轮只从 TMEM 读回 64 列并完成一次 TMA store，使每个 thread 不必同时保存全部 256 个 fp32 values
 
 
 ### 完整 Kernel
