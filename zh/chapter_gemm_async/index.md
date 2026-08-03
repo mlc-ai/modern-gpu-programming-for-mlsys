@@ -278,7 +278,9 @@ phase_mma ^= 1
 tma_load(stage, next_k * BLK_K)
 ```
 
-**3. Phase 管理**：前面的异步同步章节已经说明，同一个 mbarrier 每完成一轮，phase 就会翻转。这里的两个 phase 变量更新频率不同，是因为它们保护的资源数量不同。MMA accumulator 只有一个 TMEM slot，因此所有 iterations 都复用同一个 `mma_bar`（`mma_bar.ptr_to([0])），`phase_mma` 每轮都需要翻转。TMA 则为每个 stage 分配一个 barrier；同一个 stage 的 barrier 只有在 ring buffer 绕回时才会再次使用，因此 `phase_tma` 只在 stage index 完成一轮时翻转：
+**3. Phase 管理**：前面的异步同步章节已经说明，同一个 mbarrier 每完成一轮，phase 就会翻转。这里的两个 phase 变量更新频率不同，是因为它们分别跟踪一个 MMA accumulator 和多个 SMEM stages。
+
+所有 K iterations 都通过 `mma_bar.ptr_to([0])` 跟踪同一个 TMEM accumulator，因此 `phase_mma` 每轮都要翻转。TMA 则为每个 SMEM stage 分配一个 barrier；只有 ring buffer 再次使用同一个 stage 时，对应的 barrier 才会进入下一轮。因此，`phase_tma` 只在 stage index 绕回 0 时翻转：
 ```python
 if stage == PIPE_DEPTH - 1:
     phase_tma ^= 1
