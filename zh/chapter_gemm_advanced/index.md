@@ -300,8 +300,6 @@ def hgemm_v7(M, N, K):
     return kernel
 ```
 
-当前实现没有处理不足一个 tile 的边界区域，因此第 7 步要求 `M`、`N` 能被 128 整除，`K` 能被 64 整除。
-
 ### 检查 Barrier 交接
 
 第 7 步用四条 barriers 连接三个角色。若 kernel 一直等待，先逐条确认 barrier 的两端：谁在执行 `wait`，谁负责 `arrive`，初始化时设置的 arrival count 是否与实际通知次数一致。若 kernel 能结束但结果错误，则应检查 consumer 是否在 wait 和 fence 完成前读取数据。
@@ -592,8 +590,6 @@ def hgemm_v8(M, N, K):
     return kernel
 ```
 
-当前实现没有处理不足一个 tile 的边界区域，因此第 8 步要求 `M`、`N` 能被 256 整除，`K` 能被 64 整除。
-
 (chap_multi_consumer)=
 ## 第 9 步：Multi-Consumer Warp Specialization
 
@@ -844,8 +840,6 @@ def hgemm_v9(M, N, K):
 
     return kernel
 ```
-
-当前实现没有处理不足一个 tile 的边界区域，因此第 9 步要求 `M` 能被 512 整除，`N` 能被 256 整除，`K` 能被 64 整除。
 
 ## 完整优化结果
 
