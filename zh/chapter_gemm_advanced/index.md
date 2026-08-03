@@ -883,7 +883,7 @@ def hgemm_v9(M, N, K):
 
 最后两步提高的是数据复用。Two-CTA cluster 让两个 CTAs 共同计算一个更大的 tile，使每份 A、B tile 参与更多乘加；第二个 MMA consumer 又让两组 A blocks 共用同一份 B tile。数据从 GMEM 搬到片上一次，能够完成的计算随之增加。
 
-在这组 B200 测试中，kernel 的运行时间从最初的 70 ms 降到 0.094 ms，达到相同测试条件下的 cuBLAS 水平。回顾整个过程，优化顺序也很清楚：先得到结果正确的 tiled GEMM，再重叠数据搬运和计算，最后通过 cluster 和多个 consumers 提高片上数据的复用率。
+在这组 B200 测试中，我们从顺序执行的 baseline 出发，逐步加入 TMA、software pipeline、persistent scheduling、warp specialization 和 cluster 等优化，最终将运行时间从 70 ms 降到 0.094 ms，达到相同测试条件下的 cuBLAS 水平。这个结果也说明，高性能 GEMM 并不依赖某一个单独的技巧，而是来自数据搬运、计算重叠和片上数据复用等多项优化的配合。
 
 
 ## 练习
