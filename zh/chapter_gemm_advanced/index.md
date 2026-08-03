@@ -88,19 +88,19 @@ tma_ps.advance()                          # Advance to next stage
 
 如果两端使用相同的初始 phase，kernel 可能 deadlock，也可能在数据尚未准备好时继续执行。
 
-### `warpgroup_sync`：只同步一个 Warpgroup
+### 使用 Named Barrier 同步一个 Warpgroup
 
 第 7 步的 writeback 由 Warpgroup 0 的 128 个 threads 完成。它们先分别把 registers 写入 `Dsmem`，等整块 tile 都写完后，再由其中一个 thread 发起 TMA store。这里需要同步 Warpgroup 0，但不能使用 `cta_sync()`：CTA 中的另一个 warpgroup 正在执行 producer 和 MMA consumer 分支，不会到达这个同步点。如果 Warpgroup 0 在分支内等待整个 CTA，kernel 就会 deadlock。
 
-`warpgroup_sync(10)` 只等待当前 warpgroup 的 128 个 threads。它会 lower 为：
+`warpgroup_sync(10)` 会 lower 为：
 
 ```text
 bar.sync 10, 128
 ```
 
-其中 `10` 是 named barrier ID，`128` 是这次同步需要收到的 thread arrivals。执行到这里的 128 个 writeback threads 使用同一个 ID；全部到达后，它们才会继续。代码中的第一次 `warpgroup_sync(10)` 保证 `Dsmem` 已经写完整，第二次则保证 selected thread 已经等待 TMA store 完成，其他 threads 才进入下一轮。
+其中 `10` 是 named barrier ID，`128` 是这次同步需要收到的 thread arrivals。该指令不会自动识别当前 warpgroup；这里之所以只同步 Warpgroup 0，是因为只有它的 128 个 threads 会执行这段代码，并且全部使用相同的 barrier ID。第一次 `warpgroup_sync(10)` 保证 `Dsmem` 已经写完整，第二次则保证 selected thread 已经等待 TMA store 完成，其他 threads 才进入下一轮。
 
-每个 CTA 有 16 个 named barrier slots，ID 范围为 0–15。ID 本身不会自动绑定某个 warpgroup，而是由 kernel 分配：参与同一次同步的 threads 必须使用相同 ID，彼此独立的同步则应使用不同 ID。第 7 步只有 Warpgroup 0 执行 writeback，因此固定使用 ID 10；第 9 步有两个 writeback warpgroups，使用 `warpgroup_sync(wg_id + 10)` 后，它们分别使用 IDs 10 和 11，arrival 不会混在同一个 barrier 中。
+每个 CTA 有 16 个 named barrier slots，ID 范围为 0–15。参与同一次同步的 threads 必须使用相同 ID，彼此独立的同步则应使用不同 ID。第 7 步只有 Warpgroup 0 执行 writeback，因此固定使用 ID 10；第 9 步有两个 writeback warpgroups，使用 `warpgroup_sync(wg_id + 10)` 后，它们分别使用 IDs 10 和 11，避免两组 arrivals 被计入同一轮同步。
 
 ### Epilogue（Writeback）
 
@@ -305,11 +305,6 @@ def hgemm_v7(M, N, K):
 第 7 步首次让 TMA load、`tcgen05` MMA 和 writeback 同时在途。第 8、9 步也会遇到相同类型的错误：barrier count 不匹配、role guard 放错位置、缺少 fence，或者 TMA store 尚未完成就复用 staging buffer。排查时应先确认每个 barrier 的等待者、通知者和 arrival count，再检查 buffer 复用前的 wait 与 fence 是否完整。
 
 **调整 pipeline depth。** 第 7 步使用最小可用深度 `PIPE_DEPTH=2`。增加到 4 或 6，可以让 TMA producer 更早准备后续数据，从而隐藏更多 memory latency，但也会消耗更多 SMEM。B200 的每个 SM 提供 228 KB SMEM。取 `BLK_M=BLK_N=128`、`BLK_K=64` 和 fp16 时，每个 stage 中 A、B 合计占用 `(128*64 + 128*64) * 2 = 32 KB`，`Dsmem` writeback buffer 还需 32 KB。因此，`PIPE_DEPTH=4` 大约使用 160 KB，`PIPE_DEPTH=6` 则约为 224 KB，已经接近容量上限。若继续增加深度，就需要重新设计 writeback staging。
-
----
-
-Warp specialization 已经让一个 CTA 内的不同 warps 并发工作。下一步将协作范围扩展到两个 CTAs，让它们共同计算一个更大的 tile。
-
 
 (chap_cta_cluster)=
 ## 第 8 步：Two-CTA Cluster
