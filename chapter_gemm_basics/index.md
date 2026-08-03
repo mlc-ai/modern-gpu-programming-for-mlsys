@@ -4,7 +4,7 @@
 :::{admonition} Overview
 :class: overview
 
-- Step 1 starts with a sequential $128\times128$ output tile and follows the complete path: A and B move from GMEM to SMEM, `tcgen05` writes the accumulator to TMEM, and the result is read back and stored.
+- Step 1 computes one $128\times128$ output tile, with load, MMA, and writeback performed in sequence. A and B move from GMEM to SMEM, `tcgen05` writes the accumulator to TMEM, and the result is read back and stored.
 - Step 2 partitions K and accumulates the partial sums in one TMEM accumulator. Reusing the MMA barrier requires the phase to advance in step with the loop.
 - Step 3 assigns the output tiles along M and N to a two-dimensional CTA grid, producing a correctness baseline that covers the full matrix.
 :::
@@ -47,9 +47,9 @@ The basic data path is sufficient for correctness, but it does not yet use the h
 - **TMA async movement** moves GMEM <-> SMEM tiles through Blackwell's hardware copy path, with barriers tracking completion.
 - **Software pipelining** uses multiple SMEM stages so that the data movement for the next K tile can overlap Tensor Core compute on the current one.
 - **Persistent scheduling** keeps a fixed pool of CTAs, each processing many output tiles through a tile scheduler, instead of launching one CTA per tile.
-- **Warp specialization** splits the producer, MMA consumer, and writeback roles across separate warpgroups.
+- **Warp specialization** assigns the producer, MMA consumer, and writeback roles to dedicated warps or warpgroups.
 - **CTA clusters** let two CTAs cooperate on a single, larger Blackwell MMA tile.
-- **Multi-consumer execution** uses multiple consumer warpgroups to compute different parts of the tile at once, raising compute density.
+- **Multi-consumer execution** uses multiple MMA consumer warps, each paired with a writeback warpgroup, to compute different row ranges while sharing a staged B tile.
 
 ---
 
@@ -368,7 +368,7 @@ Without the flip, the second iteration would still wait for phase 0. Because the
 
 ### Complete Kernel
 
-The full kernel below is simply Step 1 with the K-loop and the phase flip folded in. The imports are the same as before:
+The Step 2 kernel keeps the structure of Step 1 and adds the K-loop and phase update described above. The imports are unchanged:
 
 ```python
 import tvm
@@ -423,8 +423,8 @@ def hgemm_v2(M, N, K):
         T.cuda.cta_sync()
 
         tmem = T.decl_buffer(
-        (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
-        layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+            (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
+            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
 
         phase_mma: T.int32 = 0
         m_st = T.meta_var(bx * BLK_M)
@@ -576,8 +576,8 @@ def hgemm_v3(M, N, K):
         T.cuda.cta_sync()
 
         tmem = T.decl_buffer(
-        (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
-        layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+            (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
+            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
 
         phase_mma: T.int32 = 0
 

@@ -47,16 +47,16 @@ $$\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 
 - **TMA 异步搬运**：使用 Blackwell 的硬件 copy path 在 GMEM 与 SMEM 之间搬运 tiles，并通过 barrier 跟踪完成状态。
 - **Software pipeline**：使用多个 SMEM stages，让下一块 K tile 的数据搬运与当前 tile 的 Tensor Core 计算重叠。
 - **Persistent scheduling**：不再为每个 output tile 启动一个 CTA，而是让固定数量的 CTAs 通过 tile scheduler 反复处理多个 tiles。
-- **Warp specialization**：把 producer、MMA consumer 和 writeback 分配给不同 warpgroups。
+- **Warp specialization**：把 producer、MMA consumer 和 writeback 分配给专门的 warps 或 warpgroups。
 - **CTA cluster**：让两个 CTAs 协作计算一个更大的 Blackwell MMA tile。
-- **Multi-consumer execution**：让多个 consumer warpgroups 同时计算 tile 的不同部分，提高计算密度。
+- **Multi-consumer execution**：使用多个 MMA consumer warps 分别计算不同的 output rows，并为每个 consumer 配置对应的 writeback warpgroup；这些 consumers 共用同一份 staged B tile。
 
 ---
 
 (chap_single_tile)=
 ## 第 1 步：顺序执行的单 Tile GEMM
 
-第 1 步沿用“TIRx 入门”中的 `hgemm_v1`，详细拆解其数据路径，并将它作为后续版本的正确性基线。这个 kernel 只计算一个 `128×128` output tile，并取 `K=64`；该规模不需要循环，数据路径中的每一步只出现一次，便于逐段理解。
+第 1 步沿用 {ref}`chap_tirx_primer` 中的 `hgemm_v1`，详细拆解其数据路径，并将它作为后续版本的正确性基线。这个 kernel 只计算一个 `128×128` output tile，并取 `K=64`；该规模不需要循环，数据路径中的每一步只出现一次，便于逐段理解。
 
 > **这一步建立基线**
 > - Scope：一个包含 128 个 threads 的 warpgroup 按顺序执行整条数据路径。
@@ -423,8 +423,8 @@ def hgemm_v2(M, N, K):
         T.cuda.cta_sync()
 
         tmem = T.decl_buffer(
-        (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
-        layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+            (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
+            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
 
         phase_mma: T.int32 = 0
         m_st = T.meta_var(bx * BLK_M)
@@ -576,8 +576,8 @@ def hgemm_v3(M, N, K):
         T.cuda.cta_sync()
 
         tmem = T.decl_buffer(
-        (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
-        layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
+            (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
+            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))
 
         phase_mma: T.int32 = 0
 

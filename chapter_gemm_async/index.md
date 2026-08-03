@@ -11,7 +11,7 @@
 
 The kernel from the previous chapter processes each K tile in a fixed order: threads copy A and B into shared memory and wait for every write to finish, then issue the MMA and wait for the computation to complete before loading the next tile. This sequence is easy to follow and produces the correct result, but data movement and Tensor Core computation cannot overlap.
 
-This chapter continues from the three kernels built so far. Step 4 replaces the thread-driven A and B copies with TMA. Step 5 provides two shared-memory stages for prefetching and later overlap. Step 6 adds a tile scheduler so that resident CTAs can process several output tiles in succession. Together, these steps turn the sequential tiled GEMM into a pipelined persistent kernel.
+This chapter continues from the three kernels built so far. Step 4 replaces the thread-driven A and B copies with TMA. Step 5 provides two shared-memory stages for prefetching and later overlap. Step 6 adds a tile scheduler so that resident CTAs can process several output tiles in succession. By the end of the chapter, the kernel has asynchronous tile movement, reusable SMEM stages, and persistent scheduling. The next chapter assigns these stages to separate warp roles so that they can run concurrently.
 
 (chap_tma_async)=
 ## Step 4: TMA Async Load
@@ -290,7 +290,7 @@ if stage == PIPE_DEPTH - 1:
 
 ### Complete Kernel
 
-The complete kernel keeps the Step 4 TMA load and store path verbatim, then wraps it in the staged buffers and phase logic we just described. The imports are unchanged:
+The complete kernel retains the Step 4 TMA load and store path, then adds the staged buffers and phase logic described above. The imports are unchanged:
 
 ```python
 import tvm
@@ -466,11 +466,11 @@ A persistent kernel instead launches a fixed number of CTAs and lets each one pr
 
 ### Persistent Scheduling
 
-A persistent kernel uses a smaller one-dimensional grid. This example sets `SM_COUNT=148` and launches 148 persistent CTAs. Each CTA obtains an output tile from the scheduler, computes it, and requests another until no tiles remain. `SM_COUNT` controls how many CTAs can work concurrently; it does not bind a particular CTA to a particular SM.
+A persistent kernel uses a smaller one-dimensional grid. This example sets `SM_COUNT=148` and launches 148 persistent CTAs. Each CTA obtains an output tile from the scheduler, computes it, and requests another until no tiles remain. `SM_COUNT` sets the size of this worker pool; the hardware scheduler and occupancy determine which CTAs are resident at any moment, and no CTA is permanently bound to a particular SM.
 
 Because one CTA processes several tiles, it allocates TMEM, initializes its barriers, and creates scheduler state only once. Those resources remain in place until the CTA finishes all of its assigned work.
 
-The scheduler also changes the tile traversal order. `l2_group_size=8` groups eight consecutive output-tile rows along M. Within a group, the scheduler holds one N tile column fixed while traversing those eight rows, then advances to the next N tile column. Tasks that read the same B tile therefore occur close together, while the same group of A tiles is revisited within a short interval. The CTAs still move their data independently, but this order is more favorable to L2 cache hits.
+The scheduler also changes the logical tile order. `l2_group_size=8` groups eight consecutive output-tile rows along M. Within each group, tile IDs run down those eight rows for one N tile column before advancing to the next column. This places work that shares a B tile close together in the schedule and revisits the same group of A tiles over a short span. The CTAs still move their data independently, and the hardware may execute them in a different order, but this numbering makes L2 reuse more likely.
 
 ```python
 bx = T.cta_id([SM_COUNT])  # 1D persistent grid
@@ -500,7 +500,7 @@ If changing `K`, `BLK_K`, or `PIPE_DEPTH` makes any barrier run an odd number of
 
 ### Complete Kernel
 
-Structurally, the kernel is nothing more than Step 5's pipeline wrapped in a tile-level outer loop. The only new dependency is the scheduler itself, which we import alongside the rest:
+Step 6 keeps the staged K-loop from Step 5 and places it inside an outer loop over output tiles. The only new dependency is the scheduler:
 
 ```python
 import tvm
@@ -511,7 +511,7 @@ from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, S
 from tvm.tirx.lang.tile_scheduler import ClusterPersistentScheduler2D
 ```
 
-The grid dimension is now simply `SM_COUNT` rather than `(M//BLK_M, N//BLK_N)`, and a `ClusterPersistentScheduler2D` takes over the job of handing each CTA its tiles:
+The launch grid now has `SM_COUNT` CTAs rather than one CTA for every `(M, N)` output tile. A `ClusterPersistentScheduler2D` assigns tiles to those persistent CTAs:
 
 ```python
 SM_COUNT = 148  # Number of SMs on NVIDIA B200 GPU

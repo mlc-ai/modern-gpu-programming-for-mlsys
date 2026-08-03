@@ -26,7 +26,7 @@ In the single-warpgroup kernel, every thread follows the same load, compute, and
 > - Layout: unchanged, same SMEM stages and TMEM accumulator as Step 6.
 > - Dispatch: unchanged, TMA loads, `tcgen05` MMA.
 
-The multi-stage SMEM pipeline and persistent `ClusterPersistentScheduler2D` carry over from Steps 5 and 6. Only the assignment of work changes here.
+The multi-stage SMEM pipeline and persistent `ClusterPersistentScheduler2D` carry over from Steps 5 and 6. Step 7 changes how that work is divided among warps and how the roles synchronize with one another.
 
 ### From Sequential to Concurrent
 
@@ -68,7 +68,7 @@ The three concurrent roles communicate through four barriers. The forward path, 
 
 The barrier type depends on how its producer reports completion. **TMA loads** use `TMABar`, an mbarrier with byte counting that the TMA hardware updates after the transfer completes. **TMA stores** are tracked by the issuing thread through an async group: `cp_async.bulk.commit_group()` submits the group, and `wait_group(0)` waits for the write to finish. **MMA operations** use `TCGen05Bar`; `tcgen05.commit()` updates the barrier when the MMA completes.
 
-The `arrive` calls use `cta_mask=0` because this kernel involves only one CTA. Step 8 forms a cluster and uses this argument to notify the peer CTA.
+In these calls, `cta_mask=0` selects the non-multicast form used by the single-CTA kernel. Step 8 forms a cluster and uses `cta_mask=3` to multicast the notification to both CTAs.
 
 ### PipelineState
 
@@ -385,7 +385,7 @@ The two CTAs have separate SMEM spaces and barriers. A cooperative MMA must wait
 tma2mma_cta0 = tma2mma.remote_view(0)
 ```
 
-The TMA loads from both CTAs report completion to this barrier. CTA 0 records the total byte count for both sets of operands. Each CTA loads one `BLK_M×BLK_K` A slice and one `BLK_N×BLK_K` B slice, so the count is:
+The TMA loads from both CTAs report completion to this barrier. The selected producer thread in CTA 0 registers the combined byte count for both CTAs. Each CTA loads one `BLK_M×BLK_K` A slice and one `BLK_N×BLK_K` B slice, so the count is:
 
 ```python
 CTA_GROUP * (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE
@@ -410,7 +410,7 @@ for k in range(K_TILES):
 mma2ld.arrive(0, cta_group=2, cta_mask=3)
 ```
 
-`cta_mask=3` is binary `11`, so both CTA 0 and CTA 1 receive the notification. Once an MMA finishes, `mma2tma` allows the TMA producers on both sides to reuse the SMEM stage it consumed. Once the K-loop finishes, `mma2ld` tells both writeback warpgroups that the TMEM accumulator is ready.
+`cta_mask=3` is binary `11`, so both CTA 0 and CTA 1 receive the notification. Once an MMA finishes, `mma2tma` allows the TMA producers on both sides to reuse the SMEM stage it consumed. Once the K-loop finishes, `mma2ld` tells the writeback warpgroup in each CTA that the TMEM accumulator is ready.
 
 **Writeback → the next output tile.** After the writeback warpgroups have finished using TMEM, 128 threads in each CTA arrive on CTA 0's `ld2mma` barrier. Its expected arrival count is therefore `128 * CTA_GROUP`, or 256. Only after all arrivals have been received may the next output tile reuse that TMEM region.
 
@@ -639,7 +639,7 @@ CTA_GROUP * (
 
 The two MMA warps use `warp_id` to select their A block and write to TMEM cols `[0:256]` and `[256:512]`, respectively.
 
-**Update the barriers.** Both consumers must finish reading the current SMEM stage before the TMA producer can overwrite it, so the expected arrival count for `mma2tma` becomes `NUM_CONSUMER`. The `mma2ld` and `ld2mma` objects each contain two slots. Slot 0 connects MMA consumer 0 to WG 0 in both CTAs; slot 1 connects MMA consumer 1 to WG 1. The MMA side indexes the slot with `warp_id`, and the writeback side uses `wg_id` to select the matching slot.
+**Update the barriers.** Both consumers must finish reading the current SMEM stage before the TMA producer can overwrite it, so the expected arrival count for `mma2tma` becomes `NUM_CONSUMER`. The `mma2ld` and `ld2mma` objects each contain two slots. For `mma2ld`, consumer 0 multicasts completion through slot 0 to WG 0 in both CTAs, while consumer 1 uses slot 1 for WG 1. The matching `ld2mma` slot then collects the writeback arrivals from both CTAs before that consumer may reuse its TMEM range. The MMA side selects a slot with `warp_id`; the writeback side selects the same slot with `wg_id`.
 
 **Adjust the scheduler and writeback.** The cluster output tile is now $512\times256$, so the scheduler uses:
 
@@ -860,7 +860,7 @@ The table below follows the progression from the naive baseline to the warp-spec
 | 9 | Multi-consumer | 0.094 ms | ~744× |
 | --- | cuBLAS (reference) | 0.094 ms | ~744× |
 
-Every row with a measured time uses the same `M=N=K=4096` problem, so those rows can be compared directly. The 70 ms in Step 1 comes from a full-matrix baseline with the same sequential data path; it is not a run of the single-tile `hgemm_v1` from {ref}`chap_gemm_basics`. The introductory chapter uses smaller problems to explain Steps 1 through 3, while the Step 1 and Step 3 rows here measure the corresponding full-matrix implementations.
+Every row with a measured time uses the same `M=N=K=4096` problem, so those rows can be compared directly. Times are rounded for display, while the speedups are calculated from the underlying measurements. The 70 ms in Step 1 comes from a full-matrix baseline with the same sequential data path; it is not a run of the single-tile `hgemm_v1` from {ref}`chap_gemm_basics`. The introductory chapter uses smaller problems to explain Steps 1 through 3, while the Step 1 and Step 3 rows here measure the corresponding full-matrix implementations.
 
 Step 2 still computes only one output tile, so it is not directly comparable with the full-matrix results. Steps 5 and 6 are intermediate versions between the TMA-load kernel and the warp-specialized kernel; their mechanisms are retained in Step 7. The table therefore shows only the endpoints of that interval. Steps 2, 5, and 6 use dashes and have no standalone speedup.
 
