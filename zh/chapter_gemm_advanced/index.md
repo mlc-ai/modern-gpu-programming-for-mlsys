@@ -850,17 +850,19 @@ def hgemm_v9(M, N, K):
 | 步骤 | 优化方法 | 时间 | 相对第 1 步的累计加速比 |
 |------|----------|------|--------|
 | 1 | Sync load + MMA | 70 ms | 1× |
-| 2 | K-loop accumulation | --- | 支持 K 大于单个 tile |
+| 2 | K-loop accumulation | 未单独测量 | — |
 | 3 | Spatial tiling | 53.6 ms | ~1.3× |
 | 4 | TMA async load | 0.49 ms | ~142× |
-| 5 | Software pipeline | --- | 重叠 load 与 compute |
-| 6 | Persistent kernel | --- | 改善 L2 cache locality |
+| 5 | Software pipeline | 未单独测量 | — |
+| 6 | Persistent kernel | 未单独测量 | — |
 | 7 | Warp specialization | 0.23 ms | ~309× |
 | 8 | Two-CTA cluster | 0.104 ms | ~676× |
 | 9 | Multi-consumer | 0.094 ms | ~744× |
 | --- | cuBLAS（参考） | 0.094 ms | ~744× |
 
-表中所有时间都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。第 1 步的 70 ms 不是将 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的示例直接用于 $4096^3$，而是把相同的串行思路扩展到完整问题后得到的 naive full-size baseline。第 1 至 3 步在基础章节中使用 $128\times128$ 和 $256^3$ 等小规模输入，是为了便于讲解；这里第 1、3 步对应的是它们的 full-size benchmark。第 2、5、6 步只用于展示结构，没有单独计时，因此以横线表示。
+表中给出具体时间的版本都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。第 1 步的 70 ms 不是将 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的示例直接用于 $4096^3$，而是把相同的串行思路扩展到完整问题后得到的 naive full-size baseline。第 1 至 3 步在基础章节中使用较小规模，是为了便于讲解；表中的第 1、3 步则来自对应的 full-size benchmarks。
+
+第 2 步仍然只计算一个 output tile，因此没有可直接比较的 full-size timing。第 5、6 步已经是完整 kernels，但这次 reference run 没有分别记录它们的时间；software pipeline 和 persistent scheduling 的效果会继续保留在第 7 步及后续版本中。这里不根据后续结果反推它们各自的加速比。
 
 这些数字来自一组受控条件下的 B200 reference run，并不是通用排行榜结果。各步骤中的 `{.python .input}` benchmark cells 适合观察趋势，不应当用来宣称硬件峰值性能。
 
