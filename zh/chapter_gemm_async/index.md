@@ -466,7 +466,7 @@ Persistent kernel 则只启动固定数量的 CTAs，让每个 CTA 依次处理�
 
 ### Persistent Scheduling
 
-Persistent kernel 使用一个较小的一维 grid。本例设置 `SM_COUNT=148`，因此启动 148 个 persistent CTAs。每个 CTA 从 scheduler 获取一个 output tile，完成后再获取下一个，直到所有 tiles 都处理完毕。`SM_COUNT` 决定这个 worker pool 的大小；任一时刻有哪些 CTAs 实际驻留，由 occupancy 和硬件调度决定，CTA 也不会与某个 SM 固定绑定。
+Persistent kernel 使用一个较小的一维 grid。本例设置 `SM_COUNT=148`，因此启动 148 个 persistent CTAs。每个 CTA 从 scheduler 获取一个 output tile，完成后再获取下一个，直到所有 tiles 都处理完毕。`SM_COUNT` 决定 kernel 启动多少个 persistent CTAs。任一时刻能有多少 CTAs 驻留、它们在哪些 SM 上执行，由 occupancy 和硬件调度决定；CTA 不会与某个 SM 固定绑定。
 
 由于一个 CTA 会连续处理多个 tiles，它只需申请一次 TMEM、初始化一次 barriers，并创建一次 scheduler state。这些资源可以一直保留到该 CTA 完成全部任务。
 

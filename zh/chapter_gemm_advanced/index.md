@@ -68,7 +68,7 @@ Load 与 MMA 之间通过两个 barriers 交接 SMEM buffer：
 
 Barrier 类型取决于 producer 如何报告完成。**TMA load** 使用带 byte counting 的 `TMABar`，传输完成后由 TMA hardware 更新 barrier。**TMA store** 的完成状态则由发起指令的 thread 通过 async group 跟踪：先执行 `cp_async.bulk.commit_group()`，再用 `wait_group(0)` 等待写入完成。**MMA operation** 使用 `TCGen05Bar`，`tcgen05.commit()` 会在 MMA 完成后更新该 barrier。
 
-这里的 `cta_mask=0` 选择单 CTA kernel 使用的 non-multicast 形式。第 8 步组成 cluster 后，代码会改用 `cta_mask=3`，把完成通知 multicast 到两个 CTAs。
+第 7 步的完成通知只需要更新当前 CTA 的 barrier，因此这些调用使用 `cta_mask=0`。第 8 步组成 two-CTA cluster 后，代码会改用 `cta_mask=3`（二进制 `11`），同时更新两个 CTAs 中对应的 barriers。
 
 ### PipelineState
 
@@ -860,7 +860,7 @@ def hgemm_v9(M, N, K):
 | 9 | Multi-consumer | 0.094 ms | ~744× |
 | --- | cuBLAS（参考） | 0.094 ms | ~744× |
 
-表中给出具体时间的版本都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。表中的时间经过四舍五入，加速比则根据未舍入的测量值计算。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的 `hgemm_v1`。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。
+表中给出具体时间的版本都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的 `hgemm_v1`。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。
 
 第 2 步仍然只计算一个 output tile，不能与表中的完整矩阵结果直接比较。第 5、6 步则是从 TMA load 逐步过渡到 warp specialization 的中间版本，相关机制都包含在第 7 步中；表格只保留这一段的起点和终点。因此，第 2、5、6 步以横线表示，也不计算对应的单步加速比。
 
