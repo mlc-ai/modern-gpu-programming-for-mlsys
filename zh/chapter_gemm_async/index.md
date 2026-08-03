@@ -468,7 +468,7 @@ Persistent kernel 则只启动固定数量的 CTAs，让每个 CTA 依次处理�
 
 Persistent kernel 的 grid 大小由硬件规模决定，而不是由 output tile 数量决定。这里启动 `SM_COUNT` 个 CTAs，目标是让每个 SM 大致对应一个长期运行的 CTA，并持续从 scheduler 获取工作。实际是否严格一一对应，还取决于 occupancy 和硬件调度。
 
-本章以包含 148 个 SMs 的 B200 为例，因此取 `SM_COUNT=148`。这 148 个 CTAs 分别循环处理 `ClusterPersistentScheduler2D` 分配的 tiles。
+示例将 `SM_COUNT` 设为 148，因此启动 148 个 persistent CTAs，分别循环处理 `ClusterPersistentScheduler2D` 分配的 tiles。
 
 首先，TMEM allocation、barrier initialization 和 scheduler state 只需为每个 persistent CTA 建立一次，随后可供它处理的多个 tiles 复用，不必由 1024 个短生命周期 CTAs 分别重复完成。
 
