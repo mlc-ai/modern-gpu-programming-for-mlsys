@@ -94,7 +94,9 @@ Warp specialization 之后，各个 warpgroups 会执行不同的代码路径。
 
 这里改用只同步一个 warpgroup 的 `warpgroup_sync(10)`。GPU 提供 16 个 named barriers（ID 0–15）；当多个 warpgroups 需要分别同步时，例如第 9 步中的多个 consumers，可以使用 `warpgroup_sync(wg_id + 10)` 为它们分配不同 IDs，避免落到同一个 hardware barrier 上。
 
-下面的实现使用 `PIPE_DEPTH=2`，这是能够让 load 与 compute 重叠的最小深度。更深的 pipeline 可以隐藏更多 memory latency，但也会占用更多 SMEM。完整 kernel 如下：
+### 完整 Kernel
+
+下面把前面的角色分工、四个 barriers 和 `PipelineState` 组合成第 7 步的完整实现。Kernel 沿用第 6 步的 persistent scheduler，并使用 `PIPE_DEPTH=2`；这是能够让 load 与 compute 重叠的最小深度。更深的 pipeline 可以隐藏更多 memory latency，但也会占用更多 SMEM。
 
 ```python
 import tvm
@@ -410,7 +412,9 @@ T.cuda.cluster_sync()
 - **Cluster-wide resource accounting**：TMA arrival byte count 要包含两个 CTAs 搬运的数据，`tcgen05.alloc` 和 `tcgen05.dealloc` 都使用 `cta_group=2`；释放 TMEM 前还要执行 `cluster_sync()`，确认两侧 CTA 都已经完成访问。
 
 
-完整实现如下：
+### 完整 Kernel
+
+下面的完整实现将上述 cluster 改动应用到第 7 步：两个 CTAs 共同准备 operands，由 CTA 0 发起 cooperative MMA，并通过 cluster-wide barriers 协调两侧的 SMEM 和 TMEM。
 
 ```python
 def hgemm_v8(M, N, K):
@@ -639,7 +643,9 @@ Cluster 提高了 CTAs 之间的数据复用。最后一步会增加第二个 MM
 - Writeback 按 `EPI_N` 分块，使每轮只有较少的 TMEM readback values 同时保存在 registers 中
 
 
-完整实现如下：
+### 完整 Kernel
+
+下面的完整实现继续沿用第 8 步的 two-CTA cluster，并加入第二组 A tile、MMA consumer 和 writeback warpgroup。两个 consumers 共享同一份 B tile，分别更新各自的 TMEM accumulator range。
 
 ```python
 def hgemm_v9(M, N, K):
