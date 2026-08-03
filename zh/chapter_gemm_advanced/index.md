@@ -88,11 +88,19 @@ tma_ps.advance()                          # Advance to next stage
 
 如果两端使用相同的初始 phase，kernel 可能 deadlock，也可能在数据尚未准备好时继续执行。
 
-### `warpgroup_sync` 的 Barrier ID
+### `warpgroup_sync`：只同步一个 Warpgroup
 
-Warp specialization 之后，各个 warpgroups 会执行不同的代码路径。此时不能在分支内部使用要求整个 CTA 参与的 `cta_sync()`，否则未进入该分支的 threads 无法到达同步点，kernel 会 deadlock。
+第 7 步的 writeback 由 Warpgroup 0 的 128 个 threads 完成。它们先分别把 registers 写入 `Dsmem`，等整块 tile 都写完后，再由其中一个 thread 发起 TMA store。这里需要同步 Warpgroup 0，但不能使用 `cta_sync()`：CTA 中的另一个 warpgroup 正在执行 producer 和 MMA consumer 分支，不会到达这个同步点。如果 Warpgroup 0 在分支内等待整个 CTA，kernel 就会 deadlock。
 
-这里改用只同步一个 warpgroup 的 `warpgroup_sync(10)`。GPU 提供 16 个 named barriers（ID 0–15）；当多个 warpgroups 需要分别同步时，例如第 9 步中的多个 consumers，可以使用 `warpgroup_sync(wg_id + 10)` 为它们分配不同 IDs，避免落到同一个 hardware barrier 上。
+`warpgroup_sync(10)` 只等待当前 warpgroup 的 128 个 threads。它会 lower 为：
+
+```text
+bar.sync 10, 128
+```
+
+其中 `10` 是 named barrier ID，`128` 是这次同步需要收到的 thread arrivals。执行到这里的 128 个 writeback threads 使用同一个 ID；全部到达后，它们才会继续。代码中的第一次 `warpgroup_sync(10)` 保证 `Dsmem` 已经写完整，第二次则保证 selected thread 已经等待 TMA store 完成，其他 threads 才进入下一轮。
+
+每个 CTA 有 16 个 named barrier slots，ID 范围为 0–15。ID 本身不会自动绑定某个 warpgroup，而是由 kernel 分配：参与同一次同步的 threads 必须使用相同 ID，彼此独立的同步则应使用不同 ID。第 7 步只有 Warpgroup 0 执行 writeback，因此固定使用 ID 10；第 9 步有两个 writeback warpgroups，使用 `warpgroup_sync(wg_id + 10)` 后，它们分别使用 IDs 10 和 11，arrival 不会混在同一个 barrier 中。
 
 ### Epilogue（Writeback）
 
