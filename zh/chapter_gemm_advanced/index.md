@@ -860,26 +860,26 @@ def hgemm_v9(M, N, K):
 | 9 | Multi-consumer | 0.094 ms | ~744× |
 | --- | cuBLAS（参考） | 0.094 ms | ~744× |
 
-表中给出具体时间的版本都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。第 1 步的 70 ms 不是将 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的示例直接用于 $4096^3$，而是把相同的串行思路扩展到完整问题后得到的 naive full-size baseline。第 1 至 3 步在基础章节中使用较小规模，是为了便于讲解；表中的第 1、3 步则来自对应的 full-size benchmarks。
+表中给出具体时间的版本都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的 `hgemm_v1`。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。
 
 第 2 步仍然只计算一个 output tile，因此没有可直接比较的 full-size timing。第 5、6 步已经是完整 kernels，但这次 reference run 没有分别记录它们的时间；software pipeline 和 persistent scheduling 的效果会继续保留在第 7 步及后续版本中。这里不根据后续结果反推它们各自的加速比。
 
-这些数字来自一组受控条件下的 B200 reference run，并不是通用排行榜结果。各步骤中的 `{.python .input}` benchmark cells 适合观察趋势，不应当用来宣称硬件峰值性能。
+这些数字来自同一次 B200 reference run，只用于比较本章各版本在相同条件下的相对变化，不代表其他输入规模或测试环境下的硬件峰值。
 
-主要性能提升来自四项改动：
+从已经测量的版本可以作四组比较：
 
-1. **TMA Async Data Movement**：第 4 步相对第 1 步约快 142 倍。这个累计结果还包含 K-loop、spatial tiling 和多 CTA 并行，不能单独归因于 TMA。
-2. **Software Pipelining 与 Warp Specialization**：让 load 和 compute 使用独立角色并重叠执行，从第 4 步到第 7 步约快 2.2 倍。
-3. **CTA Cluster**：two-SM cooperative MMA 提高 B tile 在 CTAs 之间的复用，本次测试中从第 7 步到第 8 步约快 2.2 倍。
-4. **Multi-Consumer**：使用两个 MMA warps 提高计算密度，从第 8 步到第 9 步约快 10%。
+1. **第 1 步 → 第 4 步**：时间从 70 ms 降到 0.49 ms，累计约快 142 倍。这一区间同时加入了 K-loop、spatial tiling、多 CTA 并行和 TMA，不能把全部提升单独归因于 TMA。
+2. **第 4 步 → 第 7 步**：software pipeline、persistent scheduling 和 warp specialization 将时间从 0.49 ms 降到 0.23 ms，约快 2.2 倍。
+3. **第 7 步 → 第 8 步**：two-CTA cooperative MMA 提高 staged operands 的复用，时间从 0.23 ms 降到 0.104 ms，约快 2.2 倍。
+4. **第 8 步 → 第 9 步**：第二个 MMA consumer 复用同一组 staged B slices，时间从 0.104 ms 降到 0.094 ms，约快 10%。
 
 下图将已测量的几个版本与 cuBLAS reference 放在一起：
 
 ![GEMM 的逐步优化结果](../../img/gemm_perf.png)
 
-越接近最终版本，单步加速幅度越小。前几步主要解决 memory bottleneck：TMA 替换 software copy，cluster 提高 arithmetic intensity，因此收益最大。第 8 步已经达到 0.104 ms，与 cuBLAS 的 0.094 ms 相差约 10%，kernel 也逐渐接近 compute-bound，可隐藏的 memory stall 已经很少。第 9 步通过 multi-consumer 进一步回收剩余空间，获得约 10% 的提升。
+后续步骤的提升逐渐变小，是因为 kernel 已经越来越接近当前计算的硬件上限。第 8 步达到 0.104 ms，与本次 cuBLAS reference 的 0.094 ms 相差约 10%；第 9 步继续提高 staged B 的复用后，最终达到 0.094 ms。
 
-下一章的 Flash Attention 会继续使用 TMA loads、`tcgen05` MMA、TMEM readback 和 warp-specialized barriers，并在两次 MMA phases 之间加入 online softmax。
+下一章会把 TMA load、`tcgen05` MMA、TMEM readback 和 warp-specialized barriers 用于 Flash Attention，并在两个 MMA 阶段之间加入 online softmax。
 
 
 ## 练习
