@@ -321,16 +321,16 @@ def hgemm_v7(M, N, K):
 (chap_cta_cluster)=
 ## 第 8 步：Two-CTA Cluster
 
-第 7 步完成了一个 CTA 内部的角色分工，但不同 CTAs 之间仍然各自加载 operands、计算自己的 $128\times128$ output tile。第 8 步将协作范围扩展到两个 CTAs：它们组成一个 cluster，各自在本地 shared memory 中准备一部分 operands，再由一条 cooperative `tcgen05` MMA 读取两侧的数据，共同计算一个 $256\times256$ output tile。
+第 7 步完成了单个 CTA 内部的角色分工。第 8 步进一步让两个 CTAs 组成 cluster：它们分别准备一部分 operands，再由一条 cooperative `tcgen05` MMA 读取两侧的数据，共同计算一个 $256\times256$ output tile。
 
 > **这一步改变 Scope、Layout 和 Dispatch**
 > - Scope：协作范围由一个 CTA 扩展到 cluster 中的两个 CTAs。
-> - Layout：operand tiles 分布在两个 CTAs 的 SMEM 中；CTA 0 持有共享的 completion barrier，另一个 CTA 通过 `remote_view` 访问它。
-> - Dispatch：MMA 使用 `cta_group` 和 `cta_mask`，使 `tcgen05` 以 two-CTA cooperative operation 的方式执行。
+> - Layout：A、B slices 分布在两个 CTAs 的 SMEM 中，accumulator 也分布在两侧的 TMEM 中。
+> - Dispatch：`Tx.gemm_async` 使用 `cta_group=2` 发起 two-CTA cooperative MMA；完成通知通过 `cta_mask=3` 同时发送到两侧。
 
-### Cluster Tile 的 Shape
+### 两个 CTA 如何组成 Cluster Tile
 
-`cta_group=2` 允许 MMA 读取两个 CTAs 分别准备的 operand tiles。每个 CTA 加载 stored B 中包含 128 行的一个 slice；转置后，这些行对应 logical B operand 的 128 个 output columns。Cooperative MMA 再将两个 slices 合并为完整 operand。下面的交互图展示两个 CTAs 的 A、B slices 如何组成一个 $256\times256$ cluster tile：
+本教程使用 `D = A @ B.T`，其中 stored B 的 shape 为 `N×K`。对于一个 $256\times256$ cluster tile，两个 CTAs 分别加载 A 的 128 行和 stored B 的 128 行；经过 `B.T` 后，两份 B row slices 正好对应 output 的两个 128-column slices。下图展示了这四个 operand slices 如何参与同一次 cooperative MMA：
 
 ```{raw} html
 <div style="overflow-x:auto;">
@@ -338,90 +338,61 @@ def hgemm_v7(M, N, K):
         style="width:100%; min-width:720px; height:580px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 ```
-*每个 CTA 持有一个 A row slice 和一个 stored-B row slice，并通过 cluster 中的 distributed shared memory（DSMEM）读取另一个 CTA 的 stored-B slice。经过 `B.T` 后，两个 slices 覆盖完整的 output columns，因此两个 CTAs 共同生成一个 $256\times256$ output tile。*
+*两个 CTAs 各自提供一个 A row slice 和一个 stored-B row slice。Cooperative MMA 从两侧 SMEM 读取这些数据，并将结果写入两侧的 TMEM。*
 
-本教程将 GEMM 写成 `D = A @ B.T`，其中 stored B 的 shape 为 `N × K`。两个 CTAs 对 operands 的分工如下：
-
-- **A 沿 M 维切分**：CTA 0 持有 A0（rows 0–127），CTA 1 持有 A1（rows 128–255）。两部分合起来共有 256 行。
-- **Stored B 沿 N 维切分**：CTA 0 加载 B rows 0–127，CTA 1 加载 B rows 128–255。由于计算使用 `B.T`，这两个 stored row slices 会成为 logical right-hand operand 的两个 128-column slices。
-- 使用 `cta_group=2` 后，MMA hardware 通过 cross-CTA shared memory access 读取两个 CTAs 的 B slices，得到完整的 logical output-column 范围。
-- 两个 CTAs 共同计算一个 $256\times256$ output tile，每个 CTA 最终写回其中一个 $128\times256$ row stripe。
-
-每个 CTA 仍只加载 $128\times K$ 的 A 和 $128\times K$ 的 B，因此 cluster 准备的 operand data 大约是单 CTA 的两倍；但它生成的 $256\times256$ tile 所包含的 FLOPs 约为 $128\times128$ tile 的四倍。Cooperative MMA 会让每个 CTA 的 B slice 与另一个 CTA 的 A slice 组合，从而使每个 staged-operand byte 支持约两倍的计算。算术强度由此接近翻倍，也解释了本章末尾结果表中约 2.2 倍的性能提升。
-
-### Tile 地址计算
-
-Cluster 成为调度单位后，tile scheduler 也按 cluster tile 计数。每个 `(m_idx, n_idx)` 表示一个完整的 $256\times256$ 区域，cluster 内的两个 CTAs 再分别加载自己的 slices：
-
-```python
-m_st = (m_idx * CTA_GROUP + cbx) * BLK_M
-n_st = (n_idx * CTA_GROUP + cbx) * BLK_N
-```
-
-两个 CTAs 处理同一个 $256\times256$ cluster tile。`cbx` 表示 CTA 在 cluster 中的位置，取值为 0 或 1。`m_st` 选择该 CTA 拥有的 output row stripe，`n_st` 选择它为 cooperative MMA 提供的 stored-B slice。Writeback 时，每个 CTA 都会写出 output 的两个 128-column halves。`num_m_tiles = M // 256` 和 `num_n_tiles = N // 256` 统计的也是 cluster tiles，而不是单 CTA tiles。
-
-令 `m_base = m_idx * 256`、`n_base = n_idx * 256`，两个 CTAs 实际负责的数据如下：
+令 `m_base = m_idx * 256`、`n_base = n_idx * 256`。两个 CTAs 的分工如下：
 
 | CTA | 加载的 A slice | 加载的 stored-B slice | 写回的 D 区域 |
 |-----|----------------|-----------------------|----------------|
 | CTA 0 | `A[m_base:m_base+128, :]` | `B[n_base:n_base+128, :]` | `D[m_base:m_base+128, n_base:n_base+256]` |
 | CTA 1 | `A[m_base+128:m_base+256, :]` | `B[n_base+128:n_base+256, :]` | `D[m_base+128:m_base+256, n_base:n_base+256]` |
 
-因此，`cbx` 在 `m_st` 中选择该 CTA 负责的 output rows，在 `n_st` 中选择它要加载的 stored-B rows。后者只是 cooperative MMA 的输入坐标，并不表示该 CTA 只负责对应的 output columns。Writeback 时，两个 CTAs 都覆盖完整的 256 个 output columns，所以 column 起点使用 `n_st_epi = n_idx * 256 + no * 128`，其中不含 `cbx`。
+与第 7 步的单 CTA tile 相比，这个 cluster 加载两倍的 operand data，却计算四倍的 output elements。每个 A slice 都会与两份 B slices 相乘，每个 B slice 也会参与两份 A rows 的计算，因此每个 staged-operand byte 支持的计算量约为原来的两倍。
 
-### 相比第 7 步的代码改动
+### Tile 地址计算
 
-与第 7 步相比，cluster 版本主要有六处改动：
+Tile scheduler 现在以 $256\times256$ cluster tile 为单位。`cbx` 表示 CTA 在 cluster 中的位置，取值为 0 或 1：
 
 ```python
-# 1. Cluster launch
-cbx, cby = T.cta_id_in_cluster([CTA_GROUP, 1])   # cbx = CTA index within cluster (0 or 1)
-
-# 2. Cooperative MMA (was cta_group=1)
-Tx.gemm_async(..., cta_group=2)
-
-# 3. Cross-CTA shared memory access
-B_remote = T.ptx.map_shared_rank(Bsmem, cta_id=1)
-
-# 4. Cross-CTA barrier
-tma2mma_cta0 = T.decl_buffer(
-    [CTA_GROUP], "uint64",
-    data=T.ptx.map_shared_rank(tma2mma.ptr_to([0]), 0),
-    scope="shared"
-)
-
-# 5. mma2tma / mma2ld arrives go from cta_mask=0 (single CTA, Step 7)
-#    to cta_mask=3 (signal both CTAs in the cluster)
-mma2tma.arrive(mma_ps.stage, cta_group=CTA_GROUP, cta_mask=3)
-mma2ld.arrive(0, cta_group=CTA_GROUP, cta_mask=3)
-
-# 6. Cluster sync replaces cta_sync at the end
-T.cuda.cluster_sync()
+cbx, cby = T.cta_id_in_cluster([CTA_GROUP, 1])
+m_st = (m_idx * CTA_GROUP + cbx) * BLK_M
+n_st = (n_idx * CTA_GROUP + cbx) * BLK_N
 ```
 
+`m_st` 选择该 CTA 负责的 128 行 output stripe，`n_st` 选择它为 cooperative MMA 提供的 stored-B slice。`n_st` 只描述 MMA 的输入，并不限制该 CTA 最终写回哪些 output columns；两个 CTAs 都会写出各自 row stripe 中的全部 256 列。因此，writeback 的 column 起点为 `n_idx * 256 + no * 128`，其中不包含 `cbx`。
 
-### Cluster 内的协作
+### Cluster 中的数据交接
 
-这些改动都来自同一件事：协作 scope 已经从单个 CTA 扩展到 cluster。具体包括：
+两个 CTAs 各自拥有 SMEM 和 barriers，但 cooperative MMA 必须等两侧的 A、B slices 都准备好。当前实现选择 CTA 0 的 `tma2mma` 作为共同的 completion barrier，两个 CTAs 都通过同一个 remote view 引用它：
 
-- **Cluster CTA ID**：`cbx` 表示 CTA 在 cluster 中的位置。CTA 0 处理 A rows 0–127，CTA 1 处理 rows 128–255。
+```python
+tma2mma_cta0 = tma2mma.remote_view(0)
+```
 
-- **Remote barrier view**：每个 CTA 都有自己的 SMEM 和 barriers。这里选择 CTA 0 的 barrier 作为统一协调点，cluster 中的其他 CTA 通过 remote pointer 访问它。`map_shared_rank(tma2mma.ptr_to([0]), 0)` 返回指向 CTA 0 barrier 的 cluster-wide pointer；TIRx 中可用 `tma2mma.remote_view(0)` 表示。后续 arrive 和 wait 都作用于 CTA 0 的这份 barrier。
+两侧的 TMA loads 都将完成状态报告到这份 barrier。CTA 0 再通过一次 `arrive` 登记两侧 operands 的总字节数；只有全部传输完成后，MMA consumer 才能继续。
 
-- **只由 CTA 0 发起 MMA**：`cta_group=2` 并不表示两个 CTAs 分别发起一条 MMA。CTA 0 发出一条 `tcgen05.mma`，hardware 执行跨越两个 CTAs 的 cooperative MMA，从两侧 SMEM 读取 operands，并将 accumulator 写入两侧 TMEM。CTA 1 不再发出相同指令，因此代码使用 `if cbx == 0:` 保护 MMA path。
+Cooperative MMA 也只发起一次。代码用 `if cbx == 0:` 选出 CTA 0 中的 MMA thread，并设置 `cta_group=2`：
 
-- **Multicast arrive**：`tcgen05.commit(..., cta_group=2, cta_mask=3)` 只由 CTA 0 发出，但会通知两个 CTAs 的 barriers。`cta_mask=3` 即二进制 `11`，表示 CTA 0 和 CTA 1 都是目标。
+```python
+if cbx == 0:
+    Tx.gemm_async(..., cta_group=2)
+```
 
-- **`ld2mma` 的 init count**：`init(128 * CTA_GROUP)`，两个 CTAs 的 writeback warpgroups 各有 128 个 threads，全部都要执行 arrival。
+硬件随后读取两个 CTAs 的 SMEM，并更新两侧的 TMEM accumulator。MMA 完成后，CTA 0 使用 `cta_mask=3` 将通知同时发送给 CTA 0 和 CTA 1：
 
-- **Cluster-wide resource accounting**：TMA arrival byte count 要包含两个 CTAs 搬运的数据，`tcgen05.alloc` 和 `tcgen05.dealloc` 都使用 `cta_group=2`；释放 TMEM 前还要执行 `cluster_sync()`，确认两侧 CTA 都已经完成访问。
+```python
+mma2tma.arrive(mma_ps.stage, cta_group=2, cta_mask=3)
+mma2ld.arrive(0, cta_group=2, cta_mask=3)
+```
 
-- **分块 writeback**：cooperative MMA 生成 256 列结果。若一次读回全部列，每个 writeback thread 需要同时保存 256 个 fp32 values。这里将 N 维拆成两个 128 列的 chunks，每次从 TMEM 读回一半并完成一次 TMA store，从而限制同时占用的 registers 数量。
+这里的 `3` 即二进制 `11`，表示 cluster 中的两个 CTAs 都是通知目标。Writeback 完成后，两侧各有 128 个 threads 向 CTA 0 的 `ld2mma` barrier 报告 arrival，因此该 barrier 初始化为 `128 * CTA_GROUP`。
+
+TMEM 的申请和释放同样使用 `cta_group=2`。释放前执行 `cluster_sync()`，确保两个 CTAs 都已结束当前访问。Writeback 则将 256 列结果拆成两个 128-column chunks，每轮只读回一半 TMEM 数据并完成一次 TMA store，避免每个 thread 同时保存 256 个 fp32 values。
 
 
 ### 完整 Kernel
 
-下面的完整实现将上述 cluster 改动应用到第 7 步：两个 CTAs 共同准备 operands，由 CTA 0 发起 cooperative MMA，并通过 cluster-wide barriers 协调两侧的 SMEM 和 TMEM。
+下面将 tile 分工、cooperative MMA 和跨 CTA barrier 协议组合成完整 kernel：
 
 ```python
 def hgemm_v8(M, N, K):
