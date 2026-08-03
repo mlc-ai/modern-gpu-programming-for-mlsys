@@ -353,15 +353,30 @@ def hgemm_v7(M, N, K):
 
 ### Tile 地址计算
 
-Tile scheduler 现在以 $256\times256$ cluster tile 为单位。`cbx` 表示 CTA 在 cluster 中的位置，取值为 0 或 1：
+Tile scheduler 返回的 `(m_idx, n_idx)` 表示一个 $256\times256$ cluster output tile。为便于展开后面的地址计算，记它的左上角为：
+
+```python
+m_base = m_idx * 256
+n_base = n_idx * 256
+```
+
+`cbx` 表示 CTA 在 cluster 中的位置，取值为 0 或 1。两个 CTAs 根据 `cbx` 从这个 cluster tile 中选择各自负责加载的 A、B slices：
 
 ```python
 cbx, cby = T.cta_id_in_cluster([CTA_GROUP, 1])
-m_st = (m_idx * CTA_GROUP + cbx) * BLK_M
-n_st = (n_idx * CTA_GROUP + cbx) * BLK_N
+m_st = m_base + cbx * BLK_M
+n_st = n_base + cbx * BLK_N
 ```
 
-`m_st` 选择该 CTA 负责的 128 行 output stripe，`n_st` 选择它为 cooperative MMA 提供的 stored-B slice。`n_st` 只描述 MMA 的输入，并不限制该 CTA 最终写回哪些 output columns；两个 CTAs 都会写出各自 row stripe 中的全部 256 列。因此，writeback 的 column 起点为 `n_idx * 256 + no * 128`，其中不包含 `cbx`。
+因此，CTA 0 从 `m_base` 和 `n_base` 开始加载，CTA 1 则分别向后移动 128 行。`m_st` 同时也是该 CTA 最终写回的 output row 起点；`n_st` 只用于选择它提供给 cooperative MMA 的 stored-B rows。
+
+两份 B slices 会共同参与 MMA，所以每个 CTA 都会得到自己 128 行上的全部 256 个 output columns。Epilogue 分两次写回这 256 列，`no=0,1` 分别选择前后两个 128-column chunks：
+
+```python
+n_st_epi = n_base + no * BLK_N
+```
+
+这里不使用 `cbx`，因为 `cbx` 选择的是当前 CTA 加载的 B slice，而不是它最终写回的 output columns。
 
 ### Cluster 中的数据交接
 
