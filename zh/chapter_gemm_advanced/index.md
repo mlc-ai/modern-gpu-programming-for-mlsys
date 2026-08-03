@@ -321,7 +321,7 @@ def hgemm_v7(M, N, K):
 (chap_cta_cluster)=
 ## 第 8 步：Two-CTA Cluster
 
-第 7 步已经让多个 engines 重叠执行，但每个 CTA 仍独立计算自己的 $128\times128$ tile，相邻 CTA 无法复用它加载的 operands。第 8 步让两个 CTAs 组成 cluster，并访问彼此的 shared memory。一条 cooperative `tcgen05` MMA 会跨越两个 CTAs，生成一个 $256\times256$ tile；一份 B data 也可以支持更多 MMA 计算。
+第 7 步完成了一个 CTA 内部的角色分工，但不同 CTAs 之间仍然各自加载 operands、计算自己的 $128\times128$ output tile。第 8 步将协作范围扩展到两个 CTAs：它们组成一个 cluster，各自在本地 shared memory 中准备一部分 operands，再由一条 cooperative `tcgen05` MMA 读取两侧的数据，共同计算一个 $256\times256$ output tile。
 
 > **这一步改变 Scope、Layout 和 Dispatch**
 > - Scope：协作范围由一个 CTA 扩展到 cluster 中的两个 CTAs。
