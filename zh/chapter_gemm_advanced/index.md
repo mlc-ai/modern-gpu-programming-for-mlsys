@@ -598,22 +598,22 @@ def hgemm_v8(M, N, K):
 > **这一步改变 Scope 和 Layout**
 > - Scope：CTA 0 中负责发起 MMA 的 consumer warps 由一个增加到两个，并通过 `warp_id` 区分。
 > - Layout：A layout 增加 consumer axis，TMEM 也分成两个独立的 accumulator ranges；两个 consumers 复用同一个 staged B tile。
-> - Dispatch：不变。
+> - Dispatch：仍使用 `tcgen05` 和 `cta_group=2`，但现在会为两个 consumers 分别发起一次 cooperative MMA。
 
 ### Multi-Consumer 结构
 
-增加第二个 consumer 后，kernel 需要两个 MMA issue warps，以及两个分别负责对应 accumulator 的 writeback warpgroups。设置 `NUM_CONSUMER=2` 和 `WG_NUMBER=3` 后，各个角色分配如下：
+增加第二个 consumer 后，kernel 需要两个 MMA issue warps，以及两个分别负责对应 accumulator 的 writeback warpgroups。每个 MMA warp 中仍然只有 `elect_sync()` 选出的一个 thread 发出指令。设置 `NUM_CONSUMER=2` 和 `WG_NUMBER=3` 后，各个角色分配如下：
 
 | Warpgroup | Warp | 角色 |
 |-----------|------|------|
-| **WG 2** | warp 0 | MMA consumer 0：由 CTA 0 发起 `Asmem[..., 0] × B`，写入 TMEM cols `[0:256]` |
-| **WG 2** | warp 1 | MMA consumer 1：由 CTA 0 发起 `Asmem[..., 1] × B`，写入 TMEM cols `[256:512]` |
+| **WG 2** | warp 0 | MMA consumer 0：CTA 0 中选出的 thread 发起 `Asmem[..., 0] × B`，写入 TMEM cols `[0:256]` |
+| **WG 2** | warp 1 | MMA consumer 1：CTA 0 中选出的 thread 发起 `Asmem[..., 1] × B`，写入 TMEM cols `[256:512]` |
 | **WG 2** | warp 2 | 当前版本未使用 |
 | **WG 2** | warp 3 | TMA producer：两个 CTAs 各自加载本地的 2 个 A blocks 和 1 个 B block |
 | **WG 0** | 全部 warps | 两个 CTAs 分别写回 consumer 0 的本地 output rows，读取 TMEM `[0:256]` |
 | **WG 1** | 全部 warps | 两个 CTAs 分别写回 consumer 1 的本地 output rows，读取 TMEM `[256:512]` |
 
-两个 consumers 需要不同的 A blocks，是因为它们计算不同的 output rows；它们使用同一组 B slices，是因为两组结果覆盖相同的 output columns。这样，同一次 B load 可以参与两次 cooperative MMA，B 相对于计算量的加载成本也近似减半。
+两个 consumers 需要不同的 A blocks，是因为它们计算不同的 output rows；它们使用同一组 B slices，是因为两组结果覆盖相同的 output columns。这样，同一组 staged B slices 可以参与两次 cooperative MMA，B 相对于计算量的加载成本也近似减半。
 
 ### 相比第 8 步的改动
 
@@ -637,7 +637,7 @@ CTA_GROUP * (
 
 两个 MMA warps 使用 `warp_id` 选择自己的 A block，并分别写入 TMEM cols `[0:256]` 和 `[256:512]`。
 
-**Barrier。** 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 `mma2tma` 的 expected arrival count 改为 `NUM_CONSUMER`。`mma2ld` 和 `ld2mma` 则各自包含两个 slots：slot 0 连接 MMA consumer 0 与 WG 0，slot 1 连接 MMA consumer 1 与 WG 1。MMA 侧使用 `warp_id` 选择 slot，writeback 侧使用 `wg_id` 选择同一个 slot。
+**Barrier。** 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 `mma2tma` 的 expected arrival count 改为 `NUM_CONSUMER`。`mma2ld` 和 `ld2mma` 则各自包含两个 slots：slot 0 连接 MMA consumer 0 与两侧 CTA 的 WG 0，slot 1 连接 MMA consumer 1 与两侧 CTA 的 WG 1。MMA 侧使用 `warp_id` 选择 slot，writeback 侧使用 `wg_id` 选择同一个 slot。
 
 **Scheduler 和 writeback。** 一个 cluster tile 现在包含 $512\times256$ 个 output elements，因此 scheduler 使用：
 
@@ -646,7 +646,7 @@ num_m_tiles = M // (NUM_CONSUMER * CTA_GROUP * BLK_M)  # M // 512
 num_n_tiles = N // (CTA_GROUP * BLK_N)                 # N // 256
 ```
 
-`m_st` 指向 consumer 0 的 A rows，consumer 1 的起点再向后移动 `CTA_GROUP * BLK_M`，也就是 256 行。Writeback 时，每个 consumer 的 256 列按 `EPI_N=64` 分成四轮；每轮只将 64 个 fp32 values 读入每个 thread 的 registers，再转换并写回。
+`m_st` 指向 consumer 0 的 A rows；consumer `c` 的起点为 `m_st + c * CTA_GROUP * BLK_M`，所以 consumer 1 会再向后移动 256 行。Writeback 时，每个 consumer 的 256 列按 `EPI_N=64` 分成四轮；每个 thread 一轮只需保存 64 个 fp32 values，完成转换和写回后再处理下一轮。
 
 
 ### 完整 Kernel
