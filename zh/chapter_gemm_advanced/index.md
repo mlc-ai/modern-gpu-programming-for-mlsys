@@ -330,7 +330,7 @@ def hgemm_v7(M, N, K):
 
 ### 两个 CTA 如何组成 Cluster Tile
 
-本教程使用 `D = A @ B.T`，其中 stored B 的 shape 为 `N×K`。对于一个 $256\times256$ cluster tile，两个 CTAs 分别加载 A 的 128 行和 stored B 的 128 行；经过 `B.T` 后，两份 B row slices 正好对应 output 的两个 128-column slices。下图展示了这四个 operand slices 如何参与同一次 cooperative MMA：
+B 在内存中按 `N×K` 存储，因此 B 的一行会在 `B.T` 中成为一列。对于一个 $256\times256$ cluster tile，每个 CTA 加载 A 的 128 行和 stored B 的 128 行。两份 A slices 合起来覆盖 256 个 output rows，两份 B slices 经过转置后覆盖 256 个 output columns。下图展示了这四个 operand slices 如何参与同一次 cooperative MMA：
 
 ```{raw} html
 <div style="overflow-x:auto;">
