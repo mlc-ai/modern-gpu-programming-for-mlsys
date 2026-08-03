@@ -48,19 +48,15 @@ T.ptx.mbarrier.try_wait(tma_bar, phase)                  # wait before MMA reads
 
 第 4 步仍然在每次 TMA load 后立即等待，因此 load 和 compute 还没有重叠。此时的变化只是将地址生成和 tile 搬运从 CTA threads 转交给 TMA engine，从而减少 threads 执行的搬运指令。第 5 步会加入第二个 SMEM stage，真正让 TMA load 与 MMA 同时进行。
 
-### TMA Load 与 Store 的同步
+### 等待 TMA Load 和 Store 完成
 
-发起 TMA load 后，数据传输仍会在 TMA engine 中继续执行。`cta_sync()` 只能同步 CTA 中的 threads，不能判断这次异步传输是否已经完成。为此，发起操作的 thread 需要向 mbarrier 登记本轮预期传输的 bytes，CTA 再等待该 barrier；只有 barrier 完成后，MMA 才能读取 SMEM tile。下图展示了这次交接：
+TMA load 发出后，数据传输仍会在 TMA engine 中继续执行。`cta_sync()` 只能同步 CTA 中的 threads，不能判断异步传输是否已经完成。因此，MMA 在读取 SMEM tile 前，需要通过 mbarrier 等待 TMA load 完成。
 
 ![TMA Async Load 的同步流程](../../img/tma_sync_flow_zh.svg)
 
-图中，一个 selected thread 启动 TMA，mbarrier 记录预期 bytes，MMA 则在读取 SMEM 前等待 barrier 完成。图中的 “Elected Thread” 指负责启动 TMA 的 selected thread；在本节代码中，它是满足 `tid == 0` 的 thread，而不是通过 `elect_sync()` 选出的 lane。
+本例的 A、B loads 共用一个 mbarrier。`tid == 0` 的 thread 发出两次 `copy_async`，再通过 `arrive.expect_tx(total_bytes)` 登记两块 tiles 的总字节数。TMA engine 完成传输后，会逐步扣减 barrier 记录的待完成字节数。只有 arrival 和字节传输都完成后，`mbarrier.try_wait(phase)` 才会通过，MMA 此时才能安全读取 `Asmem` 和 `Bsmem`。
 
-完整 load path 如下：selected thread 发出两次 `copy_async`，再执行 `arrive.expect_tx(total_bytes)`，登记两块 tiles 的总 byte count。Engine 完成这些 bytes 的传输后，对应的 `mbarrier.try_wait(phase)` 才会通过，此时 SMEM tile 才能安全交给 MMA。
-
-TMA store 使用另一套等待方式：load 通过 mbarrier 和 byte count 跟踪完成，store 则使用 commit group 和 wait group。Threads 将 fp16 结果写入 `Dsmem` 并完成同步后，一个 selected thread 启动 `Tx.copy_async(D[...], Dsmem, dispatch="tma")`，再依次执行 `cp_async.bulk.commit_group()` 和 `cp_async.bulk.wait_group(0)`，等待 store 完成。此前不能复用 `Dsmem`，否则会覆盖仍在传输的数据。
-
-**使用你的 agent 练习**：追踪第 4 步中一个 K tile 的 load/store 同步。指出哪个 thread 启动每条 TMA 命令，哪个 mbarrier 或 commit group 跟踪完成状态，哪个 wait 保护 MMA 对 `Asmem`、`Bsmem` 的读取，以及哪个 wait 保护 `Dsmem` 的复用。如果四个 warps 都直接执行 `elect_sync()`，会有多少个 threads 发起 TMA？
+TMA store 使用另一套完成机制。Threads 将结果写入 `Dsmem` 并执行 CTA 同步后，`tid == 0` 的 thread 发起从 `Dsmem` 到 GMEM 的异步 copy。Kernel 随后通过 `cp_async.bulk.commit_group()` 提交这次 store，并使用 `cp_async.bulk.wait_group(0)` 等待完成。在 wait 返回前，`Dsmem` 不能被覆盖或复用。
 
 ### 完整 Kernel
 
