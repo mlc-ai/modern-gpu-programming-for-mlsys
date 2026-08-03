@@ -286,7 +286,7 @@ if stage == PIPE_DEPTH - 1:
     phase_tma ^= 1
 ```
 
-**使用你的 agent 练习**：取 `PIPE_DEPTH=2`、`K_TILES=5`，追踪 main loop。对每个 `k`，列出 `stage`、传给 waits 的 `phase_tma` 和 `phase_mma`，以及是否发起新的 prefetch。`phase_tma` 在哪里翻转？为什么最后两个 iterations 不会再 prefetch？
+**Pipeline 推演**：取 `PIPE_DEPTH=2`、`K_TILES=5`，追踪 main loop。对每个 `k`，列出 `stage`、传给 waits 的 `phase_tma` 和 `phase_mma`，以及是否发起新的 prefetch。`phase_tma` 在哪里翻转？为什么最后两个 iterations 不会再 prefetch？
 
 ### 完整 Kernel
 

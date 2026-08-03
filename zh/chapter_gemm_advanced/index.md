@@ -874,4 +874,4 @@ def hgemm_v9(M, N, K):
 2. 第 8 步使用 `cta_group=2` 时，TMA arrival byte count 为 `CTA_GROUP * (BLK_M*BLK_K + BLK_N*BLK_K) * F16_SIZE`。既然每个 CTA 分别加载自己的数据，为什么还要乘以 `CTA_GROUP`？
 3. 第 9 步中，每个 consumer 处理不同的 M rows，但使用相同的 B tile。为什么应该共享 B，而不是 A？
 
-**使用你的 agent 练习**：粘贴第 7 步的 kernel，让它追踪一个 K tile 依次经过四个 barriers（`tma2mma`、`mma2tma`、`mma2ld`、`ld2mma`）的过程。对于每个 barrier，说明谁执行 wait、谁执行 arrival、哪个 tile 随后可以安全读取，以及哪个 buffer 可以复用。
+**Barrier 推演**：追踪第 7 步中一个 K tile 依次经过四个 barriers（`tma2mma`、`mma2tma`、`mma2ld`、`ld2mma`）的过程。对于每个 barrier，说明谁执行 wait、谁执行 arrival、哪个 tile 随后可以安全读取，以及哪个 buffer 可以复用。
