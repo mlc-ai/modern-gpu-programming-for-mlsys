@@ -94,9 +94,32 @@ Warp specialization 之后，各个 warpgroups 会执行不同的代码路径。
 
 这里改用只同步一个 warpgroup 的 `warpgroup_sync(10)`。GPU 提供 16 个 named barriers（ID 0–15）；当多个 warpgroups 需要分别同步时，例如第 9 步中的多个 consumers，可以使用 `warpgroup_sync(wg_id + 10)` 为它们分配不同 IDs，避免落到同一个 hardware barrier 上。
 
+### Epilogue（Writeback）
+
+第 7 步中 `BLK_N=128`，writeback warpgroup 可以一次将整个 TMEM tile 读入 registers，再发起一次 TMA store。执行顺序如下：
+
+1. 使用 `mma2ld.wait(phase)` 等待 MMA 完成，再执行 `T.ptx.tcgen05.fence.after_thread_sync()`，将后续的 `tcgen05.ld` 排在这次跨 thread 的完成通知之后。
+2. 将 TMEM 读入 registers。每个 thread 接收 128 个 fp32 values；warpgroup 先执行 `Tx.copy_async(reg_wg, tmem[:, :BLK_N])`，再使用 `T.ptx.tcgen05.wait.ld()` 等待 load 完成。
+3. 所有 128 个 writeback threads 执行 `ld2mma.arrive(0, cta_id=0, pred=True)`，通知 MMA 当前 TMEM 已经可以供下一个 tile 使用。`cta_id=0` 表示更新当前 CTA 的 local barrier；`pred=True` 表示每个 writeback thread 都执行 arrival。第 8 步会改用 `cta_mask` 通知 cluster 中的 CTAs。
+4. 在 registers 中将 fp32 转换为 fp16。
+5. 将 registers 写入 `Dsmem`，再执行 `fence.proxy_async("shared::cta")` 和 `warpgroup_sync(10)`。
+6. 使用 `cp_async.bulk.commit_group()` 和 `wait_group(0)`，通过 TMA 将 `Dsmem` 写回 GMEM。
+
+这里的 mbarrier wait 和 `tcgen05.wait.ld()` 负责等待两项不同的工作：前者确认 MMA 已经完成，`fence.after_thread_sync()` 建立跨 thread 的 `tcgen05` 执行顺序，后者再确认异步 TMEM load 已经写入目标 registers。
+
+第 8 步的 `BLK_N=256`，第 9 步中每个 consumer 的 `MMA_N=256`。若仍一次读取整个 tile，每个 thread 需要同时保存 256 个 fp32 values，也就是 1024 bytes，不仅会增加 register pressure，甚至可能 spill 到 local memory，还会要求更大的 `Dsmem`。因此，后面两个版本将 writeback 拆成 `EPI_N=64` 列的 chunks。每轮只保留 `EPI_N` 个 fp32 registers，并发起一次较小的 TMA store，以更多 store instructions 换取可控的 register 用量。
+
+实现中还保留了以下两点：
+
+- **Persistent kernel**：`bx = T.cta_id([SM_COUNT])`，每个 CTA 循环处理多个 tiles。
+
+- **有利于 L2 locality 的调度**：`ClusterPersistentScheduler2D` 调整 tiles 的处理顺序。
+
+Warp specialization 与 software pipelining 的组合也常见于 CUTLASS 等高性能 GEMM 实现。
+
 ### 完整 Kernel
 
-下面把前面的角色分工、四个 barriers 和 `PipelineState` 组合成第 7 步的完整实现。Kernel 沿用第 6 步的 persistent scheduler，并使用 `PIPE_DEPTH=2`；这是能够让 load 与 compute 重叠的最小深度。更深的 pipeline 可以隐藏更多 memory latency，但也会占用更多 SMEM。
+下面把前面的角色分工、四个 barriers、`PipelineState` 和 writeback path 组合成第 7 步的完整实现。Kernel 沿用第 6 步的 persistent scheduler，并使用 `PIPE_DEPTH=2`；这是能够让 load 与 compute 重叠的最小深度。更深的 pipeline 可以隐藏更多 memory latency，但也会占用更多 SMEM。
 
 ```python
 import tvm
@@ -278,29 +301,6 @@ def hgemm_v7(M, N, K):
 
     return kernel
 ```
-
-### Epilogue（Writeback）
-
-第 7 步中 `BLK_N=128`，writeback warpgroup 可以一次将整个 TMEM tile 读入 registers，再发起一次 TMA store。执行顺序如下：
-
-1. 使用 `mma2ld.wait(phase)` 等待 MMA 完成，再执行 `T.ptx.tcgen05.fence.after_thread_sync()`，将后续的 `tcgen05.ld` 排在这次跨 thread 的完成通知之后。
-2. 将 TMEM 读入 registers。每个 thread 接收 128 个 fp32 values；warpgroup 先执行 `Tx.copy_async(reg_wg, tmem[:, :BLK_N])`，再使用 `T.ptx.tcgen05.wait.ld()` 等待 load 完成。
-3. 所有 128 个 writeback threads 执行 `ld2mma.arrive(0, cta_id=0, pred=True)`，通知 MMA 当前 TMEM 已经可以供下一个 tile 使用。`cta_id=0` 表示更新当前 CTA 的 local barrier；`pred=True` 表示每个 writeback thread 都执行 arrival。第 8 步会改用 `cta_mask` 通知 cluster 中的 CTAs。
-4. 在 registers 中将 fp32 转换为 fp16。
-5. 将 registers 写入 `Dsmem`，再执行 `fence.proxy_async("shared::cta")` 和 `warpgroup_sync(10)`。
-6. 使用 `cp_async.bulk.commit_group()` 和 `wait_group(0)`，通过 TMA 将 `Dsmem` 写回 GMEM。
-
-这里的 mbarrier wait 和 `tcgen05.wait.ld()` 负责等待两项不同的工作：前者确认 MMA 已经完成，`fence.after_thread_sync()` 建立跨 thread 的 `tcgen05` 执行顺序，后者再确认异步 TMEM load 已经写入目标 registers。
-
-第 8 步的 `BLK_N=256`，第 9 步中每个 consumer 的 `MMA_N=256`。若仍一次读取整个 tile，每个 thread 需要同时保存 256 个 fp32 values，也就是 1024 bytes，不仅会增加 register pressure，甚至可能 spill 到 local memory，还会要求更大的 `Dsmem`。因此，后面两个版本将 writeback 拆成 `EPI_N=64` 列的 chunks。每轮只保留 `EPI_N` 个 fp32 registers，并发起一次较小的 TMA store，以更多 store instructions 换取可控的 register 用量。
-
-实现中还保留了以下两点：
-
-- **Persistent kernel**：`bx = T.cta_id([SM_COUNT])`，每个 CTA 循环处理多个 tiles。
-
-- **有利于 L2 locality 的调度**：`ClusterPersistentScheduler2D` 调整 tiles 的处理顺序。
-
-Warp specialization 与 software pipelining 的组合也常见于 CUTLASS 等高性能 GEMM 实现。
 
 ### 第 7 步的常见错误
 
