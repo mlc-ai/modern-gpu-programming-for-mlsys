@@ -353,6 +353,8 @@ Tile scheduler 返回的 `(m_idx, n_idx)` 表示一个 $256\times256$ cluster ou
 
 ### Tile 地址计算
 
+因为 scheduler 以 $256\times256$ cluster tile 为单位，所以 M、N 方向的 tile 数量分别是 `M // 256` 和 `N // 256`。
+
 `cbx` 表示 CTA 在 cluster 中的位置，取值为 0 或 1。基于上面的 `m_base` 和 `n_base`，两个 CTAs 使用 `cbx` 选择各自负责加载的 A、B slices：
 
 ```python
@@ -381,7 +383,13 @@ n_st_epi = n_base + no * BLK_N
 tma2mma_cta0 = tma2mma.remote_view(0)
 ```
 
-两侧的 TMA loads 都将完成状态报告到这份 barrier，CTA 0 则通过一次 `arrive` 登记两侧 operands 的总字节数。只有所有 A、B slices 都传输完成，CTA 0 中的 MMA consumer 才能通过 wait。
+两侧的 TMA loads 都将完成状态报告到这份 barrier，CTA 0 则通过一次 `arrive` 登记两侧 operands 的总字节数。每个 CTA 加载一份 `BLK_M×BLK_K` 的 A 和一份 `BLK_N×BLK_K` 的 B，因此登记的 byte count 为：
+
+```python
+CTA_GROUP * (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE
+```
+
+只有这些 bytes 全部传输完成，CTA 0 中的 MMA consumer 才能通过 wait。
 
 **MMA → TMA 和 writeback。** Cooperative MMA 只需发起一次。代码用 `if cbx == 0:` 保留 CTA 0 的 MMA path，其中选出的一个 thread 使用 `cta_group=2` 发出指令：
 
