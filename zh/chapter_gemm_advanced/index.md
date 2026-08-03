@@ -879,7 +879,7 @@ def hgemm_v9(M, N, K):
 
 后续步骤的提升逐渐变小，是因为 kernel 已经越来越接近当前计算的硬件上限。第 8 步达到 0.104 ms，与本次 cuBLAS reference 的 0.094 ms 相差约 10%；第 9 步继续提高 staged B 的复用后，最终达到 0.094 ms。
 
-下一章会把 TMA load、`tcgen05` MMA、TMEM readback 和 warp-specialized barriers 用于 Flash Attention，并在两个 MMA 阶段之间加入 online softmax。
+下一章转向 Flash Attention。它先通过 score MMA 计算 $QK^{\mathsf T}$，再执行 online softmax，最后通过 value MMA 用 $P$ 和 $V$ 更新输出。前面建立的 TMA、TMEM 和 barrier 协议仍然适用，但 pipeline 中多出了由 CUDA cores 执行的 softmax 阶段。
 
 
 ## 练习
