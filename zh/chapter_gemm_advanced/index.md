@@ -4,16 +4,16 @@
 :::{admonition} 概览
 :class: overview
 
-- 上一章的 pipelined GEMM 仍由一个 warpgroup 依次完成 load、MMA 和 writeback，本章将消除这个串行瓶颈。
+- 上一章的 pipelined GEMM 仍由一个 warpgroup 统一控制 load、MMA 和 writeback，本章将通过角色分工进一步解耦这些阶段。
 - 第 7 步为不同 warps 分配专门角色，第 8 步引入 two-CTA cluster，第 9 步增加多个 MMA consumers。
 - 每一步都扩大协作范围并减少一个串行阶段，最终在本章测试条件下接近 cuBLAS reference。
 :::
 
-上一章的 pipelined GEMM（{ref}`chap_gemm_async`）已经使用 TMA、software pipeline 和 persistent scheduling，但 load、MMA 和 writeback 仍由同一个 warpgroup 依次完成。三个硬件执行路径最终都要经过同一组 threads。
+上一章的 pipelined GEMM（{ref}`chap_gemm_async`）已经引入 TMA、software pipeline 和 persistent scheduling，但 kernel 中仍然只有一个 warpgroup。它既要发起 TMA load，也要等待 A、B tiles 准备完成并发起 MMA，最后还要完成结果写回。虽然这些操作由不同的硬件单元执行，它们的控制与同步仍集中在同一个 warpgroup 中。
 
-结果是，Tensor Cores 计算时 TMA engine 可能处于空闲状态，结果写回 memory 时计算单元又可能停下来。要让这些阶段真正并行，首先要让不同 warps 各自负责固定的工作。
+Software pipeline 已经让部分 load 与 compute 发生重叠，但各阶段的推进仍然相互牵制。这个 warpgroup 等待某个阶段完成或执行 writeback 时，无法独立推进其他阶段。要让数据搬运、矩阵计算和结果写回持续并行，需要让不同 warps 分别负责固定的工作。
 
-本章分三步扩大协作范围：先把 TMA、MMA 和 writeback 分配给不同角色，再让两个 CTAs 协作计算一个更大的 tile，最后增加第二个 MMA consumer。前两章建立的数据路径保持不变，变化的是哪些执行单元共同使用这些数据，以及它们如何通过 barriers 交接资源。
+本章分三步扩大 kernel 的协作范围：第 7 步将 TMA、MMA 和 writeback 分配给不同的 warp roles；第 8 步让两个 CTAs 协作计算一个更大的 output tile；第 9 步增加第二个 MMA consumer。GEMM 的数学计算保持不变，重点转向不同 warps 和 CTAs 如何分工，以及它们如何通过 barriers 交接数据和资源。
 
 
 (chap_warp_specialization)=
