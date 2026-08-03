@@ -11,7 +11,7 @@
 
 上一章的 kernel 按照固定顺序处理每个 K tile：threads 先把 A、B 搬入 shared memory，等待所有写入完成，再发起 MMA 并等待计算结束；之后才开始加载下一块。这个执行顺序容易理解，也能得到正确结果，但数据搬运和 Tensor Core 计算无法重叠。
 
-本章将在前面三步完成的 kernel 上继续优化。第 4 步用 TMA 代替 threads 搬运 A、B tiles；第 5 步为 shared memory 准备两个 stages，使 TMA 加载下一块 K tile 时，Tensor Core 可以计算当前 tile；第 6 步再加入 tile scheduler，让已经驻留的 CTAs 连续处理多个 output tiles。经过这三步，kernel 将从串行执行的 tiled GEMM 逐步变成 pipelined persistent GEMM。
+本章将在前面三步完成的 kernel 上继续优化。第 4 步用 TMA 代替 threads 搬运 A、B tiles；第 5 步为 shared memory 准备两个 stages，建立预取和后续并发所需的 buffer 结构；第 6 步再加入 tile scheduler，让已经驻留的 CTAs 连续处理多个 output tiles。经过这三步，kernel 将从串行执行的 tiled GEMM 逐步变成 pipelined persistent GEMM。
 
 (chap_tma_async)=
 ## 第 4 步：TMA Async Load
@@ -46,7 +46,7 @@ T.ptx.mbarrier.try_wait(tma_bar, phase)                  # wait before MMA reads
 
 `tid` 将 warp ID 和 lane ID 合并为 warpgroup 内的 thread ID，因此 `tid == 0` 只会选中一个 thread。若四个 warps 都直接执行 `elect_sync()`，每个 warp 都会选出一个 active lane，共有四个 threads 发起 TMA。也可以先限制 `warp_id == 0` 再使用 `elect_sync()`；这里使用 `tid == 0`，写法更直接。
 
-第 4 步仍然在每次 TMA load 后立即等待，因此 load 和 compute 还没有重叠。此时的变化只是将地址生成和 tile 搬运从 CTA threads 转交给 TMA engine，从而减少 threads 执行的搬运指令。第 5 步会加入第二个 SMEM stage，真正让 TMA load 与 MMA 同时进行。
+第 4 步仍然在每次 TMA load 后立即等待，因此 load 和 compute 还没有重叠。此时的变化只是将地址生成和 tile 搬运从 CTA threads 转交给 TMA engine，从而减少 threads 执行的搬运指令。第 5 步会加入第二个 SMEM stage，用于预取和循环复用；真正的角色级重叠会在第 7 步实现。
 
 ### 等待 TMA Load 和 Store 完成
 

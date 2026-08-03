@@ -11,7 +11,7 @@
 
 上一章的 pipelined GEMM（{ref}`chap_gemm_async`）已经引入 TMA、software pipeline 和 persistent scheduling，但 kernel 中仍然只有一个 warpgroup。它既要发起 TMA load，也要等待 A、B tiles 准备完成并发起 MMA，最后还要完成结果写回。虽然这些操作由不同的硬件单元执行，它们的控制与同步仍集中在同一个 warpgroup 中。
 
-Software pipeline 已经让部分 load 与 compute 发生重叠，但各阶段的推进仍然相互牵制。这个 warpgroup 等待某个阶段完成或执行 writeback 时，无法独立推进其他阶段。要让数据搬运、矩阵计算和结果写回持续并行，需要让不同 warps 分别负责固定的工作。
+SMEM ring 和 prefetch 结构已经建立，但所有阶段仍由同一个 warpgroup 控制。它等待数据、发起 MMA 或执行 writeback 时，无法独立推进 pipeline 的其他部分。要让数据搬运、矩阵计算和结果写回持续并行，需要让不同 warps 分别负责固定的工作。
 
 本章分三步扩大 kernel 的协作范围：第 7 步将 TMA、MMA 和 writeback 分配给不同的 warp roles；第 8 步让两个 CTAs 协作计算一个更大的 output tile；第 9 步增加第二个 MMA consumer。GEMM 的数学计算保持不变，重点转向不同 warps 和 CTAs 如何分工，以及它们如何通过 barriers 交接数据和资源。
 
