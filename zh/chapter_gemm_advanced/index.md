@@ -306,6 +306,8 @@ def hgemm_v7(M, N, K):
 
 还要确认每块存储何时可以复用：TMA 只能在 `mma2tma` 完成后覆盖当前 `Asmem`、`Bsmem` stage；MMA 只能在 `ld2mma` 完成后覆盖 TMEM accumulator；下一轮 writeback 也必须等前一次 TMA store 完成后才能复用 `Dsmem`。这样可以把一次 deadlock 或错误结果定位到具体的数据交接，而不必同时检查整条 pipeline。
 
+**Barrier 推演**：追踪一个 K tile 依次经过 `tma2mma`、`mma2tma`、`mma2ld` 和 `ld2mma` 的过程。对于每个 barrier，说明谁执行 wait、谁执行 arrival、哪份数据随后可以安全读取，以及哪个 buffer 可以复用。
+
 ### Pipeline Depth 的 SMEM 成本
 
 `PIPE_DEPTH=2` 包含两组 A、B stages：MMA 读取其中一组时，TMA 可以填充另一组。增加 depth 可以让 producer 提前准备更多 tiles，但每增加一个 stage 都要多分配一组 `Asmem` 和 `Bsmem`。
@@ -885,5 +887,3 @@ def hgemm_v9(M, N, K):
 1. 第 7 步中，如果 TMA 和 MMA 的 `PipelineState` 都将初始 `phase` 设为 `0`，会发生什么？画出 deadlock 过程。
 2. 第 8 步使用 `cta_group=2` 时，TMA arrival byte count 为 `CTA_GROUP * (BLK_M*BLK_K + BLK_N*BLK_K) * F16_SIZE`。既然每个 CTA 分别加载自己的数据，为什么还要乘以 `CTA_GROUP`？
 3. 第 9 步中，每个 consumer 处理不同的 M rows，但使用相同的 B tile。为什么应该共享 B，而不是 A？
-
-**Barrier 推演**：追踪第 7 步中一个 K tile 依次经过四个 barriers（`tma2mma`、`mma2tma`、`mma2ld`、`ld2mma`）的过程。对于每个 barrier，说明谁执行 wait、谁执行 arrival、哪个 tile 随后可以安全读取，以及哪个 buffer 可以复用。
