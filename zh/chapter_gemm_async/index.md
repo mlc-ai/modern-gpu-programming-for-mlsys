@@ -4,9 +4,9 @@
 :::{admonition} 本章概览
 :class: overview
 
-- 基础 GEMM 让 copy 和 compute 依次执行，但两者本可以同时工作。
-- 第 4 步改用 TMA async load；第 5 步建立双缓冲 SMEM；第 6 步加入 tile scheduler，将 kernel 改为 persistent kernel。
-- 最终目标是在 Tensor Core 计算当前 tile 时，同时加载下一块 tile。
+- 第 4 步使用 TMA 搬运 GMEM 与 SMEM 之间的 tiles：load 通过 mbarrier 等待，store 通过 async group 等待。
+- 第 5 步将 A、B buffers 改成双缓冲 SMEM ring，加入预取、stage 复用和 phase 管理，为重叠 TMA load 与 MMA 建立基础。
+- 第 6 步使用 tile scheduler 构建 persistent kernel，让固定数量的 CTAs 连续处理多个 output tiles，并改善 tile 的 L2 locality。
 :::
 
 上一章的 kernel 按照固定顺序处理每个 K tile：threads 先把 A、B 搬入 shared memory，等待所有写入完成，再发起 MMA 并等待计算结束；之后才开始加载下一块。这个执行顺序容易理解，也能得到正确结果，但数据搬运和 Tensor Core 计算无法重叠。

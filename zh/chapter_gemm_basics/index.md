@@ -4,9 +4,9 @@
 :::{admonition} 本章概览
 :class: overview
 
-- 本章使用 TIRx tile primitives，从一个输出 tile 开始构建 tiled GEMM。
-- 第 1 步完成单个 tile 的计算，第 2 步沿 K 维循环累加，第 3 步将完整输出矩阵划分为多个 tiles，并交给不同的 CTAs 计算。
-- 本章先保证结果正确，后两章再逐步优化性能。
+- 第 1 步从一个顺序执行的 $128\times128$ output tile 开始，走通 A、B 从 GMEM 进入 SMEM、`tcgen05` MMA 写入 TMEM，以及结果读回与写出的完整数据路径。
+- 第 2 步沿 K 维分块，并在同一块 TMEM accumulator 中累加 partial sums；重复使用 MMA barrier 时，需要同步更新 phase。
+- 第 3 步将 M、N 方向的 output tiles 分配给二维 CTA grid，得到能够处理完整矩阵的正确性基线。
 :::
 
 GEMM 是本书后续章节反复使用的核心计算。Linear layer、attention projection 和许多 convolution 实现都以矩阵乘法为基础，而这些运算通常占据 GPU 的大部分执行时间。要进一步优化 GEMM，首先需要一个结果正确、结构清楚的基线 kernel。

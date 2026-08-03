@@ -4,9 +4,9 @@
 :::{admonition} 概览
 :class: overview
 
-- 上一章的 pipelined GEMM 仍由一个 warpgroup 统一控制 load、MMA 和 writeback，本章将通过角色分工进一步解耦这些阶段。
-- 第 7 步为不同 warps 分配专门角色，第 8 步引入 two-CTA cluster，第 9 步增加多个 MMA consumers。
-- 每一步都扩大协作范围并减少一个串行阶段，最终在本章测试条件下接近 cuBLAS reference。
+- 第 7 步将 TMA load、MMA 和 writeback 分配给不同的 warp roles，并用四个 barriers 连接数据准备与 buffer 复用。
+- 第 8 步让两个 CTAs 通过 cooperative MMA 共同计算一个更大的 output tile，并处理跨 CTA 的 operand 读取与 barrier 交接。
+- 第 9 步增加第二个 MMA consumer，让两组 A blocks 共享同一份 staged B tile；最终版本在本章测试条件下达到 cuBLAS reference 的性能。
 :::
 
 上一章的 pipelined GEMM（{ref}`chap_gemm_async`）已经引入 TMA、software pipeline 和 persistent scheduling，但 kernel 中仍然只有一个 warpgroup。它既要发起 TMA load，也要等待 A、B tiles 准备完成并发起 MMA，最后还要完成结果写回。虽然这些操作由不同的硬件单元执行，它们的控制与同步仍集中在同一个 warpgroup 中。
