@@ -314,7 +314,7 @@ Warp specialization 已经让一个 CTA 内的不同 warps 并发工作。下一
 (chap_cta_cluster)=
 ## 第 8 步：Two-CTA Cluster
 
-第 7 步已经让多个 engines 重叠执行，但每个 CTA 仍独立计算自己的 $128\times128$ tile，相邻 CTA 无法复用它加载的 operands。第 8 步让两个 CTAs 组成 cluster，并访问彼此的 shared memory。一条 cooperative `tcgen05` MMA 会跨越两个 CTAs，生成一个 $256\times256$ tile；一份 B data 也可以支持更多 MMA 计算。问题规模仍为 `M=N=K=4096`。
+第 7 步已经让多个 engines 重叠执行，但每个 CTA 仍独立计算自己的 $128\times128$ tile，相邻 CTA 无法复用它加载的 operands。第 8 步让两个 CTAs 组成 cluster，并访问彼此的 shared memory。一条 cooperative `tcgen05` MMA 会跨越两个 CTAs，生成一个 $256\times256$ tile；一份 B data 也可以支持更多 MMA 计算。
 
 > **这一步改变 Scope、Layout 和 Dispatch**
 > - Scope：协作范围由一个 CTA 扩展到 cluster 中的两个 CTAs。
@@ -599,7 +599,7 @@ Cluster 提高了 CTAs 之间的数据复用。最后一步会增加第二个 MM
 (chap_multi_consumer)=
 ## 第 9 步：Multi-Consumer Warp Specialization
 
-第 8 步已经让 MMA 保持忙碌，但每个 staged B tile 仍只供一个 consumer warp 使用。最后一步增加第二个 MMA consumer，让它使用另一块 A 与同一份 B tile 相乘。每个 CTA 的计算密度由此翻倍，cluster output 也从 $256\times256$ 扩展到 $512\times256$。问题规模仍为 `M=N=K=4096`。
+第 8 步已经让 MMA 保持忙碌，但每个 staged B tile 仍只供一个 consumer warp 使用。最后一步增加第二个 MMA consumer，让它使用另一块 A 与同一份 B tile 相乘。每个 CTA 的计算密度由此翻倍，cluster output 也从 $256\times256$ 扩展到 $512\times256$。
 
 > **这一步改变 Scope 和 Layout**
 > - Scope：MMA consumer 由一个增加到两个，并通过 `warp_id` 区分。
