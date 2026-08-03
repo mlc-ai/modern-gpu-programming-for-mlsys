@@ -877,9 +877,9 @@ def hgemm_v9(M, N, K):
 
 ![GEMM 的逐步优化结果](../../img/gemm_perf.png)
 
-后续步骤的提升逐渐变小，是因为 kernel 已经越来越接近当前计算的硬件上限。第 8 步达到 0.104 ms，与本次 cuBLAS reference 的 0.094 ms 相差约 10%；第 9 步继续提高 staged B 的复用后，最终达到 0.094 ms。
+回看第 7 至第 9 步，优化沿着并发和数据复用两条主线推进。第 7 步通过 warp specialization 将 TMA load、MMA 和 writeback 分配给不同角色，使三条硬件路径可以重叠；第 8 步让两个 CTAs 共同计算一个更大的 output tile，提高每份 staged operand 参与的计算量；第 9 步增加第二个 MMA consumer，让两组 A blocks 共享同一份 B tile，进一步提高 CTA 内的数据复用。
 
-下一章转向 Flash Attention。它先通过 score MMA 计算 $QK^{\mathsf T}$，再执行 online softmax，最后通过 value MMA 用 $P$ 和 $V$ 更新输出。前面建立的 TMA、TMEM 和 barrier 协议仍然适用，但 pipeline 中多出了由 CUDA cores 执行的 softmax 阶段。
+这些步骤没有改变 $D=A B^{\mathsf T}$ 的计算，而是逐步扩大同时执行的工作和片上数据的复用范围，并通过 barriers 保证 SMEM 与 TMEM buffers 能够安全交接。在本次 B200 测试中，第 8 步达到 0.104 ms，第 9 步进一步降到 0.094 ms，与本次 cuBLAS reference 相同。此时主要的并发与复用机会已经得到利用，继续优化所能获得的增益也随之变小。
 
 
 ## 练习
