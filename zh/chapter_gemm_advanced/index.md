@@ -582,19 +582,6 @@ def hgemm_v8(M, N, K):
     return kernel
 ```
 
-增加 arithmetic intensity 后，第 8 步在 $4096^3$ 问题上达到 **0.104 ms**，相对于相同规模下耗时 70 ms 的第 1 步约快 676 倍。Kernel 此时已经逐渐接近 compute-bound。第 9 步会增加第二个 MMA consumer，让更多 Tensor Core work 同时在途。
-
-如果第 8 步反而比第 7 步慢，应先检查新增的 cluster contracts：
-
-1. TMA arrival byte count 是否为 `CTA_GROUP * (BLK_M*BLK_K + BLK_N*BLK_K) * F16_SIZE`。
-2. 对于 $256\times256$ cluster tile，scheduler dimensions 是否为 `num_m_tiles=M//256` 和 `num_n_tiles=N//256`。
-3. Writeback 是否对两个 128-column chunks 分别发起 TMA store，并在复用 `Dsmem` 前等待每次 store 完成。
-
----
-
-Cluster 提高了 CTAs 之间的数据复用。最后一步会增加第二个 MMA consumer，进一步提高每个 CTA 内部的计算密度。
-
-
 (chap_multi_consumer)=
 ## 第 9 步：Multi-Consumer Warp Specialization
 
