@@ -42,7 +42,7 @@ CLC 会换一种方式组织这 12 个 tiles。它的 launch grid 包含 12 个 
 
 所以，每个 coordinate 都只会被处理一次：它可能正常启动自己的 CTA，也可能在启动前被取消，再交给一个已经运行的 worker。只要 launch queue 中还有可以取消的 coordinate，空闲下来的 worker 就能继续计算，而不必等待某个预先指定的 CTA 启动。
 
-上面的例子把一个 CTA 当作调度单位。如果 kernel 使用 thread block cluster，CLC 每次会取消一个尚未启动的 cluster launch，并把它的 coordinate 交给一个已经运行的 cluster。Thread block cluster 是从 Hopper 开始提供的执行层级，一组 CTAs 会被共同调度，可以进行 cluster 范围的同步，也可以访问 cluster 内其他 CTA 的 distributed shared memory；Blackwell 的 CLC 则负责动态调度这些 CTA 或 cluster coordinates。
+上面的例子把一个 CTA 当作调度单位。如果 kernel 使用 thread block cluster，CLC 每次会取消一个尚未启动的 cluster launch，并把它的 coordinate 交给一个已经运行的 cluster。Thread block cluster 是从 Hopper 开始提供的执行层级，一组 CTAs 会被共同调度，可以进行 cluster 范围的同步，也可以访问 cluster 内其他 CTA 的 distributed shared memory；Blackwell 的 CLC 则负责动态调度这些 CTA 或 cluster coordinates；它与 cluster 执行模型本身是相互独立的。
 
 ## 一次 CLC 请求
 

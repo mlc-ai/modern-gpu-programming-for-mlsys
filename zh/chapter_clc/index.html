@@ -361,7 +361,7 @@ worker 3: tile 3, 7, 11
 <p>假设 CTA 0 已经算完 tile 0。它可以先不退出，而是向硬件请求一份尚未开始的工作。如果硬件选择了 CTA 3，就会取消 CTA 3 的启动，并把 CTA 3 原本应当使用的 <code class="docutils literal notranslate"><span class="pre">blockIdx</span></code> coordinate 返回给 CTA 0。CTA 0 根据这个 coordinate 找到 tile 3，接着完成 tile 3，然后再次请求下一份工作。</p>
 <p>被取消的 CTA 3 从未开始执行，因此也没有需要迁移的寄存器或执行状态。硬件交给 CTA 0 的只有 coordinate 3；这个 coordinate 在 kernel 中正好充当 tile 3 的任务编号。已经运行的 CTA 通过这种方式接管 pending launch 的工作，就是 CLC 所说的 work stealing。</p>
 <p>所以，每个 coordinate 都只会被处理一次：它可能正常启动自己的 CTA，也可能在启动前被取消，再交给一个已经运行的 worker。只要 launch queue 中还有可以取消的 coordinate，空闲下来的 worker 就能继续计算，而不必等待某个预先指定的 CTA 启动。</p>
-<p>上面的例子把一个 CTA 当作调度单位。如果 kernel 使用 thread block cluster，CLC 每次会取消一个尚未启动的 cluster launch，并把它的 coordinate 交给一个已经运行的 cluster。Thread block cluster 是从 Hopper 开始提供的执行层级，一组 CTAs 会被共同调度，可以进行 cluster 范围的同步，也可以访问 cluster 内其他 CTA 的 distributed shared memory；Blackwell 的 CLC 则负责动态调度这些 CTA 或 cluster coordinates。</p>
+<p>上面的例子把一个 CTA 当作调度单位。如果 kernel 使用 thread block cluster，CLC 每次会取消一个尚未启动的 cluster launch，并把它的 coordinate 交给一个已经运行的 cluster。Thread block cluster 是从 Hopper 开始提供的执行层级，一组 CTAs 会被共同调度，可以进行 cluster 范围的同步，也可以访问 cluster 内其他 CTA 的 distributed shared memory；Blackwell 的 CLC 则负责动态调度这些 CTA 或 cluster coordinates；它与 cluster 执行模型本身是相互独立的。</p>
 </section>
 <section id="clc">
 <h2>一次 CLC 请求<a class="headerlink" href="#clc" title="Link to this heading">#</a></h2>
