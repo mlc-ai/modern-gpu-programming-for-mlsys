@@ -16,7 +16,7 @@
 (chap_tma_async)=
 ## 第 4 步：TMA Async Load
 
-第 1 至第 3 步中，CTA 的所有 threads 都要计算地址并发出 load/store 指令，只为了把 tiles 搬入 SMEM。这会占用本可用于其他工作的 instruction bandwidth。第 4 步用 TMA 替换同步 `Tx.copy`：一个 thread 提交命令，TMA engine 独立完成整个 tile 的传输。从这里开始，示例统一使用完整的 `M=N=K=4096` 规模；端到端时间会在 {ref}`chap_gemm_advanced` 末尾汇总。
+第 1 至第 3 步中，CTA 的所有 threads 都要计算地址并发出 load/store 指令，只为了把 tiles 搬入 SMEM。这会占用本可用于其他工作的 instruction bandwidth。第 4 步用 TMA 替换同步 `Tx.copy`：一个 thread 提交命令，TMA engine 独立完成整个 tile 的传输。从这里开始，示例统一使用完整的 `M=N=K=4096` 规模。
 
 > **这一步改变 Dispatch**
 > - Scope：不变，仍为一个 warpgroup。
