@@ -342,25 +342,18 @@ def hgemm_v7(M, N, K):
 ```
 *点击两侧的 `Asmem`、`Bsmem` 或图中央的跨 CTA 读取，可以查看各部分在 cooperative MMA 中的作用。*
 
-令 `m_base = m_idx * 256`、`n_base = n_idx * 256`。两个 CTAs 的分工如下：
+Tile scheduler 返回的 `(m_idx, n_idx)` 表示一个 $256\times256$ cluster output tile。令它的左上角为 `m_base = m_idx * 256`、`n_base = n_idx * 256`，两个 CTAs 的分工如下：
 
 | CTA | 加载的 A slice | 加载的 stored-B slice | 写回的 D 区域 |
 |-----|----------------|-----------------------|----------------|
 | CTA 0 | `A[m_base:m_base+128, :]` | `B[n_base:n_base+128, :]` | `D[m_base:m_base+128, n_base:n_base+256]` |
 | CTA 1 | `A[m_base+128:m_base+256, :]` | `B[n_base+128:n_base+256, :]` | `D[m_base+128:m_base+256, n_base:n_base+256]` |
 
-与第 7 步的单 CTA tile 相比，这个 cluster 加载两倍的 operand data，却计算四倍的 output elements。每个 A slice 都会与两份 B slices 相乘，每个 B slice 也会参与两份 A rows 的计算，因此每个 staged-operand byte 支持的计算量约为原来的两倍。
+第 7 步的单个 CTA 加载一份 $128\times K$ 的 A 和一份 $128\times K$ 的 B，计算一个 $128\times128$ output tile。这里的 cluster 加载两份 A 和两份 B，operand data 增加到两倍；output tile 则扩大为 $256\times256$，元素数量增加到四倍。两份 A slices 都会分别与两份 B slices 相乘，因此每份 staged operand 参与的计算量约为原来的两倍。
 
 ### Tile 地址计算
 
-Tile scheduler 返回的 `(m_idx, n_idx)` 表示一个 $256\times256$ cluster output tile。为便于展开后面的地址计算，记它的左上角为：
-
-```python
-m_base = m_idx * 256
-n_base = n_idx * 256
-```
-
-`cbx` 表示 CTA 在 cluster 中的位置，取值为 0 或 1。两个 CTAs 根据 `cbx` 从这个 cluster tile 中选择各自负责加载的 A、B slices：
+`cbx` 表示 CTA 在 cluster 中的位置，取值为 0 或 1。基于上面的 `m_base` 和 `n_base`，两个 CTAs 使用 `cbx` 选择各自负责加载的 A、B slices：
 
 ```python
 cbx, cby = T.cta_id_in_cluster([CTA_GROUP, 1])
