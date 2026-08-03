@@ -18,10 +18,10 @@ This chapter continues from the three kernels built so far. Step 4 replaces the 
 
 Steps 1 through 3 use `Tx.cta.copy` to move A and B tiles: the CTA threads compute their addresses and execute the corresponding loads and stores. Step 4 switches to TMA. One thread issues the operation, and the TMA engine performs the remaining address generation and tile transfer. From this point onward, the examples use the full `M=N=K=4096` problem size.
 
-> **What this step changes: Dispatch**
+> **Step 4 execution structure**
 > - Scope: unchanged, one warpgroup.
 > - Layout: unchanged, same SMEM/TMEM/register tiles.
-> - Dispatch: GMEM → SMEM loads move from sync `Tx.copy` to the TMA engine.
+> - Dispatch: GMEM → SMEM loads move from synchronous `Tx.cta.copy` to the TMA engine.
 
 ### Issuing a TMA Load
 
@@ -240,7 +240,7 @@ The data-movement path is now correct, but the schedule remains sequential: each
 
 Step 4 cannot overlap load and compute because SMEM contains only one operand-tile pair. The next load has no independent destination; starting it early would overwrite data that the current MMA is still reading. Step 5 removes this storage conflict by double-buffering shared memory. The single-warpgroup loop still waits for each MMA before issuing the next TMA load, but it now has separate stages that can be prefetched and reused in a ring.
 
-> **What this step changes: Layout**
+> **Step 5 execution structure**
 > - Scope: unchanged, one warpgroup.
 > - Layout: the single SMEM tile pair becomes a `PIPE_DEPTH`-stage ring buffer.
 > - Dispatch: unchanged, TMA load and `tcgen05` MMA; this step adds prefetch and stage reuse, while full load/compute overlap arrives in Step 7.
@@ -459,7 +459,7 @@ Step 5 launches one CTA per $128\times128$ output tile. A $4096\times4096$ outpu
 
 A persistent kernel instead launches a fixed number of CTAs and lets each one process several tiles in sequence. This amortizes initialization across multiple tiles and moves tile assignment into the kernel, where the scheduler can choose an order that improves operand locality.
 
-> **What this step changes: Scope**
+> **Step 6 execution structure**
 > - Scope: a fixed pool of persistent CTAs, each looping over many output tiles via the scheduler.
 > - Layout: unchanged, the same per-tile SMEM/TMEM/register path.
 > - Dispatch: unchanged.

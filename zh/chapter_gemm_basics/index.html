@@ -357,9 +357,9 @@
 <div class="overview admonition">
 <p class="admonition-title">本章概览</p>
 <ul class="simple">
-<li><p>第 1 步从一个顺序执行的 <span class="math notranslate nohighlight">\(128\times128\)</span> output tile 开始，走通 A、B 从 GMEM 进入 SMEM、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA 写入 TMEM，以及结果读回与写出的完整数据路径。</p></li>
-<li><p>第 2 步沿 K 维分块，并在同一块 TMEM accumulator 中累加 partial sums；重复使用 MMA barrier 时，需要同步更新 phase。</p></li>
-<li><p>第 3 步将 M、N 方向的 output tiles 分配给二维 CTA grid，得到能够处理完整矩阵的正确性基线。</p></li>
+<li><p>第 1 步从输出矩阵 D 中一个顺序计算的 <span class="math notranslate nohighlight">\(128\times128\)</span> tile 开始，走通输入矩阵 A、B 从 GMEM 加载到 SMEM、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA 将结果写入 TMEM，以及 D 的读回与写出。</p></li>
+<li><p>第 2 步沿 K 维分块，并在同一块 TMEM accumulator 中累加 partial sums；每次复用 MMA barrier 时，都要更新下一轮的等待状态。</p></li>
+<li><p>第 3 步沿 M、N 维划分 output tiles，并让多个 CTAs 分别计算这些 tiles，从而覆盖完整的输出矩阵。</p></li>
 </ul>
 </div>
 <p>GEMM 是本书后续章节反复使用的核心计算。Linear layer、attention projection 和许多 convolution 实现都以矩阵乘法为基础，而这些运算通常占据 GPU 的大部分执行时间。要进一步优化 GEMM，首先需要一个结果正确、结构清楚的基线 kernel。</p>
@@ -376,14 +376,15 @@
 <li><p><span class="math notranslate nohighlight">\(D[m,n] = \sum_k A[m,k] \cdot B[n,k]\)</span>.</p></li>
 </ul>
 <p>这里将 <span class="math notranslate nohighlight">\(B\)</span> 按 <span class="math notranslate nohighlight">\(N \times K\)</span> 存储，这是 linear-layer weights 常见的存储方式。计算时直接读取 <span class="math notranslate nohighlight">\(B[n,k]\)</span>；若写成矩阵形式，等价于 <span class="math notranslate nohighlight">\(D=AB^{\top}\)</span>，但 kernel 不会额外转置或重排 <span class="math notranslate nohighlight">\(B\)</span>。</p>
-<p>本章使用 TFLOPS 衡量 kernel throughput。一次 multiply-add 计作两次浮点运算，因此：</p>
+<p>示例中的 <span class="math notranslate nohighlight">\(A\)</span>、<span class="math notranslate nohighlight">\(B\)</span> 和 <span class="math notranslate nohighlight">\(D\)</span> 都以 fp16 存储。MMA 沿 <span class="math notranslate nohighlight">\(K\)</span> 维累加时使用 fp32 accumulator，以减小累计舍入误差。</p>
+<p>Kernel 性能使用 TFLOPS 衡量。一次 multiply-add 计作两次浮点运算，因此：</p>
 <div class="math notranslate nohighlight">
 \[\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 10^{12}}\]</div>
 <section id="id1">
 <h3>GEMM 的数据路径<a class="headerlink" href="#id1" title="Link to this heading">#</a></h3>
 <p>后面的每项优化都与数据存放在哪里、如何移动有关，因此先看 Blackwell GEMM 的基本数据路径。Kernel 主要完成两类工作：在不同 memory space 之间搬运 tiles，以及使用这些 tiles 进行计算。下图展示了数据从输入到输出依次经过的 memory space：</p>
 <p><img alt="Memory 数据流" src="../_images/memory_dataflow.png" /></p>
-<p>从左向右看：operand tiles 先从 GMEM 进入 SMEM；<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 读取 SMEM 中的 operands，并把 accumulator 写入 TMEM；最后，epilogue 将 TMEM 中的结果读入 registers，再写回 GMEM。后续优化会改变其中某一步如何执行，但不会改变这条基本路径。</p>
+<p>从左向右看：operand tiles 先从 GMEM 进入 SMEM；<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 读取 SMEM 中的 operands，并把 accumulator 写入 TMEM；最后的结果写回阶段称为 epilogue，它将 TMEM 中的结果读入 registers，再写回 GMEM。后续优化会改变其中某一步如何执行，但不会改变这条基本路径。</p>
 </section>
 </section>
 <section id="id2">
@@ -403,18 +404,18 @@
 <span id="chap-single-tile"></span><h2>第 1 步：顺序执行的单 Tile GEMM<a class="headerlink" href="#tile-gemm" title="Link to this heading">#</a></h2>
 <p>第 1 步沿用 <a class="reference internal" href="../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">TIRx 入门</span></a> 中的 <code class="docutils literal notranslate"><span class="pre">hgemm_v1</span></code>，详细拆解其数据路径，并将它作为后续版本的正确性基线。这个 kernel 只计算一个 <code class="docutils literal notranslate"><span class="pre">128×128</span></code> output tile，并取 <code class="docutils literal notranslate"><span class="pre">K=64</span></code>；该规模不需要循环，数据路径中的每一步只出现一次，便于逐段理解。</p>
 <blockquote>
-<div><p><strong>这一步建立基线</strong></p>
+<div><p><strong>第 1 步的执行结构</strong></p>
 <ul class="simple">
 <li><p>Scope：一个包含 128 个 threads 的 warpgroup 按顺序执行整条数据路径。</p></li>
 <li><p>Layout：A、B tiles 位于 SMEM，accumulator 位于 TMEM，结果通过 registers 写出。</p></li>
-<li><p>Dispatch：同步 <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> 负责加载，<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 执行 MMA。</p></li>
+<li><p>Dispatch：同步 <code class="docutils literal notranslate"><span class="pre">Tx.cta.copy</span></code> 负责加载，<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 执行 MMA。</p></li>
 </ul>
 </div></blockquote>
 <section id="tile">
 <h3>单 Tile 数据流<a class="headerlink" href="#tile" title="Link to this heading">#</a></h3>
 <p>这个 kernel 只沿 <code class="docutils literal notranslate"><span class="pre">GMEM</span> <span class="pre">-&gt;</span> <span class="pre">SMEM</span> <span class="pre">-&gt;</span> <span class="pre">TMEM</span> <span class="pre">-&gt;</span> <span class="pre">registers</span> <span class="pre">-&gt;</span> <span class="pre">GMEM</span></code> 路径执行一次，不包含循环。具体步骤如下：</p>
 <ol class="arabic simple">
-<li><p><strong>分配</strong>：通过 pool allocator 分配 SMEM，通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 分配 TMEM，并准备 mbarrier。</p></li>
+<li><p><strong>分配</strong>：通过 pool allocator 分配 SMEM，通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 分配 TMEM，并准备等待 MMA 完成的 mbarrier。</p></li>
 <li><p><strong>加载</strong>：128 个 threads 使用同步 <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code>，协作将 A、B tiles 从 GMEM 搬到 SMEM。</p></li>
 <li><p><strong>计算</strong>：选出的一个 thread 发出 <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>，所有 threads 等待 mbarrier。</p></li>
 <li><p><strong>写回</strong>：warpgroup 将 TMEM 读入 registers；每个 thread 把 fp32 转成 fp16，再写入 GMEM。</p></li>
@@ -423,7 +424,7 @@
 </section>
 <section id="kernel">
 <h3>Kernel 的四个部分<a class="headerlink" href="#kernel" title="Link to this heading">#</a></h3>
-<p>下面先分别介绍存储空间分配、operand 加载、MMA 发起和结果写回，再把它们组合成完整 kernel。相关 API 已在第二部分（<a class="reference internal" href="../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">TIRx 入门</span></a>、<a class="reference internal" href="../chapter_tirx_layout_api/index.html#chap-tirx-layout-api"><span class="std std-ref">TIRx Layout API</span></a>）中介绍。</p>
+<p>下面先分别介绍存储空间分配、operand 加载、MMA 发起和结果写回，再把它们组合成完整 kernel。相关 API 已在第二部分（<a class="reference internal" href="../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">TIRx 入门</span></a>、<a class="reference internal" href="../chapter_tirx_layout_api/index.html#chap-tirx-layout-api"><span class="std std-ref">TIRx Layout API</span></a>）中介绍。本节固定使用 <code class="docutils literal notranslate"><span class="pre">BLK_M=BLK_N=128</span></code>、<code class="docutils literal notranslate"><span class="pre">BLK_K=64</span></code>；<code class="docutils literal notranslate"><span class="pre">m_st</span></code> 和 <code class="docutils literal notranslate"><span class="pre">n_st</span></code> 表示当前 output tile 在 D 中的行、列起点，在这个单 tile kernel 中都为 0。</p>
 <p><strong>分配存储空间。</strong> Kernel 先为 operands 分配 shared memory，并为 TMEM address 和 mbarrier 预留位置：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>
 <span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>           <span class="c1"># TMEM address (4 bytes)</span>
@@ -434,7 +435,7 @@
 <span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">pool.move_base_to(1024)</span></code> 将 SMEM pool 的当前分配位置移动到 byte offset 1024。之后，<code class="docutils literal notranslate"><span class="pre">Asmem</span></code> 从这里开始分配，<code class="docutils literal notranslate"><span class="pre">Bsmem</span></code> 紧随其后；前面的区域留给 <code class="docutils literal notranslate"><span class="pre">tmem_addr</span></code>、<code class="docutils literal notranslate"><span class="pre">mma_bar</span></code> 等 metadata。</p>
+<p><code class="docutils literal notranslate"><span class="pre">pool.move_base_to(1024)</span></code> 将 SMEM pool 的当前分配位置移动到 byte offset 1024。之后，<code class="docutils literal notranslate"><span class="pre">Asmem</span></code> 从这里开始分配，<code class="docutils literal notranslate"><span class="pre">Bsmem</span></code> 紧随其后；前面的区域留给 <code class="docutils literal notranslate"><span class="pre">tmem_addr</span></code>、<code class="docutils literal notranslate"><span class="pre">mma_bar</span></code> 等少量管理数据。</p>
 <p><code class="docutils literal notranslate"><span class="pre">A_layout</span></code> 和 <code class="docutils literal notranslate"><span class="pre">B_layout</span></code> 由 <code class="docutils literal notranslate"><span class="pre">tma_shared_layout(dtype,</span> <span class="pre">swizzle_mode,</span> <span class="pre">shape)</span></code> 生成。这个函数根据数据类型、swizzle mode 和 tile shape 构造 shared-memory layout；这里选择 128-byte swizzle，得到与当前 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> dispatch 匹配的 SMEM 排列。<code class="docutils literal notranslate"><span class="pre">layout=A_layout</span></code> 和 <code class="docutils literal notranslate"><span class="pre">layout=B_layout</span></code> 再将这两个 layout 分别绑定到 <code class="docutils literal notranslate"><span class="pre">Asmem</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Bsmem</span></code>。</p>
 <p>第 1 步由 <code class="docutils literal notranslate"><span class="pre">Tx.cta.copy</span></code> 按照这些 layout 写入数据，随后 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 按照匹配的排列读取。</p>
 <p><strong>加载 operand tiles。</strong> Buffer 分配完成后，由 CTA 中的 threads 把 operands 搬入 SMEM：</p>
@@ -456,7 +457,7 @@
 </div>
 <p>外层 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0</span></code> 只保留 warpgroup 中的 warp 0；内层 <code class="docutils literal notranslate"><span class="pre">T.ptx.elect_sync()</span></code> 再从这个 warp 的 active lanes 中选出一个。最终只有一个 thread 执行 <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>。</p>
 <p>只有一个 thread 发出指令，并不表示矩阵乘法由这个 thread 单独完成。硬件仍然根据 SMEM operand layouts 和 TMEM accumulator layout，对整个 tile 执行 MMA。若让 128 个 threads 都发出同一操作，硬件反而会重复启动这次计算。</p>
-<p><code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 表示一个 tile operation，而不是一条硬件指令。这里 <code class="docutils literal notranslate"><span class="pre">K=64</span></code>，大于硬件 MMA 的 K-atom（<code class="docutils literal notranslate"><span class="pre">MMA_K=16</span></code>），因此 TIRx 会沿 K 维将它 lower 成一小段 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 指令序列。</p>
+<p><code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 表示一个 tile operation，而不是一条硬件指令。这里 tile 的 K 维大小为 64，而底层每条 MMA 指令处理 16 个 K 元素，因此 TIRx 会将它 lower 成一小段 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 指令序列。</p>
 <p><code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 是异步操作。<code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> 将前面发出的 MMA 与 <code class="docutils literal notranslate"><span class="pre">mma_bar</span></code> 关联；warpgroup 中的 threads 随后在外层执行 <code class="docutils literal notranslate"><span class="pre">mbarrier.try_wait</span></code>，等到 barrier 完成后才能读取 TMEM 中的结果。</p>
 <p><code class="docutils literal notranslate"><span class="pre">accum=False</span></code> 表示这次 <code class="docutils literal notranslate"><span class="pre">gemm_async</span></code> 从新的 accumulator 开始，不读取 TMEM 中原有的 partial sum。本步骤只执行一次 tile operation，因此使用 <code class="docutils literal notranslate"><span class="pre">False</span></code>；第 2 步加入 K-loop 后，后续 iterations 会改用 <code class="docutils literal notranslate"><span class="pre">accum=True</span></code>。</p>
 <p><strong>写回结果。</strong> 计算结果位于 TMEM，而输出 <code class="docutils literal notranslate"><span class="pre">D</span></code> 需要以 fp16 写回 GMEM。Epilogue 先将结果读入 registers，再完成类型转换：</p>
@@ -493,7 +494,7 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">TileLayout</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">TLane</span><span class="p">,</span> <span class="n">TCol</span><span class="p">,</span> <span class="n">tid_in_wg</span>
 </pre></div>
 </div>
-<p>Kernel 使用后续步骤共同采用的 <code class="docutils literal notranslate"><span class="pre">hgemm_vX(M,</span> <span class="pre">N,</span> <span class="pre">K)</span></code> 形式。第 1 步取 <code class="docutils literal notranslate"><span class="pre">M=N=128,</span> <span class="pre">K=64</span></code>，因此 launch 中只有一个 output tile：</p>
+<p>Kernel 使用后续步骤共同采用的 <code class="docutils literal notranslate"><span class="pre">hgemm_vX(M,</span> <span class="pre">N,</span> <span class="pre">K)</span></code> 形式。一次 kernel launch 中的所有 CTAs 构成 grid；第 1 步取 <code class="docutils literal notranslate"><span class="pre">M=N=128,</span> <span class="pre">K=64</span></code>，只需要一个 CTA，因此 grid shape 为 <code class="docutils literal notranslate"><span class="pre">1×1</span></code>：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">hgemm_v1</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">K</span><span class="p">):</span>
     <span class="n">a_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
     <span class="n">b_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
@@ -640,7 +641,7 @@
 <h3>单 Tile Kernel 的限制<a class="headerlink" href="#tile-kernel" title="Link to this heading">#</a></h3>
 <p>这个 kernel 已经能够算对，但适用范围很窄。当前仍有以下限制：</p>
 <ul class="simple">
-<li><p>只处理一个 K tile，无法对较大的 K 做 contraction。</p></li>
+<li><p>只处理一个 K tile，无法沿更大的 K 维完成分块累加。</p></li>
 <li><p>只处理一个 output tile，因此 M、N 固定为 128。</p></li>
 <li><p>使用同步的 GMEM → SMEM copy，而不是 TMA。</p></li>
 <li><p>数据搬运与计算不重叠，两者不能同时执行。</p></li>
@@ -653,7 +654,7 @@
 <p>先解决 K 维的限制。第 1 步只处理一个宽度为 64 的 K tile，而真实矩阵的 K 往往远大于 64。第 2 步仍然只计算一个 output tile，但允许 K 由多个宽度为 64 的 chunks 组成。</p>
 <p>基本做法是：对每个 chunk 重复一次 <code class="docutils literal notranslate"><span class="pre">load</span> <span class="pre">-&gt;</span> <span class="pre">MMA</span> <span class="pre">-&gt;</span> <span class="pre">wait</span></code>，并让所有 MMA 累加到同一个 TMEM 位置。需要特别注意的是同步。多个 iterations 复用同一个 mbarrier 时，如果 phase 跟踪错误，wait 可能在当前 MMA 真正完成之前返回，最终结果会在没有报错的情况下被破坏。</p>
 <blockquote>
-<div><p><strong>这一步改变 Layout 复用方式</strong></p>
+<div><p><strong>第 2 步的执行结构</strong></p>
 <ul class="simple">
 <li><p>Scope：不变，仍然是一个 warpgroup。</p></li>
 <li><p>Layout/复用：K-loop 始终复用同一对 SMEM tiles 和同一个 TMEM accumulator 位置。Operand tiles 依次流过固定 buffers，accumulator 则保留在同一 TMEM 位置。</p></li>
@@ -802,10 +803,10 @@
 <section id="tiling-multi-cta">
 <span id="chap-spatial-tiling"></span><h2>第 3 步：空间 Tiling（Multi-CTA）<a class="headerlink" href="#tiling-multi-cta" title="Link to this heading">#</a></h2>
 <p>第 2 步允许 K 大于 64，但仍要求 <code class="docutils literal notranslate"><span class="pre">M=N=128</span></code>，因此只能计算一个 <code class="docutils literal notranslate"><span class="pre">128×128</span></code> output tile。实际 GEMM 的 M、N 往往更大。第 3 步将 <code class="docutils literal notranslate"><span class="pre">M×N</span></code> 输出矩阵切成多个 <code class="docutils literal notranslate"><span class="pre">128×128</span></code> tiles，并为每个 tile 启动一个 CTA。</p>
-<p>一次 kernel launch 中的所有 CTAs 共同组成 grid。由于 output tiles 沿 M、N 两个方向排列，这里使用二维 grid；CTA 的 coordinate <code class="docutils literal notranslate"><span class="pre">(bx,</span> <span class="pre">by)</span></code> 表示它负责第几行、第几列的 output tile。</p>
+<p>前两步的 grid 只有一个 CTA。现在 output tiles 沿 M、N 两个方向排列，因此第 3 步使用二维 grid；CTA 的 coordinate <code class="docutils literal notranslate"><span class="pre">(bx,</span> <span class="pre">by)</span></code> 表示它负责第几行、第几列的 output tile。</p>
 <p>例如，取 <code class="docutils literal notranslate"><span class="pre">M=N=256,</span> <span class="pre">K=256</span></code> 时，输出矩阵被切成 <code class="docutils literal notranslate"><span class="pre">2×2</span></code> 个 tiles，因此 grid shape 为 <code class="docutils literal notranslate"><span class="pre">2×2</span></code>，共包含 4 个 CTAs。每个 CTA 负责一个 output tile，并在内部执行第 2 步的 K-loop。</p>
 <blockquote>
-<div><p><strong>这一步改变 Scope</strong></p>
+<div><p><strong>第 3 步的执行结构</strong></p>
 <ul class="simple">
 <li><p>Scope：二维 CTA grid，每个 CTA 计算一个 <code class="docutils literal notranslate"><span class="pre">128×128</span></code> output tile。</p></li>
 <li><p>Layout：不变，CTA 内部仍使用第 2 步的 SMEM、TMEM 和 register layouts。</p></li>

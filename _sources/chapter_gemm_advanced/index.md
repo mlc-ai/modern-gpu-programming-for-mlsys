@@ -21,7 +21,7 @@ This chapter broadens cooperation in three steps. Step 7 assigns TMA, MMA, and w
 
 In the single-warpgroup kernel, every thread follows the same load, compute, and writeback path. The Tensor Cores have no work while data is being loaded, and the TMA engine may sit idle during computation. Warp specialization assigns these jobs to different warps and uses a software pipeline to pass data between them, allowing several stages to run concurrently.
 
-> **What this step changes: Scope**
+> **Step 7 execution structure**
 > - Scope: one warpgroup walking load → MMA → writeback in order becomes three concurrent roles (TMA producer, MMA consumer, writeback) connected by full/empty barriers.
 > - Layout: unchanged, same SMEM stages and TMEM accumulator as Step 6.
 > - Dispatch: unchanged, TMA loads, `tcgen05` MMA.
@@ -325,7 +325,7 @@ The `Dsmem` writeback buffer requires another 32 KB. `PIPE_DEPTH=4` therefore us
 
 Step 7 coordinates several roles within one CTA. Step 8 extends that cooperation to a cluster of two CTAs.
 
-> **What this step changes: Scope + Layout + Dispatch**
+> **Step 8 execution structure**
 > - Scope: the cooperating scope now spans two CTAs in a cluster, not one.
 > - Layout: A and B slices reside in the SMEM of both CTAs, while the accumulator spans their two TMEM spaces.
 > - Dispatch: `Tx.gemm_async` uses `cta_group=2` to issue a two-CTA cooperative MMA, and `cta_mask=3` sends completion notifications to both CTAs.
@@ -597,7 +597,7 @@ def hgemm_v8(M, N, K):
 
 In Step 8, one MMA consumer uses the A and B slices from both CTAs to compute a $256\times256$ cluster output tile. Step 9 keeps the same B slices, loads one additional A slice in each CTA, and adds a second MMA consumer. Consumer 0 computes the first 256 output rows, while consumer 1 computes the next 256 rows; both cover the same 256 columns. The cluster output therefore grows along M from $256\times256$ to $512\times256$, without increasing the B data loaded per stage.
 
-> **What this step changes: Scope + Layout**
+> **Step 9 execution structure**
 > - Scope: CTA 0 now has two consumer warps that issue MMA operations, selected by `warp_id`.
 > - Layout: A gains a consumer axis, and TMEM is divided into two accumulator ranges; both consumers reuse the same staged B tile.
 > - Dispatch: the kernel still uses `tcgen05` with `cta_group=2`, but issues a separate cooperative MMA for each consumer.

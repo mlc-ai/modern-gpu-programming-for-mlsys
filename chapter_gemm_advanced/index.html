@@ -442,7 +442,7 @@
 <span id="chap-warp-specialization"></span><h2>Step 7: Warp Specialization and Pipelining<a class="headerlink" href="#step-7-warp-specialization-and-pipelining" title="Link to this heading">#</a></h2>
 <p>In the single-warpgroup kernel, every thread follows the same load, compute, and writeback path. The Tensor Cores have no work while data is being loaded, and the TMA engine may sit idle during computation. Warp specialization assigns these jobs to different warps and uses a software pipeline to pass data between them, allowing several stages to run concurrently.</p>
 <blockquote>
-<div><p><strong>What this step changes: Scope</strong></p>
+<div><p><strong>Step 7 execution structure</strong></p>
 <ul class="simple">
 <li><p>Scope: one warpgroup walking load → MMA → writeback in order becomes three concurrent roles (TMA producer, MMA consumer, writeback) connected by full/empty barriers.</p></li>
 <li><p>Layout: unchanged, same SMEM stages and TMEM accumulator as Step 6.</p></li>
@@ -771,7 +771,7 @@
 <span id="chap-cta-cluster"></span><h2>Step 8: Two-CTA Cluster<a class="headerlink" href="#step-8-two-cta-cluster" title="Link to this heading">#</a></h2>
 <p>Step 7 coordinates several roles within one CTA. Step 8 extends that cooperation to a cluster of two CTAs.</p>
 <blockquote>
-<div><p><strong>What this step changes: Scope + Layout + Dispatch</strong></p>
+<div><p><strong>Step 8 execution structure</strong></p>
 <ul class="simple">
 <li><p>Scope: the cooperating scope now spans two CTAs in a cluster, not one.</p></li>
 <li><p>Layout: A and B slices reside in the SMEM of both CTAs, while the accumulator spans their two TMEM spaces.</p></li>
@@ -1035,7 +1035,7 @@
 <span id="chap-multi-consumer"></span><h2>Step 9: Multi-Consumer Warp Specialization<a class="headerlink" href="#step-9-multi-consumer-warp-specialization" title="Link to this heading">#</a></h2>
 <p>In Step 8, one MMA consumer uses the A and B slices from both CTAs to compute a <span class="math notranslate nohighlight">\(256\times256\)</span> cluster output tile. Step 9 keeps the same B slices, loads one additional A slice in each CTA, and adds a second MMA consumer. Consumer 0 computes the first 256 output rows, while consumer 1 computes the next 256 rows; both cover the same 256 columns. The cluster output therefore grows along M from <span class="math notranslate nohighlight">\(256\times256\)</span> to <span class="math notranslate nohighlight">\(512\times256\)</span>, without increasing the B data loaded per stage.</p>
 <blockquote>
-<div><p><strong>What this step changes: Scope + Layout</strong></p>
+<div><p><strong>Step 9 execution structure</strong></p>
 <ul class="simple">
 <li><p>Scope: CTA 0 now has two consumer warps that issue MMA operations, selected by <code class="docutils literal notranslate"><span class="pre">warp_id</span></code>.</p></li>
 <li><p>Layout: A gains a consumer axis, and TMEM is divided into two accumulator ranges; both consumers reuse the same staged B tile.</p></li>

@@ -364,7 +364,7 @@
 <span id="chap-tma-async"></span><h2>第 4 步：TMA Async Load<a class="headerlink" href="#tma-async-load" title="Link to this heading">#</a></h2>
 <p>第 1 至第 3 步使用 <code class="docutils literal notranslate"><span class="pre">Tx.cta.copy</span></code> 搬运 A、B tiles：CTA 中的 threads 分别计算地址，再执行相应的 load 和 store。第 4 步改用 TMA，只由一个 thread 发起操作，后续的地址生成和 tile 搬运交给 TMA engine 完成。从这里开始，示例统一使用完整的 <code class="docutils literal notranslate"><span class="pre">M=N=K=4096</span></code> 规模。</p>
 <blockquote>
-<div><p><strong>这一步改变 Dispatch</strong></p>
+<div><p><strong>第 4 步的执行结构</strong></p>
 <ul class="simple">
 <li><p>Scope：不变，仍为一个 warpgroup。</p></li>
 <li><p>Layout：不变，仍使用相同的 SMEM/TMEM/register tiles。</p></li>
@@ -571,7 +571,7 @@
 <span id="chap-software-pipeline"></span><h2>第 5 步：Software Pipeline（<code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH=2</span></code>）<a class="headerlink" href="#software-pipeline-pipe-depth-2" title="Link to this heading">#</a></h2>
 <p>第 4 步无法重叠 load 与 compute，原因在于 SMEM 中只有一对 operand tiles。下一次 load 没有独立位置可以写入；如果提前开始，就会覆盖当前 MMA 仍在读取的数据。第 5 步通过 shared memory 双缓冲解决这个存储冲突。当前单 warpgroup loop 仍会等待每次 MMA，再发起下一次 TMA load，但现在已经有独立 stages 可用于预取和循环复用。</p>
 <blockquote>
-<div><p><strong>这一步改变 Layout</strong></p>
+<div><p><strong>第 5 步的执行结构</strong></p>
 <ul class="simple">
 <li><p>Scope：不变，仍为一个 warpgroup。</p></li>
 <li><p>Layout：单个 SMEM tile pair 改为包含 <code class="docutils literal notranslate"><span class="pre">PIPE_DEPTH</span></code> 个 stages 的 ring buffer。</p></li>
@@ -781,7 +781,7 @@
 <p>第 5 步为每个 <span class="math notranslate nohighlight">\(128\times128\)</span> output tile 启动一个 CTA。对于 <span class="math notranslate nohighlight">\(4096\times4096\)</span> 的输出，一共需要 1024 个 CTAs。每个 CTA 都要单独完成初始化，计算完一个 tile 后便退出。</p>
 <p>Persistent kernel 则只启动固定数量的 CTAs，让每个 CTA 依次处理多个 tiles。这样做有两个好处：初始化开销可以分摊到多个 tiles 上；tile 的分配也转移到了 kernel 内部，scheduler 可以按有利于复用 operands 的顺序安排工作。</p>
 <blockquote>
-<div><p><strong>这一步改变 Scope</strong></p>
+<div><p><strong>第 6 步的执行结构</strong></p>
 <ul class="simple">
 <li><p>Scope：固定数量的 persistent CTAs，每个 CTA 通过 scheduler 循环处理多个 output tiles。</p></li>
 <li><p>Layout：不变，每个 tile 仍使用相同的 SMEM、TMEM 和 register 数据路径。</p></li>
