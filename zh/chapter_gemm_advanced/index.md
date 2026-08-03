@@ -21,7 +21,7 @@ SMEM ring 和 prefetch 结构已经建立，但所有阶段仍由同一个 warpg
 
 单 warpgroup kernel 中，所有 threads 都沿着 load、compute、writeback 的同一条路径执行。加载数据时 Tensor Cores 无事可做，执行计算时 TMA engine 也可能空闲。Warp specialization 将这些工作交给不同 warps，再用 software pipeline 在它们之间传递数据，使多个阶段可以同时运行。
 
-> **这一步改变 Scope**
+> **第 7 步的执行结构**
 > - Scope：一个 warpgroup 依次执行 load → MMA → writeback，改为由 TMA producer、MMA consumer 和 writeback 三个角色并行工作，并通过 full/empty barriers 交接数据。
 > - Layout：不变，继续使用第 6 步中的 SMEM stages 和 TMEM accumulator。
 > - Dispatch：不变，仍使用 TMA loads 和 `tcgen05` MMA。
@@ -325,7 +325,7 @@ def hgemm_v7(M, N, K):
 
 第 7 步的协作范围仍然局限在一个 CTA 内。第 8 步把这个范围扩展到由两个 CTAs 组成的 cluster。
 
-> **这一步改变 Scope、Layout 和 Dispatch**
+> **第 8 步的执行结构**
 > - Scope：协作范围由一个 CTA 扩展到 cluster 中的两个 CTAs。
 > - Layout：A、B slices 分布在两个 CTAs 的 SMEM 中，accumulator 也分布在两侧的 TMEM 中。
 > - Dispatch：`Tx.gemm_async` 使用 `cta_group=2` 发起 two-CTA cooperative MMA；完成通知通过 `cta_mask=3` 同时发送到两侧。
@@ -597,7 +597,7 @@ def hgemm_v8(M, N, K):
 
 第 8 步中，一个 MMA consumer 使用两侧 CTA 提供的 A slices 和 B slices，计算一个 $256\times256$ cluster output tile。第 9 步保留同一份 B，再为每个 CTA 多加载一份 A，并增加第二个 MMA consumer。Consumer 0 计算 output 的前 256 行，consumer 1 计算接下来的 256 行；两者覆盖相同的 256 列。因此，cluster output 沿 M 维从 $256\times256$ 扩展为 $512\times256$，而每个 stage 的 B load 不变。
 
-> **这一步改变 Scope 和 Layout**
+> **第 9 步的执行结构**
 > - Scope：CTA 0 中负责发起 MMA 的 consumer warps 由一个增加到两个，并通过 `warp_id` 区分。
 > - Layout：A layout 增加 consumer axis，TMEM 也分成两个独立的 accumulator ranges；两个 consumers 复用同一个 staged B tile。
 > - Dispatch：仍使用 `tcgen05` 和 `cta_group=2`，但现在会为两个 consumers 分别发起一次 cooperative MMA。

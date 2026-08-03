@@ -18,7 +18,7 @@
 
 第 1 至第 3 步使用 `Tx.cta.copy` 搬运 A、B tiles：CTA 中的 threads 分别计算地址，再执行相应的 load 和 store。第 4 步改用 TMA，只由一个 thread 发起操作，后续的地址生成和 tile 搬运交给 TMA engine 完成。从这里开始，示例统一使用完整的 `M=N=K=4096` 规模。
 
-> **这一步改变 Dispatch**
+> **第 4 步的执行结构**
 > - Scope：不变，仍为一个 warpgroup。
 > - Layout：不变，仍使用相同的 SMEM/TMEM/register tiles。
 > - Dispatch：GMEM → SMEM load 从 CTA 协作执行的 `Tx.cta.copy` 改为 TMA engine。
@@ -240,7 +240,7 @@ def hgemm_v4(M, N, K):
 
 第 4 步无法重叠 load 与 compute，原因在于 SMEM 中只有一对 operand tiles。下一次 load 没有独立位置可以写入；如果提前开始，就会覆盖当前 MMA 仍在读取的数据。第 5 步通过 shared memory 双缓冲解决这个存储冲突。当前单 warpgroup loop 仍会等待每次 MMA，再发起下一次 TMA load，但现在已经有独立 stages 可用于预取和循环复用。
 
-> **这一步改变 Layout**
+> **第 5 步的执行结构**
 > - Scope：不变，仍为一个 warpgroup。
 > - Layout：单个 SMEM tile pair 改为包含 `PIPE_DEPTH` 个 stages 的 ring buffer。
 > - Dispatch：不变，仍使用 TMA load 和 `tcgen05` MMA。本步加入 prefetch 和 stage 复用；完整的 load/compute 重叠会在第 7 步实现。
@@ -459,7 +459,7 @@ def hgemm_v5(M, N, K):
 
 Persistent kernel 则只启动固定数量的 CTAs，让每个 CTA 依次处理多个 tiles。这样做有两个好处：初始化开销可以分摊到多个 tiles 上；tile 的分配也转移到了 kernel 内部，scheduler 可以按有利于复用 operands 的顺序安排工作。
 
-> **这一步改变 Scope**
+> **第 6 步的执行结构**
 > - Scope：固定数量的 persistent CTAs，每个 CTA 通过 scheduler 循环处理多个 output tiles。
 > - Layout：不变，每个 tile 仍使用相同的 SMEM、TMEM 和 register 数据路径。
 > - Dispatch：不变。

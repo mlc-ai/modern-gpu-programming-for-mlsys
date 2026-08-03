@@ -4,9 +4,9 @@
 :::{admonition} 本章概览
 :class: overview
 
-- 第 1 步从一个顺序执行的 $128\times128$ output tile 开始，走通 A、B 从 GMEM 进入 SMEM、`tcgen05` MMA 写入 TMEM，以及结果读回与写出的完整数据路径。
-- 第 2 步沿 K 维分块，并在同一块 TMEM accumulator 中累加 partial sums；重复使用 MMA barrier 时，需要同步更新 phase。
-- 第 3 步将 M、N 方向的 output tiles 分配给二维 CTA grid，得到能够处理完整矩阵的正确性基线。
+- 第 1 步从输出矩阵 D 中一个顺序计算的 $128\times128$ tile 开始，走通输入矩阵 A、B 从 GMEM 加载到 SMEM、`tcgen05` MMA 将结果写入 TMEM，以及 D 的读回与写出。
+- 第 2 步沿 K 维分块，并在同一块 TMEM accumulator 中累加 partial sums；每次复用 MMA barrier 时，都要更新下一轮的等待状态。
+- 第 3 步沿 M、N 维划分 output tiles，并让多个 CTAs 分别计算这些 tiles，从而覆盖完整的输出矩阵。
 :::
 
 GEMM 是本书后续章节反复使用的核心计算。Linear layer、attention projection 和许多 convolution 实现都以矩阵乘法为基础，而这些运算通常占据 GPU 的大部分执行时间。要进一步优化 GEMM，首先需要一个结果正确、结构清楚的基线 kernel。
@@ -28,7 +28,9 @@ GEMM 是稠密矩阵乘法，也是 linear layer、attention projection 和许�
 
 这里将 $B$ 按 $N \times K$ 存储，这是 linear-layer weights 常见的存储方式。计算时直接读取 $B[n,k]$；若写成矩阵形式，等价于 $D=AB^{\top}$，但 kernel 不会额外转置或重排 $B$。
 
-本章使用 TFLOPS 衡量 kernel throughput。一次 multiply-add 计作两次浮点运算，因此：
+示例中的 $A$、$B$ 和 $D$ 都以 fp16 存储。MMA 沿 $K$ 维累加时使用 fp32 accumulator，以减小累计舍入误差。
+
+Kernel 性能使用 TFLOPS 衡量。一次 multiply-add 计作两次浮点运算，因此：
 
 $$\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 10^{12}}$$
 
@@ -38,7 +40,7 @@ $$\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 
 
 ![*Memory 数据流*](../../img/memory_dataflow.png)
 
-从左向右看：operand tiles 先从 GMEM 进入 SMEM；`tcgen05.mma` 读取 SMEM 中的 operands，并把 accumulator 写入 TMEM；最后，epilogue 将 TMEM 中的结果读入 registers，再写回 GMEM。后续优化会改变其中某一步如何执行，但不会改变这条基本路径。
+从左向右看：operand tiles 先从 GMEM 进入 SMEM；`tcgen05.mma` 读取 SMEM 中的 operands，并把 accumulator 写入 TMEM；最后的结果写回阶段称为 epilogue，它将 TMEM 中的结果读入 registers，再写回 GMEM。后续优化会改变其中某一步如何执行，但不会改变这条基本路径。
 
 ## 优化路线
 
@@ -58,16 +60,16 @@ $$\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 
 
 第 1 步沿用 {ref}`chap_tirx_primer` 中的 `hgemm_v1`，详细拆解其数据路径，并将它作为后续版本的正确性基线。这个 kernel 只计算一个 `128×128` output tile，并取 `K=64`；该规模不需要循环，数据路径中的每一步只出现一次，便于逐段理解。
 
-> **这一步建立基线**
+> **第 1 步的执行结构**
 > - Scope：一个包含 128 个 threads 的 warpgroup 按顺序执行整条数据路径。
 > - Layout：A、B tiles 位于 SMEM，accumulator 位于 TMEM，结果通过 registers 写出。
-> - Dispatch：同步 `Tx.copy` 负责加载，`tcgen05` 执行 MMA。
+> - Dispatch：同步 `Tx.cta.copy` 负责加载，`tcgen05` 执行 MMA。
 
 ### 单 Tile 数据流
 
 这个 kernel 只沿 `GMEM -> SMEM -> TMEM -> registers -> GMEM` 路径执行一次，不包含循环。具体步骤如下：
 
-1. **分配**：通过 pool allocator 分配 SMEM，通过 `tcgen05.alloc` 分配 TMEM，并准备 mbarrier。
+1. **分配**：通过 pool allocator 分配 SMEM，通过 `tcgen05.alloc` 分配 TMEM，并准备等待 MMA 完成的 mbarrier。
 2. **加载**：128 个 threads 使用同步 `Tx.copy`，协作将 A、B tiles 从 GMEM 搬到 SMEM。
 3. **计算**：选出的一个 thread 发出 `Tx.gemm_async` 和 `tcgen05.commit`，所有 threads 等待 mbarrier。
 4. **写回**：warpgroup 将 TMEM 读入 registers；每个 thread 把 fp32 转成 fp16，再写入 GMEM。
@@ -75,7 +77,7 @@ $$\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 
 
 ### Kernel 的四个部分
 
-下面先分别介绍存储空间分配、operand 加载、MMA 发起和结果写回，再把它们组合成完整 kernel。相关 API 已在第二部分（{ref}`chap_tirx_primer`、{ref}`chap_tirx_layout_api`）中介绍。
+下面先分别介绍存储空间分配、operand 加载、MMA 发起和结果写回，再把它们组合成完整 kernel。相关 API 已在第二部分（{ref}`chap_tirx_primer`、{ref}`chap_tirx_layout_api`）中介绍。本节固定使用 `BLK_M=BLK_N=128`、`BLK_K=64`；`m_st` 和 `n_st` 表示当前 output tile 在 D 中的行、列起点，在这个单 tile kernel 中都为 0。
 
 **分配存储空间。** Kernel 先为 operands 分配 shared memory，并为 TMEM address 和 mbarrier 预留位置：
 
@@ -89,7 +91,7 @@ Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout)  # 128×64 fp16
 pool.commit()
 ```
 
-`pool.move_base_to(1024)` 将 SMEM pool 的当前分配位置移动到 byte offset 1024。之后，`Asmem` 从这里开始分配，`Bsmem` 紧随其后；前面的区域留给 `tmem_addr`、`mma_bar` 等 metadata。
+`pool.move_base_to(1024)` 将 SMEM pool 的当前分配位置移动到 byte offset 1024。之后，`Asmem` 从这里开始分配，`Bsmem` 紧随其后；前面的区域留给 `tmem_addr`、`mma_bar` 等少量管理数据。
 
 `A_layout` 和 `B_layout` 由 `tma_shared_layout(dtype, swizzle_mode, shape)` 生成。这个函数根据数据类型、swizzle mode 和 tile shape 构造 shared-memory layout；这里选择 128-byte swizzle，得到与当前 `tcgen05.mma` dispatch 匹配的 SMEM 排列。`layout=A_layout` 和 `layout=B_layout` 再将这两个 layout 分别绑定到 `Asmem` 和 `Bsmem`。
 
@@ -121,7 +123,7 @@ T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
 
 只有一个 thread 发出指令，并不表示矩阵乘法由这个 thread 单独完成。硬件仍然根据 SMEM operand layouts 和 TMEM accumulator layout，对整个 tile 执行 MMA。若让 128 个 threads 都发出同一操作，硬件反而会重复启动这次计算。
 
-`Tx.gemm_async` 表示一个 tile operation，而不是一条硬件指令。这里 `K=64`，大于硬件 MMA 的 K-atom（`MMA_K=16`），因此 TIRx 会沿 K 维将它 lower 成一小段 `tcgen05.mma` 指令序列。
+`Tx.gemm_async` 表示一个 tile operation，而不是一条硬件指令。这里 tile 的 K 维大小为 64，而底层每条 MMA 指令处理 16 个 K 元素，因此 TIRx 会将它 lower 成一小段 `tcgen05.mma` 指令序列。
 
 `tcgen05.mma` 是异步操作。`tcgen05.commit` 将前面发出的 MMA 与 `mma_bar` 关联；warpgroup 中的 threads 随后在外层执行 `mbarrier.try_wait`，等到 barrier 完成后才能读取 TMEM 中的结果。
 
@@ -172,7 +174,7 @@ from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, S
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
 ```
 
-Kernel 使用后续步骤共同采用的 `hgemm_vX(M, N, K)` 形式。第 1 步取 `M=N=128, K=64`，因此 launch 中只有一个 output tile：
+Kernel 使用后续步骤共同采用的 `hgemm_vX(M, N, K)` 形式。一次 kernel launch 中的所有 CTAs 构成 grid；第 1 步取 `M=N=128, K=64`，只需要一个 CTA，因此 grid shape 为 `1×1`：
 
 ```python
 def hgemm_v1(M, N, K):
@@ -322,7 +324,7 @@ print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 
 这个 kernel 已经能够算对，但适用范围很窄。当前仍有以下限制：
 
-- 只处理一个 K tile，无法对较大的 K 做 contraction。
+- 只处理一个 K tile，无法沿更大的 K 维完成分块累加。
 - 只处理一个 output tile，因此 M、N 固定为 128。
 - 使用同步的 GMEM → SMEM copy，而不是 TMA。
 - 数据搬运与计算不重叠，两者不能同时执行。
@@ -336,7 +338,7 @@ print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 
 基本做法是：对每个 chunk 重复一次 `load -> MMA -> wait`，并让所有 MMA 累加到同一个 TMEM 位置。需要特别注意的是同步。多个 iterations 复用同一个 mbarrier 时，如果 phase 跟踪错误，wait 可能在当前 MMA 真正完成之前返回，最终结果会在没有报错的情况下被破坏。
 
-> **这一步改变 Layout 复用方式**
+> **第 2 步的执行结构**
 > - Scope：不变，仍然是一个 warpgroup。
 > - Layout/复用：K-loop 始终复用同一对 SMEM tiles 和同一个 TMEM accumulator 位置。Operand tiles 依次流过固定 buffers，accumulator 则保留在同一 TMEM 位置。
 > - 同步：复用的 MMA barrier 必须在每个 K chunk 后进入正确 phase，否则后续 wait 可能误把上一轮完成当作当前轮完成。
@@ -477,11 +479,11 @@ def hgemm_v2(M, N, K):
 
 第 2 步允许 K 大于 64，但仍要求 `M=N=128`，因此只能计算一个 `128×128` output tile。实际 GEMM 的 M、N 往往更大。第 3 步将 `M×N` 输出矩阵切成多个 `128×128` tiles，并为每个 tile 启动一个 CTA。
 
-一次 kernel launch 中的所有 CTAs 共同组成 grid。由于 output tiles 沿 M、N 两个方向排列，这里使用二维 grid；CTA 的 coordinate `(bx, by)` 表示它负责第几行、第几列的 output tile。
+前两步的 grid 只有一个 CTA。现在 output tiles 沿 M、N 两个方向排列，因此第 3 步使用二维 grid；CTA 的 coordinate `(bx, by)` 表示它负责第几行、第几列的 output tile。
 
 例如，取 `M=N=256, K=256` 时，输出矩阵被切成 `2×2` 个 tiles，因此 grid shape 为 `2×2`，共包含 4 个 CTAs。每个 CTA 负责一个 output tile，并在内部执行第 2 步的 K-loop。
 
-> **这一步改变 Scope**
+> **第 3 步的执行结构**
 > - Scope：二维 CTA grid，每个 CTA 计算一个 `128×128` output tile。
 > - Layout：不变，CTA 内部仍使用第 2 步的 SMEM、TMEM 和 register layouts。
 > - Dispatch：不变。
