@@ -68,7 +68,7 @@ The three concurrent roles communicate through four barriers. The forward path, 
 
 The barrier type depends on how its producer reports completion. **TMA loads** use `TMABar`, an mbarrier with byte counting that the TMA hardware updates after the transfer completes. **TMA stores** are tracked by the issuing thread through an async group: `cp_async.bulk.commit_group()` submits the group, and `wait_group(0)` waits for the write to finish. **MMA operations** use `TCGen05Bar`; `tcgen05.commit()` updates the barrier when the MMA completes.
 
-In these calls, `cta_mask=0` selects the non-multicast form used by the single-CTA kernel. Step 8 forms a cluster and uses `cta_mask=3` to multicast the notification to both CTAs.
+In Step 7, each completion signal only needs to update a barrier in the current CTA, so these calls use `cta_mask=0`. Step 8 forms a two-CTA cluster and uses `cta_mask=3` (binary `11`) to update the corresponding barriers in both CTAs.
 
 ### PipelineState
 
@@ -860,7 +860,7 @@ The table below follows the progression from the naive baseline to the warp-spec
 | 9 | Multi-consumer | 0.094 ms | ~744× |
 | --- | cuBLAS (reference) | 0.094 ms | ~744× |
 
-Every row with a measured time uses the same `M=N=K=4096` problem, so those rows can be compared directly. Times are rounded for display, while the speedups are calculated from the underlying measurements. The 70 ms in Step 1 comes from a full-matrix baseline with the same sequential data path; it is not a run of the single-tile `hgemm_v1` from {ref}`chap_gemm_basics`. The introductory chapter uses smaller problems to explain Steps 1 through 3, while the Step 1 and Step 3 rows here measure the corresponding full-matrix implementations.
+Every row with a measured time uses the same `M=N=K=4096` problem, so those rows can be compared directly. The 70 ms in Step 1 comes from a full-matrix baseline with the same sequential data path; it is not a run of the single-tile `hgemm_v1` from {ref}`chap_gemm_basics`. The introductory chapter uses smaller problems to explain Steps 1 through 3, while the Step 1 and Step 3 rows here measure the corresponding full-matrix implementations.
 
 Step 2 still computes only one output tile, so it is not directly comparable with the full-matrix results. Steps 5 and 6 are intermediate versions between the TMA-load kernel and the warp-specialized kernel; their mechanisms are retained in Step 7. The table therefore shows only the endpoints of that interval. Steps 2, 5, and 6 use dashes and have no standalone speedup.
 

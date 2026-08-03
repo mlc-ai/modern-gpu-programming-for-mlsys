@@ -466,7 +466,7 @@ A persistent kernel instead launches a fixed number of CTAs and lets each one pr
 
 ### Persistent Scheduling
 
-A persistent kernel uses a smaller one-dimensional grid. This example sets `SM_COUNT=148` and launches 148 persistent CTAs. Each CTA obtains an output tile from the scheduler, computes it, and requests another until no tiles remain. `SM_COUNT` sets the size of this worker pool; the hardware scheduler and occupancy determine which CTAs are resident at any moment, and no CTA is permanently bound to a particular SM.
+A persistent kernel uses a smaller one-dimensional grid. This example sets `SM_COUNT=148` and launches 148 persistent CTAs. Each CTA obtains an output tile from the scheduler, computes it, and requests another until no tiles remain. `SM_COUNT` determines how many persistent CTAs the kernel launches. Occupancy and hardware scheduling determine how many can be resident at once and which SMs execute them; no CTA is permanently bound to a particular SM.
 
 Because one CTA processes several tiles, it allocates TMEM, initializes its barriers, and creates scheduler state only once. Those resources remain in place until the CTA finishes all of its assigned work.
 
