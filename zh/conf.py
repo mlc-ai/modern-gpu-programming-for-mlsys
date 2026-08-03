@@ -30,7 +30,6 @@ exclude_patterns = [
     "**/_*.md",
     # Release the Chinese edition chapter by chapter. Keep draft sources in
     # zh/, but exclude unreleased pages so they are not published or searchable.
-    "chapter_flash_attention/**",
 ]
 
 html_theme = "sphinx_book_theme"

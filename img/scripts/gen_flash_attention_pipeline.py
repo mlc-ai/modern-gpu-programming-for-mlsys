@@ -1,8 +1,29 @@
 #!/usr/bin/env python3
 """Generate the Flash Attention 4 pipeline diagram."""
 
+import argparse
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+
+
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "Microsoft YaHei", "Arial Unicode MS", "DejaVu Sans"]
+
+
+def configure_font(lang, font_path=None):
+    if lang != "zh":
+        return
+    if not font_path:
+        raise ValueError("Chinese output requires --font-path pointing to a CJK font")
+    path = Path(font_path)
+    if not path.exists():
+        raise FileNotFoundError("Chinese output requires --font-path pointing to a CJK font")
+    font_manager.fontManager.addfont(path)
+    plt.rcParams["font.family"] = font_manager.FontProperties(fname=path).get_name()
+    plt.rcParams["svg.fonttype"] = "path"
 
 
 COLORS = {
@@ -46,31 +67,37 @@ def arrow(ax, x1, y1, x2, y2, label=None, color="#4b5563", rad=0.0):
         ax.text((x1 + x2) / 2, (y1 + y2) / 2 + 0.08, label, fontsize=7, color=color, ha="center", zorder=2)
 
 
-def main():
+def main(lang="en", font_path=None):
+    configure_font(lang, font_path)
+    zh = lang == "zh"
+    tr = lambda en, cn: cn if zh else en
     fig, ax = plt.subplots(figsize=(15.5, 7.5))
     ax.set_xlim(0, 13.3)
     ax.set_ylim(-0.25, 6.65)
     ax.axis("off")
 
-    ax.text(6.65, 6.45, "Flash Attention 4 Pipeline Structure", ha="center", fontsize=17, weight="bold")
+    ax.text(6.65, 6.45, tr("Flash Attention 4 Pipeline Structure", "Flash Attention 4 Pipeline 结构"), ha="center", fontsize=17, weight="bold")
     ax.text(
         6.65,
         6.18,
-        "representative issue order; the MMA warp interleaves value MMA for current V with score MMA for next K",
+        tr(
+            "representative issue order; the MMA warp interleaves value MMA for current V with score MMA for next K",
+            "一种典型的发起顺序：MMA warp 交错执行当前 V 的 value MMA 和下一个 K 的 score MMA",
+        ),
         ha="center",
         fontsize=9,
         color="#4b5563",
     )
     arrow(ax, 1.75, 5.95, 12.75, 5.95, color="#9ca3af")
-    ax.text(7.25, 6.02, "time", ha="center", va="bottom", fontsize=8, color="#6b7280", style="italic", zorder=2)
+    ax.text(7.25, 6.02, tr("time", "时间"), ha="center", va="bottom", fontsize=8, color="#6b7280", style="italic", zorder=2)
 
     rows = [
-        ("WG3 warp 1", "TMA load", 5.0),
-        ("WG3 warp 0", "MMA issue", 4.0),
-        ("WG0", "softmax Q stage 0", 3.0),
-        ("WG1", "softmax Q stage 1", 2.0),
-        ("WG2", "correction / epilogue", 1.0),
-        ("WG3 warp 2", "TMA store", 0.0),
+        ("WG3 warp 1", tr("TMA load", "TMA 加载"), 5.0),
+        ("WG3 warp 0", tr("MMA issue", "发起 MMA"), 4.0),
+        ("WG0", tr("softmax Q stage 0", "softmax Q stage 0"), 3.0),
+        ("WG1", tr("softmax Q stage 1", "softmax Q stage 1"), 2.0),
+        ("WG2", tr("correction / epilogue", "重缩放 / epilogue"), 1.0),
+        ("WG3 warp 2", tr("TMA store", "TMA 写回"), 0.0),
     ]
     for name, role, y in rows:
         block(ax, 0.15, y + 0.12, 1.35, 0.62, f"{name}\n{role}", COLORS["label"], fs=8)
@@ -78,14 +105,14 @@ def main():
 
     # TMA load order from the source: Q0, K_last, Q1, V_last, then K/V stream.
     for x, text in [
-        (2.0, "load Q0"),
-        (3.1, "load K[n-1]"),
-        (4.2, "load Q1"),
-        (5.3, "load V[n-1]"),
-        (6.7, "load K[n-2]"),
-        (7.8, "load V[n-2]"),
-        (9.2, "load K[n-3]"),
-        (10.3, "load V[n-3]"),
+        (2.0, tr("load Q0", "加载 Q0")),
+        (3.1, tr("load K[n-1]", "加载 K[n-1]")),
+        (4.2, tr("load Q1", "加载 Q1")),
+        (5.3, tr("load V[n-1]", "加载 V[n-1]")),
+        (6.7, tr("load K[n-2]", "加载 K[n-2]")),
+        (7.8, tr("load V[n-2]", "加载 V[n-2]")),
+        (9.2, tr("load K[n-3]", "加载 K[n-3]")),
+        (10.3, tr("load V[n-3]", "加载 V[n-3]")),
     ]:
         block(ax, x, 5.12, 0.88, 0.62, text, COLORS["tma"], fs=8)
     ax.text(11.45, 5.43, "...", fontsize=13, color="#6b7280")
@@ -102,17 +129,17 @@ def main():
     ]
     for x, text, color in mma_blocks:
         block(ax, x, 4.12, 0.98, 0.66, text, color, fs=8)
-    ax.text(11.95, 4.43, "... after last K/V", fontsize=8, color="#6b7280")
+    ax.text(11.95, 4.43, tr("... after last K/V", "... 直到最后一组 K/V"), fontsize=8, color="#6b7280")
 
     # Softmax and correction events. Keep one dependency loop per Q stage readable.
-    block(ax, 4.75, 3.12, 1.05, 0.66, "softmax S0\nwrite P0", COLORS["softmax"], fs=8)
-    block(ax, 5.85, 2.12, 1.05, 0.66, "softmax S1\nwrite P1", COLORS["softmax"], fs=8)
-    block(ax, 6.05, 1.12, 1.02, 0.66, "release /\nrescale O0", COLORS["corr"], fs=8)
-    block(ax, 8.25, 1.12, 1.02, 0.66, "release /\nrescale O1", COLORS["corr"], fs=8)
-    block(ax, 8.35, 3.12, 1.05, 0.66, "softmax S0\nwrite P0", COLORS["softmax"], fs=8)
-    block(ax, 10.25, 2.12, 1.05, 0.66, "softmax S1\nwrite P1", COLORS["softmax"], fs=8)
-    block(ax, 11.25, 1.12, 1.08, 0.66, "normalize\nO0/O1", COLORS["corr"], fs=8)
-    block(ax, 12.0, 0.12, 0.9, 0.62, "store O", COLORS["tma"], fs=8)
+    block(ax, 4.75, 3.12, 1.05, 0.66, tr("softmax S0\nwrite P0", "softmax S0\n写入 P0"), COLORS["softmax"], fs=8)
+    block(ax, 5.85, 2.12, 1.05, 0.66, tr("softmax S1\nwrite P1", "softmax S1\n写入 P1"), COLORS["softmax"], fs=8)
+    block(ax, 6.05, 1.12, 1.02, 0.66, tr("release /\nrescale O0", "释放 /\n重缩放 O0"), COLORS["corr"], fs=8)
+    block(ax, 8.25, 1.12, 1.02, 0.66, tr("release /\nrescale O1", "释放 /\n重缩放 O1"), COLORS["corr"], fs=8)
+    block(ax, 8.35, 3.12, 1.05, 0.66, tr("softmax S0\nwrite P0", "softmax S0\n写入 P0"), COLORS["softmax"], fs=8)
+    block(ax, 10.25, 2.12, 1.05, 0.66, tr("softmax S1\nwrite P1", "softmax S1\n写入 P1"), COLORS["softmax"], fs=8)
+    block(ax, 11.25, 1.12, 1.08, 0.66, tr("normalize\nO0/O1", "归一化\nO0/O1"), COLORS["corr"], fs=8)
+    block(ax, 12.0, 0.12, 0.9, 0.62, tr("store O", "写回 O"), COLORS["tma"], fs=8)
 
     # Keep this as a timeline. Barrier-level dependencies are shown in
     # flash_attention_barrier_flow_v2.png; drawing them again here makes
@@ -120,10 +147,10 @@ def main():
 
     # Legend.
     legend = [
-        ("TMA load/store", COLORS["tma"]),
+        (tr("TMA load/store", "TMA 加载/写回"), COLORS["tma"]),
         ("Tensor Core MMA", COLORS["mma"]),
         ("softmax", COLORS["softmax"]),
-        ("correction/epilogue", COLORS["corr"]),
+        (tr("correction/epilogue", "重缩放/epilogue"), COLORS["corr"]),
     ]
     lx = 2.0
     for name, color in legend:
@@ -131,8 +158,13 @@ def main():
         ax.text(lx + 0.3, -0.04, name, fontsize=8, va="center", color="#4b5563")
         lx += 1.55
 
-    fig.savefig("../flash_attention_pipeline_v2.png", dpi=160, bbox_inches="tight", facecolor="white")
+    output = "../flash_attention_pipeline_v2_zh.svg" if zh else "../flash_attention_pipeline_v2.png"
+    fig.savefig(output, dpi=160, bbox_inches="tight", facecolor="white")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lang", choices=("en", "zh"), default="en")
+    parser.add_argument("--font-path")
+    args = parser.parse_args()
+    main(args.lang, args.font_path)

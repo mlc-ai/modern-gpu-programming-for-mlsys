@@ -1,8 +1,29 @@
 #!/usr/bin/env python3
 """Generate Flash Attention 4 barrier diagrams."""
 
+import argparse
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+
+
+plt.rcParams["svg.fonttype"] = "none"
+plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "Microsoft YaHei", "Arial Unicode MS", "DejaVu Sans"]
+
+
+def configure_font(lang, font_path=None):
+    if lang != "zh":
+        return
+    if not font_path:
+        raise ValueError("Chinese output requires --font-path pointing to a CJK font")
+    path = Path(font_path)
+    if not path.exists():
+        raise FileNotFoundError("Chinese output requires --font-path pointing to a CJK font")
+    font_manager.fontManager.addfont(path)
+    plt.rcParams["font.family"] = font_manager.FontProperties(fname=path).get_name()
+    plt.rcParams["svg.fonttype"] = "path"
 
 
 COLORS = {
@@ -59,90 +80,95 @@ def label(ax, x, y, text, fs=8.5, color="#374151", facecolor=None):
     )
 
 
-def gen_main_handoff():
+def gen_main_handoff(lang="en"):
+    zh = lang == "zh"
+    tr = lambda en, cn: cn if zh else en
     fig, ax = plt.subplots(figsize=(13.0, 7.0))
     ax.set_xlim(0, 13.0)
     ax.set_ylim(0, 7.0)
     ax.axis("off")
 
-    ax.text(6.5, 6.62, "Flash Attention 4: MMA Input Gates", ha="center", fontsize=17, weight="bold")
+    ax.text(6.5, 6.62, tr("Flash Attention 4: MMA Input Gates", "Flash Attention 4：MMA 的启动条件"), ha="center", fontsize=17, weight="bold")
     ax.text(
         6.5,
         6.26,
-        "inputs that must be ready before each MMA may fire",
+        tr("inputs that must be ready before each MMA may fire", "每次 MMA 发起前必须准备好的输入"),
         ha="center",
         fontsize=10,
         color="#4b5563",
     )
 
     # ---- Score MMA gate (top): Q and K must be in SMEM. ----
-    ax.text(0.5, 5.95, "Score MMA gate", fontsize=11.5, weight="bold", color="#1f2937")
-    box(ax, 0.6, 5.12, 1.95, 0.62, "Q tile\nin SMEM", COLORS["smem"], fs=8.8)
-    box(ax, 0.6, 4.30, 1.95, 0.62, "K tile\nin SMEM", COLORS["smem"], fs=8.8)
-    box(ax, 6.45, 4.55, 2.3, 0.95, "score MMA\nQ,K -> S", COLORS["mma"], fs=10.5)
+    ax.text(0.5, 5.95, tr("Score MMA gate", "Score MMA"), fontsize=11.5, weight="bold", color="#1f2937")
+    box(ax, 0.6, 5.12, 1.95, 0.62, tr("Q tile\nin SMEM", "SMEM 中的\nQ tile"), COLORS["smem"], fs=8.8)
+    box(ax, 0.6, 4.30, 1.95, 0.62, tr("K tile\nin SMEM", "SMEM 中的\nK tile"), COLORS["smem"], fs=8.8)
+    box(ax, 6.45, 4.55, 2.3, 0.95, tr("score MMA\nQ,K -> S", "score MMA\nQ,K -> S"), COLORS["mma"], fs=10.5)
     arrow(ax, 2.55, 5.43, 6.45, 5.18, rad=-0.04)
     arrow(ax, 2.55, 4.61, 6.45, 4.88, rad=0.04)
     label(ax, 4.45, 5.50, "q_load.full", fs=8.3)
     label(ax, 4.45, 4.54, "kv_load.full", fs=8.3)
-    ax.text(7.6, 4.34, "fires when all inputs ready", ha="center", fontsize=7.8,
+    ax.text(7.6, 4.34, tr("fires when all inputs ready", "所有输入就绪后发起"), ha="center", fontsize=7.8,
             color="#6b7280", style="italic")
 
     # ---- Value MMA gate (bottom): V in SMEM, P in TMEM (split), O slot safe. ----
-    ax.text(0.5, 3.35, "Value MMA gate", fontsize=11.5, weight="bold", color="#1f2937")
-    box(ax, 0.6, 2.55, 1.95, 0.62, "V tile\nin SMEM", COLORS["smem"], fs=8.8)
-    box(ax, 0.6, 1.55, 3.15, 0.7, "P cols 0:96 in TMEM\n+ O-slot safe (WG2)", COLORS["tmem"], fs=8.2)
-    box(ax, 0.6, 0.55, 3.15, 0.62, "P cols 96:128\nin TMEM", COLORS["tmem"], fs=8.4)
-    box(ax, 6.45, 1.35, 2.3, 0.95, "value MMA\nP,V -> O", COLORS["mma"], fs=10.5)
+    ax.text(0.5, 3.35, tr("Value MMA gate", "Value MMA"), fontsize=11.5, weight="bold", color="#1f2937")
+    box(ax, 0.6, 2.55, 1.95, 0.62, tr("V tile\nin SMEM", "SMEM 中的\nV tile"), COLORS["smem"], fs=8.8)
+    box(ax, 0.6, 1.55, 3.15, 0.7, tr("P cols 0:96 in TMEM\n+ O-slot safe (WG2)", "TMEM 中 P 的列 0:96\n+ O slot 可安全累加（WG2）"), COLORS["tmem"], fs=8.2)
+    box(ax, 0.6, 0.55, 3.15, 0.62, tr("P cols 96:128\nin TMEM", "TMEM 中 P 的列 96:128"), COLORS["tmem"], fs=8.4)
+    box(ax, 6.45, 1.35, 2.3, 0.95, tr("value MMA\nP,V -> O", "value MMA\nP,V -> O"), COLORS["mma"], fs=10.5)
     arrow(ax, 2.55, 2.86, 6.45, 2.05, rad=-0.05)
     arrow(ax, 3.75, 1.90, 6.45, 1.83, rad=0.0)
     arrow(ax, 3.75, 0.86, 6.45, 1.52, rad=0.06)
     label(ax, 4.95, 2.42, "kv_load.full", fs=8.3)
     label(ax, 4.95, 1.93, "p_o_rescale.full", fs=8.3)
     label(ax, 4.95, 1.08, "p_ready_2.full", fs=8.3)
-    ax.text(7.6, 1.14, "two-part MMA: starts on cols 0:96, then 96:128", ha="center", fontsize=7.8,
+    ax.text(7.6, 1.14, tr("two-part MMA: starts on cols 0:96, then 96:128", "两段 MMA：先处理列 0:96，再处理 96:128"), ha="center", fontsize=7.8,
             color="#6b7280", style="italic")
 
     # ---- Legend (right gap). ----
     lx = 9.55
-    ax.text(lx, 5.95, "Legend", fontsize=11.5, weight="bold", color="#1f2937")
+    ax.text(lx, 5.95, tr("Legend", "图例"), fontsize=11.5, weight="bold", color="#1f2937")
 
     def swatch(y, color, text):
         box(ax, lx, y, 0.42, 0.34, "", color)
         ax.text(lx + 0.6, y + 0.17, text, ha="left", va="center", fontsize=8.7, color="#374151")
 
-    swatch(5.40, COLORS["smem"], "SMEM tile (TMA-loaded)")
-    swatch(4.86, COLORS["tmem"], "TMEM tile / O slot")
-    swatch(4.32, COLORS["mma"], "MMA operation")
+    swatch(5.40, COLORS["smem"], tr("SMEM tile (TMA-loaded)", "SMEM tile（由 TMA 加载）"))
+    swatch(4.86, COLORS["tmem"], tr("TMEM tile / O slot", "TMEM tile / O slot"))
+    swatch(4.32, COLORS["mma"], tr("MMA operation", "MMA 操作"))
     label(ax, lx + 0.5, 3.66, "barrier", fs=8.0)
-    ax.text(lx + 1.05, 3.66, "gate that must signal\nbefore the MMA may fire",
+    ax.text(lx + 1.05, 3.66, tr("gate that must signal\nbefore the MMA may fire", "MMA 发起前必须\n完成的 barrier"),
             ha="left", va="center", fontsize=8.7, color="#374151")
-    ax.text(lx, 2.55, "kv_load.full gates both the K and V loads,\nso it appears in both gates.",
+    ax.text(lx, 2.55, tr("kv_load.full gates both the K and V loads,\nso it appears in both gates.", "kv_load.full 同时保护 K 和 V 的加载，\n因此出现在两处。"),
             ha="left", va="center", fontsize=8.5, color="#6b7280", style="italic")
 
-    fig.savefig("../flash_attention_main_handoff.png", dpi=170, bbox_inches="tight", facecolor="white")
+    output = "../flash_attention_main_handoff_zh.svg" if zh else "../flash_attention_main_handoff.png"
+    fig.savefig(output, dpi=170, bbox_inches="tight", facecolor="white")
 
 
-def gen_softmax_correction():
+def gen_softmax_correction(lang="en"):
+    zh = lang == "zh"
+    tr = lambda en, cn: cn if zh else en
     fig, ax = plt.subplots(figsize=(13.0, 5.2))
     ax.set_xlim(0, 12.0)
     ax.set_ylim(0, 5.35)
     ax.axis("off")
 
-    ax.text(6.0, 5.0, "Softmax / WG2 Scale Slot Handshake", ha="center", fontsize=17, weight="bold")
+    ax.text(6.0, 5.0, tr("Softmax / WG2 Scale Slot Handshake", "Softmax 与 WG2 的 Scale Slot 交接"), ha="center", fontsize=17, weight="bold")
     ax.text(
         6.0,
         4.66,
-        "softmax_corr.full and softmax_corr.empty protect one SMEM slot, not the P/O compute path",
+        tr("softmax_corr.full and softmax_corr.empty protect one SMEM slot, not the P/O compute path", "softmax_corr.full / empty 保护一个 SMEM slot，不表示 P/O 计算已经完成"),
         ha="center",
         fontsize=10,
         color="#4b5563",
     )
 
     # Main full/empty lifecycle.
-    box(ax, 0.55, 3.35, 1.75, 0.72, "slot empty\nsoftmax may write", COLORS["bar"], fs=8.8)
-    box(ax, 2.8, 3.35, 1.95, 0.72, "softmax writes\nacc_scale / row_sum", COLORS["softmax"], fs=8.8)
+    box(ax, 0.55, 3.35, 1.75, 0.72, tr("slot empty\nsoftmax may write", "slot 为空\nsoftmax 可以写入"), COLORS["bar"], fs=8.8)
+    box(ax, 2.8, 3.35, 1.95, 0.72, tr("softmax writes\nacc_scale / row_sum", "softmax 写入\nacc_scale / row_sum"), COLORS["softmax"], fs=8.8)
     box(ax, 5.25, 3.35, 1.7, 0.72, "bar_softmax\n_corr_full", COLORS["bar"], fs=8.4)
-    box(ax, 7.45, 3.35, 1.9, 0.72, "WG2 reads\nthat SMEM slot", COLORS["wg2"], fs=8.8)
+    box(ax, 7.45, 3.35, 1.9, 0.72, tr("WG2 reads\nthat SMEM slot", "WG2 读取\n该 SMEM slot"), COLORS["wg2"], fs=8.8)
     box(ax, 9.85, 3.35, 1.7, 0.72, "bar_softmax\n_corr_empty", COLORS["bar"], fs=8.4)
 
     arrow(ax, 2.3, 3.71, 2.8, 3.71)
@@ -150,42 +176,59 @@ def gen_softmax_correction():
     arrow(ax, 6.95, 3.71, 7.45, 3.71)
     arrow(ax, 9.35, 3.71, 9.85, 3.71)
     arrow(ax, 10.7, 3.35, 1.42, 3.35, color="#7c3aed", rad=-0.18, lw=1.35)
-    label(ax, 5.95, 2.7, "empty goes back to softmax:\nthis slot can be overwritten next time", fs=8.4)
+    label(ax, 5.95, 2.7, tr("empty goes back to softmax:\nthis slot can be overwritten next time", "empty 返回 softmax：\n下一轮可以覆盖该 slot"), fs=8.4)
 
     ax.text(0.7, 4.25, "producer", fontsize=9, weight="bold", color="#92400e")
     ax.text(7.95, 4.25, "consumer", fontsize=9, weight="bold", color="#166534")
-    ax.text(0.6, 1.95, "What the full/empty pair proves", fontsize=11, weight="bold")
+    ax.text(0.6, 1.95, tr("What the full/empty pair proves", "这对 full/empty barriers 能证明什么"), fontsize=11, weight="bold")
     ax.text(
         0.6,
         1.58,
-        "full: WG2 may read the scale or final row_sum from SMEM\n"
-        "empty: softmax may reuse that same SMEM slot\n"
-        "scope: one slot per Q stage, arrived by 128 warpgroup threads",
+        tr(
+            "full: WG2 may read the scale or final row_sum from SMEM\n"
+            "empty: softmax may reuse that same SMEM slot\n"
+            "scope: one slot per Q stage, arrived by 128 warpgroup threads",
+            "full：WG2 可以从 SMEM 读取 scale 或最终 row_sum\n"
+            "empty：softmax 可以复用同一个 SMEM slot\n"
+            "scope：每个 Q stage 一个 slot，由 warpgroup 的 128 个 threads 报告 arrival",
+        ),
         fontsize=9.2,
         color="#374151",
         va="top",
     )
 
-    ax.text(7.05, 1.95, "What it does not prove", fontsize=11, weight="bold")
+    ax.text(7.05, 1.95, tr("What it does not prove", "这对 barriers 不能证明什么"), fontsize=11, weight="bold")
     ax.text(
         7.05,
         1.58,
-        "not: P has been written to TMEM\n"
-        "not: O has been rescaled\n"
-        "not: value MMA may start\n"
-        "those are covered by p_o_rescale.full and p_ready_2.full",
+        tr(
+            "not: P has been written to TMEM\n"
+            "not: O has been rescaled\n"
+            "not: value MMA may start\n"
+            "those are covered by p_o_rescale.full and p_ready_2.full",
+            "不能证明：P 已经写入 TMEM\n"
+            "不能证明：O 已经完成重缩放\n"
+            "不能证明：value MMA 可以开始\n"
+            "这些条件由 p_o_rescale.full 和 p_ready_2.full 保护",
+        ),
         fontsize=9.2,
         color="#374151",
         va="top",
     )
 
-    fig.savefig("../flash_attention_softmax_correction.png", dpi=170, bbox_inches="tight", facecolor="white")
+    output = "../flash_attention_softmax_correction_zh.svg" if zh else "../flash_attention_softmax_correction.png"
+    fig.savefig(output, dpi=170, bbox_inches="tight", facecolor="white")
 
 
-def main():
-    gen_main_handoff()
-    gen_softmax_correction()
+def main(lang="en", font_path=None):
+    configure_font(lang, font_path)
+    gen_main_handoff(lang)
+    gen_softmax_correction(lang)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--lang", choices=("en", "zh"), default="en")
+    parser.add_argument("--font-path")
+    args = parser.parse_args()
+    main(args.lang, args.font_path)
