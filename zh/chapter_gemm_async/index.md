@@ -16,16 +16,16 @@
 (chap_tma_async)=
 ## 第 4 步：TMA Async Load
 
-第 1 至第 3 步中，CTA 的所有 threads 都要计算地址并发出 load/store 指令，只为了把 tiles 搬入 SMEM。这会占用本可用于其他工作的 instruction bandwidth。第 4 步用 TMA 替换同步 `Tx.copy`：一个 thread 提交命令，TMA engine 独立完成整个 tile 的传输。从这里开始，示例统一使用完整的 `M=N=K=4096` 规模。
+第 1 至第 3 步使用 `Tx.cta.copy` 搬运 A、B tiles：CTA 中的 threads 分别计算地址，再执行相应的 load 和 store。第 4 步改用 TMA，只由一个 thread 发起操作，后续的地址生成和 tile 搬运交给 TMA engine 完成。从这里开始，示例统一使用完整的 `M=N=K=4096` 规模。
 
 > **这一步改变 Dispatch**
 > - Scope：不变，仍为一个 warpgroup。
 > - Layout：不变，仍使用相同的 SMEM/TMEM/register tiles。
-> - Dispatch：GMEM → SMEM load 从同步 `Tx.copy` 改为 TMA engine。
+> - Dispatch：GMEM → SMEM load 从 CTA 协作执行的 `Tx.cta.copy` 改为 TMA engine。
 
-### 如何发起 TMA
+### 发起 TMA Load
 
-虽然源代码只改了几行，但同步 copy 与 TMA 的执行模型不同。同步 `Tx.copy` 由 CTA 中的 threads 自己执行；TMA copy 则由一个 thread 发出命令，之后由 TMA hardware 完成数据搬运。下面对比两种写法。
+先对比第 3 步和第 4 步的写法。
 
 **修改前（第 3 步）**：128 个 threads 共同参与 copy，随后由 `cta_sync` 保证 shared-memory writes 可见：
 ```python
@@ -44,20 +44,13 @@ if tid == 0:  # exactly one thread starts TMA
 T.ptx.mbarrier.try_wait(tma_bar, phase)                  # wait before MMA reads SMEM
 ```
 
-这里使用 `tid == 0`，而不是 `elect_sync()`。`elect.sync` 会在每个 warp 中选出一个 active lane；一个 warpgroup 包含四个 warps，因此 `elect_sync()` 会让四个 threads 进入 load protocol。TMA load 需要向 mbarrier 登记一次预期 byte count；如果登记四次，计数会出错，wait 也无法按预期释放。使用 warpgroup-wide `tid` 选择唯一 thread 可以避免这个问题。
+`tid` 将 warp ID 和 lane ID 合并为 warpgroup 内的 thread ID，因此 `tid == 0` 只会选中一个 thread。若四个 warps 都直接执行 `elect_sync()`，每个 warp 都会选出一个 active lane，共有四个 threads 发起 TMA。也可以先限制 `warp_id == 0` 再使用 `elect_sync()`；这里使用 `tid == 0`，写法更直接。
 
-第 4 步仍会在每次 TMA load 后等待，因此还没有重叠 load 与 compute。这里的性能提升只来自数据搬运路径的改变：
-
-- `Tx.copy` 使用 CTA threads 计算地址并发出 load/store 指令。
-- tensor map descriptor 描述 tensor shape、strides、tile shape 和 swizzle mode；TMA engine 根据这些信息生成地址并搬运整个 tile。
-
-即使每次 load 后仍然阻塞，TMA 也能减少 CTA threads 用于数据搬运的指令，因此这一版本仍会更快。
+第 4 步仍然在每次 TMA load 后立即等待，因此 load 和 compute 还没有重叠。此时的变化只是将地址生成和 tile 搬运从 CTA threads 转交给 TMA engine，从而减少 threads 执行的搬运指令。第 5 步会加入第二个 SMEM stage，真正让 TMA load 与 MMA 同时进行。
 
 ### TMA Load 与 Store 的同步
 
-改用 TMA 后，不仅 copy 的发起者发生变化，完成通知也不同。`Tx.cta.copy` 由 CTA threads 协作执行，之后的 `cta_sync()` 足以确认完成。TMA 则由一个选出的 thread 执行 `Tx.copy_async(..., dispatch="tma")`，engine 按自己的进度完成传输，并通过 mbarrier 通知完成。
-
-因此，`cta_sync()` 已经不够。它只等待 CTA 自己的 threads，并排序这些 threads 的 shared-memory writes，不会追踪仍在进行的 TMA transfer。TMA load 的 selected thread 需要先告诉 mbarrier 本轮预期多少 bytes，CTA 再等待这个 mbarrier；只有完成后，MMA 才能读取 SMEM tile。下图展示了这次交接：
+发起 TMA load 后，数据传输仍会在 TMA engine 中继续执行。`cta_sync()` 只能同步 CTA 中的 threads，不能判断这次异步传输是否已经完成。为此，发起操作的 thread 需要向 mbarrier 登记本轮预期传输的 bytes，CTA 再等待该 barrier；只有 barrier 完成后，MMA 才能读取 SMEM tile。下图展示了这次交接：
 
 ![TMA Async Load 的同步流程](../../img/tma_sync_flow_zh.svg)
 
@@ -67,7 +60,7 @@ T.ptx.mbarrier.try_wait(tma_bar, phase)                  # wait before MMA reads
 
 TMA store 使用另一套等待方式：load 通过 mbarrier 和 byte count 跟踪完成，store 则使用 commit group 和 wait group。Threads 将 fp16 结果写入 `Dsmem` 并完成同步后，一个 selected thread 启动 `Tx.copy_async(D[...], Dsmem, dispatch="tma")`，再依次执行 `cp_async.bulk.commit_group()` 和 `cp_async.bulk.wait_group(0)`，等待 store 完成。此前不能复用 `Dsmem`，否则会覆盖仍在传输的数据。
 
-**使用你的 agent 练习**：追踪第 4 步中一个 K tile 的 load/store 同步。指出哪个 thread 启动每条 TMA 命令，哪个 mbarrier 或 commit group 跟踪完成状态，哪个 wait 保护 MMA 对 `Asmem`、`Bsmem` 的读取，以及哪个 wait 保护 `Dsmem` 的复用。为什么这里不能使用 `elect_sync()` 选择 TMA load 的发起者？
+**使用你的 agent 练习**：追踪第 4 步中一个 K tile 的 load/store 同步。指出哪个 thread 启动每条 TMA 命令，哪个 mbarrier 或 commit group 跟踪完成状态，哪个 wait 保护 MMA 对 `Asmem`、`Bsmem` 的读取，以及哪个 wait 保护 `Dsmem` 的复用。如果四个 warps 都直接执行 `elect_sync()`，会有多少个 threads 发起 TMA？
 
 ### 完整 Kernel
 
