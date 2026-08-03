@@ -54,7 +54,15 @@ TMA load 发出后，数据传输仍会在 TMA engine 中继续执行。`cta_syn
 
 ![TMA Async Load 的同步流程](../../img/tma_sync_flow_zh.svg)
 
-本例的 A、B loads 共用一个 mbarrier。`tid == 0` 的 thread 发出两次 `copy_async`，再通过 `arrive.expect_tx(total_bytes)` 登记两块 tiles 的总字节数。TMA engine 完成传输后，会逐步扣减 barrier 记录的待完成字节数。只有 arrival 和字节传输都完成后，`mbarrier.try_wait(phase)` 才会通过，MMA 此时才能安全读取 `Asmem` 和 `Bsmem`。
+图中的流程从上到下分为五步：
+
+1. `tid == 0` 的 thread 分别为 A、B 发出一次 `copy_async`。
+2. 同一个 thread 执行 `arrive.expect_tx(4096)`，报告一次 arrival，并登记两次 copy 共需传输 `4096 bytes`。此时 pending arrival count 已归零，但仍有 `4096 bytes` 尚未完成。
+3. TMA engine 将数据从 GMEM 搬到 SMEM，并通过 `complete_tx` 扣减待完成的 byte count。两次传输全部结束后，pending bytes 归零。
+4. Consumer 通过 `try_wait(phase)` 等待当前 barrier phase 完成。只有 pending arrival count 和 pending bytes 都归零，这次等待才会通过。
+5. SMEM 中的 A、B tiles 已经准备好，kernel 此时才发起 MMA。
+
+图中沿用前面 TMA 章节的示例，假设 A、B tiles 各为 `2048 bytes`。本节 kernel 实际加载的两个 tiles 都是 `128×64` 个 fp16 元素，各占 `16384 bytes`，因此传给 `arrive.expect_tx` 的总字节数是 `32768`。同步过程与图中相同，只有 byte count 不同。
 
 TMA store 使用另一套完成机制。Threads 将结果写入 `Dsmem` 并执行 CTA 同步后，`tid == 0` 的 thread 发起从 `Dsmem` 到 GMEM 的异步 copy。Kernel 随后通过 `cp_async.bulk.commit_group()` 提交这次 store，并使用 `cp_async.bulk.wait_group(0)` 等待完成。在 wait 返回前，`Dsmem` 不能被覆盖或复用。
 
