@@ -375,7 +375,7 @@ n_st_epi = n_base + no * BLK_N
 
 两个 CTAs 各自拥有 SMEM 和 barriers。为了让一次 cooperative MMA 等到两侧的数据都准备好，并在完成后通知两侧继续执行，这里需要完成三次交接。
 
-**TMA → MMA。** 当前实现使用 CTA 0 的 `tma2mma` 作为共同的 completion barrier，两个 CTAs 都通过同一个 remote view 引用它：
+**TMA → MMA。** 当前实现使用 CTA 0 的 `tma2mma` 统一记录两侧 TMA loads 的完成状态，两个 CTAs 都通过同一个 remote view 引用它：
 
 ```python
 tma2mma_cta0 = tma2mma.remote_view(0)
