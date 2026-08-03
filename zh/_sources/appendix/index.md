@@ -7,7 +7,7 @@
 |---|---|
 | TIRx 语言特性的准确写法和语义 | **{ref}`chap_language_reference`** |
 | 排查异步 GEMM 或 Flash Attention kernel 的卡死、崩溃、错误结果和性能下降 | **{ref}`chap_warp_spec_debug`** |
-| 编译器内部机制与 lowering pipeline | **{ref}`chap_arch`** |
+| 编译器内部机制与 lowering 流程 | **{ref}`chap_arch`** |
 
 完整的 `tvm.tirx` Python API 请参阅
 [TVM 官方文档](https://tvm.apache.org/docs/)。

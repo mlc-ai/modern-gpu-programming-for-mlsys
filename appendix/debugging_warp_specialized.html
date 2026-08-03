@@ -657,19 +657,19 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <thead>
 <tr class="row-odd"><th class="head"><p>Barrier</p></th>
 <th class="head"><p>init(count)</p></th>
-<th class="head"><p>Who arrives</p></th>
+<th class="head"><p>How completion is reported</p></th>
 <th class="head"><p>Arrivals</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TMABar</span></code> (tma-&gt;mma)</p></td>
 <td><p>1</p></td>
-<td><p>TMA engine via <code class="docutils literal notranslate"><span class="pre">arrive(stage,</span> <span class="pre">bytes)</span></code></p></td>
+<td><p>The selected producer thread calls <code class="docutils literal notranslate"><span class="pre">arrive(stage,</span> <span class="pre">bytes)</span></code>; the TMA engine later completes the byte count</p></td>
 <td><p>1</p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code> (mma-&gt;tma, mma-&gt;ld)</p></td>
 <td><p>1</p></td>
-<td><p>MMA warp via <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code></p></td>
+<td><p>The selected MMA thread calls <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>; hardware reports the arrival when the MMA completes</p></td>
 <td><p>1</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">MBarrier</span></code> (ld-&gt;mma)</p></td>
@@ -706,7 +706,7 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">fence.proxy_async(&quot;shared::cta&quot;)</span></code> before TMA store.</strong> The TMA engine may not see SMEM writes from threads.</p></li>
 <li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span></code> plus <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code> after TMA store.</strong> The next tile can reuse Dsmem before the store drains.</p></li>
 <li><p><strong>Persistent kernel fails intermittently at small sizes such as 1024x1024.</strong> Larger sizes can mask the race with longer K-loops. Re-check phase reset between tiles and the TMA-store commit/wait.</p></li>
-<li><p><strong><code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> is usually not the fix.</strong> The MMA-completion mbarrier already carries release-acquire semantics. Steps 8 and 9 add it conservatively on the writeback edge, after <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code> and before the first <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>; do not add it routinely on the TMA-to-MMA edge.</p></li>
+<li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> between MMA completion and TMEM load.</strong> The <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> wait confirms that the MMA has completed, but a writeback thread still needs <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code> before issuing <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. This orders the new thread’s TMEM load after the cross-thread completion notification. Steps 7-9 place the fence immediately after <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code>. This is a <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.</p></li>
 </ul>
 </section>
 <section id="correct-but-slow">
