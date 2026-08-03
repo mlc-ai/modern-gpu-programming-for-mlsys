@@ -69,7 +69,6 @@ TMA store 使用另一套完成机制。Threads 将结果写入 `Dsmem` 并执�
 完整 kernel 在第 3 步结构中加入 TMA load 和 store，其余部分保持不变。Imports 与前面相同：
 
 ```python
-
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
@@ -292,7 +291,6 @@ if stage == PIPE_DEPTH - 1:
 完整 kernel 保留第 4 步的 TMA load/store path，并加入 staged buffers 和 phase logic。Imports 不变：
 
 ```python
-
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
@@ -503,7 +501,6 @@ while tile_scheduler.valid():
 从结构上看，这个 kernel 只是在第 5 步的 pipeline 外增加了一层 tile loop。新增的依赖只有 scheduler：
 
 ```python
-
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
