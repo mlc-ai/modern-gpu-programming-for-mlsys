@@ -617,9 +617,9 @@ def hgemm_v8(M, N, K):
 
 ### 如何加入第二个 MMA Consumer
 
-这些改动可以分成三组。
+加入第二个 MMA consumer，需要同时调整 layout、barriers 和 tile 调度。
 
-**Operand 和 accumulator layout。** `Asmem` 增加一个长度为 `NUM_CONSUMER` 的维度，使每个 stage 能够保存两份 A blocks：
+**扩展 operand 和 accumulator layout。** `Asmem` 增加一个长度为 `NUM_CONSUMER` 的维度，使每个 stage 能够保存两份 A blocks：
 
 ```python
 Asmem = pool.alloc(
@@ -627,7 +627,7 @@ Asmem = pool.alloc(
 )
 ```
 
-TMA producer 每轮加载 `Asmem[stage, 0]`、`Asmem[stage, 1]` 和一份共享的 `Bsmem[stage]`。相应的 arrival byte count 为：
+两个 CTAs 的 TMA producers 每轮都加载 `Asmem[stage, 0]`、`Asmem[stage, 1]` 和本地的 `Bsmem[stage]`。两个 consumers 会复用这组 B slices，因此无需再增加 B block。两侧 TMA loads 登记的总 byte count 为：
 
 ```python
 CTA_GROUP * (
@@ -637,16 +637,16 @@ CTA_GROUP * (
 
 两个 MMA warps 使用 `warp_id` 选择自己的 A block，并分别写入 TMEM cols `[0:256]` 和 `[256:512]`。
 
-**Barrier。** 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 `mma2tma` 的 expected arrival count 改为 `NUM_CONSUMER`。`mma2ld` 和 `ld2mma` 则各自包含两个 slots：slot 0 连接 MMA consumer 0 与两侧 CTA 的 WG 0，slot 1 连接 MMA consumer 1 与两侧 CTA 的 WG 1。MMA 侧使用 `warp_id` 选择 slot，writeback 侧使用 `wg_id` 选择同一个 slot。
+**更新 barriers。** 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 `mma2tma` 的 expected arrival count 改为 `NUM_CONSUMER`。`mma2ld` 和 `ld2mma` 则各自包含两个 slots：slot 0 连接 MMA consumer 0 与两侧 CTA 的 WG 0，slot 1 连接 MMA consumer 1 与两侧 CTA 的 WG 1。MMA 侧使用 `warp_id` 选择 slot，writeback 侧使用 `wg_id` 选择同一个 slot。
 
-**Scheduler 和 writeback。** 一个 cluster tile 现在包含 $512\times256$ 个 output elements，因此 scheduler 使用：
+**调整 scheduler 和 writeback。** Cluster output tile 的 shape 现在是 $512\times256$，因此 scheduler 使用：
 
 ```python
 num_m_tiles = M // (NUM_CONSUMER * CTA_GROUP * BLK_M)  # M // 512
 num_n_tiles = N // (CTA_GROUP * BLK_N)                 # N // 256
 ```
 
-`m_st` 指向 consumer 0 的 A rows；consumer `c` 的起点为 `m_st + c * CTA_GROUP * BLK_M`，所以 consumer 1 会再向后移动 256 行。Writeback 时，每个 consumer 的 256 列按 `EPI_N=64` 分成四轮；每个 thread 一轮只需保存 64 个 fp32 values，完成转换和写回后再处理下一轮。
+`m_st` 指向 consumer 0 的 A rows；consumer `c` 的起点为 `m_st + c * CTA_GROUP * BLK_M`，所以 consumer 1 会再向后移动 256 行。Writeback 时，每个 consumer 的 256 列按 `EPI_N=64` 分成四轮。每个 thread 一轮只处理其中 64 列，完成转换和写回后再进入下一轮。
 
 
 ### 完整 Kernel
