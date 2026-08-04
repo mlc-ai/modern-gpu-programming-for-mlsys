@@ -1,0 +1,318 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="760" viewBox="0 0 1320 760" role="img" aria-label="C/D Register Fragment for mma.sync.m16n8k16">
+<rect x="0" y="0" width="1320" height="760" rx="0" fill="#ffffff" stroke="none" stroke-width="0"/>
+<text x="660.0" y="48" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="30" font-weight="700" fill="#111827">C/D Register Fragment for mma.sync.m16n8k16</text>
+<text x="660.0" y="80" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="18" font-weight="400" fill="#64748b">How 32 lanes collectively hold a 16 x 8 fp32 accumulator tile</text>
+<rect x="38" y="108" width="760" height="570" rx="8" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+<text x="418.0" y="140" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="19" font-weight="700" fill="#1f2937">Logical C/D tile (each cell names its owning lane)</text>
+<text x="218.0" y="178" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#64748b">0</text>
+<text x="282.0" y="178" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#64748b">1</text>
+<text x="346.0" y="178" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#64748b">2</text>
+<text x="410.0" y="178" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#64748b">3</text>
+<text x="474.0" y="178" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#64748b">4</text>
+<text x="538.0" y="178" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#64748b">5</text>
+<text x="602.0" y="178" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#64748b">6</text>
+<text x="666.0" y="178" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#64748b">7</text>
+<text x="442" y="160" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#475569">column n</text>
+<text x="168" y="209" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">0</text>
+<rect x="186" y="190" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="217.0" y="209" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L0</text>
+<rect x="250" y="190" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="281.0" y="209" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L0</text>
+<rect x="314" y="190" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="345.0" y="209" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L1</text>
+<rect x="378" y="190" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="409.0" y="209" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L1</text>
+<rect x="442" y="190" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="473.0" y="209" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L2</text>
+<rect x="506" y="190" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="537.0" y="209" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L2</text>
+<rect x="570" y="190" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="601.0" y="209" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L3</text>
+<rect x="634" y="190" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="665.0" y="209" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L3</text>
+<text x="168" y="236" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">1</text>
+<rect x="186" y="217" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="217.0" y="236" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L4</text>
+<rect x="250" y="217" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="281.0" y="236" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L4</text>
+<rect x="314" y="217" width="62" height="25" rx="2" fill="#dcfce7" stroke="#111827" stroke-width="3.5"/>
+<text x="345.0" y="236" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L5</text>
+<rect x="378" y="217" width="62" height="25" rx="2" fill="#dcfce7" stroke="#111827" stroke-width="3.5"/>
+<text x="409.0" y="236" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L5</text>
+<rect x="442" y="217" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="473.0" y="236" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L6</text>
+<rect x="506" y="217" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="537.0" y="236" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L6</text>
+<rect x="570" y="217" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="601.0" y="236" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L7</text>
+<rect x="634" y="217" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="665.0" y="236" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L7</text>
+<text x="168" y="263" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">2</text>
+<rect x="186" y="244" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="217.0" y="263" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L8</text>
+<rect x="250" y="244" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="281.0" y="263" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L8</text>
+<rect x="314" y="244" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="345.0" y="263" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L9</text>
+<rect x="378" y="244" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="409.0" y="263" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L9</text>
+<rect x="442" y="244" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="473.0" y="263" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L10</text>
+<rect x="506" y="244" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="537.0" y="263" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L10</text>
+<rect x="570" y="244" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="601.0" y="263" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L11</text>
+<rect x="634" y="244" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="665.0" y="263" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L11</text>
+<text x="168" y="290" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">3</text>
+<rect x="186" y="271" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="217.0" y="290" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L12</text>
+<rect x="250" y="271" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="281.0" y="290" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L12</text>
+<rect x="314" y="271" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="345.0" y="290" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L13</text>
+<rect x="378" y="271" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="409.0" y="290" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L13</text>
+<rect x="442" y="271" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="473.0" y="290" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L14</text>
+<rect x="506" y="271" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="537.0" y="290" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L14</text>
+<rect x="570" y="271" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="601.0" y="290" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L15</text>
+<rect x="634" y="271" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="665.0" y="290" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L15</text>
+<text x="168" y="317" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">4</text>
+<rect x="186" y="298" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="217.0" y="317" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L16</text>
+<rect x="250" y="298" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="281.0" y="317" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L16</text>
+<rect x="314" y="298" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="345.0" y="317" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L17</text>
+<rect x="378" y="298" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="409.0" y="317" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L17</text>
+<rect x="442" y="298" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="473.0" y="317" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L18</text>
+<rect x="506" y="298" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="537.0" y="317" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L18</text>
+<rect x="570" y="298" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="601.0" y="317" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L19</text>
+<rect x="634" y="298" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="665.0" y="317" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L19</text>
+<text x="168" y="344" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">5</text>
+<rect x="186" y="325" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="217.0" y="344" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L20</text>
+<rect x="250" y="325" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="281.0" y="344" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L20</text>
+<rect x="314" y="325" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="345.0" y="344" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L21</text>
+<rect x="378" y="325" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="409.0" y="344" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L21</text>
+<rect x="442" y="325" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="473.0" y="344" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L22</text>
+<rect x="506" y="325" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="537.0" y="344" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L22</text>
+<rect x="570" y="325" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="601.0" y="344" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L23</text>
+<rect x="634" y="325" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="665.0" y="344" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L23</text>
+<text x="168" y="371" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">6</text>
+<rect x="186" y="352" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="217.0" y="371" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L24</text>
+<rect x="250" y="352" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="281.0" y="371" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L24</text>
+<rect x="314" y="352" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="345.0" y="371" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L25</text>
+<rect x="378" y="352" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="409.0" y="371" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L25</text>
+<rect x="442" y="352" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="473.0" y="371" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L26</text>
+<rect x="506" y="352" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="537.0" y="371" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L26</text>
+<rect x="570" y="352" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="601.0" y="371" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L27</text>
+<rect x="634" y="352" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="665.0" y="371" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L27</text>
+<text x="168" y="398" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">7</text>
+<rect x="186" y="379" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="217.0" y="398" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L28</text>
+<rect x="250" y="379" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="281.0" y="398" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L28</text>
+<rect x="314" y="379" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="345.0" y="398" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L29</text>
+<rect x="378" y="379" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="409.0" y="398" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L29</text>
+<rect x="442" y="379" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="473.0" y="398" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L30</text>
+<rect x="506" y="379" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="537.0" y="398" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L30</text>
+<rect x="570" y="379" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="601.0" y="398" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L31</text>
+<rect x="634" y="379" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="665.0" y="398" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L31</text>
+<text x="168" y="441" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">8</text>
+<rect x="186" y="422" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="217.0" y="441" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L0</text>
+<rect x="250" y="422" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="281.0" y="441" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L0</text>
+<rect x="314" y="422" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="345.0" y="441" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L1</text>
+<rect x="378" y="422" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="409.0" y="441" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L1</text>
+<rect x="442" y="422" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="473.0" y="441" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L2</text>
+<rect x="506" y="422" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="537.0" y="441" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L2</text>
+<rect x="570" y="422" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="601.0" y="441" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L3</text>
+<rect x="634" y="422" width="62" height="25" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.1"/>
+<text x="665.0" y="441" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L3</text>
+<text x="168" y="468" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">9</text>
+<rect x="186" y="449" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="217.0" y="468" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L4</text>
+<rect x="250" y="449" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="281.0" y="468" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L4</text>
+<rect x="314" y="449" width="62" height="25" rx="2" fill="#dcfce7" stroke="#111827" stroke-width="3.5"/>
+<text x="345.0" y="468" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L5</text>
+<rect x="378" y="449" width="62" height="25" rx="2" fill="#dcfce7" stroke="#111827" stroke-width="3.5"/>
+<text x="409.0" y="468" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L5</text>
+<rect x="442" y="449" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="473.0" y="468" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L6</text>
+<rect x="506" y="449" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="537.0" y="468" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L6</text>
+<rect x="570" y="449" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="601.0" y="468" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L7</text>
+<rect x="634" y="449" width="62" height="25" rx="2" fill="#dcfce7" stroke="#22c55e" stroke-width="1.1"/>
+<text x="665.0" y="468" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L7</text>
+<text x="168" y="495" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">10</text>
+<rect x="186" y="476" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="217.0" y="495" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L8</text>
+<rect x="250" y="476" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="281.0" y="495" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L8</text>
+<rect x="314" y="476" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="345.0" y="495" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L9</text>
+<rect x="378" y="476" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="409.0" y="495" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L9</text>
+<rect x="442" y="476" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="473.0" y="495" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L10</text>
+<rect x="506" y="476" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="537.0" y="495" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L10</text>
+<rect x="570" y="476" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="601.0" y="495" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L11</text>
+<rect x="634" y="476" width="62" height="25" rx="2" fill="#fef3c7" stroke="#eab308" stroke-width="1.1"/>
+<text x="665.0" y="495" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L11</text>
+<text x="168" y="522" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">11</text>
+<rect x="186" y="503" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="217.0" y="522" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L12</text>
+<rect x="250" y="503" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="281.0" y="522" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L12</text>
+<rect x="314" y="503" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="345.0" y="522" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L13</text>
+<rect x="378" y="503" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="409.0" y="522" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L13</text>
+<rect x="442" y="503" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="473.0" y="522" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L14</text>
+<rect x="506" y="503" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="537.0" y="522" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L14</text>
+<rect x="570" y="503" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="601.0" y="522" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L15</text>
+<rect x="634" y="503" width="62" height="25" rx="2" fill="#fce7f3" stroke="#ec4899" stroke-width="1.1"/>
+<text x="665.0" y="522" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L15</text>
+<text x="168" y="549" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">12</text>
+<rect x="186" y="530" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="217.0" y="549" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L16</text>
+<rect x="250" y="530" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="281.0" y="549" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L16</text>
+<rect x="314" y="530" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="345.0" y="549" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L17</text>
+<rect x="378" y="530" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="409.0" y="549" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L17</text>
+<rect x="442" y="530" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="473.0" y="549" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L18</text>
+<rect x="506" y="530" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="537.0" y="549" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L18</text>
+<rect x="570" y="530" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="601.0" y="549" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L19</text>
+<rect x="634" y="530" width="62" height="25" rx="2" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1.1"/>
+<text x="665.0" y="549" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L19</text>
+<text x="168" y="576" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">13</text>
+<rect x="186" y="557" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="217.0" y="576" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L20</text>
+<rect x="250" y="557" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="281.0" y="576" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L20</text>
+<rect x="314" y="557" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="345.0" y="576" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L21</text>
+<rect x="378" y="557" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="409.0" y="576" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L21</text>
+<rect x="442" y="557" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="473.0" y="576" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L22</text>
+<rect x="506" y="557" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="537.0" y="576" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L22</text>
+<rect x="570" y="557" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="601.0" y="576" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L23</text>
+<rect x="634" y="557" width="62" height="25" rx="2" fill="#cffafe" stroke="#06b6d4" stroke-width="1.1"/>
+<text x="665.0" y="576" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L23</text>
+<text x="168" y="603" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">14</text>
+<rect x="186" y="584" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="217.0" y="603" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L24</text>
+<rect x="250" y="584" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="281.0" y="603" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L24</text>
+<rect x="314" y="584" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="345.0" y="603" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L25</text>
+<rect x="378" y="584" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="409.0" y="603" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L25</text>
+<rect x="442" y="584" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="473.0" y="603" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L26</text>
+<rect x="506" y="584" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="537.0" y="603" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L26</text>
+<rect x="570" y="584" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="601.0" y="603" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L27</text>
+<rect x="634" y="584" width="62" height="25" rx="2" fill="#ffedd5" stroke="#f97316" stroke-width="1.1"/>
+<text x="665.0" y="603" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L27</text>
+<text x="168" y="630" text-anchor="end" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="14" font-weight="600" fill="#64748b">15</text>
+<rect x="186" y="611" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="217.0" y="630" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L28</text>
+<rect x="250" y="611" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="281.0" y="630" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L28</text>
+<rect x="314" y="611" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="345.0" y="630" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L29</text>
+<rect x="378" y="611" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="409.0" y="630" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L29</text>
+<rect x="442" y="611" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="473.0" y="630" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L30</text>
+<rect x="506" y="611" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="537.0" y="630" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L30</text>
+<rect x="570" y="611" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="601.0" y="630" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L31</text>
+<rect x="634" y="611" width="62" height="25" rx="2" fill="#e2e8f0" stroke="#64748b" stroke-width="1.1"/>
+<text x="665.0" y="630" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="13" font-weight="700" fill="#1f2937">L31</text>
+<text x="92" y="298" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#475569">rows 0-7</text>
+<text x="92" y="530" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="600" fill="#475569">rows 8-15</text>
+<line x1="138" y1="190" x2="138" y2="404" stroke="#94a3b8" stroke-width="2"/>
+<line x1="138" y1="422" x2="138" y2="636" stroke="#94a3b8" stroke-width="2"/>
+<line x1="186" y1="414.0" x2="696" y2="414.0" stroke="#475569" stroke-width="2" stroke-dasharray="5 5"/>
+<rect x="830" y="108" width="452" height="570" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+<text x="858" y="155" text-anchor="start" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="20" font-weight="700" fill="#1f2937">Step 1: the group selects two rows</text>
+<rect x="858" y="172" width="396" height="48" rx="5" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+<text x="1056.0" y="204" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="23" font-weight="700" fill="#1d4ed8">g = lane // 4</text>
+<text x="858" y="247" text-anchor="start" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="17" font-weight="500" fill="#334155">lane 5: g = 1 -&gt; rows 1 and 9</text>
+<text x="858" y="302" text-anchor="start" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="20" font-weight="700" fill="#1f2937">Step 2: position selects two columns</text>
+<rect x="858" y="319" width="396" height="48" rx="5" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
+<text x="1056.0" y="351" text-anchor="middle" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="23" font-weight="700" fill="#15803d">t = lane mod 4</text>
+<text x="858" y="394" text-anchor="start" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="17" font-weight="500" fill="#334155">lane 5: t = 1 -&gt; columns 2 and 3</text>
+<line x1="858" y1="430" x2="1254" y2="430" stroke="#e2e8f0" stroke-width="2"/>
+<text x="858" y="466" text-anchor="start" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="20" font-weight="700" fill="#1f2937">lane 5 holds four fp32 accumulator values</text>
+<rect x="858" y="486" width="180" height="50" rx="5" fill="#f8fafc" stroke="#111827" stroke-width="1.8"/>
+<text x="876" y="517" text-anchor="start" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="16" font-weight="700" fill="#475569">c0</text>
+<text x="1016" y="517" text-anchor="end" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="17" font-weight="700" fill="#111827">(1, 2)</text>
+<rect x="1056" y="486" width="180" height="50" rx="5" fill="#f8fafc" stroke="#111827" stroke-width="1.8"/>
+<text x="1074" y="517" text-anchor="start" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="16" font-weight="700" fill="#475569">c1</text>
+<text x="1214" y="517" text-anchor="end" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="17" font-weight="700" fill="#111827">(1, 3)</text>
+<rect x="858" y="552" width="180" height="50" rx="5" fill="#f8fafc" stroke="#111827" stroke-width="1.8"/>
+<text x="876" y="583" text-anchor="start" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="16" font-weight="700" fill="#475569">c2</text>
+<text x="1016" y="583" text-anchor="end" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="17" font-weight="700" fill="#111827">(9, 2)</text>
+<rect x="1056" y="552" width="180" height="50" rx="5" fill="#f8fafc" stroke="#111827" stroke-width="1.8"/>
+<text x="1074" y="583" text-anchor="start" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="16" font-weight="700" fill="#475569">c3</text>
+<text x="1214" y="583" text-anchor="end" font-family="'DejaVu Sans Mono', 'Noto Sans Mono CJK SC', monospace" font-size="17" font-weight="700" fill="#111827">(9, 3)</text>
+<text x="1056.0" y="633" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="15" font-weight="500" fill="#64748b">Each cell corresponds to one fp32 register value</text>
+<text x="660.0" y="720" text-anchor="middle" font-family="Arial, 'Noto Sans CJK SC', sans-serif" font-size="16" font-weight="500" fill="#475569">Matching fills identify one four-lane group; black borders mark lane 5&#x27;s four elements.</text>
+</svg>
