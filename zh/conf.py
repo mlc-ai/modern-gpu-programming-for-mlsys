@@ -40,7 +40,7 @@ html_favicon = "../static/mlc-favicon.ico"
 html_static_path = ["../static"]
 html_extra_path = ["../_extra", "_extra"]
 html_css_files = ["custom.css", "demo-embed.css"]
-html_js_files = ["demo-embed-zh-20260627.js"]
+html_js_files = ["demo-embed-zh-20260627.js", "chinese-search.js"]
 html_theme_options = {
     "show_navbar_depth": 1,
     "show_toc_level": 2,
