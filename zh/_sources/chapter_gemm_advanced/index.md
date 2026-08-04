@@ -17,7 +17,7 @@ SMEM ring 和 prefetch 结构已经建立，但所有阶段仍由同一个 warpg
 
 
 (chap_warp_specialization)=
-## 第 7 步：Warp Specialization 与 Pipeline
+## 第 7 步：Warp Specialization
 
 单 warpgroup kernel 中，所有 threads 都沿着 load、compute、writeback 的同一条路径执行。加载数据时 Tensor Cores 无事可做，执行计算时 TMA engine 也可能空闲。Warp specialization 将这些工作交给不同 warps，再用 software pipeline 在它们之间传递数据，使多个阶段可以同时运行。
 
@@ -88,7 +88,7 @@ tma_ps.advance()                          # Advance to next stage
 
 如果两端使用相同的初始 phase，kernel 可能 deadlock，也可能在数据尚未准备好时继续执行。
 
-### 使用 Named Barrier 同步一个 Warpgroup
+### 使用 `warpgroup_sync` 同步 Writeback Warpgroup
 
 第 7 步的 writeback 由 Warpgroup 0 的 128 个 threads 完成。它们先分别把 registers 写入 `Dsmem`，等整块 tile 都写完后，再由其中一个 thread 发起 TMA store。这里需要同步 Warpgroup 0，但不能使用 `cta_sync()`：CTA 中的另一个 warpgroup 正在执行 producer 和 MMA consumer 分支，不会到达这个同步点。如果 Warpgroup 0 在分支内等待整个 CTA，kernel 就会 deadlock。
 
@@ -98,9 +98,11 @@ tma_ps.advance()                          # Advance to next stage
 bar.sync 10, 128
 ```
 
-其中 `10` 是 named barrier ID，`128` 是这次同步需要收到的 thread arrivals。该指令不会自动识别当前 warpgroup；这里之所以只同步 Warpgroup 0，是因为只有它的 128 个 threads 会执行这段代码，并且全部使用相同的 barrier ID。第一次 `warpgroup_sync(10)` 保证 `Dsmem` 已经写完整，第二次则保证 selected thread 已经等待 TMA store 完成，其他 threads 才进入下一轮。
+PTX 将这种通过数字 ID 选择的 CTA barrier 称为 named barrier。这里的 `10` 是 barrier ID，`128` 是这次同步需要收到的 thread arrivals。它与前面用于追踪异步操作完成状态的 `mbarrier` 不同：`bar.sync` 会让执行它的 threads 停下来，直到指定数量的 threads 使用同一个 ID 到达。
 
-每个 CTA 有 16 个 named barrier slots，ID 范围为 0–15。参与同一次同步的 threads 必须使用相同 ID，彼此独立的同步则应使用不同 ID。第 7 步只有 Warpgroup 0 执行 writeback，因此固定使用 ID 10；第 9 步有两个 writeback warpgroups，使用 `warpgroup_sync(wg_id + 10)` 后，它们分别使用 IDs 10 和 11，避免两组 arrivals 被计入同一轮同步。
+该指令不会自动识别当前 warpgroup；这里之所以只同步 Warpgroup 0，是因为只有它的 128 个 threads 会执行这段代码，并且全部使用 ID 10。第一次 `warpgroup_sync(10)` 保证 `Dsmem` 已经写完整，第二次则保证 selected thread 已经等待 TMA store 完成，其他 threads 才进入下一轮。
+
+每个 CTA 有 16 个这样的 barrier slots，ID 范围为 0–15。参与同一次同步的 threads 必须使用相同 ID，彼此独立的同步则应使用不同 ID。第 7 步只有 Warpgroup 0 执行 writeback，因此固定使用 ID 10；第 9 步有两个 writeback warpgroups，使用 `warpgroup_sync(wg_id + 10)` 后，它们分别使用 IDs 10 和 11，避免两组 arrivals 被计入同一轮同步。
 
 ### Epilogue（Writeback）
 
@@ -595,22 +597,32 @@ def hgemm_v8(M, N, K):
 (chap_multi_consumer)=
 ## 第 9 步：Multi-Consumer Warp Specialization
 
-第 8 步中，一个 MMA consumer 使用两侧 CTA 提供的 A slices 和 B slices，计算一个 $256\times256$ cluster output tile。第 9 步保留同一份 B，再为每个 CTA 多加载一份 A，并增加第二个 MMA consumer。Consumer 0 计算 output 的前 256 行，consumer 1 计算接下来的 256 行；两者覆盖相同的 256 列。因此，cluster output 沿 M 维从 $256\times256$ 扩展为 $512\times256$，而每个 stage 的 B load 不变。
+第 8 步中，一次 cooperative MMA 使用两个 CTAs 提供的 A、B slices，计算一个 $256\times256$ output tile。第 9 步在同一个 two-CTA cluster 中发起两次这样的 MMA：它们读取不同的 A rows，但共用同一组 B slices。这样，每个 stage 的 B load 保持不变，cluster output 则沿 M 维扩展为 $512\times256$。
 
 > **第 9 步的执行结构**
 > - Scope：CTA 0 中负责发起 MMA 的 consumer warps 由一个增加到两个，并通过 `warp_id` 区分。
 > - Layout：A layout 增加 consumer axis，TMEM 也分成两个独立的 accumulator ranges；两个 consumers 复用同一个 staged B tile。
 > - Dispatch：仍使用 `tcgen05` 和 `cta_group=2`，但现在会为两个 consumers 分别发起一次 cooperative MMA。
 
-### Multi-Consumer 结构
+### 两个 Consumers 计算哪些 Rows
 
-增加第二个 consumer 后，kernel 需要两个 MMA issue warps，以及两个分别负责对应 accumulator 的 writeback warpgroups。每个 MMA warp 中仍然只有 `elect_sync()` 选出的一个 thread 发出指令。设置 `NUM_CONSUMER=2` 和 `WG_NUMBER=3` 后，各个角色分配如下：
+令当前 cluster tile 的起点为 `m_base` 和 `n_base`。Consumer 0 计算前 256 行，consumer 1 计算后 256 行；每个 consumer 内部再由 CTA 0 和 CTA 1 各负责 128 行。两次 MMA 都使用 `B[n_base:n_base+256, :]`，所以覆盖相同的 256 个 output columns：
+
+| Consumer | CTA 0 使用的 A / 写回的 D rows | CTA 1 使用的 A / 写回的 D rows | 两侧共同提供的 B rows | 两侧 TMEM 中的 TCol range | Writeback |
+|----------|----------------------------------|----------------------------------|--------------------------|-----------------------------|-----------|
+| **0** | `m_base:m_base+128` | `m_base+128:m_base+256` | `n_base:n_base+256` | `[0:256]` | WG 0 |
+| **1** | `m_base+256:m_base+384` | `m_base+384:m_base+512` | `n_base:n_base+256` | `[256:512]` | WG 1 |
+
+表中的一个 consumer 表示一次跨两个 CTAs 的 cooperative MMA。CTA 0 中对应的 MMA issue warp 只负责发出指令；硬件随后读取两侧 CTA 的 A、B slices，并将各自负责的 128 行结果写入两侧 TMEM。两个 consumers 合起来覆盖 `D[m_base:m_base+512, n_base:n_base+256]`。
+
+### Warp 角色
+
+Kernel 使用两个 MMA issue warps 发起上述两次 cooperative MMA，并使用两个 writeback warpgroups 分别处理对应的 accumulator。每个 issue warp 中仍然只有 `elect_sync()` 选出的一个 thread 发出指令。设置 `NUM_CONSUMER=2` 和 `WG_NUMBER=3` 后，各个角色分配如下：
 
 | Warpgroup | Warp | 角色 |
 |-----------|------|------|
-| **WG 2** | warp 0 | MMA consumer 0：CTA 0 中选出的 thread 发起 `Asmem[..., 0] × B`，写入 TMEM cols `[0:256]` |
-| **WG 2** | warp 1 | MMA consumer 1：CTA 0 中选出的 thread 发起 `Asmem[..., 1] × B`，写入 TMEM cols `[256:512]` |
-| **WG 2** | warp 2 | 当前版本未使用 |
+| **WG 2** | warp 0 | MMA issue warp 0：CTA 0 中选出的 thread 发起 consumer 0 的 MMA，使用 `Asmem[..., 0]`，写入 TMEM `[0:256]` |
+| **WG 2** | warp 1 | MMA issue warp 1：CTA 0 中选出的 thread 发起 consumer 1 的 MMA，使用 `Asmem[..., 1]`，写入 TMEM `[256:512]` |
 | **WG 2** | warp 3 | TMA producer：两个 CTAs 各自加载本地的 2 个 A blocks 和 1 个 B block |
 | **WG 0** | 全部 warps | 两个 CTAs 分别写回 consumer 0 的本地 output rows，读取 TMEM `[0:256]` |
 | **WG 1** | 全部 warps | 两个 CTAs 分别写回 consumer 1 的本地 output rows，读取 TMEM `[256:512]` |
@@ -639,7 +651,9 @@ CTA_GROUP * (
 
 两个 MMA warps 使用 `warp_id` 选择自己的 A block，并分别写入 TMEM cols `[0:256]` 和 `[256:512]`。
 
-**更新 barriers。** 两个 consumers 都必须读完当前 SMEM stage，TMA producer 才能覆盖它，因此 `mma2tma` 的 expected arrival count 改为 `NUM_CONSUMER`。`mma2ld` 和 `ld2mma` 各自包含两个 slots。对于 `mma2ld`，consumer 0 通过 slot 0 向两个 CTAs 的 WG 0 multicast 完成通知，consumer 1 则通过 slot 1 通知 WG 1。随后，对应的 `ld2mma` slot 会收集两侧 writeback threads 的 arrivals；全部到达后，该 consumer 才能复用自己的 TMEM range。MMA 侧使用 `warp_id` 选择 slot，writeback 侧使用 `wg_id` 选择同一个 slot。
+**更新 barriers。** `tma2mma` 和 `mma2tma` 仍然按 pipeline stage 索引。TMA 完成一个 stage 的两份 A 和一份 B load 后，两个 MMA issue warps 都等待同一个 `tma2mma[stage]`。反方向上，两个 consumers 都读完这个 stage 后，TMA producer 才能覆盖它，因此 `mma2tma[stage]` 的 expected arrival count 改为 `NUM_CONSUMER`。
+
+`mma2ld` 和 `ld2mma` 则按 consumer 索引，而不是按 pipeline stage 索引。Slot 0 保护 consumer 0 使用的 TMEM `[0:256]`，slot 1 保护 consumer 1 使用的 TMEM `[256:512]`。Consumer 0 通过 `mma2ld[0]` 通知两侧 CTA 的 WG 0，consumer 1 通过 `mma2ld[1]` 通知 WG 1；对应的 `ld2mma` slot 再收集两侧 writeback threads 的 arrivals。只有这些 arrivals 全部到达，相应 consumer 才能复用自己的 TMEM range。MMA 侧使用 `warp_id` 选择 slot，writeback 侧使用 `wg_id` 选择同一个 slot。
 
 **调整 scheduler 和 writeback。** Cluster output tile 的 shape 现在是 $512\times256$，因此 scheduler 使用：
 

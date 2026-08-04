@@ -336,7 +336,9 @@ print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 
 先解决 K 维的限制。第 1 步只处理一个宽度为 64 的 K tile，而真实矩阵的 K 往往远大于 64。第 2 步仍然只计算一个 output tile，但允许 K 由多个宽度为 64 的 chunks 组成。
 
-基本做法是：对每个 chunk 重复一次 `load -> MMA -> wait`，并让所有 MMA 累加到同一个 TMEM 位置。需要特别注意的是同步。多个 iterations 复用同一个 mbarrier 时，如果 phase 跟踪错误，wait 可能在当前 MMA 真正完成之前返回，最终结果会在没有报错的情况下被破坏。
+基本做法是：对每个 chunk 重复一次 `load -> MMA -> wait`，并让所有 MMA 累加到同一个 TMEM 位置。`Tx.gemm_async` 只负责发起异步 MMA；它返回时，Tensor Core 可能仍在更新 TMEM。随后执行的 `tcgen05.commit` 将本轮 MMA 的完成通知关联到 `mma_bar`，硬件写完 accumulator 后才会向这个 barrier 报告 arrival。`try_wait` 等待的正是这次完成通知，返回后才能确认当前 chunk 的结果已经写入 TMEM。
+
+所有 iterations 都复用同一个 `mma_bar`。Barrier 每完成一轮就进入下一个 phase，因此 kernel 还要用 `phase_mma` 指明当前等待的是哪一轮。若 phase 跟踪错误，wait 可能把上一轮的完成状态当成当前 MMA 已经完成，最终在没有报错的情况下破坏结果。
 
 > **第 2 步的执行结构**
 > - Scope：不变，仍然是一个 warpgroup。
@@ -350,7 +352,7 @@ print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 
 `accum` 决定是否读取 TMEM 中已有的 accumulator。第一个 chunk 使用 `accum=False`，直接写入第一份 partial sum；后续 chunks 使用 `accum=True`，把新的乘积累加到已有结果上。
 
-每次 MMA 都通过同一个 `mbarrier` 通知完成。`phase_mma` 记录当前要等待的 barrier phase：
+代码中，每轮选出的 thread 都在 `Tx.gemm_async` 后执行 `tcgen05.commit(mma_bar)`。MMA 完成并报告 arrival 后，barrier 才会离开当前 phase。`phase_mma` 记录当前 iteration 要等待的 phase：
 
 | K iteration | 传给 `try_wait` 的 `phase_mma` | MMA 完成后的 barrier phase |
 |---|---:|---:|

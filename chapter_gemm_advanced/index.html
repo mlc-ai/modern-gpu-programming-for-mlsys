@@ -387,12 +387,12 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7-warp-specialization-and-pipelining">Step 7: Warp Specialization and Pipelining</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7-warp-specialization">Step 7: Warp Specialization</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#from-sequential-to-concurrent">From Sequential to Concurrent</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-roles">Warp Roles</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#four-barriers">Four Barriers</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipelinestate">PipelineState</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#using-a-named-barrier-within-one-warpgroup">Using a Named Barrier Within One Warpgroup</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#synchronizing-the-writeback-warpgroup-with-warpgroup-sync">Synchronizing the Writeback Warpgroup with <code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#epilogue-writeback">Epilogue (Writeback)</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#complete-kernel">Complete Kernel</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#checking-barrier-handoffs">Checking Barrier Handoffs</a></li>
@@ -407,9 +407,10 @@
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-9-multi-consumer-warp-specialization">Step 9: Multi-Consumer Warp Specialization</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#multi-consumer-structure">Multi-Consumer Structure</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#which-rows-each-consumer-computes">Which Rows Each Consumer Computes</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">Warp Roles</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#adding-the-second-mma-consumer">Adding the Second MMA Consumer</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">Complete Kernel</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">Complete Kernel</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#end-to-end-results">End-to-End Results</a></li>
@@ -438,8 +439,8 @@
 <p>The pipelined GEMM from the previous chapter (<a class="reference internal" href="../chapter_gemm_async/index.html#chap-gemm-async"><span class="std std-ref">Pipelining GEMM with TMA</span></a>) already uses TMA, a software pipeline, and persistent scheduling, but the kernel still has only one warpgroup. It issues the TMA loads, waits for the A and B tiles, issues the MMA, and finally writes the result back. Although separate hardware units execute these operations, their control and synchronization remain concentrated in one warpgroup.</p>
 <p>The SMEM ring and prefetch structure are already in place, but one warpgroup still controls every stage. While it waits for data, issues an MMA, or performs writeback, it cannot independently advance another part of the pipeline. Sustained overlap between data movement, matrix computation, and writeback requires assigning those jobs to separate warps.</p>
 <p>This chapter broadens cooperation in three steps. Step 7 assigns TMA, MMA, and writeback to different warp roles. Step 8 lets two CTAs cooperate on a larger output tile. Step 9 adds a second MMA consumer. The GEMM itself does not change; the focus is how warps and CTAs divide the work and use barriers to hand off data and resources.</p>
-<section id="step-7-warp-specialization-and-pipelining">
-<span id="chap-warp-specialization"></span><h2>Step 7: Warp Specialization and Pipelining<a class="headerlink" href="#step-7-warp-specialization-and-pipelining" title="Link to this heading">#</a></h2>
+<section id="step-7-warp-specialization">
+<span id="chap-warp-specialization"></span><h2>Step 7: Warp Specialization<a class="headerlink" href="#step-7-warp-specialization" title="Link to this heading">#</a></h2>
 <p>In the single-warpgroup kernel, every thread follows the same load, compute, and writeback path. The Tensor Cores have no work while data is being loaded, and the TMA engine may sit idle during computation. Warp specialization assigns these jobs to different warps and uses a software pipeline to pass data between them, allowing several stages to run concurrently.</p>
 <blockquote>
 <div><p><strong>Step 7 execution structure</strong></p>
@@ -544,15 +545,16 @@
 </ul>
 <p>If both ends use the same initial phase, the kernel may deadlock or continue before the data is ready.</p>
 </section>
-<section id="using-a-named-barrier-within-one-warpgroup">
-<h3>Using a Named Barrier Within One Warpgroup<a class="headerlink" href="#using-a-named-barrier-within-one-warpgroup" title="Link to this heading">#</a></h3>
+<section id="synchronizing-the-writeback-warpgroup-with-warpgroup-sync">
+<h3>Synchronizing the Writeback Warpgroup with <code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code><a class="headerlink" href="#synchronizing-the-writeback-warpgroup-with-warpgroup-sync" title="Link to this heading">#</a></h3>
 <p>In Step 7, all 128 threads in Warpgroup 0 perform writeback. They first write their register values to <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code>, wait until the complete tile is present, and then allow one thread to issue the TMA store. This requires synchronization within Warpgroup 0, but <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> cannot be used inside the branch: the other warpgroup is executing the producer and MMA consumer paths and will never reach that synchronization point. Waiting for the entire CTA would deadlock.</p>
 <p><code class="docutils literal notranslate"><span class="pre">warpgroup_sync(10)</span></code> lowers to:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bar.sync 10, 128
 </pre></div>
 </div>
-<p>Here, <code class="docutils literal notranslate"><span class="pre">10</span></code> is the named barrier ID and <code class="docutils literal notranslate"><span class="pre">128</span></code> is the number of thread arrivals required. The instruction does not identify the warpgroup automatically. It synchronizes Warpgroup 0 here because only those 128 threads execute this code, and all of them use the same barrier ID. The first <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(10)</span></code> ensures that <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> is complete. The second ensures that the selected thread has waited for the TMA store before the remaining threads continue to the next tile.</p>
-<p>Each CTA has 16 named barrier slots, numbered 0 through 15. Threads participating in one synchronization must use the same ID, while independent synchronizations need different IDs. Step 7 has only one writeback warpgroup and uses ID 10. Step 9 has two writeback warpgroups and calls <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(wg_id</span> <span class="pre">+</span> <span class="pre">10)</span></code>, assigning IDs 10 and 11 so their arrivals are not counted together.</p>
+<p>PTX calls this ID-selected CTA barrier a named barrier. Here, <code class="docutils literal notranslate"><span class="pre">10</span></code> is the barrier ID, and <code class="docutils literal notranslate"><span class="pre">128</span></code> is the required number of thread arrivals. This mechanism is distinct from the shared-memory <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> objects used earlier to track asynchronous completion: <code class="docutils literal notranslate"><span class="pre">bar.sync</span></code> blocks the executing threads until the requested number of threads have reached the same barrier ID.</p>
+<p>The instruction does not identify the warpgroup automatically. It synchronizes Warpgroup 0 here because only those 128 threads execute this code, and all of them use ID 10. The first <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(10)</span></code> ensures that <code class="docutils literal notranslate"><span class="pre">Dsmem</span></code> is complete. The second ensures that the selected thread has waited for the TMA store before the remaining threads continue to the next tile.</p>
+<p>Each CTA has 16 such barrier slots, numbered 0 through 15. Threads participating in one synchronization must use the same ID, while independent synchronizations need different IDs. Step 7 has only one writeback warpgroup and uses ID 10. Step 9 has two writeback warpgroups and calls <code class="docutils literal notranslate"><span class="pre">warpgroup_sync(wg_id</span> <span class="pre">+</span> <span class="pre">10)</span></code>, assigning IDs 10 and 11 so their arrivals are not counted together.</p>
 </section>
 <section id="epilogue-writeback">
 <h3>Epilogue (Writeback)<a class="headerlink" href="#epilogue-writeback" title="Link to this heading">#</a></h3>
@@ -1033,7 +1035,7 @@
 </section>
 <section id="step-9-multi-consumer-warp-specialization">
 <span id="chap-multi-consumer"></span><h2>Step 9: Multi-Consumer Warp Specialization<a class="headerlink" href="#step-9-multi-consumer-warp-specialization" title="Link to this heading">#</a></h2>
-<p>In Step 8, one MMA consumer uses the A and B slices from both CTAs to compute a <span class="math notranslate nohighlight">\(256\times256\)</span> cluster output tile. Step 9 keeps the same B slices, loads one additional A slice in each CTA, and adds a second MMA consumer. Consumer 0 computes the first 256 output rows, while consumer 1 computes the next 256 rows; both cover the same 256 columns. The cluster output therefore grows along M from <span class="math notranslate nohighlight">\(256\times256\)</span> to <span class="math notranslate nohighlight">\(512\times256\)</span>, without increasing the B data loaded per stage.</p>
+<p>In Step 8, one cooperative MMA uses A and B slices from both CTAs to compute a <span class="math notranslate nohighlight">\(256\times256\)</span> output tile. Step 9 issues two such MMAs in the same two-CTA cluster. They read different A rows but share the same B slices. The amount of B loaded into each stage stays fixed, while the cluster output grows along M to <span class="math notranslate nohighlight">\(512\times256\)</span>.</p>
 <blockquote>
 <div><p><strong>Step 9 execution structure</strong></p>
 <ul class="simple">
@@ -1042,9 +1044,42 @@
 <li><p>Dispatch: the kernel still uses <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> with <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code>, but issues a separate cooperative MMA for each consumer.</p></li>
 </ul>
 </div></blockquote>
-<section id="multi-consumer-structure">
-<h3>Multi-Consumer Structure<a class="headerlink" href="#multi-consumer-structure" title="Link to this heading">#</a></h3>
-<p>Adding the second consumer requires two MMA issue warps and two writeback warpgroups, one for each accumulator. A single thread selected by <code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code> still issues the instruction within each MMA warp. With <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER=2</span></code> and <code class="docutils literal notranslate"><span class="pre">WG_NUMBER=3</span></code>, the roles are assigned as follows:</p>
+<section id="which-rows-each-consumer-computes">
+<h3>Which Rows Each Consumer Computes<a class="headerlink" href="#which-rows-each-consumer-computes" title="Link to this heading">#</a></h3>
+<p>Let <code class="docutils literal notranslate"><span class="pre">m_base</span></code> and <code class="docutils literal notranslate"><span class="pre">n_base</span></code> denote the origin of the current cluster tile. Consumer 0 computes the first 256 rows, and consumer 1 computes the next 256. Within each consumer, CTA 0 and CTA 1 contribute 128 rows apiece. Both MMAs use <code class="docutils literal notranslate"><span class="pre">B[n_base:n_base+256,</span> <span class="pre">:]</span></code>, so they cover the same 256 output columns:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Consumer</p></th>
+<th class="head"><p>A / D rows in CTA 0</p></th>
+<th class="head"><p>A / D rows in CTA 1</p></th>
+<th class="head"><p>B rows supplied by the CTA pair</p></th>
+<th class="head"><p>TCol range in each CTA’s TMEM</p></th>
+<th class="head"><p>Writeback</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>0</strong></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">m_base:m_base+128</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">m_base+128:m_base+256</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">n_base:n_base+256</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[0:256]</span></code></p></td>
+<td><p>WG 0</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>1</strong></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">m_base+256:m_base+384</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">m_base+384:m_base+512</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">n_base:n_base+256</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">[256:512]</span></code></p></td>
+<td><p>WG 1</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Each consumer in the table represents one cooperative MMA spanning both CTAs. The corresponding MMA issue warp in CTA 0 only issues the instruction; the hardware then reads the A and B slices from both CTAs and writes each CTA’s 128 output rows into its local TMEM. Together, the two consumers cover <code class="docutils literal notranslate"><span class="pre">D[m_base:m_base+512,</span> <span class="pre">n_base:n_base+256]</span></code>.</p>
+</section>
+<section id="id2">
+<h3>Warp Roles<a class="headerlink" href="#id2" title="Link to this heading">#</a></h3>
+<p>The kernel uses two MMA issue warps for these cooperative MMAs and two writeback warpgroups for their accumulators. Within each issue warp, only the thread selected by <code class="docutils literal notranslate"><span class="pre">elect_sync()</span></code> issues the instruction. With <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER=2</span></code> and <code class="docutils literal notranslate"><span class="pre">WG_NUMBER=3</span></code>, the roles are assigned as follows:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Warpgroup</p></th>
@@ -1055,25 +1090,21 @@
 <tbody>
 <tr class="row-even"><td><p><strong>WG 2</strong></p></td>
 <td><p>warp 0</p></td>
-<td><p>MMA consumer 0: a selected thread in CTA 0 issues <code class="docutils literal notranslate"><span class="pre">Asmem[...,</span> <span class="pre">0]</span> <span class="pre">×</span> <span class="pre">B</span></code> and writes TMEM cols <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code></p></td>
+<td><p>MMA issue warp 0: the selected thread in CTA 0 issues consumer 0’s MMA with <code class="docutils literal notranslate"><span class="pre">Asmem[...,</span> <span class="pre">0]</span></code>, writing TMEM <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><strong>WG 2</strong></p></td>
 <td><p>warp 1</p></td>
-<td><p>MMA consumer 1: a selected thread in CTA 0 issues <code class="docutils literal notranslate"><span class="pre">Asmem[...,</span> <span class="pre">1]</span> <span class="pre">×</span> <span class="pre">B</span></code> and writes TMEM cols <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code></p></td>
+<td><p>MMA issue warp 1: the selected thread in CTA 0 issues consumer 1’s MMA with <code class="docutils literal notranslate"><span class="pre">Asmem[...,</span> <span class="pre">1]</span></code>, writing TMEM <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><strong>WG 2</strong></p></td>
-<td><p>warp 2</p></td>
-<td><p>Unused in this version</p></td>
-</tr>
-<tr class="row-odd"><td><p><strong>WG 2</strong></p></td>
 <td><p>warp 3</p></td>
 <td><p>TMA producer: each CTA loads its local two A blocks and one B block</p></td>
 </tr>
-<tr class="row-even"><td><p><strong>WG 0</strong></p></td>
+<tr class="row-odd"><td><p><strong>WG 0</strong></p></td>
 <td><p>all warps</p></td>
 <td><p>Each CTA writes its local output rows for consumer 0, reading TMEM <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code></p></td>
 </tr>
-<tr class="row-odd"><td><p><strong>WG 1</strong></p></td>
+<tr class="row-even"><td><p><strong>WG 1</strong></p></td>
 <td><p>all warps</p></td>
 <td><p>Each CTA writes its local output rows for consumer 1, reading TMEM <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code></p></td>
 </tr>
@@ -1098,7 +1129,8 @@
 </pre></div>
 </div>
 <p>The two MMA warps use <code class="docutils literal notranslate"><span class="pre">warp_id</span></code> to select their A block and write to TMEM cols <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code> and <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code>, respectively.</p>
-<p><strong>Update the barriers.</strong> Both consumers must finish reading the current SMEM stage before the TMA producer can overwrite it, so the expected arrival count for <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> becomes <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER</span></code>. The <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> and <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> objects each contain two slots. For <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code>, consumer 0 multicasts completion through slot 0 to WG 0 in both CTAs, while consumer 1 uses slot 1 for WG 1. The matching <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> slot then collects the writeback arrivals from both CTAs before that consumer may reuse its TMEM range. The MMA side selects a slot with <code class="docutils literal notranslate"><span class="pre">warp_id</span></code>; the writeback side selects the same slot with <code class="docutils literal notranslate"><span class="pre">wg_id</span></code>.</p>
+<p><strong>Update the barriers.</strong> <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code> and <code class="docutils literal notranslate"><span class="pre">mma2tma</span></code> remain indexed by pipeline stage. Once TMA has loaded two A blocks and one B block for a stage, both MMA issue warps wait on the same <code class="docutils literal notranslate"><span class="pre">tma2mma[stage]</span></code>. In the reverse direction, the producer cannot overwrite that stage until both consumers have finished reading it, so the expected arrival count for <code class="docutils literal notranslate"><span class="pre">mma2tma[stage]</span></code> becomes <code class="docutils literal notranslate"><span class="pre">NUM_CONSUMER</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> and <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> are indexed by consumer rather than by pipeline stage. Slot 0 protects consumer 0’s TMEM range <code class="docutils literal notranslate"><span class="pre">[0:256]</span></code>, and slot 1 protects consumer 1’s range <code class="docutils literal notranslate"><span class="pre">[256:512]</span></code>. Consumer 0 uses <code class="docutils literal notranslate"><span class="pre">mma2ld[0]</span></code> to notify WG 0 in both CTAs, while consumer 1 uses <code class="docutils literal notranslate"><span class="pre">mma2ld[1]</span></code> to notify WG 1. The matching <code class="docutils literal notranslate"><span class="pre">ld2mma</span></code> slot then collects writeback arrivals from both CTAs. Only after all of those arrivals have been reported may the corresponding consumer reuse its TMEM range. The MMA side selects the slot with <code class="docutils literal notranslate"><span class="pre">warp_id</span></code>; the writeback side selects the same slot with <code class="docutils literal notranslate"><span class="pre">wg_id</span></code>.</p>
 <p><strong>Adjust the scheduler and writeback.</strong> The cluster output tile is now <span class="math notranslate nohighlight">\(512\times256\)</span>, so the scheduler uses:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">num_m_tiles</span> <span class="o">=</span> <span class="n">M</span> <span class="o">//</span> <span class="p">(</span><span class="n">NUM_CONSUMER</span> <span class="o">*</span> <span class="n">CTA_GROUP</span> <span class="o">*</span> <span class="n">BLK_M</span><span class="p">)</span>  <span class="c1"># M // 512</span>
 <span class="n">num_n_tiles</span> <span class="o">=</span> <span class="n">N</span> <span class="o">//</span> <span class="p">(</span><span class="n">CTA_GROUP</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>                 <span class="c1"># N // 256</span>
@@ -1106,8 +1138,8 @@
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">m_st</span></code> points to the A rows for consumer 0. Consumer <code class="docutils literal notranslate"><span class="pre">c</span></code> starts at <code class="docutils literal notranslate"><span class="pre">m_st</span> <span class="pre">+</span> <span class="pre">c</span> <span class="pre">*</span> <span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">BLK_M</span></code>, so consumer 1 advances by another 256 rows. During writeback, each consumer divides its 256 columns into four <code class="docutils literal notranslate"><span class="pre">EPI_N=64</span></code> chunks. Each thread converts and stores 64 columns at a time before moving to the next chunk.</p>
 </section>
-<section id="id2">
-<h3>Complete Kernel<a class="headerlink" href="#id2" title="Link to this heading">#</a></h3>
+<section id="id3">
+<h3>Complete Kernel<a class="headerlink" href="#id3" title="Link to this heading">#</a></h3>
 <p>The complete kernel retains the two-CTA cluster from Step 8 and adds a second A tile, MMA consumer, and writeback warpgroup. Both consumers share the same B tile and update separate TMEM accumulator ranges.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">hgemm_v9</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">K</span><span class="p">):</span>
     <span class="n">a_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
@@ -1437,12 +1469,12 @@
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7-warp-specialization-and-pipelining">Step 7: Warp Specialization and Pipelining</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7-warp-specialization">Step 7: Warp Specialization</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#from-sequential-to-concurrent">From Sequential to Concurrent</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#warp-roles">Warp Roles</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#four-barriers">Four Barriers</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#pipelinestate">PipelineState</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#using-a-named-barrier-within-one-warpgroup">Using a Named Barrier Within One Warpgroup</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#synchronizing-the-writeback-warpgroup-with-warpgroup-sync">Synchronizing the Writeback Warpgroup with <code class="docutils literal notranslate"><span class="pre">warpgroup_sync</span></code></a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#epilogue-writeback">Epilogue (Writeback)</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#complete-kernel">Complete Kernel</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#checking-barrier-handoffs">Checking Barrier Handoffs</a></li>
@@ -1457,9 +1489,10 @@
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-9-multi-consumer-warp-specialization">Step 9: Multi-Consumer Warp Specialization</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#multi-consumer-structure">Multi-Consumer Structure</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#which-rows-each-consumer-computes">Which Rows Each Consumer Computes</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">Warp Roles</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#adding-the-second-mma-consumer">Adding the Second MMA Consumer</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">Complete Kernel</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">Complete Kernel</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#end-to-end-results">End-to-End Results</a></li>

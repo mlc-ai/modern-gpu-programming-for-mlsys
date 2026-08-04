@@ -652,7 +652,8 @@
 <section id="k-loop">
 <span id="chap-k-loop"></span><h2>第 2 步：K-Loop 累加<a class="headerlink" href="#k-loop" title="Link to this heading">#</a></h2>
 <p>先解决 K 维的限制。第 1 步只处理一个宽度为 64 的 K tile，而真实矩阵的 K 往往远大于 64。第 2 步仍然只计算一个 output tile，但允许 K 由多个宽度为 64 的 chunks 组成。</p>
-<p>基本做法是：对每个 chunk 重复一次 <code class="docutils literal notranslate"><span class="pre">load</span> <span class="pre">-&gt;</span> <span class="pre">MMA</span> <span class="pre">-&gt;</span> <span class="pre">wait</span></code>，并让所有 MMA 累加到同一个 TMEM 位置。需要特别注意的是同步。多个 iterations 复用同一个 mbarrier 时，如果 phase 跟踪错误，wait 可能在当前 MMA 真正完成之前返回，最终结果会在没有报错的情况下被破坏。</p>
+<p>基本做法是：对每个 chunk 重复一次 <code class="docutils literal notranslate"><span class="pre">load</span> <span class="pre">-&gt;</span> <span class="pre">MMA</span> <span class="pre">-&gt;</span> <span class="pre">wait</span></code>，并让所有 MMA 累加到同一个 TMEM 位置。<code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 只负责发起异步 MMA；它返回时，Tensor Core 可能仍在更新 TMEM。随后执行的 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> 将本轮 MMA 的完成通知关联到 <code class="docutils literal notranslate"><span class="pre">mma_bar</span></code>，硬件写完 accumulator 后才会向这个 barrier 报告 arrival。<code class="docutils literal notranslate"><span class="pre">try_wait</span></code> 等待的正是这次完成通知，返回后才能确认当前 chunk 的结果已经写入 TMEM。</p>
+<p>所有 iterations 都复用同一个 <code class="docutils literal notranslate"><span class="pre">mma_bar</span></code>。Barrier 每完成一轮就进入下一个 phase，因此 kernel 还要用 <code class="docutils literal notranslate"><span class="pre">phase_mma</span></code> 指明当前等待的是哪一轮。若 phase 跟踪错误，wait 可能把上一轮的完成状态当成当前 MMA 已经完成，最终在没有报错的情况下破坏结果。</p>
 <blockquote>
 <div><p><strong>第 2 步的执行结构</strong></p>
 <ul class="simple">
@@ -666,7 +667,7 @@
 <h3>沿 K 维分块累加<a class="headerlink" href="#k" title="Link to this heading">#</a></h3>
 <p>当 <code class="docutils literal notranslate"><span class="pre">K</span> <span class="pre">&gt;</span> <span class="pre">64</span></code> 时，kernel 将 K 维切成多个宽度为 <code class="docutils literal notranslate"><span class="pre">BLK_K=64</span></code> 的 chunks。每个 iteration 加载 A、B 的一个 K-slice，然后执行 <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code>。</p>
 <p><code class="docutils literal notranslate"><span class="pre">accum</span></code> 决定是否读取 TMEM 中已有的 accumulator。第一个 chunk 使用 <code class="docutils literal notranslate"><span class="pre">accum=False</span></code>，直接写入第一份 partial sum；后续 chunks 使用 <code class="docutils literal notranslate"><span class="pre">accum=True</span></code>，把新的乘积累加到已有结果上。</p>
-<p>每次 MMA 都通过同一个 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 通知完成。<code class="docutils literal notranslate"><span class="pre">phase_mma</span></code> 记录当前要等待的 barrier phase：</p>
+<p>代码中，每轮选出的 thread 都在 <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 后执行 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit(mma_bar)</span></code>。MMA 完成并报告 arrival 后，barrier 才会离开当前 phase。<code class="docutils literal notranslate"><span class="pre">phase_mma</span></code> 记录当前 iteration 要等待的 phase：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>K iteration</p></th>

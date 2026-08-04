@@ -17,7 +17,7 @@ This chapter broadens cooperation in three steps. Step 7 assigns TMA, MMA, and w
 
 
 (chap_warp_specialization)=
-## Step 7: Warp Specialization and Pipelining
+## Step 7: Warp Specialization
 
 In the single-warpgroup kernel, every thread follows the same load, compute, and writeback path. The Tensor Cores have no work while data is being loaded, and the TMA engine may sit idle during computation. Warp specialization assigns these jobs to different warps and uses a software pipeline to pass data between them, allowing several stages to run concurrently.
 
@@ -88,7 +88,7 @@ The initial `phase` determines whether a role's first `wait` passes or blocks. T
 
 If both ends use the same initial phase, the kernel may deadlock or continue before the data is ready.
 
-### Using a Named Barrier Within One Warpgroup
+### Synchronizing the Writeback Warpgroup with `warpgroup_sync`
 
 In Step 7, all 128 threads in Warpgroup 0 perform writeback. They first write their register values to `Dsmem`, wait until the complete tile is present, and then allow one thread to issue the TMA store. This requires synchronization within Warpgroup 0, but `cta_sync()` cannot be used inside the branch: the other warpgroup is executing the producer and MMA consumer paths and will never reach that synchronization point. Waiting for the entire CTA would deadlock.
 
@@ -98,9 +98,11 @@ In Step 7, all 128 threads in Warpgroup 0 perform writeback. They first write th
 bar.sync 10, 128
 ```
 
-Here, `10` is the named barrier ID and `128` is the number of thread arrivals required. The instruction does not identify the warpgroup automatically. It synchronizes Warpgroup 0 here because only those 128 threads execute this code, and all of them use the same barrier ID. The first `warpgroup_sync(10)` ensures that `Dsmem` is complete. The second ensures that the selected thread has waited for the TMA store before the remaining threads continue to the next tile.
+PTX calls this ID-selected CTA barrier a named barrier. Here, `10` is the barrier ID, and `128` is the required number of thread arrivals. This mechanism is distinct from the shared-memory `mbarrier` objects used earlier to track asynchronous completion: `bar.sync` blocks the executing threads until the requested number of threads have reached the same barrier ID.
 
-Each CTA has 16 named barrier slots, numbered 0 through 15. Threads participating in one synchronization must use the same ID, while independent synchronizations need different IDs. Step 7 has only one writeback warpgroup and uses ID 10. Step 9 has two writeback warpgroups and calls `warpgroup_sync(wg_id + 10)`, assigning IDs 10 and 11 so their arrivals are not counted together.
+The instruction does not identify the warpgroup automatically. It synchronizes Warpgroup 0 here because only those 128 threads execute this code, and all of them use ID 10. The first `warpgroup_sync(10)` ensures that `Dsmem` is complete. The second ensures that the selected thread has waited for the TMA store before the remaining threads continue to the next tile.
+
+Each CTA has 16 such barrier slots, numbered 0 through 15. Threads participating in one synchronization must use the same ID, while independent synchronizations need different IDs. Step 7 has only one writeback warpgroup and uses ID 10. Step 9 has two writeback warpgroups and calls `warpgroup_sync(wg_id + 10)`, assigning IDs 10 and 11 so their arrivals are not counted together.
 
 ### Epilogue (Writeback)
 
@@ -595,22 +597,32 @@ def hgemm_v8(M, N, K):
 (chap_multi_consumer)=
 ## Step 9: Multi-Consumer Warp Specialization
 
-In Step 8, one MMA consumer uses the A and B slices from both CTAs to compute a $256\times256$ cluster output tile. Step 9 keeps the same B slices, loads one additional A slice in each CTA, and adds a second MMA consumer. Consumer 0 computes the first 256 output rows, while consumer 1 computes the next 256 rows; both cover the same 256 columns. The cluster output therefore grows along M from $256\times256$ to $512\times256$, without increasing the B data loaded per stage.
+In Step 8, one cooperative MMA uses A and B slices from both CTAs to compute a $256\times256$ output tile. Step 9 issues two such MMAs in the same two-CTA cluster. They read different A rows but share the same B slices. The amount of B loaded into each stage stays fixed, while the cluster output grows along M to $512\times256$.
 
 > **Step 9 execution structure**
 > - Scope: CTA 0 now has two consumer warps that issue MMA operations, selected by `warp_id`.
 > - Layout: A gains a consumer axis, and TMEM is divided into two accumulator ranges; both consumers reuse the same staged B tile.
 > - Dispatch: the kernel still uses `tcgen05` with `cta_group=2`, but issues a separate cooperative MMA for each consumer.
 
-### Multi-Consumer Structure
+### Which Rows Each Consumer Computes
 
-Adding the second consumer requires two MMA issue warps and two writeback warpgroups, one for each accumulator. A single thread selected by `elect_sync()` still issues the instruction within each MMA warp. With `NUM_CONSUMER=2` and `WG_NUMBER=3`, the roles are assigned as follows:
+Let `m_base` and `n_base` denote the origin of the current cluster tile. Consumer 0 computes the first 256 rows, and consumer 1 computes the next 256. Within each consumer, CTA 0 and CTA 1 contribute 128 rows apiece. Both MMAs use `B[n_base:n_base+256, :]`, so they cover the same 256 output columns:
+
+| Consumer | A / D rows in CTA 0 | A / D rows in CTA 1 | B rows supplied by the CTA pair | TCol range in each CTA's TMEM | Writeback |
+|----------|---------------------|---------------------|-----------------------------------|--------------------------------|-----------|
+| **0** | `m_base:m_base+128` | `m_base+128:m_base+256` | `n_base:n_base+256` | `[0:256]` | WG 0 |
+| **1** | `m_base+256:m_base+384` | `m_base+384:m_base+512` | `n_base:n_base+256` | `[256:512]` | WG 1 |
+
+Each consumer in the table represents one cooperative MMA spanning both CTAs. The corresponding MMA issue warp in CTA 0 only issues the instruction; the hardware then reads the A and B slices from both CTAs and writes each CTA's 128 output rows into its local TMEM. Together, the two consumers cover `D[m_base:m_base+512, n_base:n_base+256]`.
+
+### Warp Roles
+
+The kernel uses two MMA issue warps for these cooperative MMAs and two writeback warpgroups for their accumulators. Within each issue warp, only the thread selected by `elect_sync()` issues the instruction. With `NUM_CONSUMER=2` and `WG_NUMBER=3`, the roles are assigned as follows:
 
 | Warpgroup | Warp | Role |
 |-----------|------|------|
-| **WG 2** | warp 0 | MMA consumer 0: a selected thread in CTA 0 issues `Asmem[..., 0] × B` and writes TMEM cols `[0:256]` |
-| **WG 2** | warp 1 | MMA consumer 1: a selected thread in CTA 0 issues `Asmem[..., 1] × B` and writes TMEM cols `[256:512]` |
-| **WG 2** | warp 2 | Unused in this version |
+| **WG 2** | warp 0 | MMA issue warp 0: the selected thread in CTA 0 issues consumer 0's MMA with `Asmem[..., 0]`, writing TMEM `[0:256]` |
+| **WG 2** | warp 1 | MMA issue warp 1: the selected thread in CTA 0 issues consumer 1's MMA with `Asmem[..., 1]`, writing TMEM `[256:512]` |
 | **WG 2** | warp 3 | TMA producer: each CTA loads its local two A blocks and one B block |
 | **WG 0** | all warps | Each CTA writes its local output rows for consumer 0, reading TMEM `[0:256]` |
 | **WG 1** | all warps | Each CTA writes its local output rows for consumer 1, reading TMEM `[256:512]` |
@@ -639,7 +651,9 @@ CTA_GROUP * (
 
 The two MMA warps use `warp_id` to select their A block and write to TMEM cols `[0:256]` and `[256:512]`, respectively.
 
-**Update the barriers.** Both consumers must finish reading the current SMEM stage before the TMA producer can overwrite it, so the expected arrival count for `mma2tma` becomes `NUM_CONSUMER`. The `mma2ld` and `ld2mma` objects each contain two slots. For `mma2ld`, consumer 0 multicasts completion through slot 0 to WG 0 in both CTAs, while consumer 1 uses slot 1 for WG 1. The matching `ld2mma` slot then collects the writeback arrivals from both CTAs before that consumer may reuse its TMEM range. The MMA side selects a slot with `warp_id`; the writeback side selects the same slot with `wg_id`.
+**Update the barriers.** `tma2mma` and `mma2tma` remain indexed by pipeline stage. Once TMA has loaded two A blocks and one B block for a stage, both MMA issue warps wait on the same `tma2mma[stage]`. In the reverse direction, the producer cannot overwrite that stage until both consumers have finished reading it, so the expected arrival count for `mma2tma[stage]` becomes `NUM_CONSUMER`.
+
+`mma2ld` and `ld2mma` are indexed by consumer rather than by pipeline stage. Slot 0 protects consumer 0's TMEM range `[0:256]`, and slot 1 protects consumer 1's range `[256:512]`. Consumer 0 uses `mma2ld[0]` to notify WG 0 in both CTAs, while consumer 1 uses `mma2ld[1]` to notify WG 1. The matching `ld2mma` slot then collects writeback arrivals from both CTAs. Only after all of those arrivals have been reported may the corresponding consumer reuse its TMEM range. The MMA side selects the slot with `warp_id`; the writeback side selects the same slot with `wg_id`.
 
 **Adjust the scheduler and writeback.** The cluster output tile is now $512\times256$, so the scheduler uses:
 
