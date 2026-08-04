@@ -62,7 +62,9 @@ Step 3 is performed by the TMA engine. As A and B arrive in SMEM, the hardware u
 
 The kernel uses the same protocol with larger tiles. A and B each contain `128×64` fp16 elements and occupy 16384 bytes, so `arrive.expect_tx` registers 32768 bytes in total.
 
-TMA stores use a different completion mechanism. After the threads write the result to `Dsmem` and synchronize, the `tid == 0` thread starts the asynchronous copy from `Dsmem` to GMEM. The kernel commits the store with `cp_async.bulk.commit_group()` and waits for it with `cp_async.bulk.wait_group(0)`. `Dsmem` cannot be overwritten or reused until that wait returns.
+TMA stores use a different completion mechanism. After the threads write the result to `Dsmem`, a `fence.proxy_async` followed by `warpgroup_sync` ensures that the complete buffer is present and visible to the TMA engine.
+
+The `tid == 0` thread then starts the asynchronous copy from `Dsmem` to GMEM and calls `cp_async.bulk.commit_group()`, which collects its previously issued but uncommitted TMA stores into one bulk async group. The `0` in `cp_async.bulk.wait_group(0)` means that no previously committed group may remain pending, so the call returns only after all of those stores have completed. Until then, `Dsmem` cannot be overwritten or reused.
 
 ### Complete Kernel
 

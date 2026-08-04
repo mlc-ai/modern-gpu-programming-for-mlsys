@@ -62,7 +62,9 @@ TMA load 发出后，数据传输仍会在 TMA engine 中继续执行。`cta_syn
 
 本节 kernel 使用相同的同步过程，只是 tile 更大。A、B tiles 都包含 `128×64` 个 fp16 元素，各占 `16384 bytes`，因此 `arrive.expect_tx` 登记的总字节数是 `32768`。
 
-TMA store 使用另一套完成机制。Threads 将结果写入 `Dsmem` 并执行 CTA 同步后，`tid == 0` 的 thread 发起从 `Dsmem` 到 GMEM 的异步 copy。Kernel 随后通过 `cp_async.bulk.commit_group()` 提交这次 store，并使用 `cp_async.bulk.wait_group(0)` 等待完成。在 wait 返回前，`Dsmem` 不能被覆盖或复用。
+TMA store 使用另一套完成机制。Threads 将结果写入 `Dsmem` 后，`fence.proxy_async` 和 `warpgroup_sync` 保证整块 buffer 已经写完，并且这些写入对 TMA engine 可见。
+
+随后，`tid == 0` 的 thread 发起从 `Dsmem` 到 GMEM 的异步 copy，并执行 `cp_async.bulk.commit_group()`，把此前发出但尚未提交的 TMA stores 归入一个 bulk async group。`cp_async.bulk.wait_group(0)` 中的 `0` 表示不允许任何先前提交的 group 仍处于 pending 状态，因此它会等到这些 stores 全部完成后才返回。在此之前，`Dsmem` 不能被覆盖或复用。
 
 ### 完整 Kernel
 
@@ -457,7 +459,7 @@ def hgemm_v5(M, N, K):
 
 第 5 步为每个 $128\times128$ output tile 启动一个 CTA。对于 $4096\times4096$ 的输出，一共需要 1024 个 CTAs。每个 CTA 都要单独完成初始化，计算完一个 tile 后便退出。
 
-Persistent kernel 则只启动固定数量的 CTAs，让每个 CTA 依次处理多个 tiles。这样做有两个好处：初始化开销可以分摊到多个 tiles 上；tile 的分配也转移到了 kernel 内部，scheduler 可以按有利于复用 operands 的顺序安排工作。
+Persistent kernel 则只启动固定数量的 CTA，让每个 CTA 依次处理多个 tiles。这样做有两个好处：初始化开销可以分摊到多个 tiles 上；tile 的分配也转移到了 kernel 内部，scheduler 可以按有利于复用 operands 的顺序安排工作。
 
 > **第 6 步的执行结构**
 > - Scope：固定数量的 persistent CTAs，每个 CTA 通过 scheduler 循环处理多个 output tiles。
