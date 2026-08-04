@@ -336,7 +336,9 @@ The kernel is correct, but it still has a narrow operating range:
 
 We first remove the restriction on K. Step 1 handles only one K tile of width 64, while real matrices often have a much larger K dimension. Step 2 still computes one output tile, but K may now span several 64-wide chunks.
 
-For each chunk, the kernel repeats `load -> MMA -> wait` and accumulates every MMA into the same TMEM location. Synchronization now requires more care: when several iterations reuse one mbarrier, incorrect phase tracking can let a wait return before the current MMA has finished, silently corrupting the result.
+For each chunk, the kernel repeats `load -> MMA -> wait` and accumulates every MMA into the same TMEM location. `Tx.gemm_async` only issues the asynchronous MMA; when it returns, the Tensor Core may still be updating TMEM. The following `tcgen05.commit` associates completion of that MMA with `mma_bar`. Only after the accumulator update finishes does the hardware report an arrival on the barrier. `try_wait` waits for that completion signal, so its return confirms that the current chunk has been written to TMEM.
+
+Every iteration reuses the same `mma_bar`. The barrier advances to a new phase after each completion, so `phase_mma` identifies the particular iteration being waited on. If this phase is tracked incorrectly, a wait can mistake the previous iteration's completion for the current MMA and silently corrupt the result.
 
 > **Step 2 execution structure**
 > - Scope: unchanged, still a single warpgroup.
@@ -350,7 +352,7 @@ When `K > 64`, the kernel divides K into chunks of width `BLK_K=64`. Each iterat
 
 The `accum` argument controls whether the MMA reads the existing accumulator from TMEM. The first chunk uses `accum=False` to write the initial partial sum. Every later chunk uses `accum=True` to add its product to the running result.
 
-Every MMA reports completion through the same mbarrier. `phase_mma` records the barrier phase that the current iteration must wait for:
+In each iteration, the selected thread follows `Tx.gemm_async` with `tcgen05.commit(mma_bar)`. The barrier leaves its current phase only after the MMA completes and reports its arrival. `phase_mma` records the phase that the current iteration must wait for:
 
 | K iteration | `phase_mma` passed to `try_wait` | Barrier phase after MMA completes |
 |---|---:|---:|
