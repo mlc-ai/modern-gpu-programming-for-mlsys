@@ -53,15 +53,22 @@ $$
 
 每个 thread 的 lane ID 决定它持有 A、B、C 和 D 中的哪些元素。先从最容易观察的 C/D 累加器开始。
 
-观察 PTX 规定的映射，可以发现它每 4 个 lanes 重复一次：lanes 0–3 负责第 0 行和第 8 行，lanes 4–7 负责第 1 行和第 9 行，后面的 lanes 依次类推。因此，可以把 32 个 lanes 分成 8 个连续的 4-lane groups。记当前 lane 的 ID 为 $l$，并定义：
+下图展示完整 `16×8` C/D tile 在 32 个 lanes 之间的分配方式。每个 cell 中的 `L0`–`L31` 表示该元素由哪个 lane 持有；相同底色连接同一个 4-lane group 负责的两条 rows，黑框则标出 lane 5 持有的四个元素。
+
+![mma.sync.m16n8k16 的 C/D register fragment 映射；32 个 lanes 每四个组成一组，每个 lane 持有两条 rows 中的一对相邻 columns](../../img/mma_m16n8k16_fragment.svg)
+
+这张图可以按“先选 rows，再选 columns”分成两步理解：
+
+1. 32 个 lanes 每 4 个组成一组，共有 8 组。第 $g$ 组负责 rows $g$ 和 $g+8$。
+2. 组内的 4 个 lanes 再分配这两条 rows 的 8 个 columns。组内第 $t$ 个 lane 负责 columns $2t$ 和 $2t+1$。
+
+记当前 lane 的 ID 为 $l$。它所属的 group 以及在 group 内的位置分别为：
 
 $$
 g=l\mathbin{//}4,\qquad t=l\bmod 4.
 $$
 
-整数除法得到 group 编号 $g$，取余得到 lane 在 group 内的位置 $t$。
-
-第 $g$ 个 group 共同负责输出 tile 的第 $g$ 行和第 $g+8$ 行。group 内第 $t$ 个 lane 负责这两行中的第 $2t$ 列和第 $2t+1$ 列。因此，每个 lane 持有四个 `fp32` 累加值，其逻辑坐标为：
+因此，每个 lane 持有四个 `fp32` 累加值，其逻辑坐标为：
 
 $$
 (g,2t),\qquad
@@ -70,7 +77,7 @@ $$
 (g+8,2t+1).
 $$
 
-例如，lane 5 对应：
+图中以 lane 5 为例。此时：
 
 $$
 g=5\mathbin{//}4=1,\qquad t=5\bmod4=1,

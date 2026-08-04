@@ -53,15 +53,22 @@ $$
 
 A thread's lane ID determines which elements of A, B, C, and D it holds. We will begin with the C/D accumulator, where the pattern is easiest to see.
 
-The PTX mapping repeats in groups of four lanes: lanes 0-3 cover rows 0 and 8, lanes 4-7 cover rows 1 and 9, and the remaining groups continue in the same way. For lane ID $l$, define:
+The figure below shows how the complete `16x8` C/D tile is distributed across 32 lanes. Each cell names the lane that holds that element. Matching fills connect the two rows assigned to one four-lane group, while the black borders mark lane 5's four elements.
+
+![C/D register-fragment mapping for mma.sync.m16n8k16; every four lanes form a group, and each lane holds one adjacent column pair in two rows](../img/mma_m16n8k16_fragment_en.svg)
+
+Read the figure in two steps:
+
+1. The 32 lanes form eight groups of four. Group $g$ owns rows $g$ and $g+8$.
+2. The four lanes in that group split the eight columns. Position $t$ owns columns $2t$ and $2t+1$ in both rows.
+
+For lane ID $l$, its group and its position within that group are:
 
 $$
 g=l\mathbin{//}4,\qquad t=l\bmod 4.
 $$
 
-Here, $g$ is the four-lane group index, and $t$ is the lane's position within that group.
-
-Group $g$ covers rows $g$ and $g+8$ of the output tile. Lane $t$ within the group covers columns $2t$ and $2t+1$ in both rows. Each lane therefore holds four `fp32` accumulator values at:
+Each lane therefore holds four `fp32` accumulator values at:
 
 $$
 (g,2t),\qquad
@@ -70,7 +77,7 @@ $$
 (g+8,2t+1).
 $$
 
-For example, lane 5 has:
+The figure highlights lane 5. For this lane:
 
 $$
 g=5\mathbin{//}4=1,\qquad t=5\bmod4=1,

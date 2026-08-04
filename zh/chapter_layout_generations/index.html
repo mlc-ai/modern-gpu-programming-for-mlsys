@@ -54,6 +54,7 @@
     <script>DOCUMENTATION_OPTIONS.pagename = 'chapter_layout_generations/index';</script>
     <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
     <script src="../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <script src="../_static/chinese-search.js?v=6dcb01bb"></script>
     <link rel="icon" href="../_static/mlc-favicon.ico"/>
     <link rel="index" title="索引" href="../genindex.html" />
     <link rel="search" title="搜索" href="../search.html" />
@@ -393,13 +394,19 @@ registers --普通 store--&gt; SMEM 或 GMEM
 D_{16\times8}=A_{16\times16}B_{16\times8}+C_{16\times8}.
 \]</div>
 <p>每个 thread 的 lane ID 决定它持有 A、B、C 和 D 中的哪些元素。先从最容易观察的 C/D 累加器开始。</p>
-<p>观察 PTX 规定的映射，可以发现它每 4 个 lanes 重复一次：lanes 0–3 负责第 0 行和第 8 行，lanes 4–7 负责第 1 行和第 9 行，后面的 lanes 依次类推。因此，可以把 32 个 lanes 分成 8 个连续的 4-lane groups。记当前 lane 的 ID 为 <span class="math notranslate nohighlight">\(l\)</span>，并定义：</p>
+<p>下图展示完整 <code class="docutils literal notranslate"><span class="pre">16×8</span></code> C/D tile 在 32 个 lanes 之间的分配方式。每个 cell 中的 <code class="docutils literal notranslate"><span class="pre">L0</span></code>–<code class="docutils literal notranslate"><span class="pre">L31</span></code> 表示该元素由哪个 lane 持有；相同底色连接同一个 4-lane group 负责的两条 rows，黑框则标出 lane 5 持有的四个元素。</p>
+<p><img alt="mma.sync.m16n8k16 的 C/D register fragment 映射；32 个 lanes 每四个组成一组，每个 lane 持有两条 rows 中的一对相邻 columns" src="../_images/mma_m16n8k16_fragment.svg" /></p>
+<p>这张图可以按“先选 rows，再选 columns”分成两步理解：</p>
+<ol class="arabic simple">
+<li><p>32 个 lanes 每 4 个组成一组，共有 8 组。第 <span class="math notranslate nohighlight">\(g\)</span> 组负责 rows <span class="math notranslate nohighlight">\(g\)</span> 和 <span class="math notranslate nohighlight">\(g+8\)</span>。</p></li>
+<li><p>组内的 4 个 lanes 再分配这两条 rows 的 8 个 columns。组内第 <span class="math notranslate nohighlight">\(t\)</span> 个 lane 负责 columns <span class="math notranslate nohighlight">\(2t\)</span> 和 <span class="math notranslate nohighlight">\(2t+1\)</span>。</p></li>
+</ol>
+<p>记当前 lane 的 ID 为 <span class="math notranslate nohighlight">\(l\)</span>。它所属的 group 以及在 group 内的位置分别为：</p>
 <div class="math notranslate nohighlight">
 \[
 g=l\mathbin{//}4,\qquad t=l\bmod 4.
 \]</div>
-<p>整数除法得到 group 编号 <span class="math notranslate nohighlight">\(g\)</span>，取余得到 lane 在 group 内的位置 <span class="math notranslate nohighlight">\(t\)</span>。</p>
-<p>第 <span class="math notranslate nohighlight">\(g\)</span> 个 group 共同负责输出 tile 的第 <span class="math notranslate nohighlight">\(g\)</span> 行和第 <span class="math notranslate nohighlight">\(g+8\)</span> 行。group 内第 <span class="math notranslate nohighlight">\(t\)</span> 个 lane 负责这两行中的第 <span class="math notranslate nohighlight">\(2t\)</span> 列和第 <span class="math notranslate nohighlight">\(2t+1\)</span> 列。因此，每个 lane 持有四个 <code class="docutils literal notranslate"><span class="pre">fp32</span></code> 累加值，其逻辑坐标为：</p>
+<p>因此，每个 lane 持有四个 <code class="docutils literal notranslate"><span class="pre">fp32</span></code> 累加值，其逻辑坐标为：</p>
 <div class="math notranslate nohighlight">
 \[
 (g,2t),\qquad
@@ -407,7 +414,7 @@ g=l\mathbin{//}4,\qquad t=l\bmod 4.
 (g+8,2t),\qquad
 (g+8,2t+1).
 \]</div>
-<p>例如，lane 5 对应：</p>
+<p>图中以 lane 5 为例。此时：</p>
 <div class="math notranslate nohighlight">
 \[
 g=5\mathbin{//}4=1,\qquad t=5\bmod4=1,
