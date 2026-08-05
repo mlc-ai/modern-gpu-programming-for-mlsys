@@ -31,7 +31,7 @@ The first is a tensor map descriptor. It records the global tensor's element typ
 
 The second is specific to the current copy: the tile's starting coordinates in the global tensor and its destination address in shared memory. A useful distinction is that the descriptor says "how is this tensor organized?", while the instruction arguments say "where does this copy begin, and where should it land?"
 
-The warp still follows the SIMT execution model when the TMA instruction is issued. Only the selected thread participates in that instruction; the other threads in the warp are masked off. This lasts only until the request has been submitted. The TMA engine then moves the data asynchronously, while the issuing warp and the other warps in the CTA may continue executing. They wait for completion only before they actually use the tile.
+The warp still follows the SIMT execution model when the TMA instruction is issued. Only the selected thread participates in that instruction; the other threads in the warp are masked off. This lasts only until the request has been submitted. The TMA engine then moves the data asynchronously, allowing the issuing warp and the other warps in the CTA to continue with other work. Before a consumer reads the destination tile, it must wait for the transfer to complete.
 
 ## How TMA Writes a Swizzled Layout
 
@@ -81,35 +81,33 @@ Each group has 16 rows, while one swizzle atom has only eight. Both `g0` and `g1
 ```
 *Toggle `Col offset` to select the first or second 128 columns of the original matrix. Hover over any cell in the blue region to see where its 16-byte sector lands in shared memory.*
 
-### The 128-Byte Swizzle Grouping Requirement
+### 128-Byte Swizzling and Row Layout
 
-Why split a 256-byte row into two 128-byte groups? In addition to satisfying the TMA box width limit, the grouping changes which shared-memory banks a cross-row access reaches.
+`SWIZZLE_128B` always permutes data within a 128-byte span. Each sector in the figure is 16 bytes, so a swizzle span always contains eight sectors. Even when a logical row contains 16 sectors, the hardware does not treat the full row as one 256-byte swizzle unit. The relevant distinction is how the two 128-byte spans are arranged in memory, not whether the swizzle itself groups sectors in sets of eight.
 
-Consider a `16x16` grid of sectors. Each sector is 16 bytes, so one row occupies 256 bytes. Suppose we read the same sector column from eight consecutive rows, producing eight parallel 16-byte accesses.
+Consider a `16x16` sector grid. Each row contains 16 sectors, or 256 bytes. Reading the same sector column from eight consecutive rows produces eight parallel 16-byte accesses. Each access spans four adjacent shared-memory banks. To make the pattern easier to inspect, the figure groups the 32 banks into eight bank sectors, `S0` through `S7`.
 
-One 16-byte access spans four adjacent shared-memory banks. To make the pattern easier to inspect, the figure below groups the 32 banks into eight bank sectors, `S0` through `S7`, with four adjacent banks in each sector. If two accesses land in the same bank sector, they contend for the same group of banks.
+If the ordinary 256-byte row stride is preserved, adjacent logical rows begin two 128-byte spans apart. Let `span = col // 8` and `local_col = col % 8`. The resulting bank sector is:
 
-First split each row into two 128-byte groups. For a column `col` in the complete grid, `col // 8` selects the left or right group and `local_col = col % 8` gives the column inside that group. For rows 0-7, the swizzled bank sector is:
+```text
+bank_sector = local_col XOR ((2*row + span) % 8)
+```
+
+Across eight rows, this expression produces only four distinct bank sectors. Each sector is accessed twice, creating a 2-way conflict. This layout is included to illustrate the effect of row stride. Because its innermost dimension is 256 bytes, it cannot be used as a single `SWIZZLE_128B` TMA box.
+
+After rewriting the logical coordinates as `(group, row, local_col)`, each group contains eight sectors and adjacent rows within a group are 128 bytes apart. The bank sector then becomes:
 
 ```text
 bank_sector = local_col XOR (row % 8)
 ```
 
-The eight rows produce eight different results, so these accesses can proceed in parallel.
+The eight rows now reach eight distinct bank sectors, so the accesses can proceed in parallel.
 
-If the row remains ungrouped with a 256-byte stride, moving to the next row crosses two 128-byte units. The value used by the XOR consequently advances by two on each row:
-
-```text
-bank_sector = local_col XOR ((2*row + col // 8) % 8)
-```
-
-This expression produces only four distinct results. Each bank sector is accessed twice, creating a 2-way conflict. The ungrouped state is included only for comparison; it is not a legal `SWIZZLE_128B` TMA box.
-
-The following interactive figure compares the two cases. Select a `Column` and eight consecutive rows in the original grid on the left. On the right, cells with black outlines show where those accesses land in the swizzled layout. With `Tiling` set to `Yes`, each row is first split into 128-byte groups `g0` and `g1`. With `Tiling` set to `No`, the figure retains the 256-byte row stride as a comparison. The `S0`-`S7` summary at the bottom shows which bank sectors the accesses use. Changing `dtype` only changes how many elements fit in a sector; it does not change the address mapping.
+The following interactive figure compares these two row layouts. Select `128B groups` to arrange the two spans explicitly as `g0` and `g1`. Select `256B stride` to preserve the original row stride; the swizzle still permutes data only within each 128-byte span. Cells with black outlines show where the selected column lands in the swizzled layout, and the summary below reports the bank sectors used by those accesses. Changing `dtype` affects only the number of elements in each sector, not the address mapping.
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe class="demo-tma3d" src="../demo/tiling_constraint.html?v=tutorial-review-20260713" title="How 128-byte grouping affects bank conflicts" loading="lazy"
+<iframe class="demo-tma3d" src="../demo/tiling_constraint.html?v=row-layout-20260805" title="How 128-byte grouping affects bank conflicts" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 <script>
@@ -124,9 +122,9 @@ The following interactive figure compares the two cases. Select a `Column` and e
 })();
 </script>
 ```
-*Toggle tiling, then select a column and a range of eight rows to compare bank-sector use with and without grouping.*
+*Switch the row layout, then select a column and eight consecutive rows to compare the bank-sector use of 128-byte groups and a 256-byte row stride.*
 
-When the tile dimensions and target access pattern allow it, choose the widest swizzle the tile can hold so that accesses spread across more banks. An `N`-byte swizzle atom requires a contiguous dimension of at least `N` bytes. If the tile cannot hold a 128-byte atom, use a 64-byte or 32-byte swizzle instead ({ref}`chap_data_layout`).
+When selecting a swizzle mode, the TMA box's innermost contiguous dimension must not exceed the corresponding swizzle width. For example, `SWIZZLE_128B` requires that dimension to be at most 128 bytes. If the data is narrower than the swizzle width, the shared-memory allocation must still reserve the full width. A kernel should therefore choose among the 128-byte, 64-byte, and 32-byte modes based on both its tile width and its access pattern ({ref}`chap_data_layout`).
 
 ## How to Wait for a TMA Load
 

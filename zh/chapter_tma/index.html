@@ -326,7 +326,7 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#thread-tile">一个 thread 如何描述整个 tile</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-swizzled-layout">TMA 如何写入 swizzled layout</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#d-tma-swizzle-atoms">用 3D TMA 搬运多个 swizzle atoms</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#byte-swizzle">128-byte swizzle 的分组要求</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#byte-swizzle-row-layout">128-byte swizzle 与 row layout</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-load">如何等待 TMA load 完成</a></li>
@@ -365,11 +365,11 @@
 <p>发起 TMA copy 的 thread 不会遍历 tile 中的元素。它只需要向硬件提供两类信息。</p>
 <p>第一类是 tensor map descriptor。它描述 global tensor 的数据类型、各维 shape 和 strides、一次 copy 的 tile shape，以及写入 shared memory 时使用的 swizzle mode。同一个 descriptor 通常可以供多次 tile copies 复用。</p>
 <p>第二类是本次 copy 的参数，包括 tile 在 global tensor 中的起始坐标，以及 shared memory 中的目标地址。可以把两者的分工理解为：descriptor 说明“整个 tensor 怎样组织”，指令参数说明“这一次从哪里开始搬、搬到哪里”。</p>
-<p>发出 TMA 指令时，warp 仍然按照 SIMT 模型执行，只有被选中的 thread 参与这条指令，同一 warp 中的其他 threads 会被屏蔽。这个状态只持续到请求提交完成。随后，TMA engine 异步搬运数据，发起操作的 warp 和 CTA 中的其他 warps 都可以继续执行；真正使用这块数据前，再等待搬运完成。</p>
+<p>发出 TMA 指令时，warp 仍然按照 SIMT 模型执行，只有被选中的 thread 参与这条指令，同一 warp 中的其他 threads 会被屏蔽。这个状态只持续到请求提交完成。随后，TMA engine 异步完成数据搬运，发起操作的 warp 和 CTA 中的其他 warps 可以继续执行其他工作。Consumer 读取目标数据前，必须等待搬运完成。</p>
 </section>
 <section id="tma-swizzled-layout">
 <h2>TMA 如何写入 swizzled layout<a class="headerlink" href="#tma-swizzled-layout" title="Link to this heading">#</a></h2>
-<p>回到上面的交互图，先选择 <code class="docutils literal notranslate"><span class="pre">None</span></code>。此时 tile 的每一行都按原来的顺序写入 shared memory，逻辑 sector <code class="docutils literal notranslate"><span class="pre">c</span></code> 仍然落在物理 sector <code class="docutils literal notranslate"><span class="pre">c</span></code>。</p>
+<p>回到上面的交互图，先选择 <strong>无</strong>。此时 tile 的每一行都按原来的顺序写入 shared memory，逻辑 sector <code class="docutils literal notranslate"><span class="pre">c</span></code> 仍然落在物理 sector <code class="docutils literal notranslate"><span class="pre">c</span></code>。</p>
 <p>再切换到 <code class="docutils literal notranslate"><span class="pre">128B</span></code>。图中一行包含 8 个 16-byte sectors，正好是 128 bytes。对于这个简化且对齐的例子，第 <code class="docutils literal notranslate"><span class="pre">row</span></code> 行的逻辑 sector <code class="docutils literal notranslate"><span class="pre">col</span></code> 会写到：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>physical_sector = col XOR row
 </pre></div>
@@ -399,24 +399,23 @@ global[row, j] = global3[group, row, col]
 <iframe class="demo-tma3d" src="../demo_zh/tma_3d.html?v=tutorial-review-20260713" title="使用 3D TMA 搬运多个 swizzle atoms" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div><p><em>切换 <code class="docutils literal notranslate"><span class="pre">Col</span> <span class="pre">offset</span></code> 可以选择原矩阵的前 128 列或后 128 列；将鼠标悬停在蓝色区域的任意 cell 上，可以查看对应的 16-byte sector 写入 shared memory 后的位置。</em></p>
-<section id="byte-swizzle">
-<h3>128-byte swizzle 的分组要求<a class="headerlink" href="#byte-swizzle" title="Link to this heading">#</a></h3>
-<p>为什么要把 256-byte 的一行拆成两个 128-byte groups？除了满足 TMA box 的宽度限制，分组还会改变跨行访问落到哪些 shared-memory banks。</p>
-<p>考虑一个 <code class="docutils literal notranslate"><span class="pre">16×16</span></code> sector grid。每个 sector 是 16 bytes，因此一行共 256 bytes。现在从连续 8 行中各读取同一个 sector column，一共会发出 8 次并行的 16-byte 访问。</p>
-<p>一次 16-byte 访问会覆盖 4 个相邻的 shared-memory banks。为了便于观察，下面把 32 个 banks 按每 4 个相邻 banks 分成 8 个 bank sectors，记为 <code class="docutils literal notranslate"><span class="pre">S0</span></code> 到 <code class="docutils literal notranslate"><span class="pre">S7</span></code>。不同访问如果落到同一个 bank sector，就会争用同一组 banks。</p>
-<p>先把每行拆成两个 128-byte groups。设完整 grid 中的列号为 <code class="docutils literal notranslate"><span class="pre">col</span></code>，那么 <code class="docutils literal notranslate"><span class="pre">col</span> <span class="pre">//</span> <span class="pre">8</span></code> 选择左、右两个 groups，<code class="docutils literal notranslate"><span class="pre">local_col</span> <span class="pre">=</span> <span class="pre">col</span> <span class="pre">%</span> <span class="pre">8</span></code> 表示组内列号。对于 rows 0–7，swizzle 后的 bank sector 是：</p>
+<section id="byte-swizzle-row-layout">
+<h3>128-byte swizzle 与 row layout<a class="headerlink" href="#byte-swizzle-row-layout" title="Link to this heading">#</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> 始终以连续的 128 bytes 为宽度进行重排。图中每个 sector 是 16 bytes，因此一个 swizzle span 固定包含 8 个 sectors；即使逻辑行有 16 个 sectors，硬件也不会把整行作为一个 256-byte swizzle 单元。这里需要比较的不是 swizzle 是否按 8 个 sectors 分组，而是这两个 128-byte spans 在内存中如何排列。</p>
+<p>考虑一个 <code class="docutils literal notranslate"><span class="pre">16×16</span></code> sector grid。每行包含 16 个 sectors，共 256 bytes。现在从连续 8 行中各读取同一个 sector column，一共会发出 8 次并行的 16-byte 访问。一次访问覆盖 4 个相邻的 shared-memory banks；为了便于观察，下面把 32 个 banks 分成 8 个 bank sectors，记为 <code class="docutils literal notranslate"><span class="pre">S0</span></code> 到 <code class="docutils literal notranslate"><span class="pre">S7</span></code>。</p>
+<p>如果保留普通的 256-byte row stride，相邻逻辑行的起点相隔两个 128-byte spans。设 <code class="docutils literal notranslate"><span class="pre">span</span> <span class="pre">=</span> <span class="pre">col</span> <span class="pre">//</span> <span class="pre">8</span></code>，<code class="docutils literal notranslate"><span class="pre">local_col</span> <span class="pre">=</span> <span class="pre">col</span> <span class="pre">%</span> <span class="pre">8</span></code>，那么对应的 bank sector 为：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank_sector = local_col XOR ((2·row + span) % 8)
+</pre></div>
+</div>
+<p>连续 8 行只会得到 4 个不同的 bank sectors，每个 sector 被访问两次，因此形成 2-way conflict。这个 layout 只是用来说明 row stride 的影响；由于其最内层维度为 256 bytes，不能作为一个 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> TMA box。</p>
+<p>将逻辑坐标改写为 <code class="docutils literal notranslate"><span class="pre">(group,</span> <span class="pre">row,</span> <span class="pre">local_col)</span></code> 后，每个 group 都包含 8 个 sectors，组内相邻行的 stride 为 128 bytes。此时 bank sector 为：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank_sector = local_col XOR (row % 8)
 </pre></div>
 </div>
-<p>连续 8 行会得到 8 个不同的结果，因此这些访问可以并行完成。</p>
-<p>如果不分组，仍然保留 256-byte row stride，那么每跨过一行就相当于跨过两个 128-byte 单元。用于 XOR 的编号也会每行前进 2：</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>bank_sector = local_col XOR ((2·row + col // 8) % 8)
-</pre></div>
-</div>
-<p>这时只有 4 个不同的结果，每个 bank sector 被访问两次，形成 2-way conflict。这里的未分组状态只是一个对照，它并不是合法的 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> TMA box。</p>
-<p>下面的交互图展示了这两种情况。左侧选择原始 grid 中的一个 <code class="docutils literal notranslate"><span class="pre">Column</span></code> 和连续 8 行，右侧带黑色边框的 cells 显示这些访问在 swizzled layout 中的位置。<code class="docutils literal notranslate"><span class="pre">Tiling</span></code> 选择“是”时，每行先拆成 <code class="docutils literal notranslate"><span class="pre">g0</span></code> 和 <code class="docutils literal notranslate"><span class="pre">g1</span></code> 两个 128-byte groups；选择“否”时，则保留 256-byte row stride 作为对照。底部的 <code class="docutils literal notranslate"><span class="pre">S0</span></code> 到 <code class="docutils literal notranslate"><span class="pre">S7</span></code> 汇总各次访问使用的 bank sectors。<code class="docutils literal notranslate"><span class="pre">dtype</span></code> 只改变一个 sector 中包含多少个元素，不影响这里的地址映射。</p>
+<p>连续 8 行会落到 8 个不同的 bank sectors，可以并行完成访问。</p>
+<p>下面的交互图展示这两种 row layouts。选择 <code class="docutils literal notranslate"><span class="pre">128B</span> <span class="pre">groups</span></code> 时，两个 spans 被显式排列为 <code class="docutils literal notranslate"><span class="pre">g0</span></code> 和 <code class="docutils literal notranslate"><span class="pre">g1</span></code>；选择 <code class="docutils literal notranslate"><span class="pre">256B</span> <span class="pre">stride</span></code> 时，swizzle 仍然只在各个 128-byte span 内重排，但逻辑行保留原来的 256-byte stride。右侧带黑色边框的 cells 表示当前选中的 column 在 swizzled layout 中的位置，底部则汇总它们使用的 bank sectors。<code class="docutils literal notranslate"><span class="pre">dtype</span></code> 只改变一个 sector 中包含多少个元素，不影响地址映射。</p>
 <div style="overflow-x:auto;">
-<iframe class="demo-tma3d" src="../demo_zh/tiling_constraint.html?v=tutorial-review-20260713" title="128-byte 分组对 bank conflict 的影响" loading="lazy"
+<iframe class="demo-tma3d" src="../demo_zh/tiling_constraint.html?v=row-layout-20260805" title="128-byte 分组对 bank conflict 的影响" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 <script>
@@ -429,8 +428,8 @@ global[row, j] = global3[group, row, col]
     });
   });
 })();
-</script><p><em>切换是否进行 tiling，再选择 column 和连续的 8 行，可以比较分组前后两种 layout 的 bank-sector 使用情况。</em></p>
-<p>在 tile 尺寸和目标访问模式允许时，通常选择能够容纳的最宽 swizzle，使访问分散到更多 banks。宽度为 <code class="docutils literal notranslate"><span class="pre">N</span></code> bytes 的 swizzle atom 要求连续维度至少能够容纳 <code class="docutils literal notranslate"><span class="pre">N</span></code> bytes；如果放不下 128-byte atom，就要改用 64-byte 或 32-byte swizzle（<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局及其记号</span></a>）。</p>
+</script><p><em>切换 row layout，再选择 column 和连续的 8 行，可以比较 128-byte groups 与 256-byte row stride 的 bank-sector 使用情况。</em></p>
+<p>选择 swizzle mode 时，TMA box 的最内层连续维度不能超过对应的 swizzle width；例如，<code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> 要求该维度不超过 128 bytes。如果实际数据宽度小于 swizzle width，shared-memory allocation 仍需为完整宽度预留空间。实际 kernel 应根据 tile 宽度和访问方式，在 128-byte、64-byte 和 32-byte swizzle 中选择合适的模式（<a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局及其记号</span></a>）。</p>
 </section>
 </section>
 <section id="tma-load">
@@ -528,7 +527,7 @@ TMA store: producer 通过 commit group 和 wait group 等待 source 可复用
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#thread-tile">一个 thread 如何描述整个 tile</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-swizzled-layout">TMA 如何写入 swizzled layout</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#d-tma-swizzle-atoms">用 3D TMA 搬运多个 swizzle atoms</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#byte-swizzle">128-byte swizzle 的分组要求</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#byte-swizzle-row-layout">128-byte swizzle 与 row layout</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tma-load">如何等待 TMA load 完成</a></li>

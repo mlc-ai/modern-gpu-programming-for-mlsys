@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Swizzle Imposes Tiling Constraint</title>
+<title>128B Swizzle and Row Layout</title>
 <link rel="stylesheet" href="../viz-base.css">
 <script src="../viz-base.js"></script>
 <style>
@@ -32,7 +32,6 @@
 
   .groups { display:flex; gap:8px; justify-content:center; }
   .group-label { text-align:center; font-size:11px; font-weight:700; color:var(--accent); margin-bottom:4px; }
-  .group-label.inv { visibility:hidden; }
   .atom-start { border-top:3px solid #273142 !important; }
 
   .bottom-bar { max-width:1300px; margin:10px auto 0; }
@@ -67,14 +66,14 @@
 </head>
 <body>
 
-<h1>Swizzle Imposes Tiling Constraint</h1>
-<div class="sub">Each cell is one 16B sector; apply a 128B swizzle to a 16&times;16 sector grid</div>
+<h1>128B Swizzle and Row Layout</h1>
+<div class="sub">A 128B swizzle always permutes groups of eight 16B sectors; this figure compares two row layouts</div>
 
 <div class="controls">
-  <div><span class="lbl">Tile</span>
+  <div><span class="lbl">Row layout</span>
     <div class="bg" id="tl">
-      <button class="btn on" data-v="1">Yes</button>
-      <button class="btn" data-v="0">No</button>
+      <button class="btn on" data-v="1">128B groups</button>
+      <button class="btn" data-v="0">256B stride</button>
     </div>
   </div>
   <div><span class="lbl">Row Range</span>
@@ -97,7 +96,7 @@
     </div>
   </div>
   <div class="box">
-    <h2 id="rh">Tiled for 128B Swizzle (two 16&times;8 groups)</h2>
+    <h2 id="rh">Stored as Two 128B Groups</h2>
     <div id="rv"></div>
   </div>
 </div>
@@ -117,7 +116,7 @@
   <div class="dtype-info" id="dtype-info"></div>
 </div>
 <div class="formula-box">
-  <div class="ftitle">Hardware derives swizzle_col from the physical offset. A 128B atom has 8 sectors per row; with a 256B row stride, each new row advances by two 128B units.</div>
+  <div class="ftitle">Both layouts use eight 16B sectors per swizzle span. The row stride determines which XOR index the next logical row uses.</div>
   <div class="fcontent" id="ffml"></div>
 </div>
 <div class="leg" id="lg"></div>
@@ -212,15 +211,15 @@ function draw() {
   const ab = new Map();
 
   rh.textContent = ST.tile
-    ? 'Tiled for 128B Swizzle (two 16\u00d78 groups)'
-    : 'Not Tiled + 128B Swizzle (16\u00d716)';
+    ? 'Stored as Two 128B Groups'
+    : 'Preserve the 256B Row Stride (Comparison)';
 
-  // Always two-group layout; labels hidden when not tiled
+  // A 128B swizzle always operates on eight 16B sectors at a time.
   const groups = mk('div', 'groups');
   for (let gi = 0; gi < 2; gi++) {
     const gd = mk('div', 'group');
-    const gl2 = mk('div', 'group-label' + (ST.tile ? '' : ' inv'));
-    gl2.textContent = 'g' + gi;
+    const gl2 = mk('div', 'group-label');
+    gl2.textContent = ST.tile ? 'g' + gi : '128B span ' + gi;
     gd.appendChild(gl2);
     const grid = mk('div', 'grid');
     const showRL = (gi === 0);
@@ -293,9 +292,9 @@ function draw() {
   // Formula
   const ffml = document.getElementById('ffml');
   if (ST.tile) {
-    ffml.textContent = '(8 sectors/row): swizzle_col = col XOR (row % 8) \u2192 all 8 XOR values distinct \u2192 conflict-free';
+    ffml.textContent = '(row stride within each group = 128B): swizzle_col = local_col XOR (row % 8) \u2192 all 8 XOR values are distinct \u2192 conflict-free';
   } else {
-    ffml.textContent = '(16 sectors/row): swizzle_col = col XOR ((row \u00d7 2 + col // 8) % 8) \u2192 the XOR row index advances by 2 \u2192 only 4 distinct values \u2192 2-way conflict';
+    ffml.textContent = '(256B row stride): swizzle_col = local_col XOR ((row \u00d7 2 + span) % 8) \u2192 the XOR index advances by 2 per row \u2192 only 4 distinct values \u2192 2-way conflict';
   }
 }
 
@@ -340,7 +339,7 @@ function mk(t, c) { const d = document.createElement(t); if (c) d.className = c;
   r2.appendChild(Object.assign(mk('div', 'li'), {innerHTML: '<div class="swtch" style="background:var(--color-hover-bg);border:2.5px solid var(--accent)"></div> Source in original'}));
   r2.appendChild(Object.assign(mk('div', 'li'), {innerHTML: '<div class="swtch brd"></div> Selected read in swizzled view'}));
   r2.appendChild(Object.assign(mk('div', 'li'), {textContent: 'Cell value = original sector column'}));
-  r2.appendChild(Object.assign(mk('div', 'li'), {textContent: 'g = group \u2014 each group is contiguous in memory'}));
+  r2.appendChild(Object.assign(mk('div', 'li'), {textContent: 'g = explicit 128B group; span = 0 or 1 for the two 128B ranges in a 256B row'}));
   lg.appendChild(r2);
 
   draw();

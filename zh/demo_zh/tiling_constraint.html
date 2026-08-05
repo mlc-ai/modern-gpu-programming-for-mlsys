@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>Swizzle 带来的 Tiling 约束</title>
+<title>128B Swizzle 与 Row Layout</title>
 <link rel="stylesheet" href="../viz-base.css">
 <script src="../viz-base.js"></script>
 <style>
@@ -33,7 +33,6 @@
 
   .groups { display:flex; gap:8px; justify-content:center; }
   .group-label { text-align:center; font-size:11px; font-weight:700; color:var(--accent); margin-bottom:4px; }
-  .group-label.inv { visibility:hidden; }
   .atom-start { border-top:3px solid #273142 !important; }
 
   .bottom-bar { max-width:1300px; margin:10px auto 0; }
@@ -68,14 +67,14 @@
 </head>
 <body>
 
-<h1>Swizzle 带来的 Tiling 约束</h1>
-<div class="sub">每个 cell 表示一个 16B sector；对 16&times;16 sector grid 应用 128B swizzle</div>
+<h1>128B Swizzle 与 Row Layout</h1>
+<div class="sub">128B swizzle 始终按每 8 个 16B sectors 重排；这里比较两种 row layout</div>
 
 <div class="controls">
-  <div><span class="lbl">Tiling</span>
+  <div><span class="lbl">Row layout</span>
     <div class="bg" id="tl">
-      <button class="btn on" data-v="1">是</button>
-      <button class="btn" data-v="0">否</button>
+      <button class="btn on" data-v="1">128B groups</button>
+      <button class="btn" data-v="0">256B stride</button>
     </div>
   </div>
   <div><span class="lbl">Row 范围</span>
@@ -98,7 +97,7 @@
     </div>
   </div>
   <div class="box">
-    <h2 id="rh">为 128B Swizzle 做 tiling（两个 16&times;8 groups）</h2>
+    <h2 id="rh">按两个 128B groups 排布</h2>
     <div id="rv"></div>
   </div>
 </div>
@@ -118,7 +117,7 @@
   <div class="dtype-info" id="dtype-info"></div>
 </div>
 <div class="formula-box">
-  <div class="ftitle">硬件根据 physical offset 计算 swizzle_col。一个 128B atom 的每行包含 8 个 16B sectors；如果 row stride 是 256B，每跨过一行就会跨过两个 128B 单元。</div>
+  <div class="ftitle">两种 layout 都以 8 个 16B sectors 为一个 swizzle span；row stride 决定相邻逻辑行使用哪个 XOR index。</div>
   <div class="fcontent" id="ffml"></div>
 </div>
 <div class="leg" id="lg"></div>
@@ -213,15 +212,15 @@ function draw() {
   const ab = new Map();
 
   rh.textContent = ST.tile
-    ? '为 128B Swizzle 做 tiling（两个 16\u00d78 group）'
-    : '未做 tiling + 128B Swizzle（16\u00d716）';
+    ? '按两个 128B groups 排布'
+    : '保留 256B row stride（对照）';
 
-  // Always two-group layout; labels hidden when not tiled
+  // 128B swizzle 始终一次处理 8 个 16B sectors。
   const groups = mk('div', 'groups');
   for (let gi = 0; gi < 2; gi++) {
     const gd = mk('div', 'group');
-    const gl2 = mk('div', 'group-label' + (ST.tile ? '' : ' inv'));
-    gl2.textContent = 'g' + gi;
+    const gl2 = mk('div', 'group-label');
+    gl2.textContent = ST.tile ? 'g' + gi : '128B span ' + gi;
     gd.appendChild(gl2);
     const grid = mk('div', 'grid');
     const showRL = (gi === 0);
@@ -294,9 +293,9 @@ function draw() {
   // Formula
   const ffml = document.getElementById('ffml');
   if (ST.tile) {
-    ffml.textContent = '(8 sectors/row): swizzle_col = col XOR (row % 8) \u2192 8 个 XOR 值互不相同 \u2192 无 conflict';
+    ffml.textContent = '(group 内的 row stride = 128B): swizzle_col = local_col XOR (row % 8) \u2192 8 个 XOR 值互不相同 \u2192 无 conflict';
   } else {
-    ffml.textContent = '(16 sectors/row): swizzle_col = col XOR ((row \u00d7 2 + col // 8) % 8) \u2192 XOR 使用的行编号每次前进 2 \u2192 只有 4 个不同值 \u2192 2-way conflict';
+    ffml.textContent = '(256B row stride): swizzle_col = local_col XOR ((row \u00d7 2 + span) % 8) \u2192 XOR index 每行前进 2 \u2192 只有 4 个不同值 \u2192 2-way conflict';
   }
 }
 
@@ -341,7 +340,7 @@ function mk(t, c) { const d = document.createElement(t); if (c) d.className = c;
   r2.appendChild(Object.assign(mk('div', 'li'), {innerHTML: '<div class="swtch" style="background:var(--color-hover-bg);border:2.5px solid var(--accent)"></div> 原始矩阵中的 source'}));
   r2.appendChild(Object.assign(mk('div', 'li'), {innerHTML: '<div class="swtch brd"></div> swizzled view 中被选中的 read'}));
   r2.appendChild(Object.assign(mk('div', 'li'), {textContent: 'Cell 数值 = 原始 sector column'}));
-  r2.appendChild(Object.assign(mk('div', 'li'), {textContent: 'g = group；每个 group 在内存中连续'}));
+  r2.appendChild(Object.assign(mk('div', 'li'), {textContent: 'g = 显式 128B group；span = 0 或 1，表示 256B 行中的一个 128B 范围'}));
   lg.appendChild(r2);
 
   draw();

@@ -95,7 +95,7 @@ $$a_{\mathrm{scale}}
 - `row_sum`：已经处理过的所有 key positions 的 $p_{ij}$ 之和，也就是 $\ell_i$。
 - `O`：使用同一组 $p_{ij}$ 得到的加权和 $o_i$；所有 blocks 处理完成后再除以 `row_sum`。
 
-现在可以看懂伪代码中的三种情况：
+更新这些状态时，kernel 分三种情况处理：
 
 - 第一个 K/V block 还没有旧状态，直接采用 `candidate_max`，并令 `acc_scale = 1`。
 - 当 `delta >= -8` 时，kernel 保留旧参考值，当前 block 也继续相对于旧值计算，因此不需要转换旧状态，`acc_scale = 1`。
@@ -248,7 +248,7 @@ with WarpgroupRole(wg_id, 2, regs=64): # WG2 执行 correction / epilogue
 
 第一，论文让 WG0 和 WG1 的 exponential-heavy softmax 区域错开执行，避免两个 softmax warpgroups 同时争用 exponential units。当前代码保留了 `bar_s0_s1_sequence` 及其同步分支，但默认设置 `USE_S0_S1_BARRIER=False`，因此默认路径不会启用这项顺序约束。
 
-第二，论文利用空余 TMEM 传递 correction statistics；当前 TIRx 实现则把逐行的 `acc_scale` 和最终 `row_sum` 写入 SMEM buffer `sScale`，再通过 `softmax_corr.full/empty` 在 softmax warpgroups 与 WG2 之间交接。后文介绍的 mailbox 指的就是这个 TIRx 实现，而不是论文中的 TMEM 传递方式。
+第二，论文利用空余 TMEM 传递 correction statistics；当前 TIRx 实现则把逐行的 `acc_scale` 和最终 `row_sum` 写入 SMEM buffer `sScale`，再通过 `softmax_corr.full/empty` 在 softmax warpgroups 与 WG2 之间交接。后文直接沿用代码中的名称，将这块缓冲区称为 `sScale`。
 
 ## 阅读代码前的约定
 
@@ -268,7 +268,7 @@ with WarpgroupRole(wg_id, 2, regs=64): # WG2 执行 correction / epilogue
 
 ### Barrier 的分工与完成条件
 
-FA4 的 pipeline 同时维护多种彼此独立的交接状态。Q、K/V 的 SMEM stages 需要在 TMA 和 MMA 之间交接；S、P、O 的 TMEM slots 需要在 Tensor Core、softmax 和 correction 之间交接；softmax 与 WG2 还要复用 mailbox，epilogue 与 TMA store 则要复用 `O_smem`。这些事件由不同角色在不同时间完成，也保护不同的存储位置，因此需要分别追踪。
+FA4 的 pipeline 同时维护多种彼此独立的交接状态。Q、K/V 的 SMEM stages 需要在 TMA 和 MMA 之间交接；S、P、O 的 TMEM slots 需要在 Tensor Core、softmax 和 correction 之间交接；softmax 与 WG2 还要复用 `sScale`，epilogue 与 TMA store 则要复用 `O_smem`。这些事件由不同角色在不同时间完成，也保护不同的存储位置，因此需要分别追踪。
 
 对于循环复用的存储，交接通常包含两个方向：`full` 或 `ready` 表示 producer 已经写好数据，consumer 可以读取；`empty` 表示 consumer 已经用完，producer 可以覆盖这块存储。下面的 barriers 分别记录这些数据就绪和资源归还事件。
 
@@ -288,8 +288,8 @@ Barrier 的初始化 count 也不总是 thread 数。普通 `MBarrier` 统计显
 | `p_o_rescale` | 128 个 softmax threads + 128 个 WG2 threads | 两组共报告 256 次 arrivals | 第一段 PV MMA 可以读取 `P[:, 0:96]`，并初始化或继续累加 O |
 | `p_ready_2` | Softmax warpgroup 的 128 个 threads | 共报告 128 次 arrivals | 第二段 PV MMA 可以读取 `P[:, 96:128]` |
 | `o_ready` | 1 个 elected MMA thread | Tensor Core 完成最后一段 PV MMA 后报告 1 次通知 | Epilogue 可以读取最终 O accumulator |
-| `softmax_corr.full` | Softmax warpgroup 的 128 个 threads | 共报告 128 次 arrivals | WG2 可以读取 mailbox 中的 `acc_scale` 或最终 `row_sum` |
-| `softmax_corr.empty` | WG2 的 128 个 threads | 共报告 128 次 arrivals | Softmax 可以继续推进并复用 mailbox |
+| `softmax_corr.full` | Softmax warpgroup 的 128 个 threads | 共报告 128 次 arrivals | WG2 可以读取 `sScale` 中的 `acc_scale` 或最终 `row_sum` |
+| `softmax_corr.empty` | WG2 的 128 个 threads | 共报告 128 次 arrivals | Softmax 可以继续推进并重新写入对应的 `sScale` slot |
 | `corr_epi.full` | WG2 的 128 个 threads | 共报告 128 次 arrivals | TMA-store warp 可以读取已经写好的 `O_smem` |
 | `corr_epi.empty` | TMA-store warp 的 32 个 threads | 等待 TMA store 完成后，共报告 32 次 arrivals | Epilogue 可以复用该 `O_smem` stage |
 
@@ -440,7 +440,7 @@ T.ptx.tcgen05.wait.st()
 p_ready_2.arrive(wg_id)
 ```
 
-`s_chunk_buf` 中仍保留着转换前的 fp32 `P`。WG2 读完 `acc_scale` 并归还 mailbox 后，softmax warpgroup 再用这些 values 更新 denominator：
+`s_chunk_buf` 中仍保留着转换前的 fp32 `P`。WG2 读完 `acc_scale` 并允许对应的 `sScale` slot 再次写入后，softmax warpgroup 再用这些 values 更新 denominator：
 
 ```python
 softmax_corr.empty.wait(wg_id, phase_q)
@@ -608,7 +608,7 @@ Regions 定义完成后，计算代码只需用 stage index 访问 `S_region[...
 
 ## 关键 Barrier 协议
 
-前面的总表已经列出了所有 barriers 的通知者、完成条件和放行操作。下面只展开两处最容易混淆的同步过程：QKᵀ MMA 和 PV MMA 在发起前分别等待哪些条件，以及 softmax 与 WG2 如何通过一对 full/empty barriers 复用 SMEM 中用于传递逐行状态的交换槽。
+前面的总表已经列出了所有 barriers 的通知者、完成条件和放行操作。下面只展开两处最容易混淆的同步过程：QKᵀ MMA 和 PV MMA 在发起前分别等待哪些条件，以及 softmax 与 WG2 如何通过一对 full/empty barriers 反复使用 SMEM buffer `sScale`。
 
 ### 两次 MMA 分别等待什么
 
@@ -626,24 +626,26 @@ Regions 定义完成后，计算代码只需用 stage index 访问 `S_region[...
 
 ### Softmax 如何向 WG2 传递逐行状态
 
-Softmax warpgroup 还要把每个 output row 的两个标量交给 WG2。K/V loop 期间传递 `acc_scale[row]`，告诉 WG2 应该把 TMEM 中该行的旧 `O` 缩放多少；所有 K/V blocks 处理完成后，再传递最终的 `row_sum[row]`，供 WG2 计算 `O[row, :] / row_sum[row]`。Kernel 在 SMEM buffer `sScale` 中为每个 Q stage 保留一个可复用的交换槽，下面简称 mailbox。Softmax 写入后通过 `softmax_corr.full` 通知 WG2；WG2 读完后通过 `softmax_corr.empty` 归还这个槽。下图先画出单个 mailbox slot 的 full/empty 协议：
+Softmax warpgroup 还要把每个 output row 的两个标量交给 WG2。K/V loop 期间传递 `acc_scale[row]`，告诉 WG2 应该把 TMEM 中该行的旧 `O` 缩放多少；所有 K/V blocks 处理完成后，再传递最终的 `row_sum[row]`，供 WG2 计算 `O[row, :] / row_sum[row]`。
 
-![Softmax 与 WG2 通过 full/empty barriers 复用同一个 SMEM mailbox](../../img/flash_attention_softmax_correction_zh.svg)
+为此，`sScale` 会为每个 Q stage 保留 128 个 `fp32` 位置，下面称为一个 `sScale` slot。循环期间，这 128 个位置保存各行的 `acc_scale`；循环结束后，同一 slot 改为保存最终的 `row_sum`。Softmax 写入后通过 `softmax_corr.full` 通知 WG2，WG2 读完后再通过 `softmax_corr.empty` 表示该 slot 可以重新写入。下图展示一个 `sScale` slot 的 full/empty 协议：
+
+![Softmax 与 WG2 通过 full/empty barriers 复用同一个 sScale slot](../../img/flash_attention_softmax_correction_zh.svg)
 
 从单个 slot 看，这组 producer-consumer 协议可以理解为：
 
-1. Softmax 先等待 `softmax_corr.empty`，确认 scale/sum slot 可以复用。
+1. Softmax 先等待 `softmax_corr.empty`，确认对应的 `sScale` slot 可以重新写入。
 2. Softmax 将 `acc_scale` 或最终 `row_sum` 写入该 slot。
 3. Softmax 向 `softmax_corr.full` 报告 arrival。
 4. WG2 等待 `softmax_corr.full`，再读取该 slot。
 5. WG2 发出对应的 empty arrival。
-6. Softmax warpgroup 在下一 phase 中继续使用 mailbox。
+6. Softmax warpgroup 在下一 phase 中重新写入这个 `sScale` slot。
 
-第一个 K/V block 没有旧的 `O`，因此不需要传递 `acc_scale`。不过，softmax 和 WG2 仍完成一次 full/empty 交接，让双方的 barrier phase 同时前进；否则下一轮可能等待不同的 phase。后续 iterations 使用同一 mailbox 传递 `acc_scale`，最后一次交接再传递 `row_sum`。
+第一个 K/V block 没有旧的 `O`，因此不需要传递 `acc_scale`。不过，softmax 和 WG2 仍完成一次 full/empty 交接，让双方的 barrier phase 同时前进；否则下一轮可能等待不同的 phase。后续 iterations 使用同一 `sScale` slot 传递 `acc_scale`，最后一次交接再传递 `row_sum`。
 
-实际 kernel 将两个 Q stages 的 correction 交错执行。WG2 处理 stage `i_q` 后，会用 `softmax_corr.empty.arrive(1 - i_q)` 放行另一个 softmax stage，使 WG0 和 WG1 交替前进；epilogue 读取最终 `row_sum` 时，才归还同一个 `i_q` 对应的 slot。因此，上图只说明一个 mailbox slot 如何完成交接，代码中的 stage index 还受到两级 pipeline 的交错顺序影响。
+实际 kernel 将两个 Q stages 的 correction 交错执行。WG2 处理 stage `i_q` 后，会用 `softmax_corr.empty.arrive(1 - i_q)` 放行另一个 softmax stage，使 WG0 和 WG1 交替前进；epilogue 读取最终 `row_sum` 时，才允许重新写入同一个 `i_q` 对应的 slot。因此，上图只说明一个 `sScale` slot 如何完成交接，代码中的 stage index 还受到两级 pipeline 的交错顺序影响。
 
-还要区分 `softmax_corr.empty` 与 `p_o_rescale`。前者控制 softmax mailbox 和两级执行顺序；后者才向 PV MMA 证明 `P` 与 `O` 已经满足第一段计算的条件。
+还要区分 `softmax_corr.empty` 与 `p_o_rescale`。前者控制 `sScale` slot 的复用和两级执行顺序；后者才向 PV MMA 证明 `P` 与 `O` 已经满足第一段计算的条件。
 
 FA4 比 GEMM 多出的 barriers 大多围绕 softmax：QKᵀ MMA 与 PV MMA 之间增加了 register 计算、TMEM rewrite 和 output rescale，每一步都需要明确证明下一角色何时可以读取数据或复用存储空间。
 
@@ -696,7 +698,7 @@ Q tiles、K/V blocks 和 TMEM slots 按不同节奏推进。Kernel 用 `Pipeline
 
 “算法结构”一节已经说明了 correction 的数学来源。当 `delta >= -8` 时，softmax 保留旧参考值，`acc_scale = 1`，TMEM 中的 `O` 不需要修改；当 `delta < -8` 时，softmax 采用新的参考值，旧 `O` 必须乘以 `acc_scale = exp2(delta)` 后才能继续累加。
 
-`row_sum` 保存在 softmax warpgroup 的 registers 中，可以在更新时直接乘 `acc_scale`。`O` 则位于 TMEM，需要由 WG2 完成单独的数据操作。Softmax 将逐行 `acc_scale` 写入 SMEM mailbox；WG2 等待 `softmax_corr.full`，从 TMEM 读出当前 `O`，完成乘法后再写回：
+`row_sum` 保存在 softmax warpgroup 的 registers 中，可以在更新时直接乘 `acc_scale`。`O` 则位于 TMEM，需要由 WG2 完成单独的数据操作。Softmax 将逐行 `acc_scale` 写入对应的 `sScale` slot；WG2 等待 `softmax_corr.full`，从 TMEM 读出当前 `O`，完成乘法后再写回：
 
 ```python
 RESCALE_TILE = T.meta_var(16)
@@ -724,7 +726,7 @@ p_o_rescale.arrive(i_q)
 softmax_corr.empty.arrive(1 - i_q)
 ```
 
-跳过数据操作后，同步协议仍然要继续。每个 warp 无论是否实际修改 `O`，都必须完成 `p_o_rescale` 和 `softmax_corr.empty` 所需的 arrival，分别允许 PV MMA 继续执行，并归还 softmax mailbox。
+跳过数据操作后，同步协议仍然要继续。每个 warp 无论是否实际修改 `O`，都必须完成 `p_o_rescale` 和 `softmax_corr.empty` 所需的 arrival，分别允许 PV MMA 继续执行，并允许 softmax 再次写入对应的 `sScale` slot。
 
 需要 correction 时，每个 warp 对自己负责的 `O` row stripe 执行 TMEM → registers → TMEM tile operation：
 
@@ -762,7 +764,7 @@ $$\mathrm{LSE}_i = \log(\mathrm{row\_sum}_i) + r_i / \sqrt{d}$$
 
 这个推导只要求 `row_sum` 与同一个参考值 $r_i$ 对应，并不要求 $r_i$ 必须是真实 maximum。公式适用于 `row_sum > 0` 的有效行；没有任何有效 key 的行对应 LSE 为 $-\infty$。当前实现不会写出 LSE。
 
-## 因果掩码
+## Causal Mask
 
 Causal attention 要求每个 query 只能访问当前位置及之前的 keys。在 Q、K 序列等长时，score matrix 的有效区域位于主对角线及其下方。当两个序列不等长时，当前实现使用右对齐（bottom-right-aligned）的 causal mask：query position `i` 最多可以访问 key position `i + SEQ_LEN_KV - SEQ_LEN_Q`，上界再截断到 `SEQ_LEN_KV - 1`。实现从 block 和 element 两个层次处理这一约束：跳过完全无效的 blocks，并在跨越边界的 blocks 内屏蔽无效 columns。
 
@@ -772,7 +774,7 @@ Causal attention 要求每个 query 只能访问当前位置及之前的 keys。
 
 `mask_r2p(...)` 不为每个元素单独比较坐标，而是把 column limit 转换成若干 bit masks。实现每次处理最多 24 个元素，随后用 bit test 生成 predicates；这些操作会 lower 到高效的 register-to-predicate 路径。完全位于 causal 边界内的 blocks 中，所有 columns 都有效，不需要 mask。
 
-从 tile primitive 的角度看，causal mode 没有改变数据路径。它只会缩短 K/V loop，并在 QKᵀ MMA 与 `P` writeback 之间、register-resident softmax 内部增加一步 masking。
+从 tile primitive 的角度看，causal mode 没有改变数据路径。它只会缩短 K/V loop，并在 QKᵀ MMA 与 `P` writeback 之间、register-resident softmax 内部应用 causal mask。
 
 ## GQA 支持
 
@@ -811,10 +813,10 @@ K 和 V 不会为每个 query head 各保存一份。同一个 `kv_head_idx` 对
 
 ## Tile 调度
 
-Scheduler 将每个 CTA 映射到一个 `(batch, kv_head, m_block)` attention task。一个 `m_block` 包含前面介绍的两个 Q stages，也就是两块同时推进的 query tiles。因果掩码会改变不同 tasks 的计算量，因此 causal 与 non-causal mode 使用不同的策略：
+Scheduler 将每个 CTA 映射到一个 `(batch, kv_head, m_block)` attention task。一个 `m_block` 包含前面介绍的两个 Q stages，也就是两块同时推进的 query tiles。Causal mask 会改变不同 tasks 的计算量，因此 causal 与 non-causal mode 使用不同的策略：
 
 - Non-causal mode 使用 `FlashAttentionLinearScheduler`。每个 task 都遍历相同数量的 K/V blocks，kernel 启动固定数量的 persistent CTAs；每个 CTA 完成一个 task 后，将线性 task index 增加 `num_ctas`，继续处理下一项工作。
-- Causal mode 使用 `FlashAttentionLPTScheduler`。因果掩码会让各 tasks 的工作量差异很大：靠前的 Q block 可能只访问一个 K/V block，靠后的 Q block 则需要访问全部 K/V blocks。Scheduler 先反转 `m_block` 顺序，让较后、工作量较大的 blocks 优先进入 launch order，尽量缩小不同 CTAs 的结束时间差。它还将展平后的 `batch × kv_head` 索引按 `L2_SWIZZLE` 分组：在切换到下一个 `m_block` 前，先遍历同组中的 batch/KV-head tasks。这样可以在 `m_block` 向前推进时将有限一组 K/V working sets 保留在 L2 中。当前实现为每个 causal task 启动一个 CTA。
+- Causal mode 使用 `FlashAttentionLPTScheduler`。Causal mask 会让各 tasks 的工作量差异很大：靠前的 Q block 可能只访问一个 K/V block，靠后的 Q block 则需要访问全部 K/V blocks。Scheduler 先反转 `m_block` 顺序，让较后、工作量较大的 blocks 优先进入 launch order，尽量缩小不同 CTAs 的结束时间差。它还将展平后的 `batch × kv_head` 索引按 `L2_SWIZZLE` 分组：在切换到下一个 `m_block` 前，先遍历同组中的 batch/KV-head tasks。这样可以在 `m_block` 向前推进时将有限一组 K/V working sets 保留在 L2 中。当前实现为每个 causal task 启动一个 CTA。
 
 当前代码中的调度常量针对本书使用的 B200 配置调优，并不是所有 Blackwell GPU 的通用参数。`max_ctas=148` 将 non-causal persistent worker 数量限制为 148；`SM_NUMBER=148` 还用于 profiler buffer 的索引。`L2_SIZE=50 MiB` 则是计算 `L2_SWIZZLE` 时采用的可用 cache budget，并不表示 GPU 的完整 L2 容量。迁移到具有不同 SM 数量或 cache 配置的 Blackwell GPU 时，应重新选择这些值，或改为从目标设备配置中传入。
 

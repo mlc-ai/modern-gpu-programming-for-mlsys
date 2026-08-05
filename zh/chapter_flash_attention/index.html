@@ -348,11 +348,11 @@
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pipeline">Pipeline 时间线</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">重缩放与结果写回</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">因果掩码</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#causal-mask">Causal Mask</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#gqa">GQA 支持</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile">Tile 调度</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">编译与验证</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">练习</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">编译与验证</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">练习</a></li>
 </ul>
             </nav>
         </div>
@@ -437,7 +437,7 @@
 <li><p><code class="docutils literal notranslate"><span class="pre">row_sum</span></code>：已经处理过的所有 key positions 的 <span class="math notranslate nohighlight">\(p_{ij}\)</span> 之和，也就是 <span class="math notranslate nohighlight">\(\ell_i\)</span>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">O</span></code>：使用同一组 <span class="math notranslate nohighlight">\(p_{ij}\)</span> 得到的加权和 <span class="math notranslate nohighlight">\(o_i\)</span>；所有 blocks 处理完成后再除以 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code>。</p></li>
 </ul>
-<p>现在可以看懂伪代码中的三种情况：</p>
+<p>更新这些状态时，kernel 分三种情况处理：</p>
 <ul class="simple">
 <li><p>第一个 K/V block 还没有旧状态，直接采用 <code class="docutils literal notranslate"><span class="pre">candidate_max</span></code>，并令 <code class="docutils literal notranslate"><span class="pre">acc_scale</span> <span class="pre">=</span> <span class="pre">1</span></code>。</p></li>
 <li><p>当 <code class="docutils literal notranslate"><span class="pre">delta</span> <span class="pre">&gt;=</span> <span class="pre">-8</span></code> 时，kernel 保留旧参考值，当前 block 也继续相对于旧值计算，因此不需要转换旧状态，<code class="docutils literal notranslate"><span class="pre">acc_scale</span> <span class="pre">=</span> <span class="pre">1</span></code>。</p></li>
@@ -630,7 +630,7 @@ P, V:  P in TMEM + V in SMEM --PV MMA--&gt; O in TMEM
 <h3>论文与当前 TIRx 实现的差异<a class="headerlink" href="#tirx" title="Link to this heading">#</a></h3>
 <p>本章解释的是当前 <code class="docutils literal notranslate"><span class="pre">flash_attention4.py</span></code> 的默认执行路径。它沿用了 FA4 论文的整体 pipeline，但有两处实现选择并不相同。</p>
 <p>第一，论文让 WG0 和 WG1 的 exponential-heavy softmax 区域错开执行，避免两个 softmax warpgroups 同时争用 exponential units。当前代码保留了 <code class="docutils literal notranslate"><span class="pre">bar_s0_s1_sequence</span></code> 及其同步分支，但默认设置 <code class="docutils literal notranslate"><span class="pre">USE_S0_S1_BARRIER=False</span></code>，因此默认路径不会启用这项顺序约束。</p>
-<p>第二，论文利用空余 TMEM 传递 correction statistics；当前 TIRx 实现则把逐行的 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 和最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 写入 SMEM buffer <code class="docutils literal notranslate"><span class="pre">sScale</span></code>，再通过 <code class="docutils literal notranslate"><span class="pre">softmax_corr.full/empty</span></code> 在 softmax warpgroups 与 WG2 之间交接。后文介绍的 mailbox 指的就是这个 TIRx 实现，而不是论文中的 TMEM 传递方式。</p>
+<p>第二，论文利用空余 TMEM 传递 correction statistics；当前 TIRx 实现则把逐行的 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 和最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 写入 SMEM buffer <code class="docutils literal notranslate"><span class="pre">sScale</span></code>，再通过 <code class="docutils literal notranslate"><span class="pre">softmax_corr.full/empty</span></code> 在 softmax warpgroups 与 WG2 之间交接。后文直接沿用代码中的名称，将这块缓冲区称为 <code class="docutils literal notranslate"><span class="pre">sScale</span></code>。</p>
 </section>
 </section>
 <section id="id2">
@@ -675,7 +675,7 @@ P, V:  P in TMEM + V in SMEM --PV MMA--&gt; O in TMEM
 </div>
 <section id="barrier">
 <h3>Barrier 的分工与完成条件<a class="headerlink" href="#barrier" title="Link to this heading">#</a></h3>
-<p>FA4 的 pipeline 同时维护多种彼此独立的交接状态。Q、K/V 的 SMEM stages 需要在 TMA 和 MMA 之间交接；S、P、O 的 TMEM slots 需要在 Tensor Core、softmax 和 correction 之间交接；softmax 与 WG2 还要复用 mailbox，epilogue 与 TMA store 则要复用 <code class="docutils literal notranslate"><span class="pre">O_smem</span></code>。这些事件由不同角色在不同时间完成，也保护不同的存储位置，因此需要分别追踪。</p>
+<p>FA4 的 pipeline 同时维护多种彼此独立的交接状态。Q、K/V 的 SMEM stages 需要在 TMA 和 MMA 之间交接；S、P、O 的 TMEM slots 需要在 Tensor Core、softmax 和 correction 之间交接；softmax 与 WG2 还要复用 <code class="docutils literal notranslate"><span class="pre">sScale</span></code>，epilogue 与 TMA store 则要复用 <code class="docutils literal notranslate"><span class="pre">O_smem</span></code>。这些事件由不同角色在不同时间完成，也保护不同的存储位置，因此需要分别追踪。</p>
 <p>对于循环复用的存储，交接通常包含两个方向：<code class="docutils literal notranslate"><span class="pre">full</span></code> 或 <code class="docutils literal notranslate"><span class="pre">ready</span></code> 表示 producer 已经写好数据，consumer 可以读取；<code class="docutils literal notranslate"><span class="pre">empty</span></code> 表示 consumer 已经用完，producer 可以覆盖这块存储。下面的 barriers 分别记录这些数据就绪和资源归还事件。</p>
 <p>Barrier 的初始化 count 也不总是 thread 数。普通 <code class="docutils literal notranslate"><span class="pre">MBarrier</span></code> 统计显式 arrival 次数；如果一个 128-thread warpgroup 中每个 thread 都执行一次 <code class="docutils literal notranslate"><span class="pre">arrive</span></code>，count 才是 128。<code class="docutils literal notranslate"><span class="pre">TMABar</span></code> 除了一次 producer arrival，还要等待登记的传输字节数归零；<code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code> 则等待一次由 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> 发出的 Tensor Core 完成通知。</p>
 <p>当前实现中，<code class="docutils literal notranslate"><span class="pre">q_load.full</span></code> 和 <code class="docutils literal notranslate"><span class="pre">kv_load.full</span></code> 使用 <code class="docutils literal notranslate"><span class="pre">TMABar</span></code>；<code class="docutils literal notranslate"><span class="pre">q_load.empty</span></code>、<code class="docutils literal notranslate"><span class="pre">kv_load.empty</span></code>、<code class="docutils literal notranslate"><span class="pre">s_ready</span></code> 和 <code class="docutils literal notranslate"><span class="pre">o_ready</span></code> 使用 <code class="docutils literal notranslate"><span class="pre">TCGen05Bar</span></code>；其余 barriers 使用普通 <code class="docutils literal notranslate"><span class="pre">MBarrier</span></code>。下表列出每个 barrier slot 在一个 phase 内的完成条件。Q pipeline 有 2 个 slots，K/V pipeline 有 3 个 slots，其余表中的 staged barriers 各有 2 个 slots。</p>
@@ -732,12 +732,12 @@ P, V:  P in TMEM + V in SMEM --PV MMA--&gt; O in TMEM
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">softmax_corr.full</span></code></p></td>
 <td><p>Softmax warpgroup 的 128 个 threads</p></td>
 <td><p>共报告 128 次 arrivals</p></td>
-<td><p>WG2 可以读取 mailbox 中的 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 或最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code></p></td>
+<td><p>WG2 可以读取 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> 中的 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 或最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code></p></td>
 <td><p>WG2 的 128 个 threads</p></td>
 <td><p>共报告 128 次 arrivals</p></td>
-<td><p>Softmax 可以继续推进并复用 mailbox</p></td>
+<td><p>Softmax 可以继续推进并重新写入对应的 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">corr_epi.full</span></code></p></td>
 <td><p>WG2 的 128 个 threads</p></td>
@@ -888,7 +888,7 @@ P, V -&gt; PV MMA -&gt; O
 <span class="n">p_ready_2</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">wg_id</span><span class="p">)</span>
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">s_chunk_buf</span></code> 中仍保留着转换前的 fp32 <code class="docutils literal notranslate"><span class="pre">P</span></code>。WG2 读完 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 并归还 mailbox 后，softmax warpgroup 再用这些 values 更新 denominator：</p>
+<p><code class="docutils literal notranslate"><span class="pre">s_chunk_buf</span></code> 中仍保留着转换前的 fp32 <code class="docutils literal notranslate"><span class="pre">P</span></code>。WG2 读完 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 并允许对应的 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot 再次写入后，softmax warpgroup 再用这些 values 更新 denominator：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">softmax_corr</span><span class="o">.</span><span class="n">empty</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">wg_id</span><span class="p">,</span> <span class="n">phase_q</span><span class="p">)</span>
 <span class="k">with</span> <span class="n">Tx</span><span class="o">.</span><span class="n">thread</span><span class="p">():</span>
     <span class="k">if</span> <span class="n">is_first</span><span class="p">:</span>
@@ -1055,7 +1055,7 @@ tmem_as_f16: 1024 × 16 bits = 16384 bits
 </section>
 <section id="id3">
 <h2>关键 Barrier 协议<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
-<p>前面的总表已经列出了所有 barriers 的通知者、完成条件和放行操作。下面只展开两处最容易混淆的同步过程：QKᵀ MMA 和 PV MMA 在发起前分别等待哪些条件，以及 softmax 与 WG2 如何通过一对 full/empty barriers 复用 SMEM 中用于传递逐行状态的交换槽。</p>
+<p>前面的总表已经列出了所有 barriers 的通知者、完成条件和放行操作。下面只展开两处最容易混淆的同步过程：QKᵀ MMA 和 PV MMA 在发起前分别等待哪些条件，以及 softmax 与 WG2 如何通过一对 full/empty barriers 反复使用 SMEM buffer <code class="docutils literal notranslate"><span class="pre">sScale</span></code>。</p>
 <section id="mma">
 <h3>两次 MMA 分别等待什么<a class="headerlink" href="#mma" title="Link to this heading">#</a></h3>
 <p>下图列出了 QKᵀ MMA 和两段 PV MMA 各自的开始条件，也就是每段计算在发起前必须等到哪些 operands 和 accumulator 状态：</p>
@@ -1067,20 +1067,21 @@ tmem_as_f16: 1024 × 16 bits = 16384 bits
 </section>
 <section id="softmax-wg2">
 <h3>Softmax 如何向 WG2 传递逐行状态<a class="headerlink" href="#softmax-wg2" title="Link to this heading">#</a></h3>
-<p>Softmax warpgroup 还要把每个 output row 的两个标量交给 WG2。K/V loop 期间传递 <code class="docutils literal notranslate"><span class="pre">acc_scale[row]</span></code>，告诉 WG2 应该把 TMEM 中该行的旧 <code class="docutils literal notranslate"><span class="pre">O</span></code> 缩放多少；所有 K/V blocks 处理完成后，再传递最终的 <code class="docutils literal notranslate"><span class="pre">row_sum[row]</span></code>，供 WG2 计算 <code class="docutils literal notranslate"><span class="pre">O[row,</span> <span class="pre">:]</span> <span class="pre">/</span> <span class="pre">row_sum[row]</span></code>。Kernel 在 SMEM buffer <code class="docutils literal notranslate"><span class="pre">sScale</span></code> 中为每个 Q stage 保留一个可复用的交换槽，下面简称 mailbox。Softmax 写入后通过 <code class="docutils literal notranslate"><span class="pre">softmax_corr.full</span></code> 通知 WG2；WG2 读完后通过 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code> 归还这个槽。下图先画出单个 mailbox slot 的 full/empty 协议：</p>
-<p><img alt="Softmax 与 WG2 通过 full/empty barriers 复用同一个 SMEM mailbox" src="../_images/flash_attention_softmax_correction_zh.svg" /></p>
+<p>Softmax warpgroup 还要把每个 output row 的两个标量交给 WG2。K/V loop 期间传递 <code class="docutils literal notranslate"><span class="pre">acc_scale[row]</span></code>，告诉 WG2 应该把 TMEM 中该行的旧 <code class="docutils literal notranslate"><span class="pre">O</span></code> 缩放多少；所有 K/V blocks 处理完成后，再传递最终的 <code class="docutils literal notranslate"><span class="pre">row_sum[row]</span></code>，供 WG2 计算 <code class="docutils literal notranslate"><span class="pre">O[row,</span> <span class="pre">:]</span> <span class="pre">/</span> <span class="pre">row_sum[row]</span></code>。</p>
+<p>为此，<code class="docutils literal notranslate"><span class="pre">sScale</span></code> 会为每个 Q stage 保留 128 个 <code class="docutils literal notranslate"><span class="pre">fp32</span></code> 位置，下面称为一个 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot。循环期间，这 128 个位置保存各行的 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code>；循环结束后，同一 slot 改为保存最终的 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code>。Softmax 写入后通过 <code class="docutils literal notranslate"><span class="pre">softmax_corr.full</span></code> 通知 WG2，WG2 读完后再通过 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code> 表示该 slot 可以重新写入。下图展示一个 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot 的 full/empty 协议：</p>
+<p><img alt="Softmax 与 WG2 通过 full/empty barriers 复用同一个 sScale slot" src="../_images/flash_attention_softmax_correction_zh.svg" /></p>
 <p>从单个 slot 看，这组 producer-consumer 协议可以理解为：</p>
 <ol class="arabic simple">
-<li><p>Softmax 先等待 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code>，确认 scale/sum slot 可以复用。</p></li>
+<li><p>Softmax 先等待 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code>，确认对应的 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot 可以重新写入。</p></li>
 <li><p>Softmax 将 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 或最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 写入该 slot。</p></li>
 <li><p>Softmax 向 <code class="docutils literal notranslate"><span class="pre">softmax_corr.full</span></code> 报告 arrival。</p></li>
 <li><p>WG2 等待 <code class="docutils literal notranslate"><span class="pre">softmax_corr.full</span></code>，再读取该 slot。</p></li>
 <li><p>WG2 发出对应的 empty arrival。</p></li>
-<li><p>Softmax warpgroup 在下一 phase 中继续使用 mailbox。</p></li>
+<li><p>Softmax warpgroup 在下一 phase 中重新写入这个 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot。</p></li>
 </ol>
-<p>第一个 K/V block 没有旧的 <code class="docutils literal notranslate"><span class="pre">O</span></code>，因此不需要传递 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code>。不过，softmax 和 WG2 仍完成一次 full/empty 交接，让双方的 barrier phase 同时前进；否则下一轮可能等待不同的 phase。后续 iterations 使用同一 mailbox 传递 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code>，最后一次交接再传递 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code>。</p>
-<p>实际 kernel 将两个 Q stages 的 correction 交错执行。WG2 处理 stage <code class="docutils literal notranslate"><span class="pre">i_q</span></code> 后，会用 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty.arrive(1</span> <span class="pre">-</span> <span class="pre">i_q)</span></code> 放行另一个 softmax stage，使 WG0 和 WG1 交替前进；epilogue 读取最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 时，才归还同一个 <code class="docutils literal notranslate"><span class="pre">i_q</span></code> 对应的 slot。因此，上图只说明一个 mailbox slot 如何完成交接，代码中的 stage index 还受到两级 pipeline 的交错顺序影响。</p>
-<p>还要区分 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code> 与 <code class="docutils literal notranslate"><span class="pre">p_o_rescale</span></code>。前者控制 softmax mailbox 和两级执行顺序；后者才向 PV MMA 证明 <code class="docutils literal notranslate"><span class="pre">P</span></code> 与 <code class="docutils literal notranslate"><span class="pre">O</span></code> 已经满足第一段计算的条件。</p>
+<p>第一个 K/V block 没有旧的 <code class="docutils literal notranslate"><span class="pre">O</span></code>，因此不需要传递 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code>。不过，softmax 和 WG2 仍完成一次 full/empty 交接，让双方的 barrier phase 同时前进；否则下一轮可能等待不同的 phase。后续 iterations 使用同一 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot 传递 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code>，最后一次交接再传递 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code>。</p>
+<p>实际 kernel 将两个 Q stages 的 correction 交错执行。WG2 处理 stage <code class="docutils literal notranslate"><span class="pre">i_q</span></code> 后，会用 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty.arrive(1</span> <span class="pre">-</span> <span class="pre">i_q)</span></code> 放行另一个 softmax stage，使 WG0 和 WG1 交替前进；epilogue 读取最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 时，才允许重新写入同一个 <code class="docutils literal notranslate"><span class="pre">i_q</span></code> 对应的 slot。因此，上图只说明一个 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot 如何完成交接，代码中的 stage index 还受到两级 pipeline 的交错顺序影响。</p>
+<p>还要区分 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code> 与 <code class="docutils literal notranslate"><span class="pre">p_o_rescale</span></code>。前者控制 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot 的复用和两级执行顺序；后者才向 PV MMA 证明 <code class="docutils literal notranslate"><span class="pre">P</span></code> 与 <code class="docutils literal notranslate"><span class="pre">O</span></code> 已经满足第一段计算的条件。</p>
 <p>FA4 比 GEMM 多出的 barriers 大多围绕 softmax：QKᵀ MMA 与 PV MMA 之间增加了 register 计算、TMEM rewrite 和 output rescale，每一步都需要明确证明下一角色何时可以读取数据或复用存储空间。</p>
 </section>
 </section>
@@ -1123,7 +1124,7 @@ value P0*V[n-2]
 <section id="id4">
 <h2>重缩放与结果写回<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
 <p>“算法结构”一节已经说明了 correction 的数学来源。当 <code class="docutils literal notranslate"><span class="pre">delta</span> <span class="pre">&gt;=</span> <span class="pre">-8</span></code> 时，softmax 保留旧参考值，<code class="docutils literal notranslate"><span class="pre">acc_scale</span> <span class="pre">=</span> <span class="pre">1</span></code>，TMEM 中的 <code class="docutils literal notranslate"><span class="pre">O</span></code> 不需要修改；当 <code class="docutils literal notranslate"><span class="pre">delta</span> <span class="pre">&lt;</span> <span class="pre">-8</span></code> 时，softmax 采用新的参考值，旧 <code class="docutils literal notranslate"><span class="pre">O</span></code> 必须乘以 <code class="docutils literal notranslate"><span class="pre">acc_scale</span> <span class="pre">=</span> <span class="pre">exp2(delta)</span></code> 后才能继续累加。</p>
-<p><code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 保存在 softmax warpgroup 的 registers 中，可以在更新时直接乘 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code>。<code class="docutils literal notranslate"><span class="pre">O</span></code> 则位于 TMEM，需要由 WG2 完成单独的数据操作。Softmax 将逐行 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 写入 SMEM mailbox；WG2 等待 <code class="docutils literal notranslate"><span class="pre">softmax_corr.full</span></code>，从 TMEM 读出当前 <code class="docutils literal notranslate"><span class="pre">O</span></code>，完成乘法后再写回：</p>
+<p><code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 保存在 softmax warpgroup 的 registers 中，可以在更新时直接乘 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code>。<code class="docutils literal notranslate"><span class="pre">O</span></code> 则位于 TMEM，需要由 WG2 完成单独的数据操作。Softmax 将逐行 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 写入对应的 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot；WG2 等待 <code class="docutils literal notranslate"><span class="pre">softmax_corr.full</span></code>，从 TMEM 读出当前 <code class="docutils literal notranslate"><span class="pre">O</span></code>，完成乘法后再写回：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">RESCALE_TILE</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="mi">16</span><span class="p">)</span>
 <span class="n">o_row</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">wg_reg_tile</span><span class="p">(</span><span class="n">RESCALE_TILE</span><span class="p">)</span>
 <span class="n">Tx</span><span class="o">.</span><span class="n">copy_async</span><span class="p">(</span><span class="n">o_row</span><span class="p">,</span> <span class="n">O_region</span><span class="p">[</span><span class="n">i_q</span><span class="p">,</span> <span class="n">d_start</span> <span class="p">:</span> <span class="n">d_start</span> <span class="o">+</span> <span class="n">RESCALE_TILE</span><span class="p">])</span>
@@ -1146,7 +1147,7 @@ value P0*V[n-2]
 <span class="n">softmax_corr</span><span class="o">.</span><span class="n">empty</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">i_q</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>跳过数据操作后，同步协议仍然要继续。每个 warp 无论是否实际修改 <code class="docutils literal notranslate"><span class="pre">O</span></code>，都必须完成 <code class="docutils literal notranslate"><span class="pre">p_o_rescale</span></code> 和 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code> 所需的 arrival，分别允许 PV MMA 继续执行，并归还 softmax mailbox。</p>
+<p>跳过数据操作后，同步协议仍然要继续。每个 warp 无论是否实际修改 <code class="docutils literal notranslate"><span class="pre">O</span></code>，都必须完成 <code class="docutils literal notranslate"><span class="pre">p_o_rescale</span></code> 和 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code> 所需的 arrival，分别允许 PV MMA 继续执行，并允许 softmax 再次写入对应的 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot。</p>
 <p>需要 correction 时，每个 warp 对自己负责的 <code class="docutils literal notranslate"><span class="pre">O</span></code> row stripe 执行 TMEM → registers → TMEM tile operation：</p>
 <blockquote>
 <div><p><strong>Tile primitive：重缩放（rescale）</strong></p>
@@ -1181,13 +1182,13 @@ value P0*V[n-2]
 \[\mathrm{LSE}_i = \log(\mathrm{row\_sum}_i) + r_i / \sqrt{d}\]</div>
 <p>这个推导只要求 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 与同一个参考值 <span class="math notranslate nohighlight">\(r_i\)</span> 对应，并不要求 <span class="math notranslate nohighlight">\(r_i\)</span> 必须是真实 maximum。公式适用于 <code class="docutils literal notranslate"><span class="pre">row_sum</span> <span class="pre">&gt;</span> <span class="pre">0</span></code> 的有效行；没有任何有效 key 的行对应 LSE 为 <span class="math notranslate nohighlight">\(-\infty\)</span>。当前实现不会写出 LSE。</p>
 </section>
-<section id="id5">
-<h2>因果掩码<a class="headerlink" href="#id5" title="Link to this heading">#</a></h2>
+<section id="causal-mask">
+<h2>Causal Mask<a class="headerlink" href="#causal-mask" title="Link to this heading">#</a></h2>
 <p>Causal attention 要求每个 query 只能访问当前位置及之前的 keys。在 Q、K 序列等长时，score matrix 的有效区域位于主对角线及其下方。当两个序列不等长时，当前实现使用右对齐（bottom-right-aligned）的 causal mask：query position <code class="docutils literal notranslate"><span class="pre">i</span></code> 最多可以访问 key position <code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">+</span> <span class="pre">SEQ_LEN_KV</span> <span class="pre">-</span> <span class="pre">SEQ_LEN_Q</span></code>，上界再截断到 <code class="docutils literal notranslate"><span class="pre">SEQ_LEN_KV</span> <span class="pre">-</span> <span class="pre">1</span></code>。实现从 block 和 element 两个层次处理这一约束：跳过完全无效的 blocks，并在跨越边界的 blocks 内屏蔽无效 columns。</p>
 <p>对于完全位于 causal 边界之外的 K/V blocks，所有元素都无效。<code class="docutils literal notranslate"><span class="pre">get_n_block_max(...)</span></code> 返回当前 Q task 需要访问的 K/V block 排他上界，因此 loop 只遍历 <code class="docutils literal notranslate"><span class="pre">0</span></code> 到 <code class="docutils literal notranslate"><span class="pre">n_block_max</span> <span class="pre">-</span> <span class="pre">1</span></code>，不会加载更高编号的 blocks。</p>
 <p>跨越 causal 边界的 blocks 同时包含有效和无效 columns，仍然需要执行 QKᵀ MMA。Softmax 会在指数运算前屏蔽无效 columns：它根据当前 query row 的位置和 block offset 计算 column limit，保留不超过该位置的 columns，并在 registers 中将其余 columns 设为 <code class="docutils literal notranslate"><span class="pre">-inf</span></code>。这些位置不会参与 row maximum，对应的 <span class="math notranslate nohighlight">\(p_{ij}\)</span> 也会变成 0。</p>
 <p><code class="docutils literal notranslate"><span class="pre">mask_r2p(...)</span></code> 不为每个元素单独比较坐标，而是把 column limit 转换成若干 bit masks。实现每次处理最多 24 个元素，随后用 bit test 生成 predicates；这些操作会 lower 到高效的 register-to-predicate 路径。完全位于 causal 边界内的 blocks 中，所有 columns 都有效，不需要 mask。</p>
-<p>从 tile primitive 的角度看，causal mode 没有改变数据路径。它只会缩短 K/V loop，并在 QKᵀ MMA 与 <code class="docutils literal notranslate"><span class="pre">P</span></code> writeback 之间、register-resident softmax 内部增加一步 masking。</p>
+<p>从 tile primitive 的角度看，causal mode 没有改变数据路径。它只会缩短 K/V loop，并在 QKᵀ MMA 与 <code class="docutils literal notranslate"><span class="pre">P</span></code> writeback 之间、register-resident softmax 内部应用 causal mask。</p>
 </section>
 <section id="gqa">
 <h2>GQA 支持<a class="headerlink" href="#gqa" title="Link to this heading">#</a></h2>
@@ -1219,10 +1220,10 @@ q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 </section>
 <section id="tile">
 <h2>Tile 调度<a class="headerlink" href="#tile" title="Link to this heading">#</a></h2>
-<p>Scheduler 将每个 CTA 映射到一个 <code class="docutils literal notranslate"><span class="pre">(batch,</span> <span class="pre">kv_head,</span> <span class="pre">m_block)</span></code> attention task。一个 <code class="docutils literal notranslate"><span class="pre">m_block</span></code> 包含前面介绍的两个 Q stages，也就是两块同时推进的 query tiles。因果掩码会改变不同 tasks 的计算量，因此 causal 与 non-causal mode 使用不同的策略：</p>
+<p>Scheduler 将每个 CTA 映射到一个 <code class="docutils literal notranslate"><span class="pre">(batch,</span> <span class="pre">kv_head,</span> <span class="pre">m_block)</span></code> attention task。一个 <code class="docutils literal notranslate"><span class="pre">m_block</span></code> 包含前面介绍的两个 Q stages，也就是两块同时推进的 query tiles。Causal mask 会改变不同 tasks 的计算量，因此 causal 与 non-causal mode 使用不同的策略：</p>
 <ul class="simple">
 <li><p>Non-causal mode 使用 <code class="docutils literal notranslate"><span class="pre">FlashAttentionLinearScheduler</span></code>。每个 task 都遍历相同数量的 K/V blocks，kernel 启动固定数量的 persistent CTAs；每个 CTA 完成一个 task 后，将线性 task index 增加 <code class="docutils literal notranslate"><span class="pre">num_ctas</span></code>，继续处理下一项工作。</p></li>
-<li><p>Causal mode 使用 <code class="docutils literal notranslate"><span class="pre">FlashAttentionLPTScheduler</span></code>。因果掩码会让各 tasks 的工作量差异很大：靠前的 Q block 可能只访问一个 K/V block，靠后的 Q block 则需要访问全部 K/V blocks。Scheduler 先反转 <code class="docutils literal notranslate"><span class="pre">m_block</span></code> 顺序，让较后、工作量较大的 blocks 优先进入 launch order，尽量缩小不同 CTAs 的结束时间差。它还将展平后的 <code class="docutils literal notranslate"><span class="pre">batch</span> <span class="pre">×</span> <span class="pre">kv_head</span></code> 索引按 <code class="docutils literal notranslate"><span class="pre">L2_SWIZZLE</span></code> 分组：在切换到下一个 <code class="docutils literal notranslate"><span class="pre">m_block</span></code> 前，先遍历同组中的 batch/KV-head tasks。这样可以在 <code class="docutils literal notranslate"><span class="pre">m_block</span></code> 向前推进时将有限一组 K/V working sets 保留在 L2 中。当前实现为每个 causal task 启动一个 CTA。</p></li>
+<li><p>Causal mode 使用 <code class="docutils literal notranslate"><span class="pre">FlashAttentionLPTScheduler</span></code>。Causal mask 会让各 tasks 的工作量差异很大：靠前的 Q block 可能只访问一个 K/V block，靠后的 Q block 则需要访问全部 K/V blocks。Scheduler 先反转 <code class="docutils literal notranslate"><span class="pre">m_block</span></code> 顺序，让较后、工作量较大的 blocks 优先进入 launch order，尽量缩小不同 CTAs 的结束时间差。它还将展平后的 <code class="docutils literal notranslate"><span class="pre">batch</span> <span class="pre">×</span> <span class="pre">kv_head</span></code> 索引按 <code class="docutils literal notranslate"><span class="pre">L2_SWIZZLE</span></code> 分组：在切换到下一个 <code class="docutils literal notranslate"><span class="pre">m_block</span></code> 前，先遍历同组中的 batch/KV-head tasks。这样可以在 <code class="docutils literal notranslate"><span class="pre">m_block</span></code> 向前推进时将有限一组 K/V working sets 保留在 L2 中。当前实现为每个 causal task 启动一个 CTA。</p></li>
 </ul>
 <p>当前代码中的调度常量针对本书使用的 B200 配置调优，并不是所有 Blackwell GPU 的通用参数。<code class="docutils literal notranslate"><span class="pre">max_ctas=148</span></code> 将 non-causal persistent worker 数量限制为 148；<code class="docutils literal notranslate"><span class="pre">SM_NUMBER=148</span></code> 还用于 profiler buffer 的索引。<code class="docutils literal notranslate"><span class="pre">L2_SIZE=50</span> <span class="pre">MiB</span></code> 则是计算 <code class="docutils literal notranslate"><span class="pre">L2_SWIZZLE</span></code> 时采用的可用 cache budget，并不表示 GPU 的完整 L2 容量。迁移到具有不同 SM 数量或 cache 配置的 Blackwell GPU 时，应重新选择这些值，或改为从目标设备配置中传入。</p>
 <p>两种 schedulers 使用相同的 loop interface：</p>
@@ -1236,8 +1237,8 @@ q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 </div>
 <p>区别只在 <code class="docutils literal notranslate"><span class="pre">next_tile()</span></code> 的行为。Non-causal mode 会让 persistent CTA 前进到另一个 task；causal mode 的 CTA 只负责当前 task，因此 <code class="docutils literal notranslate"><span class="pre">next_tile()</span></code> 会结束 loop。进入 loop 后，两种模式都会执行相同的 TMA load、QKᵀ MMA、softmax、PV MMA、重缩放和 TMA store。</p>
 </section>
-<section id="id6">
-<h2>编译与验证<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
+<section id="id5">
+<h2>编译与验证<a class="headerlink" href="#id5" title="Link to this heading">#</a></h2>
 <p>前面使用的都是完整 kernel 中的代码片段。要运行 FA4，可以从 <code class="docutils literal notranslate"><span class="pre">tirx-kernels</span></code> 导入 <a class="reference external" href="https://github.com/mlc-ai/tirx-kernels/blob/main/tirx_kernels/attention/flash_attention4.py"><code class="docutils literal notranslate"><span class="pre">flash_attention4.py</span></code></a>，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 <code class="docutils literal notranslate"><span class="pre">get_flash_attention4_kernel</span></code> 创建 kernel，并额外传入内置 profiler 使用的 <code class="docutils literal notranslate"><span class="pre">profiler_buffer</span></code>：</p>
 <p>当前 <code class="docutils literal notranslate"><span class="pre">flash_attention4.py</span></code> 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：</p>
 <ul class="simple">
@@ -1283,8 +1284,8 @@ q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 <p>这里的 <code class="docutils literal notranslate"><span class="pre">rtol</span></code>/<code class="docutils literal notranslate"><span class="pre">atol</span></code> 与原 kernel 自带测试相同，用于覆盖这些误差的共同影响。如果结果明显超出容差，应优先检查 softmax path，例如是否遗漏了 <code class="docutils literal notranslate"><span class="pre">s_ready</span></code>、<code class="docutils literal notranslate"><span class="pre">p_o_rescale</span></code> 或 <code class="docutils literal notranslate"><span class="pre">p_ready_2</span></code> 的 wait，以及 <code class="docutils literal notranslate"><span class="pre">row_max</span></code> / <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 的更新是否正确传递到 rescale。</p>
 <p>FA4 复用了 GEMM kernel 中的 TMA、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>、TMEM 和 barrier 机制，但数据依赖更长：QKᵀ MMA 生成 <code class="docutils literal notranslate"><span class="pre">S</span></code>，softmax 将 <code class="docutils literal notranslate"><span class="pre">S</span></code> 转换为 <code class="docutils literal notranslate"><span class="pre">P</span></code>，PV MMA 再使用 <code class="docutils literal notranslate"><span class="pre">P</span></code> 和 <code class="docutils literal notranslate"><span class="pre">V</span></code> 更新 <code class="docutils literal notranslate"><span class="pre">O</span></code>。由于 <code class="docutils literal notranslate"><span class="pre">S</span></code>、<code class="docutils literal notranslate"><span class="pre">P</span></code> 和 <code class="docutils literal notranslate"><span class="pre">O</span></code> 需要在不同 warpgroups 之间交接，并复用同一块 TMEM，kernel 必须在重叠这些阶段的同时，保证每块数据只在准备完成后被读取或覆盖。</p>
 </section>
-<section id="id7">
-<h2>练习<a class="headerlink" href="#id7" title="Link to this heading">#</a></h2>
+<section id="id6">
+<h2>练习<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
 <ol class="arabic simple">
 <li><p>设一行最终使用的指数参考值为 <span class="math notranslate nohighlight">\(r_i\)</span>。从 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 的定义出发，推导
 <span class="math notranslate nohighlight">\(\mathrm{LSE}_i=\log(\mathrm{row\_sum}_i)+r_i/\sqrt d\)</span>，并说明为什么 <span class="math notranslate nohighlight">\(r_i\)</span> 不必等于这一行的真实 maximum。</p></li>
@@ -1373,11 +1374,11 @@ q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pipeline">Pipeline 时间线</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">重缩放与结果写回</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">因果掩码</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#causal-mask">Causal Mask</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#gqa">GQA 支持</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile">Tile 调度</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">编译与验证</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">练习</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">编译与验证</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">练习</a></li>
 </ul>
   </nav></div>
 
