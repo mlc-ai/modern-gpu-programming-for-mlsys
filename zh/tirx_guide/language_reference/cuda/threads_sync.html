@@ -56,7 +56,7 @@
     <link rel="icon" href="../../../_static/mlc-favicon.ico"/>
     <link rel="index" title="索引" href="../../../genindex.html" />
     <link rel="search" title="搜索" href="../../../search.html" />
-    <link rel="next" title="调试 Warp-Specialized Kernel" href="../../../appendix/debugging_warp_specialized.html" />
+    <link rel="next" title="调试 Warp-Specialized Kernels" href="../../../appendix/debugging_warp_specialized.html" />
     <link rel="prev" title="控制流" href="control_flow.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="zh-CN"/>
@@ -197,7 +197,7 @@
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -369,26 +369,26 @@
     <span class="n">A</span><span class="p">[</span><span class="n">lane_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 </pre></div>
 </div>
-<p>Shuffle 会直接 lowering 为 <code class="docutils literal notranslate"><span class="pre">__shfl_xor_sync</span></code>：</p>
+<p>Shuffle 会直接转换为 <code class="docutils literal notranslate"><span class="pre">__shfl_xor_sync</span></code>：</p>
 <div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">v_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">__shfl_xor_sync</span><span class="p">(</span><span class="mh">0xFFFFFFFF</span><span class="p">,</span><span class="w"> </span><span class="n">v_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="n">i_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="mi">32</span><span class="p">);</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">T.ptx.*</span></code> / <code class="docutils literal notranslate"><span class="pre">T.cuda.*</span></code> 还包含 <code class="docutils literal notranslate"><span class="pre">cp_async``（LDGSTS）、</span>
 <span class="pre">``cp_async.bulk.tensor``（TMA）、``ldmatrix</span></code> / <code class="docutils literal notranslate"><span class="pre">stmatrix</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05.*</span></code>
-（Blackwell MMA）、<code class="docutils literal notranslate"><span class="pre">atomic_add</span></code> 和 <code class="docutils literal notranslate"><span class="pre">fence</span></code> 等 families。完整列表请参阅
+（Blackwell MMA）、<code class="docutils literal notranslate"><span class="pre">atomic_add</span></code> 和 <code class="docutils literal notranslate"><span class="pre">fence</span></code> 等指令类别。完整列表请参阅
 <code class="docutils literal notranslate"><span class="pre">tvm.backend.cuda</span></code> backend API reference。</p>
 </section>
 <section id="id1">
 <h2>同步语义<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
 <p>GEMM 和 Flash Attention kernel 中经常出现下面四种同步机制。它们控制异步
-engine 和并行 thread groups，使用错误通常会导致 silent corruption 或
-deadlock。</p>
+engine 和并行 thread groups；使用错误通常会让结果在没有报错的情况下损坏，
+或者造成 deadlock。</p>
 <p><strong>Mbarrier phase。</strong> Mbarrier 使用一个内部 phase bit 追踪不同轮次的
 arrival。<code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.try_wait(bar,</span> <span class="pre">phase)</span></code> 会一直等待，直到 barrier
 内部 phase 与调用者提供的 <code class="docutils literal notranslate"><span class="pre">phase</span></code> 不同。循环复用 barrier 时，每次 wait
-之后都必须翻转本地 phase tracker（<code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">^=</span> <span class="pre">1</span></code>）。否则，后续 wait 会立即
-返回，engine 可能读取只写完一部分的 memory。第三部分的 GEMM 章节会给出
-完整的 phase tracking 表。</p>
+之后都必须翻转本地 phase tracker（<code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">^=</span> <span class="pre">1</span></code>）。否则，后续 wait 可能
+误把上一轮的完成状态当作当前轮，导致 consumer 在本轮 producer 或异步操作
+真正完成前访问数据。第三部分的 GEMM 章节会给出完整的 phase tracking 表。</p>
 <p><strong>Election。</strong> <code class="docutils literal notranslate"><span class="pre">T.ptx.elect_sync()</span></code> 从一个 warp 的 active lanes 中选择
 <strong>一个 lane</strong>；它不一定选择 lane 0，也不是每个 CTA 选择一个 thread。如果
 只允许一个 thread 发出指令，还需要配合 warp-level guard。第三部分的 GEMM
@@ -399,8 +399,8 @@ kernel 使用 <code class="docutils literal notranslate"><span class="pre">if</s
 角色分支后，不能把 <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> 放进其中一个 warpgroup 的分支，否则其他
 warpgroups 无法到达，kernel 会 deadlock。硬件提供 16 个 named barriers
 （ID 0 到 15）；<code class="docutils literal notranslate"><span class="pre">T.cuda.warpgroup_sync(10)</span></code> 只同步一个 warpgroup 的
-threads。不同 warpgroups 使用不同 ID，例如
-<code class="docutils literal notranslate"><span class="pre">warpgroup_sync(wg_id</span> <span class="pre">+</span> <span class="pre">10)</span></code>，避免共享同一个 hardware barrier。第三部分
+threads。可能同时处于 active 状态的独立同步必须使用不同 ID，例如
+<code class="docutils literal notranslate"><span class="pre">warpgroup_sync(wg_id</span> <span class="pre">+</span> <span class="pre">10)</span></code>；前一次同步完成后，ID 可以再次使用。第三部分
 的 warp-specialized GEMM 会展示完整用法。</p>
 <p><strong>Fence。</strong> Fence 保证 producer 的写入先于 consumer（通常是异步 engine）
 读取：</p>
@@ -479,7 +479,7 @@ threads。不同 warpgroups 使用不同 ID，例如
        title="下一页">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">下一页</p>
-        <p class="prev-next-title">调试 Warp-Specialized Kernel</p>
+        <p class="prev-next-title">调试 Warp-Specialized Kernels</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

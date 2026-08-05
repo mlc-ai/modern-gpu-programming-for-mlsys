@@ -21,8 +21,8 @@ TIRx Lowering Pipeline
 调用 ``tvm.compile(mod, target, tir_pipeline="tirx")`` 时，编译器会将输入的
 TIRx module 依次送入一组 TIR passes，这组 passes 称为 **tirx pipeline**。
 它负责把 tile primitives、使用 ``TileLayout`` 的 buffers 和 execution-scope
-ids 等高层结构，逐步 lowering 为彼此分离的 **host** 与 **device** functions，
-最后再由 CUDA backend 生成源码。
+ids 等高层结构逐步转换为彼此分离的 **host** 与 **device** functions，最后再
+由 CUDA backend 生成源码。
 
 Pipeline 定义在 ``python/tvm/tirx/compilation_pipeline.py`` 的
 ``tirx_pipeline`` 中。下面按执行顺序介绍其中的 passes。
@@ -55,7 +55,7 @@ Pass 执行顺序
      - 作用
    * - 1
      - ``LowerTIRx``
-     - 完成 TIRx 的核心 lowering，详见下方 `LowerTIRx 内部做了什么`_
+     - 完成 TIRx 的核心转换，详见下方 `LowerTIRx 内部做了什么`_
    * - 2
      - ``UnifyThreadBinding``
      - 合并等价的 thread-axis bindings，使每个 ``threadIdx`` / ``blockIdx``
@@ -65,7 +65,7 @@ Pass 执行顺序
      - 使用 arithmetic analyzer 简化 statement 中的算术表达式
    * - 4
      - ``LowerTIRxOpaque``
-     - 将剩余的 opaque TIRx constructs lowering 为普通 TIR
+     - 将剩余的 opaque TIRx constructs 转换为普通 TIR
    * - 5
      - ``FlattenBuffer``
      - 将多维 ``BufferLoad`` / ``BufferStore`` 展平为一维访问
@@ -113,9 +113,9 @@ Pass 执行顺序
 
 之后，编译器会根据 function 类型分别执行 **finalization**：
 
-- **host**：``LowerTVMBuiltin`` lowering ``tvm_*`` builtins，
-  ``LowerIntrin`` lowering target-specific intrinsics。
-- **device**：``LowerWarpMemory`` 将 warp-scoped buffers lowering 为
+- **host**：``LowerTVMBuiltin`` 处理 ``tvm_*`` builtins，``LowerIntrin``
+  处理 target-specific intrinsics。
+- **device**：``LowerWarpMemory`` 将 warp-scoped buffers 转换为
   shuffles，随后执行 ``StmtSimplify`` 和 ``LowerIntrin``。
 
 LowerTIRx 内部做了什么
@@ -134,7 +134,7 @@ LowerTIRx 内部做了什么
 - **``LowerTIRxCleanup``** 运行 ``LayoutApplier``，将使用
   ``TileLayout`` 的 buffer access 变成具体的物理地址计算
   （``addr = data + elem_offset + layout.apply(coord)``），再展平 buffers，
-  并将 execution-scope ids lowering 为 thread axes，例如
+  并将 execution-scope ids 转换为 thread axes，例如
   ``T.cta_id`` / ``T.thread_id`` 通过 ``launch_thread`` 变为
   ``blockIdx`` / ``threadIdx``。
 

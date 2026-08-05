@@ -1,26 +1,28 @@
 # Modern GPU Programming For MLSys
 
-Machine learning systems sit at the heart of modern AI workloads. In these systems, performance
-often comes down to the quality of a small number of GPU kernels. Attention kernels, LLM prefill
-and decode kernels, low-precision block-scaled GEMMs, fused MoE layers, and other large fused
-kernels all directly shape end-to-end speed in both training and serving.
+Machine learning systems power many of today's AI workloads. As models grow and deployment
+settings become more complex, end-to-end performance increasingly depends on a small number of
+critical GPU kernels. Attention, LLM prefill and decode, low-precision block-scaled GEMM, fused MoE
+layers, and other large fused kernels directly affect both training and serving speed.
 
-To make these kernels fast, however, we need more than a list of optimization tricks. Modern GPUs
-are no longer simple variations of the same old design. Recent architectures introduce richer
-memory spaces, new access patterns, and increasingly specialized execution units. To program them
-well, we need both a clear mental model of the hardware and a practical understanding of how
-high-performance kernels are built. This book is about developing both.
+Making these kernels fast requires more than a list of optimization tricks. Recent GPU
+architectures introduce richer memory spaces, new data-movement mechanisms, and increasingly
+specialized execution units. Using them effectively requires both a clear understanding of how the
+hardware executes a program and practical knowledge of how a basic kernel evolves into a
+high-performance implementation. This book develops both.
 
-The book follows a simple progression: first understand the GPU hardware, then learn the
-programming model we will use, and finally build state-of-the-art kernels step by step. Our main
-target is the Blackwell generation, and our main running examples are General Matrix-Matrix
-Multiplication (GEMM) and FlashAttention. Along the way, we will also study the core ingredients
-behind GPU optimization: data layout, asynchronous data movement, and asynchronous coordination.
+The book proceeds from hardware to programming model to complete kernels. It first introduces GPU
+organization and execution, then presents the programming model used throughout the book, and
+finally builds high-performance kernels step by step. The main target is NVIDIA Blackwell, and the
+running examples are General Matrix-Matrix Multiplication (GEMM) and FlashAttention. Along the way,
+the book develops the key ideas behind GPU optimization: data layout, asynchronous data movement,
+and asynchronous coordination.
 
-The material grows out of the [Machine Learning Systems](https://mlsyscourse.org/) course series
-at Carnegie Mellon University. To make the ideas easier to study and easier to run, this book uses
-the **TIRx** Python DSL to build real GPU kernel examples step by step. TIRx stays close to the
-hardware, which lets us reason about low-level control while still learning through runnable code.
+The material grows out of the [Machine Learning Systems](https://mlsyscourse.org/) course series at
+Carnegie Mellon University. The examples use the **TIRx** Python DSL so that the ideas can be
+studied, run, and verified in real kernels. TIRx keeps hardware-level choices explicit, making it
+possible to reason about control flow, memory access, and synchronization while working with
+runnable code.
 
 This book is open source. Contributions, corrections, and examples are welcome through the
 [GitHub repository](https://github.com/mlc-ai/modern-gpu-programming-for-mlsys).
@@ -28,7 +30,7 @@ This book is open source. Contributions, corrections, and examples are welcome t
 ## How This Book Is Organized
 
 - **Part I, Understanding the GPU.** This part introduces the overall organization of the GPU,
-  general recipes for writing fast kernels, and key concepts such as data layout, asynchronous
+  general techniques for writing fast kernels, and key concepts such as data layout, asynchronous
   memory operations, and coordination. It builds the hardware intuition that the rest of the book
   relies on.
 - **Part II, TIRx Overview.** This part introduces the key elements of TIRx, which serve as the
@@ -37,7 +39,8 @@ This book is open source. Contributions, corrections, and examples are welcome t
   TMA pipelining, persistent scheduling, warp specialization, and 2-CTA clusters.
 - **Part IV, Flash Attention 4.** A complete attention kernel built from the Part III techniques:
   two MMAs with softmax between them, online-softmax rescaling, causal masking, and GQA.
-- **Reference.** TIRx language reference and compiler internals.
+- **Reference.** TIRx language reference, compiler internals, and a guide to debugging asynchronous
+  kernels.
 
 ```{toctree}
 :caption: Part I, Understanding the GPU

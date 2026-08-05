@@ -199,7 +199,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -363,7 +363,7 @@
 </ul>
 </div>
 <p>同一组数字，如果以不同的物理排列方式写入内存，在同一块 GPU 上的运行速度可能相差一个数量级。</p>
-<p>原因在于，张量的逻辑索引并不说明它的字节在物理上实际存放在哪里。硬件对这种位置关系非常敏感：它决定 32 个 lane 的 load 能否合并成一次 transaction，还是分散成 32 次；决定这些地址会落到不同的 memory bank，还是撞到同一个 bank 并被串行化；甚至还决定一个 tile 的字节排列是否符合 Tensor Core 能够读取的格式。</p>
+<p>原因在于，张量的逻辑索引并不说明它的字节在物理上实际存放在哪里。硬件对这种位置关系非常敏感：根据访问模式，32 个 lanes 的 loads 可能合并成一次 transaction，也可能最多被拆成 32 次；这些地址可能落到不同的 memory banks，也可能集中到同一个 bank 并被串行处理；一个 tile 的字节排列还决定 Tensor Core 能否直接读取它。</p>
 <p>机器学习程序通常用逻辑 shape 来描述张量。<strong>数据布局</strong>补上了缺失的物理部分：它说明带有逻辑索引 <code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">j,</span> <span class="pre">…)</span></code> 的元素实际存放在哪里，可以是在 memory 中、register 中，也可以是在其他硬件存储空间中。</p>
 <p>下面先从 Shape-Stride 模型出发，再把同一套记号推广到 TMEM、register fragment 和多设备布局。最后介绍 <strong>swizzling</strong>，看看它如何通过重排地址来改善同一个 tile 的按行和按列访问。</p>
 <section id="shape-stride">
@@ -639,7 +639,7 @@ bank       = mapped_col
 <p><em>NVIDIA PTX ISA 中的 K-major 128B swizzling layout。每个 cell 表示一个 128-bit 元素块。图片来源：<a class="reference external" href="https://docs.nvidia.com/cuda/parallel-thread-execution/">NVIDIA PTX ISA</a>。</em></p>
 <p>两张图中的数字看起来不同，只是因为编号方式不同。交互图在每一行中都用 <code class="docutils literal notranslate"><span class="pre">0–7</span></code> 表示元素原来的逻辑列号；官方示意图则把整个 <code class="docutils literal notranslate"><span class="pre">8×8</span></code> 矩阵从 <code class="docutils literal notranslate"><span class="pre">0</span></code> 到 <code class="docutils literal notranslate"><span class="pre">63</span></code> 连续编号。</p>
 <p>以第 1 行为例，交互图显示的逻辑列号依次为 <code class="docutils literal notranslate"><span class="pre">1,</span> <span class="pre">0,</span> <span class="pre">3,</span> <span class="pre">2,</span> <span class="pre">5,</span> <span class="pre">4,</span> <span class="pre">7,</span> <span class="pre">6</span></code>。官方示意图在同一排列上加了这一行的编号偏移 <code class="docutils literal notranslate"><span class="pre">8</span></code>，因此显示为 <code class="docutils literal notranslate"><span class="pre">9,</span> <span class="pre">8,</span> <span class="pre">11,</span> <span class="pre">10,</span> <span class="pre">13,</span> <span class="pre">12,</span> <span class="pre">15,</span> <span class="pre">14</span></code>。</p>
-<p>下面把图中的每个 128-bit cell 称为一个 16 B sector。对于 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>，atom 的每一行包含 8 个 sector，共 128 B。在常见的 4-byte bank 粒度下，一个 sector 横跨 4 个 bank，一整行正好覆盖 32 个 bank。swizzle 根据行坐标，对这一行中的 8 个 sector 做 XOR 重排。</p>
+<p>下面把图中的每个 128-bit cell 称为一个 16 B sector。对于 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code>，atom 的每一行包含 8 个 sector，共 128 B。在常见的 4-byte bank 粒度下，一个 sector 中的四个 32-bit words 会映射到四个相邻 banks，一整行正好覆盖 32 个 banks。swizzle 根据行坐标，对这一行中的 8 个 sectors 做 XOR 重排。</p>
 <p>一个 <code class="docutils literal notranslate"><span class="pre">SWIZZLE_128B</span></code> atom 包含 8 行，因此大小为 <code class="docutils literal notranslate"><span class="pre">8</span> <span class="pre">×</span> <span class="pre">128</span> <span class="pre">B</span> <span class="pre">=</span> <span class="pre">1024</span> <span class="pre">B</span></code>。这里的 <code class="docutils literal notranslate"><span class="pre">128</span> <span class="pre">B</span></code> 指 atom 每一行在连续维度上的宽度，而不是 atom 的总大小。atom 是地址重排的最小重复块，更大的 tile 由多个 atom 平铺而成。</p>
 <iframe src="../demo_zh/swizzle_128B.html" title="SWIZZLE_128B layout" loading="lazy"
         style="width:100%; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe><p><em>图中的每个 cell 表示一个 16 B sector。逐步查看 read cycles，可以观察 XOR 如何把一列访问分散到不同 bank。</em></p>

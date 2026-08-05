@@ -199,7 +199,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -429,7 +429,7 @@
 </section>
 <section id="barriers">
 <h3>四个 Barriers<a class="headerlink" href="#barriers" title="Link to this heading">#</a></h3>
-<p>三个并发角色之间需要四个 barriers。正向路径 TMA → MMA → Writeback 表示数据已经准备好；反向路径 Writeback → MMA → TMA 表示 buffer 已经释放。Barrier 名称采用 <code class="docutils literal notranslate"><span class="pre">source2destination</span></code>，例如 <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code> 表示 TMA 向 MMA 发送通知。</p>
+<p>三个并发角色之间需要四个 barriers。正向路径 TMA → MMA → Writeback 表示数据已经准备好；反向路径 Writeback → MMA → TMA 则把各自保护的 buffer 或资源交还给前一角色复用。Barrier 名称采用 <code class="docutils literal notranslate"><span class="pre">source2destination</span></code>，例如 <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code> 表示 TMA 向 MMA 发送通知。</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Barrier</p></th>
@@ -469,8 +469,8 @@
 <h3>PipelineState<a class="headerlink" href="#pipelinestate" title="Link to this heading">#</a></h3>
 <p>四个 barriers 说明 buffer 何时可用，<code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> 则记录每个角色当前使用哪个 stage，以及应该等待该 stage 的哪个 phase。手工同时维护这两个值容易产生 off-by-one error，并导致整个 kernel deadlock。<code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> 将它们放在同一个状态对象中：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tma_ps</span> <span class="o">=</span> <span class="n">PipelineState</span><span class="p">(</span><span class="n">PIPE_DEPTH</span><span class="p">,</span> <span class="n">phase</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># Producer starts ready (phase=1)</span>
-<span class="c1"># tma_ps.stage = current stage index</span>
-<span class="c1"># tma_ps.phase = current phase (0 or 1)</span>
+<span class="c1"># tma_ps.stage 表示当前 stage index</span>
+<span class="c1"># tma_ps.phase 表示当前 phase（0 或 1）</span>
 <span class="n">tma_ps</span><span class="o">.</span><span class="n">advance</span><span class="p">()</span>                          <span class="c1"># Advance to next stage</span>
 </pre></div>
 </div>
@@ -586,7 +586,7 @@
         <span class="n">n_st</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">tile_scheduler</span><span class="o">.</span><span class="n">n_idx</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>
 
         <span class="c1"># =============================================</span>
-        <span class="c1"># Warpgroup 1: TMA Producer (warp 3) + MMA Consumer (warp 0)</span>
+        <span class="c1"># Warpgroup 1：TMA producer（warp 3）+ MMA consumer（warp 0）</span>
         <span class="c1"># =============================================</span>
         <span class="k">if</span> <span class="n">wg_id</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
@@ -621,7 +621,7 @@
 
                 <span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">lane_id</span><span class="p">,</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">()):</span>
                     <span class="k">while</span> <span class="n">tile_scheduler</span><span class="o">.</span><span class="n">valid</span><span class="p">():</span>
-                        <span class="c1"># Wait for TMEM to be free from previous tile&#39;s writeback</span>
+                        <span class="c1"># 等待上一块 tile 的 writeback 释放 TMEM</span>
                         <span class="n">ld2mma</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">ld_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">ld_ps</span><span class="o">.</span><span class="n">phase</span><span class="p">)</span>
                         <span class="n">ld_ps</span><span class="o">.</span><span class="n">advance</span><span class="p">()</span>
 
@@ -635,37 +635,37 @@
                             <span class="n">mma2tma</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">mma_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">cta_mask</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
                             <span class="n">mma_ps</span><span class="o">.</span><span class="n">advance</span><span class="p">()</span>
 
-                        <span class="c1"># Signal results ready for writeback</span>
+                        <span class="c1"># 通知 writeback：结果已经准备好</span>
                         <span class="n">mma2ld</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">cta_mask</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
                         <span class="n">tile_scheduler</span><span class="o">.</span><span class="n">next_tile</span><span class="p">()</span>
 
         <span class="c1"># =============================================</span>
-        <span class="c1"># Warpgroup 0: Writeback</span>
+        <span class="c1"># Warpgroup 0：writeback</span>
         <span class="c1"># =============================================</span>
         <span class="k">elif</span> <span class="n">wg_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
             <span class="n">wb_ps</span> <span class="o">=</span> <span class="n">PipelineState</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">phase</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
             <span class="n">reg_f16</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">d_type</span><span class="p">)</span>
 
             <span class="k">while</span> <span class="n">tile_scheduler</span><span class="o">.</span><span class="n">valid</span><span class="p">():</span>
-                <span class="c1"># Wait for MMA results</span>
+                <span class="c1"># 等待 MMA 结果</span>
                 <span class="n">mma2ld</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span><span class="n">wb_ps</span><span class="o">.</span><span class="n">stage</span><span class="p">,</span> <span class="n">wb_ps</span><span class="o">.</span><span class="n">phase</span><span class="p">)</span>
                 <span class="n">wb_ps</span><span class="o">.</span><span class="n">advance</span><span class="p">()</span>
                 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
 
-                <span class="c1"># Read TMEM -&gt; registers (warpgroup scope)</span>
+                <span class="c1"># 以 warpgroup scope 读取 TMEM -&gt; registers</span>
                 <span class="n">reg</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">acc_type</span><span class="p">)</span>
                 <span class="n">reg_wg</span> <span class="o">=</span> <span class="n">reg</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">,</span>
                     <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@tid_in_wg</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]))</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">wg</span><span class="o">.</span><span class="n">copy_async</span><span class="p">(</span><span class="n">reg_wg</span><span class="p">[:],</span> <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">])</span>
                 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">wait</span><span class="o">.</span><span class="n">ld</span><span class="p">()</span>
 
-                <span class="c1"># Signal TMEM free (all 128 threads arrive)</span>
+                <span class="c1"># 所有 128 个 threads 报告 arrival，通知 MMA 可以复用 TMEM</span>
                 <span class="n">ld2mma</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">cta_id</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">pred</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
 
-                <span class="c1"># Cast fp32 -&gt; fp16</span>
+                <span class="c1"># 转换 fp32 -&gt; fp16</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">cast</span><span class="p">(</span><span class="n">reg_f16</span><span class="p">[:],</span> <span class="n">reg</span><span class="p">[:])</span>
 
-                <span class="c1"># Write to Dsmem + TMA store</span>
+                <span class="c1"># 写入 Dsmem，再执行 TMA store</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Dsmem</span><span class="p">[</span><span class="n">warp_id</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">+</span> <span class="n">lane_id</span><span class="p">,</span> <span class="p">:],</span> <span class="n">reg_f16</span><span class="p">[:])</span>
                 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">proxy_async</span><span class="p">(</span><span class="s2">&quot;shared::cta&quot;</span><span class="p">)</span>
                 <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">warpgroup_sync</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
@@ -873,7 +873,7 @@
         <span class="n">tma2mma_cta0</span> <span class="o">=</span> <span class="n">tma2mma</span><span class="o">.</span><span class="n">remote_view</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
         <span class="c1"># =============================================</span>
-        <span class="c1"># Warpgroup 1: TMA Producer (warp 3) + MMA Consumer (warp 0)</span>
+        <span class="c1"># Warpgroup 1：TMA producer（warp 3）+ MMA consumer（warp 0）</span>
         <span class="c1"># =============================================</span>
         <span class="k">if</span> <span class="n">wg_id</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
@@ -925,7 +925,7 @@
                             <span class="n">tile_scheduler</span><span class="o">.</span><span class="n">next_tile</span><span class="p">()</span>
 
         <span class="c1"># =============================================</span>
-        <span class="c1"># Warpgroup 0: Writeback (256 columns in 2 x 128-column chunks)</span>
+        <span class="c1"># Warpgroup 0：writeback（将 256 columns 分成两个 128-column chunks）</span>
         <span class="c1"># =============================================</span>
         <span class="k">elif</span> <span class="n">wg_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
             <span class="n">wb_ps</span> <span class="o">=</span> <span class="n">PipelineState</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">phase</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
@@ -1157,7 +1157,7 @@
         <span class="n">tma2mma_cta0</span> <span class="o">=</span> <span class="n">tma2mma</span><span class="o">.</span><span class="n">remote_view</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
         <span class="c1"># =============================================</span>
-        <span class="c1"># Warpgroup 2: TMA Producer (warp 3) + 2 MMA Consumers (warp 0, 1)</span>
+        <span class="c1"># Warpgroup 2：TMA producer（warp 3）+ 两个 MMA consumers（warp 0、1）</span>
         <span class="c1"># =============================================</span>
         <span class="k">if</span> <span class="n">wg_id</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
@@ -1216,7 +1216,7 @@
                             <span class="n">tile_scheduler</span><span class="o">.</span><span class="n">next_tile</span><span class="p">()</span>
 
         <span class="c1"># =============================================</span>
-        <span class="c1"># Warpgroup 0/1: Writeback (each reads its consumer&#39;s TMEM range)</span>
+        <span class="c1"># Warpgroup 0/1：writeback（分别读取对应 consumer 的 TMEM range）</span>
         <span class="c1"># =============================================</span>
         <span class="k">elif</span> <span class="n">wg_id</span> <span class="o">&lt;</span> <span class="n">NUM_CONSUMER</span><span class="p">:</span>
             <span class="n">wb_ps</span> <span class="o">=</span> <span class="n">PipelineState</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">phase</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
@@ -1227,7 +1227,7 @@
                 <span class="n">wb_ps</span><span class="o">.</span><span class="n">advance</span><span class="p">()</span>
                 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">after_thread_sync</span><span class="p">()</span>
 
-                <span class="c1"># Read TMEM in EPI_N=64 column chunks (4 iterations for 256 cols)</span>
+                <span class="c1"># 以 EPI_N=64 为单位分块读取 TMEM（256 columns 共需四轮）</span>
                 <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="n">MMA_N</span> <span class="o">//</span> <span class="n">EPI_N</span><span class="p">):</span>
                     <span class="n">reg</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">EPI_N</span><span class="p">,),</span> <span class="n">acc_type</span><span class="p">)</span>
                     <span class="n">reg_wg</span> <span class="o">=</span> <span class="n">reg</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="n">EPI_N</span><span class="p">,</span>
@@ -1332,7 +1332,7 @@
 </table>
 </div>
 <p>表中给出具体时间的版本都在相同的 <code class="docutils literal notranslate"><span class="pre">M=N=K=4096</span></code> 规模下测量，因此可以直接比较。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">构建 Tiled GEMM</span></a> 中只计算一个 <span class="math notranslate nohighlight">\(128\times128\)</span> tile 的 <code class="docutils literal notranslate"><span class="pre">hgemm_v1</span></code>。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。</p>
-<p>第 2 步仍然只计算一个 output tile，不能与表中的完整矩阵结果直接比较。第 5、6 步则是从 TMA load 逐步过渡到 warp specialization 的中间版本，相关机制都包含在第 7 步中；表格只保留这一段的起点和终点。因此，第 2、5、6 步以横线表示，也不计算对应的单步加速比。</p>
+<p>第 2 步仍然只计算一个 output tile，不能与表中的完整矩阵结果直接比较。第 5、6 步则是从 TMA load 逐步过渡到 warp specialization 的中间版本，相关机制都包含在第 7 步中；表格只保留这一段的起点和终点。因此，第 2、5、6 步以横线表示，不展示它们相对第 1 步的累计加速比。</p>
 <p>这些数字来自同一次 B200 reference run，只用于比较本章各版本在相同条件下的相对变化，不代表其他输入规模或测试环境下的硬件峰值。</p>
 <p>从已经测量的版本可以作四组比较：</p>
 <ol class="arabic simple">

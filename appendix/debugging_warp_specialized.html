@@ -387,7 +387,7 @@
                 <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#before-debugging-the-kernel">Before Debugging the Kernel</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#debugging-workflow">Debugging Workflow</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-transfers">What Transfers</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#map-the-data-handoffs">Map the Data Handoffs</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#if-compilation-fails">If Compilation Fails</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inspecting-generated-code">Inspecting Generated Code</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7-reference-skeleton">Step 7 Reference Skeleton</a></li>
@@ -411,8 +411,8 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="debugging-warp-specialized-kernels">
 <span id="chap-warp-spec-debug"></span><h1>Debugging Warp-Specialized Kernels<a class="headerlink" href="#debugging-warp-specialized-kernels" title="Link to this heading">#</a></h1>
-<p>GEMM Steps 7-9 in <a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> overlap TMA load, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA, and TMEM/SMEM writeback. The same debugging method applies to Flash Attention handoffs: identify the roles, identify the storage each role owns, then verify the generated CUDA against that model.</p>
-<p>Do not start by rewriting the kernel. First make sure the run is valid, then inspect the generated CUDA. After environment and compile-time issues are ruled out, runtime failures in these kernels usually reduce to a broken handoff: an uninitialized barrier, the wrong arrival count, a collective hidden inside a role guard, a stale barrier phase, or storage reused before the producer has made its writes visible.</p>
+<p>GEMM Steps 7–9 in <a class="reference internal" href="../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> overlap TMA load, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA, and TMEM/SMEM writeback. The same debugging method applies to the handoffs among QKᵀ MMA, softmax, PV MMA, and correction in Flash Attention: identify the roles and the storage each role owns, then verify the generated CUDA against that model.</p>
+<p>Do not start by rewriting the kernel. First verify the environment and reproduce the failure with the smallest correctness test, then inspect the generated CUDA. After environment and compile-time issues are ruled out, runtime failures in these kernels usually reduce to a broken handoff: an uninitialized barrier, the wrong arrival count, a collective hidden inside a role guard, a stale barrier phase, or storage reused before the producer has made its writes visible.</p>
 <section id="before-debugging-the-kernel">
 <h2>Before Debugging the Kernel<a class="headerlink" href="#before-debugging-the-kernel" title="Link to this heading">#</a></h2>
 <p>Rule out the runtime context first:</p>
@@ -435,8 +435,8 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <li><p>Re-run correctness before measuring performance.</p></li>
 </ol>
 </section>
-<section id="what-transfers">
-<h2>What Transfers<a class="headerlink" href="#what-transfers" title="Link to this heading">#</a></h2>
+<section id="map-the-data-handoffs">
+<h2>Map the Data Handoffs<a class="headerlink" href="#map-the-data-handoffs" title="Link to this heading">#</a></h2>
 <p>For any asynchronous kernel, make a small worksheet before changing code:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
@@ -466,9 +466,9 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <li><p>Barrier inits appear before guarded role branches.</p></li>
 <li><p>Collective operations are not accidentally narrowed by lane, warp, or warpgroup guards.</p></li>
 <li><p>Arrive/wait phases match the handoff table.</p></li>
-<li><p>TMA store drains, TMEM dealloc, and SMEM reuse happen only after the lifetime table says they are legal.</p></li>
+<li><p>TMA store completion is awaited, TMEM is deallocated, and SMEM is reused only when the lifetime table says each action is safe.</p></li>
 </ul>
-<p>Use the same worksheet for TMA-&gt;MMA-&gt;writeback GEMM pipelines and for the score/softmax/value/correction handoffs in Flash Attention.</p>
+<p>Use the same worksheet for TMA → MMA → writeback GEMM pipelines and for the handoffs among QKᵀ MMA, softmax, PV MMA, and correction in Flash Attention.</p>
 </section>
 <section id="if-compilation-fails">
 <h2>If Compilation Fails<a class="headerlink" href="#if-compilation-fails" title="Link to this heading">#</a></h2>
@@ -476,7 +476,7 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Symptom</p></th>
-<th class="head"><p>Likely area</p></th>
+<th class="head"><p>Likely cause</p></th>
 <th class="head"><p>First check</p></th>
 </tr>
 </thead>
@@ -611,7 +611,7 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Clue</p></th>
-<th class="head"><p>Likely area</p></th>
+<th class="head"><p>Likely cause</p></th>
 <th class="head"><p>First check</p></th>
 </tr>
 </thead>
@@ -706,7 +706,7 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">fence.proxy_async(&quot;shared::cta&quot;)</span></code> before TMA store.</strong> The TMA engine may not see SMEM writes from threads.</p></li>
 <li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span></code> plus <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code> after TMA store.</strong> The next tile can reuse Dsmem before the store drains.</p></li>
 <li><p><strong>Persistent kernel fails intermittently at small sizes such as 1024x1024.</strong> Larger sizes can mask the race with longer K-loops. Re-check phase reset between tiles and the TMA-store commit/wait.</p></li>
-<li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> between MMA completion and TMEM load.</strong> The <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> wait confirms that the MMA has completed, but a writeback thread still needs <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code> before issuing <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. This orders the new thread’s TMEM load after the cross-thread completion notification. Steps 7-9 place the fence immediately after <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code>. This is a <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.</p></li>
+<li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> between MMA completion and TMEM load.</strong> The <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> wait confirms that the MMA has completed, but a writeback thread still needs <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code> before issuing <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. This orders the new thread’s TMEM load after the cross-thread completion notification. Steps 7–9 place the fence immediately after <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code>. This is a <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.</p></li>
 </ul>
 </section>
 <section id="correct-but-slow">
@@ -715,7 +715,7 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Clue</p></th>
-<th class="head"><p>Likely area</p></th>
+<th class="head"><p>Likely cause</p></th>
 <th class="head"><p>First check</p></th>
 </tr>
 </thead>
@@ -802,7 +802,7 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
     <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#before-debugging-the-kernel">Before Debugging the Kernel</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#debugging-workflow">Debugging Workflow</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#what-transfers">What Transfers</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#map-the-data-handoffs">Map the Data Handoffs</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#if-compilation-fails">If Compilation Fails</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inspecting-generated-code">Inspecting Generated Code</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#step-7-reference-skeleton">Step 7 Reference Skeleton</a></li>

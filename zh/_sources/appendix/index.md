@@ -12,5 +12,5 @@
 完整的 `tvm.tirx` Python API 请参阅
 [TVM 官方文档](https://tvm.apache.org/docs/)。
 
-TIRx 的基本用法见第二部分的 {ref}`chap_tirx_primer`，tensor layout 模型见
-{ref}`chap_tirx_layout_api`。
+第二部分介绍了 TIRx 编程模型（{ref}`chap_tirx_primer`）和 tensor layout 模型
+（{ref}`chap_tirx_layout_api`）。

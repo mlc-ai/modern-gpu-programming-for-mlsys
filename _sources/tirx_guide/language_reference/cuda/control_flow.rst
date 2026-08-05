@@ -18,8 +18,8 @@
 Control flow
 ============
 
-Control flow is ``if``, the loop family, and ``while`` — each maps to the obvious
-CUDA.
+TIRx provides ``if``, several loop forms, and ``while``. Each maps directly to the
+corresponding CUDA control flow.
 
 if
 --
@@ -46,8 +46,9 @@ thread/lane comparison, or elect a single issuing thread with
       A_ptr[tx] = A_ptr[tx] + 1.0f;
     }
 
-For an expression-level choice (no branch), use ``T.if_then_else(cond, a, b)``. It
-lowers to a ternary, so it introduces no control-flow divergence:
+For an expression-level choice without an explicit TIRx control-flow branch, use
+``T.if_then_else(cond, a, b)``. It lowers to a ternary expression; the backend
+still decides which machine instructions implement that expression:
 
 .. code-block:: c++
 
@@ -67,9 +68,11 @@ warpgroups will never arrive and the kernel will deadlock. When only one warpgro
 needs to synchronize, use a warpgroup-scoped ``T.cuda.warpgroup_sync(id)`` (see
 :ref:`chap_gemm_advanced` and :doc:`threads_sync`). 
 
-The same caution applies to barrier setup. An ``mbarrier`` ``.init()`` lowers to a
-single-thread guard (``if (threadIdx.x < 1)``). Nesting it inside another divergent
-branch can leave the barrier uninitialized, leading to unspecified launch failures.
+The same caution applies to barrier setup. The high-level ``MBarrier.init()``
+wrapper emits a single-thread guard (``if (threadIdx.x < 1)``). Nesting that call
+inside another divergent branch can leave the barrier uninitialized and cause an
+unspecified launch failure. The raw ``T.ptx.mbarrier.init`` intrinsic does not add
+this guard automatically; its caller must select the initializing thread.
 
 loop
 ----

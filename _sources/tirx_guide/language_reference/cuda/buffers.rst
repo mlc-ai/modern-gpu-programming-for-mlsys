@@ -240,9 +240,10 @@ The TMEM pool (`Tensor memory`_, below) is layered on top of an ``SMEMPool``.
 Registers
 ---------
 
-Per-thread scratch lives in registers. Allocate it with ``T.alloc_local(shape,
-dtype)`` (i.e. ``scope="local"``): it is private to each thread and lowers to a
-local array kept in registers.
+Per-thread scratch uses ``local`` scope. Allocate it with ``T.alloc_local(shape,
+dtype)`` (i.e. ``scope="local"``): it is private to each thread. Statically indexed
+local arrays are normally scalarized into registers, while dynamically indexed
+arrays or values under high register pressure may use local memory.
 
 .. code-block:: python
 
@@ -376,7 +377,7 @@ tensor as a view at a column offset, and one warp frees it at the end:
     # ... use acc as a gemm_async / copy_async operand ...
     if warp_id == alloc_warp:
         T.ptx.tcgen05.relinquish_alloc_permit(cta_group=cta_group)
-        T.ptx.tcgen05.dealloc(addr, n_cols=512, cta_group=cta_group)
+        T.ptx.tcgen05.dealloc(addr[0], n_cols=512, cta_group=cta_group)
 
 You manage the column offsets and the ``tmem_layout`` (a datapath D/F layout)
 yourself. This is exactly the sequence the pool below emits.

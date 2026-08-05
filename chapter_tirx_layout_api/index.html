@@ -524,7 +524,7 @@
 </pre></div>
 </div>
 <p>places two copies along the <code class="docutils literal notranslate"><span class="pre">warpid</span></code> axis, separated by four warps.</p>
-<p>GPU hardware often needs to broadcast the same data across warps, lanes, or storage regions. A replica expresses that behavior directly as one logical element with several physical coordinates.</p>
+<p>A replica describes one logical element as having several physical coordinates. It records where the copies belong; the tile operation that consumes the layout determines how those copies are produced or used.</p>
 </section>
 <section id="offset">
 <h3>Offset<a class="headerlink" href="#offset" title="Link to this heading">#</a></h3>
@@ -739,7 +739,7 @@ TCol  = s
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>m = 64 * i + j
 </pre></div>
 </div>
-<p>Each row contains 64 float16 values, or 128 bytes. Reading a fixed column <code class="docutils literal notranslate"><span class="pre">j</span></code> advances by 128 bytes from one row to the next, so several accesses may repeatedly land in the same set of banks.</p>
+<p>Each row contains 64 float16 values, or 128 bytes. If a group of threads reads the same column <code class="docutils literal notranslate"><span class="pre">j</span></code> from different rows, successive addresses are 128 bytes apart and may repeatedly land in the same set of banks.</p>
 <p>A swizzle makes low address bits depend on higher row bits, scattering a column access that would otherwise repeatedly hit the same bank.</p>
 </section>
 <section id="the-swizzle-transform">

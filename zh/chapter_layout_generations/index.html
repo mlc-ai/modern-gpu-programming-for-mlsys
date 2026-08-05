@@ -199,7 +199,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -581,7 +581,7 @@ SFA, SFB: GMEM --TMA--&gt; SMEM --tcgen05.cp--&gt; TMEM --tcgen05.mma--&gt; Tens
 </pre></div>
 </div>
 <p>其中，<code class="docutils literal notranslate"><span class="pre">S[...]</span></code> 把 <code class="docutils literal notranslate"><span class="pre">(Mgroup,</span> <span class="pre">lane,</span> <span class="pre">sfk)</span></code> 映射到 TMEM 中的 byte 位置。在带有数据类型的 TIRx layout 中，<code class="docutils literal notranslate"><span class="pre">&#64;TCol</span></code> stride 以 buffer element 为单位。这里每个 scale factor 占 8 bits，因此逻辑 TCol 位置为 <code class="docutils literal notranslate"><span class="pre">4*Mgroup+sfk</span></code>；每四个连续位置打包进一个 32-bit hardware TCol cell。等价地，<code class="docutils literal notranslate"><span class="pre">hardware_TCol=(4*Mgroup+sfk)//4</span></code>，<code class="docutils literal notranslate"><span class="pre">byte_in_word=(4*Mgroup+sfk)%4</span></code>。</p>
-<p><code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 表示沿 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 轴复制四份。<code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> 的 <code class="docutils literal notranslate"><span class="pre">.32x128b.warpx4</span></code> 形式正好完成这件事：先写入一个 32-lane window，再把同一份数据广播到另外三个 warp windows。</p>
+<p><code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 表示沿 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 轴复制四份。<code class="docutils literal notranslate"><span class="pre">tcgen05.cp</span></code> 的 <code class="docutils literal notranslate"><span class="pre">.32x128b.warpx4</span></code> 形式会把同一个基础 tile multicast 到四个 32-lane warp windows，从而得到这一布局。</p>
 </section>
 <section id="scale-vec-word">
 <h3><code class="docutils literal notranslate"><span class="pre">scale_vec</span></code> 的 Word 内复制<a class="headerlink" href="#scale-vec-word" title="Link to this heading">#</a></h3>

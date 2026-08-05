@@ -70,7 +70,7 @@ $$\text{TFLOPS} = \frac{2 \times M \times N \times K}{t_{\text{seconds}} \times 
 这个 kernel 只沿 `GMEM -> SMEM -> TMEM -> registers -> GMEM` 路径执行一次，不包含循环。具体步骤如下：
 
 1. **分配**：通过 pool allocator 分配 SMEM，通过 `tcgen05.alloc` 分配 TMEM，并准备等待 MMA 完成的 mbarrier。
-2. **加载**：128 个 threads 使用同步 `Tx.copy`，协作将 A、B tiles 从 GMEM 搬到 SMEM。
+2. **加载**：128 个 threads 使用同步 `Tx.cta.copy`，协作将 A、B tiles 从 GMEM 搬到 SMEM。
 3. **计算**：选出的一个 thread 发出 `Tx.gemm_async` 和 `tcgen05.commit`，所有 threads 等待 mbarrier。
 4. **写回**：warpgroup 将 TMEM 读入 registers；每个 thread 把 fp32 转成 fp16，再写入 GMEM。
 5. **释放**：释放 TMEM。
@@ -184,9 +184,8 @@ def hgemm_v1(M, N, K):
     acc_type = tvm.DataType("float32")
 
     BLK_M, BLK_N, BLK_K = 128, 128, 64
-    # MMA_M/MMA_N/MMA_K document the underlying hardware MMA tile; they are not
-    # passed to gemm_async (which derives the MMA shape from the operand and
-    # accumulator tiles), so the later steps omit them.
+    # MMA_M/MMA_N/MMA_K 记录底层硬件 MMA tile 的 shape。gemm_async 会根据
+    # operands 和 accumulator tiles 推导该 shape，因此后续步骤不再保留这些常量。
     MMA_M, MMA_N, MMA_K = 128, 128, 16
 
     A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
@@ -199,9 +198,8 @@ def hgemm_v1(M, N, K):
         D: T.Buffer((M, N), d_type),
     ):
         T.device_entry()
-        # Step 1 is a single-tile kernel: M = BLK_M and N = BLK_N, so the grid
-        # is 1x1. Starting with a 1x1 grid keeps the per-CTA tile offsets
-        # (m_st, n_st) trivially zero; Steps 3+ generalise this to larger M / N.
+        # 第 1 步只计算一个 tile：M=BLK_M、N=BLK_N，因此 grid shape 为 1x1。
+        # 此时每个 CTA 的 tile offsets（m_st、n_st）都为 0；第 3 步再扩展到更大的 M、N。
         bx, by = T.cta_id([M // BLK_M, N // BLK_N])
         wg_id = T.warpgroup_id([1])      # single warpgroup, so wg_id is always 0 (unused below)
         warp_id = T.warp_id_in_wg([4])
@@ -235,14 +233,14 @@ def hgemm_v1(M, N, K):
         n_st = T.meta_var(by * BLK_N)
         phase_mma: T.int32 = 0
 
-        # --- Load: all threads copy global -> shared (synchronous).
-        # With M=BLK_M and N=BLK_N the slices below cover the full matrices;
-        # the slice form is kept so the diff to Step 3 (multi-tile) is minimal.
+        # --- Load：所有 threads 同步完成 global -> shared copy ---
+        # M=BLK_M、N=BLK_N 时，下面的 slices 覆盖完整矩阵；保留 slice 写法，
+        # 便于与第 3 步的 multi-tile 版本比较。
         Tx.cta.copy(Asmem[:, :], A[m_st:m_st + BLK_M, :])
         Tx.cta.copy(Bsmem[:, :], B[n_st:n_st + BLK_N, :])
         T.cuda.cta_sync()
 
-        # --- Compute: single elected thread issues MMA ---
+        # --- Compute：由一个 elected thread 发起 MMA ---
         if warp_id == 0:
             if T.ptx.elect_sync():
                 Tx.gemm_async(
@@ -253,7 +251,7 @@ def hgemm_v1(M, N, K):
 
         T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
 
-        # --- Writeback: TMEM -> RF -> GMEM ---
+        # --- Writeback：TMEM -> RF -> GMEM ---
         Dreg = T.alloc_local((BLK_N,), acc_type)
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
@@ -264,7 +262,7 @@ def hgemm_v1(M, N, K):
         m_thr = T.meta_var(m_st + warp_id * 32 + lane_id)
         Tx.copy(D[m_thr, n_st : n_st + BLK_N], Dreg_f16[:])
 
-        # --- Deallocate TMEM ---
+        # --- 释放 TMEM ---
         T.cuda.cta_sync()
         if warp_id == 0:
             T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
@@ -292,18 +290,18 @@ A_tensor = torch.randn(M, K, dtype=torch.float16, device=device)
 B_tensor = torch.randn(N, K, dtype=torch.float16, device=device)
 D_tensor = torch.zeros(M, N, dtype=torch.float16, device=device)
 
-# ex.mod(...) takes torch tensors directly, the same call form used in every chapter.
+# ex.mod(...) 可以直接接收 torch tensors；后续章节沿用相同的调用方式。
 ex.mod(A_tensor, B_tensor, D_tensor)
 
 D_ref = (A_tensor.float() @ B_tensor.float().T).half()
 max_err = float((D_tensor - D_ref).abs().max())
 print(f"Max error vs torch reference: {max_err:.6f}")
-# Relative tolerance, like the warp-specialization and Flash Attention cells:
-# output magnitude grows with K, so a fixed absolute bound would fail at larger K.
+# 与 warp specialization 和 Flash Attention 的示例一样，这里使用相对容差：
+# output magnitude 会随 K 增长，固定的绝对误差上限不适用于较大的 K。
 torch.testing.assert_close(D_tensor, D_ref, rtol=2e-2, atol=1e-2)
 print("PASS")
 
-# Optional timing for larger kernels.
+# 对更大 kernel 进行可选计时。
 ITERS = 10
 for _ in range(3):
     ex.mod(A_tensor, B_tensor, D_tensor)
@@ -404,7 +402,7 @@ def hgemm_v2(M, N, K):
         D: T.Buffer((M, N), d_type),
     ):
         T.device_entry()
-        bx, by = T.cta_id([M // BLK_M, N // BLK_N])  # still one output tile (M=N=128)
+        bx, by = T.cta_id([M // BLK_M, N // BLK_N])  # 仍然只有一个 output tile（M=N=128）
         wg_id = T.warpgroup_id([1])
         warp_id = T.warp_id_in_wg([4])
         lane_id = T.lane_id([32])
@@ -434,26 +432,26 @@ def hgemm_v2(M, N, K):
         m_st = T.meta_var(bx * BLK_M)
         n_st = T.meta_var(by * BLK_N)
 
-        # === K-loop: iterate over K in chunks of BLK_K ===
-        for i in T.serial(K_TILES):   # serial device loop (keeps the full-K A/B parameters correctly shaped)
-            # Load the i-th K chunk
+        # === K-loop：以 BLK_K 为单位遍历 K ===
+        for i in T.serial(K_TILES):   # device 侧串行 loop；A、B parameters 仍保留完整 K 维
+            # 加载第 i 个 K chunk
             Tx.cta.copy(Asmem[:, :], A[:, i*BLK_K:(i+1)*BLK_K])
             Tx.cta.copy(Bsmem[:, :], B[:, i*BLK_K:(i+1)*BLK_K])
 
             T.cuda.cta_sync()
 
-            # MMA: accum=False for first tile, True for rest
+            # 第一个 tile 使用 accum=False，后续 tiles 使用 accum=True
             if warp_id == 0:
                 if T.ptx.elect_sync():
                     Tx.gemm_async(tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
                                   accum=(i != 0), dispatch="tcgen05", cta_group=1)
                     T.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
 
-            # Wait for MMA, then flip phase
+            # 等待 MMA 完成，再翻转 phase
             T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
             phase_mma ^= 1
 
-        # === Writeback (same as Step 1) ===
+        # === Writeback（与第 1 步相同）===
         Dreg = T.alloc_local((BLK_N,), acc_type)
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
@@ -585,12 +583,12 @@ def hgemm_v3(M, N, K):
 
         phase_mma: T.int32 = 0
 
-        # Per-CTA tile offsets
+        # 当前 CTA 的 tile offsets
         m_st = T.meta_var(bx * BLK_M)
         n_st = T.meta_var(by * BLK_N)
 
-        # K-loop with offset A and B slices
-        for i in T.serial(K_TILES):   # serial device loop (keeps the full-K A/B parameters correctly shaped)
+        # K-loop：加载带 offset 的 A、B slices
+        for i in T.serial(K_TILES):   # device 侧串行 loop；A、B parameters 仍保留完整 K 维
             Tx.cta.copy(Asmem[:, :], A[m_st:m_st+BLK_M, i*BLK_K:(i+1)*BLK_K])
             Tx.cta.copy(Bsmem[:, :], B[n_st:n_st+BLK_N, i*BLK_K:(i+1)*BLK_K])
 
@@ -605,7 +603,7 @@ def hgemm_v3(M, N, K):
             T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
             phase_mma ^= 1
 
-        # Writeback to the correct output tile
+        # 写回当前 CTA 对应的 output tile
         Dreg = T.alloc_local((BLK_N,), acc_type)
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
@@ -628,6 +626,6 @@ def hgemm_v3(M, N, K):
 
 ## 练习
 
-1. 在第 1 至第 3 步中，`Tx.copy` 会在 MMA 之前将 A、B tiles 搬入 SMEM。为什么 `Tx.gemm_async` 读取这些 tiles 前必须执行 `T.cuda.cta_sync()`？
+1. 在第 1 至第 3 步中，`Tx.cta.copy` 会在 MMA 之前将 A、B tiles 搬入 SMEM。为什么 `Tx.gemm_async` 读取这些 tiles 前必须执行 `T.cuda.cta_sync()`？
 2. 在第 2 步中，如果从 K-loop 删除 `phase_mma ^= 1`，会发生什么？Kernel 仍会等待每次 MMA，还是后续 wait 可能提前通过？
 3. 当 `M=N=4096`、`BLK_M=BLK_N=128` 时，第 3 步的 grid shape 是多少，共启动多少个 CTAs？对于 CTA `(bx, by)`，哪些 CTAs 会独立读取相同的 A tiles，哪些会独立读取相同的 B tiles？当前 kernel 是否显式共享了这些数据？

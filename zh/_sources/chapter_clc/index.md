@@ -13,7 +13,7 @@
 
 假设输出矩阵被划分成 100 个 tiles。最直接的做法是启动 100 个 CTAs，让第 0 个 CTA 计算 tile 0，第 1 个 CTA 计算 tile 1，以此类推。GPU 通常无法同时运行全部 100 个 CTAs，因此会先运行其中一部分；某个 CTA 结束并释放资源后，硬件再启动后续 CTA，直到所有 tiles 都处理完毕。
 
-传统的 fixed-number persistent kernel 使用另一种方式：它只启动一组长期运行的 CTAs 或 clusters，让每个 worker 在循环中连续计算多个 tiles。这样可以减少 CTA 启动和重复准备工作的开销，但也带来了新的调度问题：一个 worker 完成当前 tile 后，下一块 tile 从哪里来？
+传统的 persistent kernel 使用另一种方式：它只启动固定数量的长期运行 CTAs 或 clusters，让每个 worker 在循环中连续计算多个 tiles。这样可以减少 CTA 启动和重复准备工作的开销，但也带来了新的调度问题：一个 worker 完成当前 tile 后，下一块 tile 从哪里来？
 
 本章介绍 Blackwell 提供的 Cluster Launch Control（CLC）。CLC kernel 的 launch grid 仍然覆盖全部 output tiles，但运行中的 worker 可以取消尚未开始的 CTA 或 cluster launch，并接管它的 coordinate。这样既保留了完整 grid 的任务编号，又能让已经驻留的 workers 根据实际完成情况动态领取工作。
 
@@ -104,7 +104,7 @@ while true:
 
 为什么要在计算当前 tile 之前请求下一块工作？因为 grid scheduler 处理请求需要时间。如果等当前 tile 算完才提交请求，这段延迟会直接落在两块 tile 之间，worker 只能停下来等待。
 
-提前提交后，scheduler 处理请求和当前 tile 的计算可以同时进行。等当前 tile 完成时，下一块工作的 coordinate 往往已经写入 shared memory。TMA 用计算覆盖数据搬运延迟，CLC 则用当前 tile 的计算覆盖调度请求延迟，两者采用的是同一种异步流水思路。
+提前提交后，scheduler 可以在当前 tile 计算期间处理请求。等当前 tile 完成时，下一块工作的 coordinate 往往已经写入 shared memory。TMA 将数据搬运延迟隐藏在计算之后，CLC 则用同样的异步流水思路隐藏调度请求的延迟。
 
 CLC 通过 async proxy 把 response 写入 shared memory，普通 thread 则通过 generic proxy 查询这份结果。`mbarrier` wait 用来确认异步 response 已经写完；实际代码在提交新请求前和读完 response 后，还必须按照 PTX 要求执行相应的 proxy fence，建立 async proxy 与 generic proxy 之间的访问顺序，防止下一轮异步写入与尚未结束的读取发生冲突。此外，kernel 还需要正确处理 barrier phase，以及 CTA 或 cluster 范围的 thread synchronization。
 

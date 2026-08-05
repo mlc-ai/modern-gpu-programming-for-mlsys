@@ -113,7 +113,7 @@ With `cta_group::1`, the MMA updates only the current CTA's TMEM. We begin with 
 
 With `cta_group::2`, the MMA accesses the TMEM of both CTAs in a pair. A CTA pair consists of two CTAs in the same cluster whose `%cluster_ctarank` values differ only in the least-significant bit. One rank is even and the other is odd; we refer to them below as the even CTA and the odd CTA.
 
-Only one thread in the CTA pair needs to issue `tcgen05.mma`. That thread may belong to either CTA, but the peer CTA must remain active. The kernels later in this book generally elect one thread in the even CTA to issue the MMA and use `tcgen05.commit` to arrange completion notification.
+Only one thread in the CTA pair needs to issue `tcgen05.mma`. That thread may belong to either CTA, but the peer CTA must remain active. The kernels later in this book generally elect one thread in the even CTA to issue the MMA and use `tcgen05.commit` to associate the completion of the previously issued operations with an `mbarrier`.
 
 The accumulator layout depends on four choices: `cta_group`, the size of M, whether A is dense or structured sparse, and whether the instruction is ordinary `tcgen05.mma` or the weight-stationary `tcgen05.mma.ws`. The selected layout maps each logical coordinate `(m,n)` to `TLane` and `TCol`.
 

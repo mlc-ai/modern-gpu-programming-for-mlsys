@@ -197,7 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -412,7 +412,7 @@
 </section>
 <section id="warp-tmem-lanes">
 <h2>每个 warp 能访问哪些 TMEM lanes<a class="headerlink" href="#warp-tmem-lanes" title="Link to this heading">#</a></h2>
-<p>TMEM 属于 CTA，但 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 不会让 CTA 中的任意 warp 访问全部 128 个 Lane 位置。一个 warpgroup 中的四个 warps 各自负责一个由 32 个 Lane 位置组成的固定范围：</p>
+<p>TMEM 属于 CTA，但每个 warp 只能通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 访问固定的 32-lane window。一个 warpgroup 中的四个 warps 分别覆盖下面四个范围：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>warp 在 warpgroup 中的 ID</p></th>

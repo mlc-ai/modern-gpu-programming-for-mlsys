@@ -142,7 +142,7 @@ R[2 : 4@warpid]
 
 places two copies along the `warpid` axis, separated by four warps.
 
-GPU hardware often needs to broadcast the same data across warps, lanes, or storage regions. A replica expresses that behavior directly as one logical element with several physical coordinates.
+A replica describes one logical element as having several physical coordinates. It records where the copies belong; the tile operation that consumes the layout determines how those copies are produced or used.
 
 ### Offset
 
@@ -406,7 +406,7 @@ Logical element `(i, j)` has linear element address:
 m = 64 * i + j
 ```
 
-Each row contains 64 float16 values, or 128 bytes. Reading a fixed column `j` advances by 128 bytes from one row to the next, so several accesses may repeatedly land in the same set of banks.
+Each row contains 64 float16 values, or 128 bytes. If a group of threads reads the same column `j` from different rows, successive addresses are 128 bytes apart and may repeatedly land in the same set of banks.
 
 A swizzle makes low address bits depend on higher row bits, scattering a column access that would otherwise repeatedly hit the same bank.
 

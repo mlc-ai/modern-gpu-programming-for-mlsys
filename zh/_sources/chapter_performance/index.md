@@ -189,7 +189,7 @@ Roofline 模型可以判断一个 kernel 的性能上限，但不会告诉我们
 
 一个大规模 fp16 GEMM 在理论上可能是 compute-bound 的。但这只说明 HBM 层的内存上限不是主要瓶颈，并不意味着任意一种实现都能达到 Tensor Core 的计算上限。要缩小这中间的差距，需要正确的指令、layout、staging、同步和调度。后续 GEMM 章节会在 B200 上通过一系列步骤展示这一点：每一步都保持相同的基本算法，但改变 tile 的计算方式或调度方式。
 
-在 GEMM 的优化阶梯中，第一个明显的实测性能跃升，是从 thread-copy tiled 路径切换到 TMA-backed 路径。前者由 CTA 中的普通线程执行 GMEM 到 SMEM 的拷贝；后者把这种规则的 tile 搬运交给 TMA 硬件引擎，让 kernel 可以通过硬件管理的大块拷贝来持续为 Tensor Cores 提供数据。
+在 GEMM 的优化阶梯中，第一个明显的实测性能跃升，是从 thread-copy tiled 路径切换到 TMA-backed 路径。前者由 CTA 中的普通 threads 将 tiles 从 GMEM 搬到 SMEM；后者把这种规则的 tile 搬运交给 TMA 硬件引擎。TMA 通过硬件管理的大块 copy 填充 SMEM，MMA 随后再从 SMEM 读取这些 tiles。
 
 在第一次跃升之后，后续优化都围绕一个问题展开：如何减少数据搬运、Tensor Core 计算和 epilogue 之间的等待。Software pipelining 和 warp specialization 会重新安排这些阶段，使不同硬件单元能够重叠工作。下一节具体说明这种调度方式。
 
@@ -201,7 +201,7 @@ Roofline 模型可以判断一个 kernel 的性能上限，但不会告诉我们
 
 ## 通过重叠执行减少硬件空闲
 
-一旦 GEMM 已经是 compute-bound 的，并且已经使用了 Tensor Cores，剩下的性能差距通常来自于硬件的空闲时间。
+当 GEMM 已经进入 compute-bound 区域并使用 Tensor Cores 后，剩余的性能差距通常来自某些执行路径没有得到充分利用。
 
 一个简单的 kernel 可能会这样执行：
 
@@ -224,7 +224,7 @@ compute tile k
 store tile k - 1
 ```
 
-在 Blackwell 上，这三个阶段分别主要由 TMA、`tcgen05.mma` 和 epilogue/store 路径完成，`mbarrier` 负责它们之间的数据交接。
+在 Blackwell 上，这三个阶段分别主要由 TMA、`tcgen05.mma` 和 epilogue/store 路径完成，`mbarrier` 则协调阶段完成状态和 buffer 的复用时机。
 
 重叠执行并不会消除依赖关系：tile `k` 的 MMA 仍然必须等待它加载完成，epilogue 也必须等待 MMA 完成。可以提前执行的是与当前计算没有直接依赖的工作，例如加载 tile `k+1`，或者写回 tile `k-1`。
 
@@ -238,7 +238,7 @@ SM 占用率受 registers、shared memory、warp slots 和 CTA slots 的限制�
 
 许多现代 Tensor Core kernel 会主动消耗更多资源，即使这会降低 occupancy。多 stage 的 shared memory pipeline 会占用 SMEM；较大的 register fragments 会占用 registers；TMEM allocation 会占用 Tensor Memory 容量；warp specialization 也可能把整组 warp 固定分配给 producer 或 consumer 角色。
 
-这是有意做出的取舍。这些 kernel 不依靠大量 warp 同时驻留来隐藏延迟，而是在较少的驻留 CTA 内显式重叠不同阶段。只要 pipeline 能让 TMA、Tensor Core 和 store 路径持续运行，低 occupancy 的 kernel 仍然可以获得很高的性能。
+这是有意做出的取舍。这些 kernel 不依靠大量 warp 同时驻留来隐藏延迟，而是在较少的驻留 CTA 内显式重叠不同阶段。只要 pipeline 能让 TMA、Tensor Core 和 store 路径持续运行，低 occupancy 的 kernel 仍可能获得很高的性能。
 
 两种方式各有适用场景。内存访问不规则、难以显式构造流水线的 kernel，通常更依赖高 occupancy；采用深度 staging 和 warp specialization 的 kernel，则可能用较低的 occupancy 换取更充分的阶段重叠。评价一个 kernel 时，不能只看 occupancy，还要看关键硬件单元是否被持续利用。
 

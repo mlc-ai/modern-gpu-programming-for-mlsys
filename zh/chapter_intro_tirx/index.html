@@ -197,7 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -388,7 +388,7 @@ D:   tcgen05.mma -&gt; TMEM -&gt; registers -&gt; GMEM
 <li><p>通过 <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 发起 MMA；</p></li>
 <li><p>将结果从 TMEM 读回 registers，再写入 GMEM。</p></li>
 </ol>
-<p>其中最关键的三项 tile 操作是 <code class="docutils literal notranslate"><span class="pre">Tx.cta.copy</span></code>、<code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Tx.wg.copy_async</span></code>。其余 PTX 调用用于申请和释放 TMEM、初始化 barrier 并建立同步；本章先把它们看作完成这几个阶段所需的底层步骤。</p>
+<p>其中最关键的三项 tile 操作是 <code class="docutils literal notranslate"><span class="pre">Tx.cta.copy</span></code>、<code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Tx.wg.copy_async</span></code>。其余底层调用用于申请和释放 TMEM、初始化 barrier 并建立同步；本章先把它们看作完成这几个阶段所需的实现步骤。</p>
 <p>先导入这个 kernel 使用的模块：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>

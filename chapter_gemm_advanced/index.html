@@ -445,7 +445,7 @@
 <blockquote>
 <div><p><strong>Step 7 execution structure</strong></p>
 <ul class="simple">
-<li><p>Scope: one warpgroup walking load → MMA → writeback in order becomes three concurrent roles (TMA producer, MMA consumer, writeback) connected by full/empty barriers.</p></li>
+<li><p>Scope: the sequential load → MMA → writeback path in one warpgroup becomes three concurrent roles (TMA producer, MMA consumer, and writeback) connected by full/empty barriers.</p></li>
 <li><p>Layout: unchanged, same SMEM stages and TMEM accumulator as Step 6.</p></li>
 <li><p>Dispatch: unchanged, TMA loads, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA.</p></li>
 </ul>
@@ -493,7 +493,7 @@
 </section>
 <section id="four-barriers">
 <h3>Four Barriers<a class="headerlink" href="#four-barriers" title="Link to this heading">#</a></h3>
-<p>The three concurrent roles communicate through four barriers. The forward path, TMA → MMA → Writeback, reports that data is ready. The reverse path, Writeback → MMA → TMA, releases a buffer for reuse. Barrier names follow <code class="docutils literal notranslate"><span class="pre">source2destination</span></code>; for example, <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code> carries the notification from TMA to MMA.</p>
+<p>The three concurrent roles communicate through four barriers. The forward path, TMA → MMA → Writeback, reports that data is ready. The reverse path, Writeback → MMA → TMA, returns each protected buffer or resource to the preceding role for reuse. Barrier names follow <code class="docutils literal notranslate"><span class="pre">source2destination</span></code>; for example, <code class="docutils literal notranslate"><span class="pre">tma2mma</span></code> carries the notification from TMA to MMA.</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Barrier</p></th>
@@ -1396,7 +1396,7 @@
 </table>
 </div>
 <p>Every row with a measured time uses the same <code class="docutils literal notranslate"><span class="pre">M=N=K=4096</span></code> problem, so those rows can be compared directly. The 70 ms in Step 1 comes from a full-matrix baseline with the same sequential data path; it is not a run of the single-tile <code class="docutils literal notranslate"><span class="pre">hgemm_v1</span></code> from <a class="reference internal" href="../chapter_gemm_basics/index.html#chap-gemm-basics"><span class="std std-ref">Building a Tiled GEMM</span></a>. The introductory chapter uses smaller problems to explain Steps 1 through 3, while the Step 1 and Step 3 rows here measure the corresponding full-matrix implementations.</p>
-<p>Step 2 still computes only one output tile, so it is not directly comparable with the full-matrix results. Steps 5 and 6 are intermediate versions between the TMA-load kernel and the warp-specialized kernel; their mechanisms are retained in Step 7. The table therefore shows only the endpoints of that interval. Steps 2, 5, and 6 use dashes and have no standalone speedup.</p>
+<p>Step 2 still computes only one output tile, so it is not directly comparable with the full-matrix results. Steps 5 and 6 are intermediate versions between the TMA-load kernel and the warp-specialized kernel; their mechanisms are retained in Step 7. The table therefore shows only the endpoints of that interval. Steps 2, 5, and 6 use dashes, so no cumulative speedup relative to Step 1 is shown for them.</p>
 <p>These numbers come from one B200 reference run. They are intended to compare the versions in this tutorial under the same conditions, rather than to represent peak performance for other problem sizes or environments.</p>
 <p>The measured versions support four comparisons:</p>
 <ol class="arabic simple">

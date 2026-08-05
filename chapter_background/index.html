@@ -512,8 +512,8 @@ warps in a warpgroup each load their own 32-lane TMEM window.</p>
 <strong>distributed shared memory (DSMEM)</strong> allows other CTAs in the same cluster to access that data.</p>
 <p>This capability avoids unnecessary round trips through GMEM. One CTA can directly access another
 CTA’s SMEM without requiring the owner to write the data back to GMEM for the peer to reload. When
-an asynchronous operation moves such data, a completion barrier notifies later computation after the
-transfer finishes.</p>
+an asynchronous operation moves such data, it updates a completion barrier after the transfer
+finishes; consumers wait on that barrier before using the result.</p>
 <p>The figure below shows the DSMEM access path in a 2-CTA cluster. Each CTA retains its own SMEM but can
 read the other CTA’s SMEM.</p>
 <div style="overflow-x:auto;">
@@ -523,8 +523,8 @@ read the other CTA’s SMEM.</p>
 <p>In the 2-CTA GEMM shown above, each CTA stores its own slices of A and B and reads the peer CTA’s B
 slice through DSMEM. Here, sharing does not merge the two SMEM allocations. It means only that CTAs
 in the same cluster can access one another’s data across SMs.</p>
-<p>The two CTAs can also form <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code> and execute a cooperative MMA that produces a larger output
-tile.</p>
+<p>The two CTAs can form a CTA pair and execute a cooperative MMA in <code class="docutils literal notranslate"><span class="pre">cta_group::2</span></code> mode, producing a
+larger output tile.</p>
 </section>
 </section>
 <section id="compute-cuda-cores-and-tensor-cores">
@@ -546,8 +546,8 @@ prepare data in time so that the Tensor Cores do not sit idle waiting on data or
 and accumulator placement. Hopper introduced asynchronous warpgroup MMA (<code class="docutils literal notranslate"><span class="pre">wgmma.mma_async</span></code>).
 Blackwell’s fifth-generation Tensor Core, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>, stores accumulators in Tensor Memory rather than
 registers. Later chapters discuss these differences in detail.</p>
-<p>Clusters also introduce two important GEMM uses. <strong>2-CTA cooperative MMA</strong> allows two CTAs to each
-provide part of the SMEM operands and jointly issue a larger Tensor Core MMA tile. <strong>TMA multicast</strong>
+<p>Clusters enable two forms of collaboration that are important for GEMM. <strong>2-CTA cooperative MMA</strong>
+allows two CTAs to each provide part of the SMEM operands for a larger Tensor Core MMA tile. <strong>TMA multicast</strong>
 allows one GMEM load to deliver the same tile to multiple CTAs, avoiding redundant global memory
 traffic from each CTA loading the same data separately. Both rely on the cluster and DSMEM mechanism
 introduced earlier.</p>
@@ -566,7 +566,8 @@ pipeline.</p>
 <ol class="arabic simple">
 <li><p><strong>Load:</strong> A TMA copy moves an A or B operand tile from GMEM to SMEM. One thread issues the copy and
 records the expected number of arriving bytes. As data reaches SMEM, the TMA engine updates the
-progress count. The completion barrier fires only after all expected bytes have arrived.</p></li>
+progress count. The completion barrier becomes complete only after all expected bytes have
+arrived.</p></li>
 <li><p><strong>Compute:</strong> A <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA reads operand tiles from SMEM and accumulates the product into a TMEM
 tile. One designated thread commits the MMA; when computation completes, the hardware signals the
 corresponding barrier.</p></li>

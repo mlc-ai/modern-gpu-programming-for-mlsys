@@ -197,7 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -460,7 +460,7 @@
 </pre></div>
 </div>
 <p>表示沿 <code class="docutils literal notranslate"><span class="pre">warpid</span></code> 轴放置 2 份副本，两份之间相隔 4 个 warps。</p>
-<p>GPU 硬件经常需要将同一份数据广播到多个 warps、lanes 或存储区域。Replica 直接将这种行为表示为“一项逻辑数据对应多个物理坐标”。</p>
+<p>Replica 表示同一个逻辑元素具有多个物理坐标。它只记录这些副本应当位于哪里；副本如何生成或使用，由实际消费这个 layout 的 tile 操作决定。</p>
 </section>
 <section id="offset">
 <h3>Offset<a class="headerlink" href="#offset" title="Link to this heading">#</a></h3>
@@ -675,7 +675,7 @@ TCol  = s
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>m = 64 * i + j
 </pre></div>
 </div>
-<p>每行包含 64 个 float16，也就是 128 bytes。固定 <code class="docutils literal notranslate"><span class="pre">j</span></code> 并沿 column 读取时，每换一行都会前进 128 bytes，多个访问可能重复落到同一组 banks。</p>
+<p>每行包含 64 个 float16，也就是 128 bytes。如果一组 threads 从不同行读取同一个 column <code class="docutils literal notranslate"><span class="pre">j</span></code>，相邻地址之间会相隔 128 bytes，因此可能反复落到同一组 banks。</p>
 <p>Swizzle 让 address 的低位同时依赖较高的 row bits，使原本落到同一个 bank 的 column access 分散到多个 banks。</p>
 </section>
 <section id="id5">

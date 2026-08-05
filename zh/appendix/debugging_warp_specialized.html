@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>调试 Warp-Specialized Kernel &#8212; 面向 MLSys 的现代 GPU 编程</title>
+    <title>调试 Warp-Specialized Kernels &#8212; 面向 MLSys 的现代 GPU 编程</title>
   
   
   
@@ -197,7 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1 current active"><a class="current reference internal" href="#">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -311,7 +311,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>调试 Warp-Specialized Kernel</h1>
+    <h1>调试 Warp-Specialized Kernels</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -333,7 +333,7 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#crash-context-poisoning">Crash 与 Context Poisoning</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">结果错误</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">结果正确但性能较差</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">提交有效的问题报告</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">提交高质量的问题报告</a></li>
 </ul>
             </nav>
         </div>
@@ -345,13 +345,14 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section class="tex2jax_ignore mathjax_ignore" id="warp-specialized-kernel">
-<span id="chap-warp-spec-debug"></span><h1>调试 Warp-Specialized Kernel<a class="headerlink" href="#warp-specialized-kernel" title="Link to this heading">#</a></h1>
-<p>第三部分 GEMM 的第 7-9 步让 TMA load、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA 和 TMEM/SMEM writeback
-重叠执行。Flash Attention 也使用类似的数据交接方式。调试这类 kernel 时，
-可以先确定各个角色及其使用的存储空间，再检查生成的 CUDA 是否符合这个模型。</p>
-<p>不要一开始就重写 kernel。先确认运行环境正确，并用最小测试稳定复现问题，
-然后再检查生成的 CUDA。排除环境和编译问题后，这类 kernel 的运行时故障通常
+  <section class="tex2jax_ignore mathjax_ignore" id="warp-specialized-kernels">
+<span id="chap-warp-spec-debug"></span><h1>调试 Warp-Specialized Kernels<a class="headerlink" href="#warp-specialized-kernels" title="Link to this heading">#</a></h1>
+<p>第三部分 GEMM 的第 7 至第 9 步让 TMA load、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> MMA 和 TMEM/SMEM
+writeback 重叠执行。Flash Attention 中的 QKᵀ MMA、softmax、PV MMA 和
+correction 也使用类似的交接方式。调试这类 kernel 时，可以先确定各个角色及其
+使用的存储空间，再检查生成的 CUDA 是否符合这个模型。</p>
+<p>不要一开始就重写 kernel。先确认运行环境无误，并用最小的正确性测试稳定复现
+问题，再检查生成的 CUDA。排除环境和编译问题后，这类 kernel 的运行时故障通常
 来自某次数据交接：barrier 没有初始化、arrival count 错误、collective 的参与
 范围被角色分支缩小、wait 使用了旧的 barrier phase，或者 producer 的写入尚未
 可见，存储空间就被提前复用。</p>
@@ -364,12 +365,12 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 </div>
 <p>这些 kernel 面向 Blackwell（<code class="docutils literal notranslate"><span class="pre">sm_100a</span></code>）。如果 Python 导入了旧的 TVM
 checkout，或者当前 GPU 不是 Blackwell 架构，应先修正环境，再修改 kernel。
-随后先运行最小的正确性测试，例如 <code class="docutils literal notranslate"><span class="pre">run_correctness()</span></code>；正确性通过后再看性能。</p>
+环境确认无误后，先运行最小的正确性测试，例如 <code class="docutils literal notranslate"><span class="pre">run_correctness()</span></code>；正确性通过后再看性能。</p>
 </section>
 <section id="id2">
 <h2>调试步骤<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
 <ol class="arabic simple">
-<li><p>用仍能复现问题的最小 shape 运行。如果发生 illegal memory access，下一次运行前先重启 Python。</p></li>
+<li><p>将输入缩小到仍能稳定复现问题的最小 shape。如果发生 illegal memory access，下一次运行前先重启 Python。</p></li>
 <li><p>如果编译失败，先检查已安装的 API、target、<code class="docutils literal notranslate"><span class="pre">dispatch=</span></code> 和 buffer scope，再检查运行时同步代码。</p></li>
 <li><p>保存 <code class="docutils literal notranslate"><span class="pre">inspect_source(&quot;cuda&quot;)</span></code> 的输出。先搜索 role guard、<code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>、<code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code>，再回头阅读 Python。</p></li>
 <li><p>针对出错的 kernel 路径，写出 roles、storage、handoff 和 lifetime 表。</p></li>
@@ -410,10 +411,10 @@ checkout，或者当前 GPU 不是 Blackwell 架构，应先修正环境，再�
 <li><p>Barrier 初始化出现在各个角色分支之前。</p></li>
 <li><p>Collective 没有被 lane、warp 或 warpgroup guard 意外缩小参与范围。</p></li>
 <li><p>Arrive/wait phase 与 handoff 表一致。</p></li>
-<li><p>完成相应的 wait，并且 lifetime 表允许之后，才释放 TMEM 或复用 SMEM。</p></li>
+<li><p>必须确认 TMA store 已经完成，并且 lifetime 表表明相关资源可以复用，之后才能释放 TMEM 或复用相应的 SMEM。</p></li>
 </ul>
-<p>这张表既适用于 GEMM 的 TMA -&gt; MMA -&gt; writeback pipeline，也适用于
-Flash Attention 中 score、softmax、value 和 correction 之间的交接。</p>
+<p>这张表既适用于 GEMM 的 TMA → MMA → writeback pipeline，也适用于
+Flash Attention 中 QKᵀ MMA、softmax、PV MMA 和 correction 之间的交接。</p>
 </section>
 <section id="id4">
 <h2>编译失败<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
@@ -421,12 +422,12 @@ Flash Attention 中 score、softmax、value 和 correction 之间的交接。</p
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>现象</p></th>
-<th class="head"><p>可能的位置</p></th>
+<th class="head"><p>可能原因</p></th>
 <th class="head"><p>首先检查</p></th>
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p>TIRx API 未知或发生 attribute error</p></td>
+<tr class="row-even"><td><p>找不到 TIRx API，或出现 attribute error</p></td>
 <td><p>安装的 wheel 与教程代码不匹配</p></td>
 <td><p>输出 <code class="docutils literal notranslate"><span class="pre">tvm.__file__</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tvm.__version__</span></code>，并对照 <a class="reference internal" href="../tirx_guide/language_reference/index.html#chap-language-reference"><span class="std std-ref">TIRx 语言参考</span></a> 检查 API 名称。</p></td>
 </tr>
@@ -435,7 +436,7 @@ Flash Attention 中 score、softmax、value 和 correction 之间的交接。</p
 <td><p>检查 <code class="docutils literal notranslate"><span class="pre">dispatch</span></code> 参数和 target capability；本教程中的 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 路径需要 Blackwell。</p></td>
 </tr>
 <tr class="row-even"><td><p>Buffer scope 不匹配</p></td>
-<td><p>Buffer 通过错误的硬件路径使用</p></td>
+<td><p>Buffer 被交给了不匹配的硬件路径</p></td>
 <td><p>检查表中的 storage：TMEM 必须通过 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 访问，TMA 搬运的 buffer 必须使用兼容的 GMEM/SMEM layout。</p></td>
 </tr>
 <tr class="row-odd"><td><p>编译成功，但生成的 CUDA 中没有预期路径</p></td>
@@ -520,25 +521,25 @@ Flash Attention 中 score、softmax、value 和 correction 之间的交接。</p
 <h2>第 7 步的参考结构<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
 <p>正确编译的第 7 步 kernel 顶层结构如下。为了便于阅读，这里用角色名称写
 guard；在生成的 CUDA 中，应搜索上表对应的表达式。</p>
-<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// (1) Barrier inits: top level, CTA thread 0 only</span>
+<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// (1) Barrier 初始化：位于顶层，只由 CTA thread 0 执行</span>
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">tma2mma</span><span class="p">[</span><span class="mf">0..1</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
 <span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">mma2tma</span><span class="p">[</span><span class="mf">0..1</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
 <span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">mma2ld</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
-<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">ld2mma</span><span class="p">,</span><span class="w"> </span><span class="mi">128</span><span class="p">);</span><span class="w">   </span><span class="c1">// arrived by all 128 WG0 threads</span>
+<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">ld2mma</span><span class="p">,</span><span class="w"> </span><span class="mi">128</span><span class="p">);</span><span class="w">   </span><span class="c1">// WG0 的 128 个 threads 全部执行 arrival</span>
 <span class="p">}</span>
 
-<span class="c1">// (2) TMEM alloc: WG0 warp 0, all lanes of the issuing warp</span>
+<span class="c1">// (2) TMEM 分配：WG0 warp 0，发出指令的 warp 中所有 lanes 都参与</span>
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="n">tcgen05_alloc</span><span class="p">(...,</span><span class="w"> </span><span class="mi">512</span><span class="p">);</span>
 
-<span class="c1">// (3) Fences + cta_sync, then phase init: producer=1, consumer=0</span>
+<span class="c1">// (3) 执行 fences 和 cta_sync，再初始化 phase：producer=1，consumer=0</span>
 
 <span class="c1">// (4) Warp-specialized loop</span>
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">elect_sync</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* TMA  */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">elect_sync</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* MMA  */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w">                                </span><span class="p">{</span><span class="w"> </span><span class="cm">/* WB   */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
 
-<span class="c1">// (5) Cleanup: issuing warp, no lane guard</span>
+<span class="c1">// (5) 清理：由发出指令的 warp 执行，不使用 lane guard</span>
 <span class="n">cta_sync</span><span class="p">();</span>
 <span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">tcgen05_relinquish_alloc_permit</span><span class="p">();</span><span class="w"> </span><span class="n">tcgen05_dealloc</span><span class="p">(...,</span><span class="w"> </span><span class="mi">512</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
 </pre></div>
@@ -557,7 +558,7 @@ guard；在生成的 CUDA 中，应搜索上表对应的表达式。</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>线索</p></th>
-<th class="head"><p>可能的位置</p></th>
+<th class="head"><p>可能原因</p></th>
 <th class="head"><p>首先检查</p></th>
 </tr>
 </thead>
@@ -658,7 +659,7 @@ descriptor、operand 设置或未初始化的 accumulation。数值有限但错�
 <li><p><strong>TMA store 前缺少 <code class="docutils literal notranslate"><span class="pre">fence.proxy_async(&quot;shared::cta&quot;)</span></code>。</strong> TMA engine 可能看不到 threads 对 SMEM 的写入。</p></li>
 <li><p><strong>TMA store 后缺少 <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span></code> 和 <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code>。</strong> Store 尚未完成，下一 tile 就复用了 Dsmem。</p></li>
 <li><p><strong>Persistent kernel 在 <code class="docutils literal notranslate"><span class="pre">1024×1024</span></code> 等较小 shape 上偶发失败。</strong> 更大的 shape 和更长的 K-loop 可能掩盖竞争。重新检查 tiles 之间的 phase reset 和 TMA store commit/wait。</p></li>
-<li><p><strong>等待 MMA 完成后直接读取 TMEM。</strong> <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code> 只能确认 MMA 已经完成；writeback thread 在随后发出 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 前，还需要执行 <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code>，把这次 TMEM load 排在跨 thread 的完成通知之后。第 7-9 步都将它放在 <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code> 之后。这个 fence 只负责 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 指令之间的顺序；等待 TMA load 和让普通 thread 的 SMEM 写入对 TMA engine 可见，分别使用各自的 mbarrier 和 proxy fence 协议。</p></li>
+<li><p><strong>等待 MMA 完成后直接读取 TMEM。</strong> <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code> 只能确认 MMA 已经完成；writeback thread 在随后发出 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 前，还需要执行 <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code>，把这次 TMEM load 排在跨 thread 的完成通知之后。第 7 至第 9 步都将它放在 <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code> 之后。这个 fence 只负责 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 指令之间的顺序；等待 TMA load 和让普通 thread 的 SMEM 写入对 TMA engine 可见，分别使用各自的 mbarrier 和 proxy fence 协议。</p></li>
 </ul>
 </section>
 <section id="id9">
@@ -667,7 +668,7 @@ descriptor、operand 设置或未初始化的 accumulation。数值有限但错�
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>线索</p></th>
-<th class="head"><p>可能的位置</p></th>
+<th class="head"><p>可能原因</p></th>
 <th class="head"><p>首先检查</p></th>
 </tr>
 </thead>
@@ -693,7 +694,7 @@ descriptor、operand 设置或未初始化的 accumulation。数值有限但错�
 </div>
 </section>
 <section id="id10">
-<h2>提交有效的问题报告<a class="headerlink" href="#id10" title="Link to this heading">#</a></h2>
+<h2>提交高质量的问题报告<a class="headerlink" href="#id10" title="Link to this heading">#</a></h2>
 <p>如果完成上述检查后问题仍然存在，请先缩小复现范围，再到
 <a class="reference external" href="https://github.com/apache/tvm/issues">Apache TVM GitHub 仓库</a>提交 issue。
 需要包含：</p>
@@ -766,7 +767,7 @@ descriptor、operand 设置或未初始化的 accumulation。数值有限但错�
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#crash-context-poisoning">Crash 与 Context Poisoning</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">结果错误</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">结果正确但性能较差</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">提交有效的问题报告</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">提交高质量的问题报告</a></li>
 </ul>
   </nav></div>
 

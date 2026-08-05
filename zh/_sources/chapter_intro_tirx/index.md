@@ -65,7 +65,7 @@ D:   tcgen05.mma -> TMEM -> registers -> GMEM
 3. 通过 `Tx.gemm_async` 发起 MMA；
 4. 将结果从 TMEM 读回 registers，再写入 GMEM。
 
-其中最关键的三项 tile 操作是 `Tx.cta.copy`、`Tx.gemm_async` 和 `Tx.wg.copy_async`。其余 PTX 调用用于申请和释放 TMEM、初始化 barrier 并建立同步；本章先把它们看作完成这几个阶段所需的底层步骤。
+其中最关键的三项 tile 操作是 `Tx.cta.copy`、`Tx.gemm_async` 和 `Tx.wg.copy_async`。其余底层调用用于申请和释放 TMEM、初始化 barrier 并建立同步；本章先把它们看作完成这几个阶段所需的实现步骤。
 
 先导入这个 kernel 使用的模块：
 

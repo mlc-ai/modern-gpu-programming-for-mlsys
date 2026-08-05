@@ -113,7 +113,7 @@ Blackwell 将长期存活的 accumulator 移入 TMEM。TMEM 是一种作用域�
 
 使用 `cta_group::2` 时，MMA 同时访问一个 CTA pair 中两个 CTA 的 TMEM。CTA pair 由同一 cluster 中 `%cluster_ctarank` 仅最低位不同的两个 CTA 组成：其中一个 rank 为偶数，另一个 rank 为奇数。下文分别称它们为偶数 CTA 和奇数 CTA。
 
-硬件只要求 CTA pair 中的一个 thread 发出 `tcgen05.mma`；指令既可以由偶数 CTA 发出，也可以由奇数 CTA 发出，但 peer CTA 必须仍然处于 active 状态。本书后续的 kernels 通常约定由偶数 CTA 中的一个 thread 发出 MMA，并通过 `tcgen05.commit` 提交完成通知。
+硬件只要求 CTA pair 中的一个 thread 发出 `tcgen05.mma`；指令既可以由偶数 CTA 发出，也可以由奇数 CTA 发出，但 peer CTA 必须仍然处于 active 状态。本书后续的 kernels 通常约定由偶数 CTA 中的一个 thread 发出 MMA，再通过 `tcgen05.commit` 将此前发出的操作的完成状态关联到 `mbarrier`。
 
 Accumulator layout 由 `cta_group`、M 维大小、A 是稠密矩阵还是结构化稀疏矩阵，以及是否使用 `tcgen05.mma.ws` 共同决定。这个 layout 规定逻辑坐标 `(m,n)` 如何映射到 `TLane` 和 `TCol`。
 

@@ -13,8 +13,8 @@ Computations over the same values can differ in performance by an order of magni
 depending only on how those values are physically arranged in memory.
 
 A tensor's logical indices do not say where its bytes are actually stored. The hardware is highly
-sensitive to that placement. It determines whether loads from 32 lanes coalesce into one transaction
-or split across as many as 32, whether addresses land in different memory banks or collide and
+sensitive to that placement. Depending on the access pattern, it determines whether loads from 32
+lanes can be coalesced into one transaction or must be split across as many as 32, whether addresses land in different memory banks or collide and
 serialize, and whether a tile has a byte arrangement that a Tensor Core can read.
 
 Machine learning programs usually describe a tensor by its logical shape. A **data layout** supplies
@@ -511,8 +511,8 @@ For example, row 1 in our demo contains the logical column labels
 arrangement, producing `9, 8, 11, 10, 13, 12, 15, 14`.
 
 We call each 128-bit cell in the figure a 16 B **sector**. In `SWIZZLE_128B`, each row of an atom
-contains eight sectors, for a total width of 128 B. At the common 4-byte bank granularity, one sector
-spans four banks, so a full row covers all 32 banks. The swizzle uses the row coordinate to
+contains eight sectors, for a total width of 128 B. At the common 4-byte bank granularity, the four
+32-bit words in one sector map to four adjacent banks, so a full row covers all 32 banks. The swizzle uses the row coordinate to
 XOR-permute the eight sectors within that row.
 
 A `SWIZZLE_128B` atom contains eight rows, so its total size is `8 × 128 B = 1024 B`. Here,

@@ -637,9 +637,10 @@ swizzle layout for you, and <code class="docutils literal notranslate"><span cla
 </section>
 <section id="registers">
 <h2>Registers<a class="headerlink" href="#registers" title="Link to this heading">#</a></h2>
-<p>Per-thread scratch lives in registers. Allocate it with <code class="docutils literal notranslate"><span class="pre">T.alloc_local(shape,</span>
-<span class="pre">dtype)</span></code> (i.e. <code class="docutils literal notranslate"><span class="pre">scope=&quot;local&quot;</span></code>): it is private to each thread and lowers to a
-local array kept in registers.</p>
+<p>Per-thread scratch uses <code class="docutils literal notranslate"><span class="pre">local</span></code> scope. Allocate it with <code class="docutils literal notranslate"><span class="pre">T.alloc_local(shape,</span>
+<span class="pre">dtype)</span></code> (i.e. <code class="docutils literal notranslate"><span class="pre">scope=&quot;local&quot;</span></code>): it is private to each thread. Statically indexed
+local arrays are normally scalarized into registers, while dynamically indexed
+arrays or values under high register pressure may use local memory.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">r</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">4</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>   <span class="c1"># per-thread register array</span>
 <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="mi">4</span><span class="p">):</span>
     <span class="n">r</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">k</span><span class="p">]</span>
@@ -756,7 +757,7 @@ tensor as a view at a column offset, and one warp frees it at the end:</p>
 <span class="c1"># ... use acc as a gemm_async / copy_async operand ...</span>
 <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="n">alloc_warp</span><span class="p">:</span>
     <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">relinquish_alloc_permit</span><span class="p">(</span><span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
-    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">dealloc</span><span class="p">(</span><span class="n">addr</span><span class="p">,</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">dealloc</span><span class="p">(</span><span class="n">addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>You manage the column offsets and the <code class="docutils literal notranslate"><span class="pre">tmem_layout</span></code> (a datapath D/F layout)

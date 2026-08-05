@@ -266,7 +266,7 @@ S[(4, 32, 4) : (4@TCol, 1@TLane, 1@TCol)]
 
 其中，`S[...]` 把 `(Mgroup, lane, sfk)` 映射到 TMEM 中的 byte 位置。在带有数据类型的 TIRx layout 中，`@TCol` stride 以 buffer element 为单位。这里每个 scale factor 占 8 bits，因此逻辑 TCol 位置为 `4*Mgroup+sfk`；每四个连续位置打包进一个 32-bit hardware TCol cell。等价地，`hardware_TCol=(4*Mgroup+sfk)//4`，`byte_in_word=(4*Mgroup+sfk)%4`。
 
-`R[...]` 表示沿 `TLane` 轴复制四份。`tcgen05.cp` 的 `.32x128b.warpx4` 形式正好完成这件事：先写入一个 32-lane window，再把同一份数据广播到另外三个 warp windows。
+`R[...]` 表示沿 `TLane` 轴复制四份。`tcgen05.cp` 的 `.32x128b.warpx4` 形式会把同一个基础 tile multicast 到四个 32-lane warp windows，从而得到这一布局。
 
 ### `scale_vec` 的 Word 内复制
 

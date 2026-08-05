@@ -442,7 +442,7 @@ shared buffers across several dtypes, plus a vectorized <code class="docutils li
 declares a <code class="docutils literal notranslate"><span class="pre">float4</span></code> register directly (you index it as <code class="docutils literal notranslate"><span class="pre">v[0]</span></code>), and a
 <code class="docutils literal notranslate"><span class="pre">float32x4</span></code> <code class="docutils literal notranslate"><span class="pre">vload</span></code> / <code class="docutils literal notranslate"><span class="pre">vstore</span></code> then moves it as one 16-byte access. The vector
 dtype is not tied to <code class="docutils literal notranslate"><span class="pre">vload</span></code> — any buffer or scalar can carry it.</p>
-<p>so the dtype → CUDA mapping is:</p>
+<p>The resulting dtype → CUDA mapping is:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 34.0%" />

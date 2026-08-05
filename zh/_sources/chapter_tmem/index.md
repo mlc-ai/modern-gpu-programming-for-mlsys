@@ -85,7 +85,7 @@ if warp_id == 0:
 
 ## 每个 warp 能访问哪些 TMEM lanes
 
-TMEM 属于 CTA，但 `tcgen05.ld` 和 `tcgen05.st` 不会让 CTA 中的任意 warp 访问全部 128 个 Lane 位置。一个 warpgroup 中的四个 warps 各自负责一个由 32 个 Lane 位置组成的固定范围：
+TMEM 属于 CTA，但每个 warp 只能通过 `tcgen05.ld` 和 `tcgen05.st` 访问固定的 32-lane window。一个 warpgroup 中的四个 warps 分别覆盖下面四个范围：
 
 | warp 在 warpgroup 中的 ID | 可访问的 TMEM Lane 位置 |
 | --- | --- |

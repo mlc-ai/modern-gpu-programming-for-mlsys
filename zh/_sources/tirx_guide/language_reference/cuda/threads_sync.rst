@@ -56,7 +56,7 @@ CUDA C++/PTX Intrinsics
             i[0] = i[0] // 2
         A[lane_id] = v[0]
 
-Shuffle 会直接 lowering 为 ``__shfl_xor_sync``：
+Shuffle 会直接转换为 ``__shfl_xor_sync``：
 
 .. code-block:: c++
 
@@ -64,22 +64,22 @@ Shuffle 会直接 lowering 为 ``__shfl_xor_sync``：
 
 ``T.ptx.*`` / ``T.cuda.*`` 还包含 ``cp_async``（LDGSTS）、
 ``cp_async.bulk.tensor``（TMA）、``ldmatrix`` / ``stmatrix``、``tcgen05.*``
-（Blackwell MMA）、``atomic_add`` 和 ``fence`` 等 families。完整列表请参阅
+（Blackwell MMA）、``atomic_add`` 和 ``fence`` 等指令类别。完整列表请参阅
 ``tvm.backend.cuda`` backend API reference。
 
 同步语义
 --------
 
 GEMM 和 Flash Attention kernel 中经常出现下面四种同步机制。它们控制异步
-engine 和并行 thread groups，使用错误通常会导致 silent corruption 或
-deadlock。
+engine 和并行 thread groups；使用错误通常会让结果在没有报错的情况下损坏，
+或者造成 deadlock。
 
 **Mbarrier phase。** Mbarrier 使用一个内部 phase bit 追踪不同轮次的
 arrival。``T.ptx.mbarrier.try_wait(bar, phase)`` 会一直等待，直到 barrier
 内部 phase 与调用者提供的 ``phase`` 不同。循环复用 barrier 时，每次 wait
-之后都必须翻转本地 phase tracker（``phase ^= 1``）。否则，后续 wait 会立即
-返回，engine 可能读取只写完一部分的 memory。第三部分的 GEMM 章节会给出
-完整的 phase tracking 表。
+之后都必须翻转本地 phase tracker（``phase ^= 1``）。否则，后续 wait 可能
+误把上一轮的完成状态当作当前轮，导致 consumer 在本轮 producer 或异步操作
+真正完成前访问数据。第三部分的 GEMM 章节会给出完整的 phase tracking 表。
 
 **Election。** ``T.ptx.elect_sync()`` 从一个 warp 的 active lanes 中选择
 **一个 lane**；它不一定选择 lane 0，也不是每个 CTA 选择一个 thread。如果
@@ -92,8 +92,8 @@ kernel 使用 ``if warp_id == 0:`` 加 ``if T.ptx.elect_sync():`` 发出
 角色分支后，不能把 ``cta_sync()`` 放进其中一个 warpgroup 的分支，否则其他
 warpgroups 无法到达，kernel 会 deadlock。硬件提供 16 个 named barriers
 （ID 0 到 15）；``T.cuda.warpgroup_sync(10)`` 只同步一个 warpgroup 的
-threads。不同 warpgroups 使用不同 ID，例如
-``warpgroup_sync(wg_id + 10)``，避免共享同一个 hardware barrier。第三部分
+threads。可能同时处于 active 状态的独立同步必须使用不同 ID，例如
+``warpgroup_sync(wg_id + 10)``；前一次同步完成后，ID 可以再次使用。第三部分
 的 warp-specialized GEMM 会展示完整用法。
 
 **Fence。** Fence 保证 producer 的写入先于 consumer（通常是异步 engine）

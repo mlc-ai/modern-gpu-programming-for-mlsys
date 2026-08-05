@@ -199,7 +199,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -421,7 +421,7 @@
 <p>这个 kernel 只沿 <code class="docutils literal notranslate"><span class="pre">GMEM</span> <span class="pre">-&gt;</span> <span class="pre">SMEM</span> <span class="pre">-&gt;</span> <span class="pre">TMEM</span> <span class="pre">-&gt;</span> <span class="pre">registers</span> <span class="pre">-&gt;</span> <span class="pre">GMEM</span></code> 路径执行一次，不包含循环。具体步骤如下：</p>
 <ol class="arabic simple">
 <li><p><strong>分配</strong>：通过 pool allocator 分配 SMEM，通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 分配 TMEM，并准备等待 MMA 完成的 mbarrier。</p></li>
-<li><p><strong>加载</strong>：128 个 threads 使用同步 <code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code>，协作将 A、B tiles 从 GMEM 搬到 SMEM。</p></li>
+<li><p><strong>加载</strong>：128 个 threads 使用同步 <code class="docutils literal notranslate"><span class="pre">Tx.cta.copy</span></code>，协作将 A、B tiles 从 GMEM 搬到 SMEM。</p></li>
 <li><p><strong>计算</strong>：选出的一个 thread 发出 <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>，所有 threads 等待 mbarrier。</p></li>
 <li><p><strong>写回</strong>：warpgroup 将 TMEM 读入 registers；每个 thread 把 fp32 转成 fp16，再写入 GMEM。</p></li>
 <li><p><strong>释放</strong>：释放 TMEM。</p></li>
@@ -507,9 +507,8 @@
     <span class="n">acc_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float32&quot;</span><span class="p">)</span>
 
     <span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">,</span> <span class="n">BLK_K</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">64</span>
-    <span class="c1"># MMA_M/MMA_N/MMA_K document the underlying hardware MMA tile; they are not</span>
-    <span class="c1"># passed to gemm_async (which derives the MMA shape from the operand and</span>
-    <span class="c1"># accumulator tiles), so the later steps omit them.</span>
+    <span class="c1"># MMA_M/MMA_N/MMA_K 记录底层硬件 MMA tile 的 shape。gemm_async 会根据</span>
+    <span class="c1"># operands 和 accumulator tiles 推导该 shape，因此后续步骤不再保留这些常量。</span>
     <span class="n">MMA_M</span><span class="p">,</span> <span class="n">MMA_N</span><span class="p">,</span> <span class="n">MMA_K</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">16</span>
 
     <span class="n">A_layout</span> <span class="o">=</span> <span class="n">tma_shared_layout</span><span class="p">(</span><span class="n">a_type</span><span class="p">,</span> <span class="n">SwizzleMode</span><span class="o">.</span><span class="n">SWIZZLE_128B_ATOM</span><span class="p">,</span> <span class="p">(</span><span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">))</span>
@@ -522,9 +521,8 @@
         <span class="n">D</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Buffer</span><span class="p">((</span><span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">),</span> <span class="n">d_type</span><span class="p">),</span>
     <span class="p">):</span>
         <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
-        <span class="c1"># Step 1 is a single-tile kernel: M = BLK_M and N = BLK_N, so the grid</span>
-        <span class="c1"># is 1x1. Starting with a 1x1 grid keeps the per-CTA tile offsets</span>
-        <span class="c1"># (m_st, n_st) trivially zero; Steps 3+ generalise this to larger M / N.</span>
+        <span class="c1"># 第 1 步只计算一个 tile：M=BLK_M、N=BLK_N，因此 grid shape 为 1x1。</span>
+        <span class="c1"># 此时每个 CTA 的 tile offsets（m_st、n_st）都为 0；第 3 步再扩展到更大的 M、N。</span>
         <span class="n">bx</span><span class="p">,</span> <span class="n">by</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="n">M</span> <span class="o">//</span> <span class="n">BLK_M</span><span class="p">,</span> <span class="n">N</span> <span class="o">//</span> <span class="n">BLK_N</span><span class="p">])</span>
         <span class="n">wg_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warpgroup_id</span><span class="p">([</span><span class="mi">1</span><span class="p">])</span>      <span class="c1"># single warpgroup, so wg_id is always 0 (unused below)</span>
         <span class="n">warp_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warp_id_in_wg</span><span class="p">([</span><span class="mi">4</span><span class="p">])</span>
@@ -558,14 +556,14 @@
         <span class="n">n_st</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">by</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>
         <span class="n">phase_mma</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">int32</span> <span class="o">=</span> <span class="mi">0</span>
 
-        <span class="c1"># --- Load: all threads copy global -&gt; shared (synchronous).</span>
-        <span class="c1"># With M=BLK_M and N=BLK_N the slices below cover the full matrices;</span>
-        <span class="c1"># the slice form is kept so the diff to Step 3 (multi-tile) is minimal.</span>
+        <span class="c1"># --- Load：所有 threads 同步完成 global -&gt; shared copy ---</span>
+        <span class="c1"># M=BLK_M、N=BLK_N 时，下面的 slices 覆盖完整矩阵；保留 slice 写法，</span>
+        <span class="c1"># 便于与第 3 步的 multi-tile 版本比较。</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">A</span><span class="p">[</span><span class="n">m_st</span><span class="p">:</span><span class="n">m_st</span> <span class="o">+</span> <span class="n">BLK_M</span><span class="p">,</span> <span class="p">:])</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">B</span><span class="p">[</span><span class="n">n_st</span><span class="p">:</span><span class="n">n_st</span> <span class="o">+</span> <span class="n">BLK_N</span><span class="p">,</span> <span class="p">:])</span>
         <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
 
-        <span class="c1"># --- Compute: single elected thread issues MMA ---</span>
+        <span class="c1"># --- Compute：由一个 elected thread 发起 MMA ---</span>
         <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
             <span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span>
@@ -576,7 +574,7 @@
 
         <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">phase_mma</span><span class="p">)</span>
 
-        <span class="c1"># --- Writeback: TMEM -&gt; RF -&gt; GMEM ---</span>
+        <span class="c1"># --- Writeback：TMEM -&gt; RF -&gt; GMEM ---</span>
         <span class="n">Dreg</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">acc_type</span><span class="p">)</span>
         <span class="n">Dreg_f16</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">d_type</span><span class="p">)</span>
         <span class="n">Dreg_wg</span> <span class="o">=</span> <span class="n">Dreg</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">,</span>
@@ -587,7 +585,7 @@
         <span class="n">m_thr</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">m_st</span> <span class="o">+</span> <span class="n">warp_id</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">+</span> <span class="n">lane_id</span><span class="p">)</span>
         <span class="n">Tx</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">D</span><span class="p">[</span><span class="n">m_thr</span><span class="p">,</span> <span class="n">n_st</span> <span class="p">:</span> <span class="n">n_st</span> <span class="o">+</span> <span class="n">BLK_N</span><span class="p">],</span> <span class="n">Dreg_f16</span><span class="p">[:])</span>
 
-        <span class="c1"># --- Deallocate TMEM ---</span>
+        <span class="c1"># --- 释放 TMEM ---</span>
         <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
         <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
             <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">relinquish_alloc_permit</span><span class="p">(</span><span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
@@ -613,18 +611,18 @@
 <span class="n">B_tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
 <span class="n">D_tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
 
-<span class="c1"># ex.mod(...) takes torch tensors directly, the same call form used in every chapter.</span>
+<span class="c1"># ex.mod(...) 可以直接接收 torch tensors；后续章节沿用相同的调用方式。</span>
 <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="p">(</span><span class="n">A_tensor</span><span class="p">,</span> <span class="n">B_tensor</span><span class="p">,</span> <span class="n">D_tensor</span><span class="p">)</span>
 
 <span class="n">D_ref</span> <span class="o">=</span> <span class="p">(</span><span class="n">A_tensor</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">@</span> <span class="n">B_tensor</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">T</span><span class="p">)</span><span class="o">.</span><span class="n">half</span><span class="p">()</span>
 <span class="n">max_err</span> <span class="o">=</span> <span class="nb">float</span><span class="p">((</span><span class="n">D_tensor</span> <span class="o">-</span> <span class="n">D_ref</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">())</span>
 <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Max error vs torch reference: </span><span class="si">{</span><span class="n">max_err</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
-<span class="c1"># Relative tolerance, like the warp-specialization and Flash Attention cells:</span>
-<span class="c1"># output magnitude grows with K, so a fixed absolute bound would fail at larger K.</span>
+<span class="c1"># 与 warp specialization 和 Flash Attention 的示例一样，这里使用相对容差：</span>
+<span class="c1"># output magnitude 会随 K 增长，固定的绝对误差上限不适用于较大的 K。</span>
 <span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">D_tensor</span><span class="p">,</span> <span class="n">D_ref</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="mf">2e-2</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-2</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;PASS&quot;</span><span class="p">)</span>
 
-<span class="c1"># Optional timing for larger kernels.</span>
+<span class="c1"># 对更大 kernel 进行可选计时。</span>
 <span class="n">ITERS</span> <span class="o">=</span> <span class="mi">10</span>
 <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
     <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="p">(</span><span class="n">A_tensor</span><span class="p">,</span> <span class="n">B_tensor</span><span class="p">,</span> <span class="n">D_tensor</span><span class="p">)</span>
@@ -733,7 +731,7 @@
         <span class="n">D</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Buffer</span><span class="p">((</span><span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">),</span> <span class="n">d_type</span><span class="p">),</span>
     <span class="p">):</span>
         <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
-        <span class="n">bx</span><span class="p">,</span> <span class="n">by</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="n">M</span> <span class="o">//</span> <span class="n">BLK_M</span><span class="p">,</span> <span class="n">N</span> <span class="o">//</span> <span class="n">BLK_N</span><span class="p">])</span>  <span class="c1"># still one output tile (M=N=128)</span>
+        <span class="n">bx</span><span class="p">,</span> <span class="n">by</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="n">M</span> <span class="o">//</span> <span class="n">BLK_M</span><span class="p">,</span> <span class="n">N</span> <span class="o">//</span> <span class="n">BLK_N</span><span class="p">])</span>  <span class="c1"># 仍然只有一个 output tile（M=N=128）</span>
         <span class="n">wg_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warpgroup_id</span><span class="p">([</span><span class="mi">1</span><span class="p">])</span>
         <span class="n">warp_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warp_id_in_wg</span><span class="p">([</span><span class="mi">4</span><span class="p">])</span>
         <span class="n">lane_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">lane_id</span><span class="p">([</span><span class="mi">32</span><span class="p">])</span>
@@ -763,26 +761,26 @@
         <span class="n">m_st</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">bx</span> <span class="o">*</span> <span class="n">BLK_M</span><span class="p">)</span>
         <span class="n">n_st</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">by</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>
 
-        <span class="c1"># === K-loop: iterate over K in chunks of BLK_K ===</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>   <span class="c1"># serial device loop (keeps the full-K A/B parameters correctly shaped)</span>
-            <span class="c1"># Load the i-th K chunk</span>
+        <span class="c1"># === K-loop：以 BLK_K 为单位遍历 K ===</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>   <span class="c1"># device 侧串行 loop；A、B parameters 仍保留完整 K 维</span>
+            <span class="c1"># 加载第 i 个 K chunk</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">A</span><span class="p">[:,</span> <span class="n">i</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">:(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">])</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">B</span><span class="p">[:,</span> <span class="n">i</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">:(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">])</span>
 
             <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
 
-            <span class="c1"># MMA: accum=False for first tile, True for rest</span>
+            <span class="c1"># 第一个 tile 使用 accum=False，后续 tiles 使用 accum=True</span>
             <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
                 <span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
                     <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span><span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">],</span> <span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span>
                                   <span class="n">accum</span><span class="o">=</span><span class="p">(</span><span class="n">i</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">),</span> <span class="n">dispatch</span><span class="o">=</span><span class="s2">&quot;tcgen05&quot;</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
                     <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">commit</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 
-            <span class="c1"># Wait for MMA, then flip phase</span>
+            <span class="c1"># 等待 MMA 完成，再翻转 phase</span>
             <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">phase_mma</span><span class="p">)</span>
             <span class="n">phase_mma</span> <span class="o">^=</span> <span class="mi">1</span>
 
-        <span class="c1"># === Writeback (same as Step 1) ===</span>
+        <span class="c1"># === Writeback（与第 1 步相同）===</span>
         <span class="n">Dreg</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">acc_type</span><span class="p">)</span>
         <span class="n">Dreg_f16</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">d_type</span><span class="p">)</span>
         <span class="n">Dreg_wg</span> <span class="o">=</span> <span class="n">Dreg</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">,</span>
@@ -901,12 +899,12 @@ B[n_st : n_st + BLK_N, k : k + BLK_K]
 
         <span class="n">phase_mma</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">int32</span> <span class="o">=</span> <span class="mi">0</span>
 
-        <span class="c1"># Per-CTA tile offsets</span>
+        <span class="c1"># 当前 CTA 的 tile offsets</span>
         <span class="n">m_st</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">bx</span> <span class="o">*</span> <span class="n">BLK_M</span><span class="p">)</span>
         <span class="n">n_st</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">by</span> <span class="o">*</span> <span class="n">BLK_N</span><span class="p">)</span>
 
-        <span class="c1"># K-loop with offset A and B slices</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>   <span class="c1"># serial device loop (keeps the full-K A/B parameters correctly shaped)</span>
+        <span class="c1"># K-loop：加载带 offset 的 A、B slices</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">K_TILES</span><span class="p">):</span>   <span class="c1"># device 侧串行 loop；A、B parameters 仍保留完整 K 维</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">A</span><span class="p">[</span><span class="n">m_st</span><span class="p">:</span><span class="n">m_st</span><span class="o">+</span><span class="n">BLK_M</span><span class="p">,</span> <span class="n">i</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">:(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">])</span>
             <span class="n">Tx</span><span class="o">.</span><span class="n">cta</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">B</span><span class="p">[</span><span class="n">n_st</span><span class="p">:</span><span class="n">n_st</span><span class="o">+</span><span class="n">BLK_N</span><span class="p">,</span> <span class="n">i</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">:(</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="n">BLK_K</span><span class="p">])</span>
 
@@ -921,7 +919,7 @@ B[n_st : n_st + BLK_N, k : k + BLK_K]
             <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">phase_mma</span><span class="p">)</span>
             <span class="n">phase_mma</span> <span class="o">^=</span> <span class="mi">1</span>
 
-        <span class="c1"># Writeback to the correct output tile</span>
+        <span class="c1"># 写回当前 CTA 对应的 output tile</span>
         <span class="n">Dreg</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">acc_type</span><span class="p">)</span>
         <span class="n">Dreg_f16</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="n">d_type</span><span class="p">)</span>
         <span class="n">Dreg_wg</span> <span class="o">=</span> <span class="n">Dreg</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">,</span>
@@ -947,7 +945,7 @@ B[n_st : n_st + BLK_N, k : k + BLK_K]
 <section id="id6">
 <h2>练习<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
 <ol class="arabic simple">
-<li><p>在第 1 至第 3 步中，<code class="docutils literal notranslate"><span class="pre">Tx.copy</span></code> 会在 MMA 之前将 A、B tiles 搬入 SMEM。为什么 <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 读取这些 tiles 前必须执行 <code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code>？</p></li>
+<li><p>在第 1 至第 3 步中，<code class="docutils literal notranslate"><span class="pre">Tx.cta.copy</span></code> 会在 MMA 之前将 A、B tiles 搬入 SMEM。为什么 <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 读取这些 tiles 前必须执行 <code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code>？</p></li>
 <li><p>在第 2 步中，如果从 K-loop 删除 <code class="docutils literal notranslate"><span class="pre">phase_mma</span> <span class="pre">^=</span> <span class="pre">1</span></code>，会发生什么？Kernel 仍会等待每次 MMA，还是后续 wait 可能提前通过？</p></li>
 <li><p>当 <code class="docutils literal notranslate"><span class="pre">M=N=4096</span></code>、<code class="docutils literal notranslate"><span class="pre">BLK_M=BLK_N=128</span></code> 时，第 3 步的 grid shape 是多少，共启动多少个 CTAs？对于 CTA <code class="docutils literal notranslate"><span class="pre">(bx,</span> <span class="pre">by)</span></code>，哪些 CTAs 会独立读取相同的 A tiles，哪些会独立读取相同的 B tiles？当前 kernel 是否显式共享了这些数据？</p></li>
 </ol>

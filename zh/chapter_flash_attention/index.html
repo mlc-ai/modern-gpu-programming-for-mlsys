@@ -199,7 +199,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -390,12 +390,12 @@
 <p><span class="math notranslate nohighlight">\(q_i\)</span> 和 <span class="math notranslate nohighlight">\(k_j\)</span> 的点积得到位置 <span class="math notranslate nohighlight">\((i,j)\)</span> 上的标量 score：</p>
 <div class="math notranslate nohighlight">
 \[s_{ij}=q_i\cdot k_j\]</div>
-<p>固定第 <span class="math notranslate nohighlight">\(i\)</span> 个 query vector <span class="math notranslate nohighlight">\(q_i\)</span> 后，让它分别与所有 key vectors <span class="math notranslate nohighlight">\(k_j\)</span> 做点积，就得到这一行的 scores <span class="math notranslate nohighlight">\(s_{ij}\)</span>。这些 scores 组成 score matrix <span class="math notranslate nohighlight">\(S=QK^\top\)</span> 的第 <span class="math notranslate nohighlight">\(i\)</span> 行。基础 online softmax 先取这一行的最大值，作为计算指数时的参考值：</p>
+<p>固定第 <span class="math notranslate nohighlight">\(i\)</span> 个 query vector <span class="math notranslate nohighlight">\(q_i\)</span> 后，让它分别与所有 key vectors <span class="math notranslate nohighlight">\(k_j\)</span> 做点积，就得到这一行的 scores <span class="math notranslate nohighlight">\(s_{ij}\)</span>。这些 scores 组成 score matrix <span class="math notranslate nohighlight">\(S=QK^\top\)</span> 的第 <span class="math notranslate nohighlight">\(i\)</span> 行。把这一行真实的最大 score 记为 <span class="math notranslate nohighlight">\(m_i^{\max}\)</span>：</p>
 <div class="math notranslate nohighlight">
-\[m_i=\max_j s_{ij}\]</div>
-<p>计算指数前统一减去 <span class="math notranslate nohighlight">\(m_i\)</span>，可以让这一行最大的指数输入变成 0，避免指数值过大。这项平移会同时作用于 softmax 的分子和分母，因此不会改变最终的归一化结果。每个位置的未归一化 attention weight 为：</p>
+\[m_i^{\max}=\max_j s_{ij}\]</div>
+<p>基础的稳定 softmax 会用 <span class="math notranslate nohighlight">\(m_i^{\max}\)</span> 作为指数参考值。计算指数前统一减去它，可以让这一行最大的指数输入变成 0，避免指数值过大。这项平移会同时作用于 softmax 的分子和分母，因此不会改变最终的归一化结果。每个位置的未归一化 attention weight 为：</p>
 <div class="math notranslate nohighlight">
-\[p_{ij}=\exp\left(\frac{s_{ij}-m_i}{\sqrt d}\right)\]</div>
+\[p_{ij}=\exp\left(\frac{s_{ij}-m_i^{\max}}{\sqrt d}\right)\]</div>
 <p>将这一行的所有 <span class="math notranslate nohighlight">\(p_{ij}\)</span> 相加，得到未归一化权重之和 <span class="math notranslate nohighlight">\(\ell_i\)</span>。再用同一组 <span class="math notranslate nohighlight">\(p_{ij}\)</span> 对 value vectors 加权求和，得到尚未除以 <span class="math notranslate nohighlight">\(\ell_i\)</span> 的 output vector <span class="math notranslate nohighlight">\(o_i\)</span>：</p>
 <div class="math notranslate nohighlight">
 \[\ell_i=\sum_j p_{ij}\]</div>
@@ -404,7 +404,7 @@
 <p>最终输出为：</p>
 <div class="math notranslate nohighlight">
 \[O_i=\frac{o_i}{\ell_i}\]</div>
-<p>FlashAttention 按 block 处理 K/V。一个 block 的 scores 使用完后就可以丢弃，后续计算只需要保留当前的 <span class="math notranslate nohighlight">\(m_i\)</span>、<span class="math notranslate nohighlight">\(\ell_i\)</span> 和 <span class="math notranslate nohighlight">\(o_i\)</span>。其中，<span class="math notranslate nohighlight">\(\ell_i\)</span> 和 <span class="math notranslate nohighlight">\(o_i\)</span> 都是使用当时的参考值 <span class="math notranslate nohighlight">\(m_i\)</span> 计算并累积的。因此，后续 block 一旦改用更大的参考值，旧状态就必须先换算到新尺度，才能与当前 block 的贡献相加。</p>
+<p>FlashAttention 按 block 处理 K/V。一个 block 的 scores 使用完后就可以丢弃；kernel 只需为每一行保留指数参考值 <span class="math notranslate nohighlight">\(r_i\)</span>、running denominator <span class="math notranslate nohighlight">\(\ell_i\)</span> 和 running weighted sum <span class="math notranslate nohighlight">\(o_i\)</span>。基础 online softmax 会把 <span class="math notranslate nohighlight">\(r_i\)</span> 更新为截至当前最大的 score，而 FA4 可以暂时保留旧值。<span class="math notranslate nohighlight">\(\ell_i\)</span> 和 <span class="math notranslate nohighlight">\(o_i\)</span> 都是相对于当前 <span class="math notranslate nohighlight">\(r_i\)</span> 累加的，因此后续 block 一旦改用更大的参考值，旧状态就必须先换算到新尺度，才能与当前 block 的贡献相加。</p>
 <p>基础 online softmax 每次发现更大的逐行最大值都会完成这次换算。FA4 则先比较新旧参考值的差距：差距较小时继续使用旧值，从而避免立即重缩放已经累积的 output。要理解这项优化，先把参考值变化时的尺度转换写清楚。</p>
 <p>代码使用 base-2 exponential，因此先定义：</p>
 <div class="math notranslate nohighlight">
@@ -412,28 +412,28 @@
 <p>于是自然指数可以改写为：</p>
 <div class="math notranslate nohighlight">
 \[\exp\left(\frac{s-m}{\sqrt d}\right)=2^{(s-m)\alpha}\]</div>
-<p>代码将 <span class="math notranslate nohighlight">\(\alpha\)</span> 记为 <code class="docutils literal notranslate"><span class="pre">scale_log2</span></code>。设旧状态使用参考值 <span class="math notranslate nohighlight">\(m_{\mathrm{old}}\)</span>，当前 block 的逐行最大值为 <span class="math notranslate nohighlight">\(m_{\mathrm{block}}\)</span>。用下标 <span class="math notranslate nohighlight">\(c\)</span> 表示 candidate，本轮可选的新参考值为：</p>
+<p>代码将 <span class="math notranslate nohighlight">\(\alpha\)</span> 记为 <code class="docutils literal notranslate"><span class="pre">scale_log2</span></code>。设旧状态使用参考值 <span class="math notranslate nohighlight">\(r_{\mathrm{old}}\)</span>，当前 block 的逐行最大值为 <span class="math notranslate nohighlight">\(m_{\mathrm{block}}\)</span>。用下标 <span class="math notranslate nohighlight">\(c\)</span> 表示 candidate，本轮可选的新参考值为：</p>
 <div class="math notranslate nohighlight">
-\[m_c=\max(m_{\mathrm{old}},m_{\mathrm{block}})\]</div>
+\[r_c=\max(r_{\mathrm{old}},m_{\mathrm{block}})\]</div>
 <p>再定义二者在 base-2 exponent 中的有符号差距 <span class="math notranslate nohighlight">\(\delta\)</span>，它对应代码变量 <code class="docutils literal notranslate"><span class="pre">delta</span></code>：</p>
 <div class="math notranslate nohighlight">
-\[\delta=(m_{\mathrm{old}}-m_c)\alpha\le 0\]</div>
-<p><span class="math notranslate nohighlight">\(\delta\)</span> 是旧参考值减去候选参考值后的有符号结果；<span class="math notranslate nohighlight">\(-\delta\)</span> 才表示候选参考值高出了多少个 base-2 exponent units。由于 <span class="math notranslate nohighlight">\(m_c\ge m_{\mathrm{old}}\)</span>，<span class="math notranslate nohighlight">\(\delta\)</span> 不会大于 0。</p>
+\[\delta=(r_{\mathrm{old}}-r_c)\alpha\le 0\]</div>
+<p><span class="math notranslate nohighlight">\(\delta\)</span> 是旧参考值减去候选参考值后的有符号结果；<span class="math notranslate nohighlight">\(-\delta\)</span> 才表示候选参考值高出了多少个 base-2 exponent units。由于 <span class="math notranslate nohighlight">\(r_c\ge r_{\mathrm{old}}\)</span>，<span class="math notranslate nohighlight">\(\delta\)</span> 不会大于 0。</p>
 <p>在 <a class="reference external" href="https://arxiv.org/abs/2603.05451">FA4 论文</a>中，阈值通常取 <span class="math notranslate nohighlight">\(\tau=\log_2(256)=8\)</span>。当 <span class="math notranslate nohighlight">\(-\delta=8\)</span> 时，继续使用旧参考值会让当前 block 的最大未归一化权重达到 <span class="math notranslate nohighlight">\(2^8=256\)</span>；若切换到候选参考值，旧状态则要乘 <span class="math notranslate nohighlight">\(2^\delta=1/256\)</span>。因此，阈值 8 表示允许新旧尺度相差最多 256 倍，超过后才执行重缩放：<code class="docutils literal notranslate"><span class="pre">delta</span> <span class="pre">&gt;=</span> <span class="pre">-8</span></code> 时保留旧参考值，<code class="docutils literal notranslate"><span class="pre">delta</span> <span class="pre">&lt;</span> <span class="pre">-8</span></code> 时切换参考值。这种通过阈值延迟重缩放的做法，是 FA4 为减少 correction 的数据搬运和乘法开销而引入的执行优化；取值 8 则在减少重缩放次数和限制指数增长之间作了折中。</p>
-<p>如果本轮改用候选参考值 <span class="math notranslate nohighlight">\(m_c\)</span>，此前相对于旧参考值计算的每个指数都要乘同一个系数：</p>
+<p>如果本轮改用候选参考值 <span class="math notranslate nohighlight">\(r_c\)</span>，此前相对于旧参考值计算的每个指数都要乘同一个系数：</p>
 <div class="math notranslate nohighlight">
-\[e^{(s-m_c)/\sqrt d}
-=e^{(s-m_{\mathrm{old}})/\sqrt d}
-\cdot e^{(m_{\mathrm{old}}-m_c)/\sqrt d}\]</div>
+\[e^{(s-r_c)/\sqrt d}
+=e^{(s-r_{\mathrm{old}})/\sqrt d}
+\cdot e^{(r_{\mathrm{old}}-r_c)/\sqrt d}\]</div>
 <p>将这个尺度转换系数记为 <span class="math notranslate nohighlight">\(a_{\mathrm{scale}}\)</span>，则：</p>
 <div class="math notranslate nohighlight">
 \[a_{\mathrm{scale}}
-=e^{(m_{\mathrm{old}}-m_c)/\sqrt d}
+=e^{(r_{\mathrm{old}}-r_c)/\sqrt d}
 =2^\delta\]</div>
-<p>切换到候选参考值 <span class="math notranslate nohighlight">\(m_c\)</span> 后，之前累积的归一化分母 <span class="math notranslate nohighlight">\(\ell_i\)</span> 和未归一化加权和 <span class="math notranslate nohighlight">\(o_i\)</span> 仍处于旧尺度。Kernel 先将两者同时乘以 <span class="math notranslate nohighlight">\(a_{\mathrm{scale}}=2^\delta\)</span>，转换到新尺度，再与当前 block 的结果相加。下面映射到伪代码时，<span class="math notranslate nohighlight">\(\ell_i\)</span> 和 <span class="math notranslate nohighlight">\(o_i\)</span> 分别记为 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 和 <code class="docutils literal notranslate"><span class="pre">O</span></code>，转换系数则由 <code class="docutils literal notranslate"><span class="pre">acc_scale</span> <span class="pre">=</span> <span class="pre">exp2(delta)</span></code> 计算。</p>
+<p>切换到候选参考值 <span class="math notranslate nohighlight">\(r_c\)</span> 后，之前累积的归一化分母 <span class="math notranslate nohighlight">\(\ell_i\)</span> 和未归一化加权和 <span class="math notranslate nohighlight">\(o_i\)</span> 仍处于旧尺度。Kernel 先将两者同时乘以 <span class="math notranslate nohighlight">\(a_{\mathrm{scale}}=2^\delta\)</span>，转换到新尺度，再与当前 block 的结果相加。下面映射到伪代码时，<span class="math notranslate nohighlight">\(\ell_i\)</span> 和 <span class="math notranslate nohighlight">\(o_i\)</span> 分别记为 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 和 <code class="docutils literal notranslate"><span class="pre">O</span></code>，转换系数则由 <code class="docutils literal notranslate"><span class="pre">acc_scale</span> <span class="pre">=</span> <span class="pre">exp2(delta)</span></code> 计算。</p>
 <p>对应到下面的伪代码，需要跨 K/V blocks 保留的三项状态分别是：</p>
 <ul class="simple">
-<li><p><code class="docutils literal notranslate"><span class="pre">row_max</span></code>：计算指数时从这一行所有 scores 中共同减去的参考值，也就是 <span class="math notranslate nohighlight">\(m_i\)</span>。基础算法使用当前最大 score；FA4 在阈值允许时可以继续使用旧值。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">row_max</span></code>：计算指数时从这一行所有 scores 中减去的参考值 <span class="math notranslate nohighlight">\(r_i\)</span>。基础 online softmax 使用截至当前最大的 score；FA4 在阈值允许时可以继续使用旧参考值。因此，尽管变量名是 <code class="docutils literal notranslate"><span class="pre">row_max</span></code>，它并不保证在每个 iteration 都等于真实最大值 <span class="math notranslate nohighlight">\(m_i^{\max}\)</span>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">row_sum</span></code>：已经处理过的所有 key positions 的 <span class="math notranslate nohighlight">\(p_{ij}\)</span> 之和，也就是 <span class="math notranslate nohighlight">\(\ell_i\)</span>。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">O</span></code>：使用同一组 <span class="math notranslate nohighlight">\(p_{ij}\)</span> 得到的加权和 <span class="math notranslate nohighlight">\(o_i\)</span>；所有 blocks 处理完成后再除以 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code>。</p></li>
 </ul>
@@ -1142,7 +1142,7 @@ value P0*V[n-2]
     <span class="c1"># 当前 warp：TMEM -&gt; registers -&gt; multiply -&gt; TMEM</span>
     <span class="o">...</span>
 
-<span class="c1"># correction loop 交错归还另一个 Q stage</span>
+<span class="c1"># correction loop 在此归还另一个 Q stage</span>
 <span class="n">p_o_rescale</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="n">i_q</span><span class="p">)</span>
 <span class="n">softmax_corr</span><span class="o">.</span><span class="n">empty</span><span class="o">.</span><span class="n">arrive</span><span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">i_q</span><span class="p">)</span>
 </pre></div>
@@ -1231,7 +1231,7 @@ q_head        = kv_head_idx * GQA_RATIO + q_head_offset
     <span class="n">m_block_idx</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">m_block_idx</span>
     <span class="n">batch_idx</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">batch_idx</span>
     <span class="n">kv_head_idx</span> <span class="o">=</span> <span class="n">scheduler</span><span class="o">.</span><span class="n">head_idx</span>
-    <span class="c1"># process one Q block against its K/V block range</span>
+    <span class="c1"># 使用对应范围内的 K/V blocks 处理一个 Q block</span>
     <span class="n">scheduler</span><span class="o">.</span><span class="n">next_tile</span><span class="p">()</span>
 </pre></div>
 </div>
@@ -1273,7 +1273,7 @@ q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">,</span> <span class="n">O</span><span class="p">,</span> <span class="n">prof</span><span class="p">)</span>
 <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
 
-<span class="c1"># torch reference; enable_gqa lets the 32 query heads share the 8 KV heads</span>
+<span class="c1"># torch reference；enable_gqa 允许 32 个 query heads 共享 8 个 KV heads</span>
 <span class="n">qt</span><span class="p">,</span> <span class="n">kt</span><span class="p">,</span> <span class="n">vt</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="p">(</span><span class="n">Q</span><span class="p">,</span> <span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">))</span>
 <span class="n">ref</span> <span class="o">=</span> <span class="n">F</span><span class="o">.</span><span class="n">scaled_dot_product_attention</span><span class="p">(</span><span class="n">qt</span><span class="p">,</span> <span class="n">kt</span><span class="p">,</span> <span class="n">vt</span><span class="p">,</span> <span class="n">enable_gqa</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span><span class="o">.</span><span class="n">half</span><span class="p">()</span>
 <span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">O</span><span class="p">,</span> <span class="n">ref</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="mf">1e-2</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-2</span><span class="p">)</span>

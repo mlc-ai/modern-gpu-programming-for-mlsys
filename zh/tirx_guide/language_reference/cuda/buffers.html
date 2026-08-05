@@ -197,7 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -542,10 +542,10 @@ dynamic shared memory allocation。Static shared memory 的大小在编译期
 kernel 的 <code class="docutils literal notranslate"><span class="pre">tirx.kernel_launch_params</span></code> 中加入
 <code class="docutils literal notranslate"><span class="pre">&quot;tirx.use_dyn_shared_memory&quot;</span></code> tag。Host launcher 计算总 byte 数，并将
 它作为最后一个 launch argument：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># device kernel attribute:</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># device kernel 属性：</span>
 <span class="s2">&quot;tirx.kernel_launch_params&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="s2">&quot;tirx.use_dyn_shared_memory&quot;</span><span class="p">]</span>
 
-<span class="c1"># host-side launch call  (..., gridDim.x, blockDim.x, dyn_shared_bytes):</span>
+<span class="c1"># host 侧 launch 调用（..., gridDim.x, blockDim.x, dyn_shared_bytes）：</span>
 <span class="n">T</span><span class="o">.</span><span class="n">call_packed</span><span class="p">(</span><span class="s2">&quot;dyn_kernel&quot;</span><span class="p">,</span> <span class="n">A</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">B</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">C</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>
 </pre></div>
 </div>
@@ -560,12 +560,12 @@ allocation 的大小推导得到。</p>
 不需要手工 <code class="docutils literal notranslate"><span class="pre">decl</span></code> 每个 view。除了 <code class="docutils literal notranslate"><span class="pre">alloc</span></code> 和 <code class="docutils literal notranslate"><span class="pre">commit</span></code>，它还支持
 per-buffer <code class="docutils literal notranslate"><span class="pre">align=</span></code>、创建 MMA-compatible swizzle layout 的 <code class="docutils literal notranslate"><span class="pre">alloc_mma</span></code>
 helper，以及将 cursor 回退以复用空间的 <code class="docutils literal notranslate"><span class="pre">move_base_to</span></code>：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>                          <span class="c1"># bump allocator over shared.dyn</span>
-<span class="n">As</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BK</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>   <span class="c1"># carve a tile</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>                          <span class="c1"># shared.dyn 上的 bump allocator</span>
+<span class="n">As</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BK</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>   <span class="c1"># 分配一个 tile</span>
 <span class="n">Bs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BK</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>
-<span class="n">Cs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc_mma</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">)</span>     <span class="c1"># MMA-compatible, swizzle inferred</span>
-<span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>                                 <span class="c1"># finalize the pool&#39;s size</span>
-<span class="c1"># pool.move_base_to(offset) rewinds the cursor to reuse space</span>
+<span class="n">Cs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc_mma</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">)</span>     <span class="c1"># 自动推导 MMA-compatible swizzle</span>
+<span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>                                 <span class="c1"># 确定 pool 的最终大小</span>
+<span class="c1"># pool.move_base_to(offset) 将 cursor 回退到可复用的位置</span>
 </pre></div>
 </div>
 <p>下方的 TMEM pool 建立在 <code class="docutils literal notranslate"><span class="pre">SMEMPool</span></code> 之上。</p>
@@ -573,13 +573,14 @@ helper，以及将 cursor 回退以复用空间的 <code class="docutils literal
 </section>
 <section id="registers">
 <h2>Registers<a class="headerlink" href="#registers" title="Link to this heading">#</a></h2>
-<p>Per-thread 临时数据位于 registers 中。使用
-<code class="docutils literal notranslate"><span class="pre">T.alloc_local(shape,</span> <span class="pre">dtype)``（即</span> <span class="pre">``scope=&quot;local&quot;</span></code>）分配；它只属于当前
-thread，并会生成保存在 registers 中的 local array。</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">r</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">4</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>   <span class="c1"># per-thread register array</span>
+<p>Per-thread 临时数据使用 <code class="docutils literal notranslate"><span class="pre">local</span></code> scope。通过
+<code class="docutils literal notranslate"><span class="pre">T.alloc_local(shape,</span> <span class="pre">dtype)</span></code> 分配后，这些数据只属于当前 thread。使用
+静态索引的 local arrays 通常会被 scalarize 到 registers；使用动态索引，或
+register pressure 较高时，也可能进入 local memory。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">r</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">4</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>   <span class="c1"># 每个 thread 私有的 register array</span>
 <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="mi">4</span><span class="p">):</span>
     <span class="n">r</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">k</span><span class="p">]</span>
-<span class="c1"># ... compute on r[0..3] ...</span>
+<span class="c1"># ... 使用 r[0..3] 计算 ...</span>
 </pre></div>
 </div>
 <div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">r_ptr</span><span class="p">[</span><span class="mi">4</span><span class="p">];</span><span class="w">          </span><span class="c1">// per-thread, register-resident</span>
@@ -605,7 +606,7 @@ natural alignment。</p>
 <h3>Scalar<a class="headerlink" href="#scalar" title="Link to this heading">#</a></h3>
 <p>Scalar 本质上是只有**一个元素**的 register array。可以直接分配大小为 1
 的 <code class="docutils literal notranslate"><span class="pre">local</span></code> buffer，并通过 <code class="docutils literal notranslate"><span class="pre">[0]</span></code> 访问：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">phase</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;int32&quot;</span><span class="p">)</span>   <span class="c1"># 1-element register array</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">phase</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;int32&quot;</span><span class="p">)</span>   <span class="c1"># 单元素 register array</span>
 <span class="n">phase</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
 <span class="k">while</span> <span class="n">phase</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
     <span class="n">acc</span> <span class="o">=</span> <span class="n">acc</span> <span class="o">+</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">phase</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span>
@@ -614,13 +615,13 @@ natural alignment。</p>
 </div>
 <p>每次都写 <code class="docutils literal notranslate"><span class="pre">phase[0]</span></code> 比较繁琐，因此 TIRx 提供 scalar 语法，表示同一个
 单元素 register buffer，并允许直接通过名称读写：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">phase</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">int32</span> <span class="o">=</span> <span class="mi">0</span>                 <span class="c1"># mutable scalar (sugar for the above)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">phase</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">int32</span> <span class="o">=</span> <span class="mi">0</span>                 <span class="c1"># mutable scalar，是上一种写法的语法糖</span>
 <span class="k">while</span> <span class="n">phase</span> <span class="o">&lt;</span> <span class="mi">4</span><span class="p">:</span>
     <span class="n">acc</span> <span class="o">=</span> <span class="n">acc</span> <span class="o">+</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">phase</span><span class="p">]</span>
     <span class="n">phase</span> <span class="o">+=</span> <span class="mi">1</span>
 
-<span class="n">s</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">local_scalar</span><span class="p">(</span><span class="s2">&quot;int32&quot;</span><span class="p">)</span>        <span class="c1"># explicit form; assign by name (s = ..., not s[0])</span>
-<span class="n">acc</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span> <span class="o">=</span> <span class="mf">0.0</span>               <span class="c1"># a type-annotated assignment also makes one</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">local_scalar</span><span class="p">(</span><span class="s2">&quot;int32&quot;</span><span class="p">)</span>        <span class="c1"># 显式形式；通过名称赋值，而不是 s[0]</span>
+<span class="n">acc</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span> <span class="o">=</span> <span class="mf">0.0</span>               <span class="c1"># 带类型注解的赋值也会创建 scalar</span>
 </pre></div>
 </div>
 <p>两种写法在 parse 后会得到结构完全相同的 TIRx。Parser 会将
@@ -628,7 +629,7 @@ natural alignment。</p>
 <code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">+=</span> <span class="pre">1</span></code> 解析为 <code class="docutils literal notranslate"><span class="pre">phase[0]</span></code> 和 <code class="docutils literal notranslate"><span class="pre">phase[0]</span> <span class="pre">+=</span> <span class="pre">1</span></code>。对两个 kernels
 调用 <code class="docutils literal notranslate"><span class="pre">tvm.ir.assert_structural_equal</span></code> 会通过；printer 甚至会把显式的
 <code class="docutils literal notranslate"><span class="pre">alloc_local</span></code> 加 <code class="docutils literal notranslate"><span class="pre">[0]</span></code> 重新输出为 scalar 语法。因此，parse 完成后两者
-没有区别，都会 lowering 为 <code class="docutils literal notranslate"><span class="pre">alignas(64)</span> <span class="pre">int</span> <span class="pre">phase_ptr[1];</span></code>。Scalar
+没有区别，都会生成 <code class="docutils literal notranslate"><span class="pre">alignas(64)</span> <span class="pre">int</span> <span class="pre">phase_ptr[1];</span></code>。Scalar
 只是省去了 <code class="docutils literal notranslate"><span class="pre">[0]</span></code>。<code class="docutils literal notranslate"><span class="pre">T.local_scalar</span></code>、<code class="docutils literal notranslate"><span class="pre">T.shared_scalar</span></code> 和
 <code class="docutils literal notranslate"><span class="pre">T.alloc_scalar</span></code> 可以显式选择 scope。</p>
 <div class="admonition note">
@@ -643,13 +644,13 @@ accumulator 中重复赋值，因此需要由能够反复 store 的单元素 buf
 <h3><code class="docutils literal notranslate"><span class="pre">let</span></code><a class="headerlink" href="#let" title="Link to this heading">#</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">T.let</span></code> 是 <strong>immutable</strong> binding，对应一个 <code class="docutils literal notranslate"><span class="pre">LetStmt</span></code>。它表示命名后的
 值，不是 buffer，适合保存派生常量：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">M</span> <span class="o">*</span> <span class="n">K</span>               <span class="c1"># immutable binding (LetStmt)</span>
-<span class="n">half</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span><span class="p">[</span><span class="n">T</span><span class="o">.</span><span class="n">int32</span><span class="p">]</span> <span class="o">=</span> <span class="n">N</span> <span class="o">//</span> <span class="mi">2</span>  <span class="c1"># ... with an explicit type</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">M</span> <span class="o">*</span> <span class="n">K</span>               <span class="c1"># immutable binding（LetStmt）</span>
+<span class="n">half</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span><span class="p">[</span><span class="n">T</span><span class="o">.</span><span class="n">int32</span><span class="p">]</span> <span class="o">=</span> <span class="n">N</span> <span class="o">//</span> <span class="mi">2</span>  <span class="c1"># 显式指定类型</span>
 </pre></div>
 </div>
 <p>它会生成普通的 C scalar variable，而不是 array，也不需要 <code class="docutils literal notranslate"><span class="pre">[0]</span></code>。例如，
 运行时变量 <code class="docutils literal notranslate"><span class="pre">m</span></code> 上的 <code class="docutils literal notranslate"><span class="pre">half:</span> <span class="pre">T.let</span> <span class="pre">=</span> <span class="pre">m</span> <span class="pre">*</span> <span class="pre">2</span></code> 会生成：</p>
-<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">half</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w">     </span><span class="c1">// the `let` -&gt; a const-like local</span>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">half</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">m</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w">     </span><span class="c1">// `let` 生成类似 const 的 local variable</span>
 </pre></div>
 </div>
 <p>由于值不会改变，simplifier 可以自由执行 propagation 和 common
@@ -681,15 +682,15 @@ intrinsics 显式申请和释放，再用
 只能通过 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 的 <code class="docutils literal notranslate"><span class="pre">mma</span></code>、<code class="docutils literal notranslate"><span class="pre">ld</span></code>、<code class="docutils literal notranslate"><span class="pre">st</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cp</span></code> 访问。</p>
 <p>手工管理时，一个 warp 将 allocation 地址写入 shared slot，再在不同 column
 offset 上 <code class="docutils literal notranslate"><span class="pre">decl</span></code> tensor views，结束时由一个 warp 释放：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">addr</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_shared</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>             <span class="c1"># slot for the allocated base</span>
-<span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="n">alloc_warp</span><span class="p">:</span>                         <span class="c1"># tcgen05.alloc is warp-uniform</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">addr</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_shared</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>             <span class="c1"># 保存 allocation base 的 slot</span>
+<span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="n">alloc_warp</span><span class="p">:</span>                         <span class="c1"># tcgen05.alloc 是 warp-uniform</span>
     <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">address_of</span><span class="p">(</span><span class="n">addr</span><span class="p">),</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
 <span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">((</span><span class="n">CTA_M</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span>
-                    <span class="n">allocated_addr</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">tmem_layout</span><span class="p">)</span>   <span class="c1"># view at column 0</span>
-<span class="c1"># ... use acc as a gemm_async / copy_async operand ...</span>
+                    <span class="n">allocated_addr</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">tmem_layout</span><span class="p">)</span>   <span class="c1"># column 0 处的 view</span>
+<span class="c1"># ... 将 acc 用作 gemm_async / copy_async operand ...</span>
 <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="n">alloc_warp</span><span class="p">:</span>
     <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">relinquish_alloc_permit</span><span class="p">(</span><span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
-    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">dealloc</span><span class="p">(</span><span class="n">addr</span><span class="p">,</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">dealloc</span><span class="p">(</span><span class="n">addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>此时 column offsets 和 <code class="docutils literal notranslate"><span class="pre">tmem_layout</span></code> （datapath D/F layout）都需要手工
@@ -698,13 +699,13 @@ offset 上 <code class="docutils literal notranslate"><span class="pre">decl</sp
 <h3>TMEMPool<a class="headerlink" href="#tmempool" title="Link to this heading">#</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">T.TMEMPool</span></code> 封装 warp-uniform alloc/dealloc、column bump allocation 和
 datapath layout：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>          <span class="c1"># pool = the kernel&#39;s smem pool</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>          <span class="c1"># pool 是 kernel 的 SMEM pool</span>
 <span class="n">tmem_pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">TMEMPool</span><span class="p">(</span><span class="n">pool</span><span class="p">,</span> <span class="n">total_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="n">cta_group</span><span class="p">,</span>
                        <span class="n">tmem_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">)</span>
-<span class="n">acc</span> <span class="o">=</span> <span class="n">tmem_pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">CTA_M</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>  <span class="c1"># allocated_addr set for you</span>
-<span class="n">tmem_pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>                               <span class="c1"># emits tcgen05.alloc (one warp)</span>
-<span class="c1"># ... use acc ...</span>
-<span class="n">tmem_pool</span><span class="o">.</span><span class="n">dealloc</span><span class="p">()</span>                              <span class="c1"># emits tcgen05.dealloc (one warp)</span>
+<span class="n">acc</span> <span class="o">=</span> <span class="n">tmem_pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">CTA_M</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>  <span class="c1"># 自动设置 allocated_addr</span>
+<span class="n">tmem_pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>                               <span class="c1"># 由一个 warp 发出 tcgen05.alloc</span>
+<span class="c1"># ... 使用 acc ...</span>
+<span class="n">tmem_pool</span><span class="o">.</span><span class="n">dealloc</span><span class="p">()</span>                              <span class="c1"># 由一个 warp 发出 tcgen05.dealloc</span>
 </pre></div>
 </div>
 <p>完整示例见第三部分的 GEMM kernels。</p>

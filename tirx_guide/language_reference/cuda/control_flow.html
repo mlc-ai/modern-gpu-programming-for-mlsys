@@ -402,8 +402,8 @@
                   
   <section id="control-flow">
 <h1>Control flow<a class="headerlink" href="#control-flow" title="Link to this heading">#</a></h1>
-<p>Control flow is <code class="docutils literal notranslate"><span class="pre">if</span></code>, the loop family, and <code class="docutils literal notranslate"><span class="pre">while</span></code> — each maps to the obvious
-CUDA.</p>
+<p>TIRx provides <code class="docutils literal notranslate"><span class="pre">if</span></code>, several loop forms, and <code class="docutils literal notranslate"><span class="pre">while</span></code>. Each maps directly to the
+corresponding CUDA control flow.</p>
 <section id="if">
 <h2>if<a class="headerlink" href="#if" title="Link to this heading">#</a></h2>
 <p>A Python <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code> becomes a CUDA <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code>. Guard work by a
@@ -425,8 +425,9 @@ thread/lane comparison, or elect a single issuing thread with
 <span class="p">}</span>
 </pre></div>
 </div>
-<p>For an expression-level choice (no branch), use <code class="docutils literal notranslate"><span class="pre">T.if_then_else(cond,</span> <span class="pre">a,</span> <span class="pre">b)</span></code>. It
-lowers to a ternary, so it introduces no control-flow divergence:</p>
+<p>For an expression-level choice without an explicit TIRx control-flow branch, use
+<code class="docutils literal notranslate"><span class="pre">T.if_then_else(cond,</span> <span class="pre">a,</span> <span class="pre">b)</span></code>. It lowers to a ternary expression; the backend
+still decides which machine instructions implement that expression:</p>
 <div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">O_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span>
 </pre></div>
 </div>
@@ -442,9 +443,11 @@ warpgroup-divergent branch: if placed inside <code class="docutils literal notra
 warpgroups will never arrive and the kernel will deadlock. When only one warpgroup
 needs to synchronize, use a warpgroup-scoped <code class="docutils literal notranslate"><span class="pre">T.cuda.warpgroup_sync(id)</span></code> (see
 <a class="reference internal" href="../../../chapter_gemm_advanced/index.html#chap-gemm-advanced"><span class="std std-ref">Scaling GEMM with Warp Specialization and Clusters</span></a> and <a class="reference internal" href="threads_sync.html"><span class="doc">CUDA C++/PTX intrinsics</span></a>).</p>
-<p>The same caution applies to barrier setup. An <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> <code class="docutils literal notranslate"><span class="pre">.init()</span></code> lowers to a
-single-thread guard (<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code>). Nesting it inside another divergent
-branch can leave the barrier uninitialized, leading to unspecified launch failures.</p>
+<p>The same caution applies to barrier setup. The high-level <code class="docutils literal notranslate"><span class="pre">MBarrier.init()</span></code>
+wrapper emits a single-thread guard (<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code>). Nesting that call
+inside another divergent branch can leave the barrier uninitialized and cause an
+unspecified launch failure. The raw <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.init</span></code> intrinsic does not add
+this guard automatically; its caller must select the initializing thread.</p>
 </section>
 <section id="loop">
 <h2>loop<a class="headerlink" href="#loop" title="Link to this heading">#</a></h2>

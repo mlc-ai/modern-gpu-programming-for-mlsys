@@ -196,7 +196,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">编译器内部机制</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -341,8 +341,8 @@
 <p>调用 <code class="docutils literal notranslate"><span class="pre">tvm.compile(mod,</span> <span class="pre">target,</span> <span class="pre">tir_pipeline=&quot;tirx&quot;)</span></code> 时，编译器会将输入的
 TIRx module 依次送入一组 TIR passes，这组 passes 称为 <strong>tirx pipeline</strong>。
 它负责把 tile primitives、使用 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 的 buffers 和 execution-scope
-ids 等高层结构，逐步 lowering 为彼此分离的 <strong>host</strong> 与 <strong>device</strong> functions，
-最后再由 CUDA backend 生成源码。</p>
+ids 等高层结构逐步转换为彼此分离的 <strong>host</strong> 与 <strong>device</strong> functions，最后再
+由 CUDA backend 生成源码。</p>
 <p>Pipeline 定义在 <code class="docutils literal notranslate"><span class="pre">python/tvm/tirx/compilation_pipeline.py</span></code> 的
 <code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code> 中。下面按执行顺序介绍其中的 passes。</p>
 <section id="pipeline">
@@ -375,7 +375,7 @@ device function 最终交给 CUDA code generator：</p>
 <tbody>
 <tr class="row-even"><td><p>1</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code></p></td>
-<td><p>完成 TIRx 的核心 lowering，详见下方 <a class="reference internal" href="#lowertirx">LowerTIRx 内部做了什么</a></p></td>
+<td><p>完成 TIRx 的核心转换，详见下方 <a class="reference internal" href="#lowertirx">LowerTIRx 内部做了什么</a></p></td>
 </tr>
 <tr class="row-odd"><td><p>2</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">UnifyThreadBinding</span></code></p></td>
@@ -388,7 +388,7 @@ axis 只声明一次</p></td>
 </tr>
 <tr class="row-odd"><td><p>4</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">LowerTIRxOpaque</span></code></p></td>
-<td><p>将剩余的 opaque TIRx constructs lowering 为普通 TIR</p></td>
+<td><p>将剩余的 opaque TIRx constructs 转换为普通 TIR</p></td>
 </tr>
 <tr class="row-even"><td><p>5</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FlattenBuffer</span></code></p></td>
@@ -453,9 +453,9 @@ axis 只声明一次</p></td>
 </div>
 <p>之后，编译器会根据 function 类型分别执行 <strong>finalization</strong>：</p>
 <ul class="simple">
-<li><p><strong>host</strong>：<code class="docutils literal notranslate"><span class="pre">LowerTVMBuiltin</span></code> lowering <code class="docutils literal notranslate"><span class="pre">tvm_*</span></code> builtins，
-<code class="docutils literal notranslate"><span class="pre">LowerIntrin</span></code> lowering target-specific intrinsics。</p></li>
-<li><p><strong>device</strong>：<code class="docutils literal notranslate"><span class="pre">LowerWarpMemory</span></code> 将 warp-scoped buffers lowering 为
+<li><p><strong>host</strong>：<code class="docutils literal notranslate"><span class="pre">LowerTVMBuiltin</span></code> 处理 <code class="docutils literal notranslate"><span class="pre">tvm_*</span></code> builtins，<code class="docutils literal notranslate"><span class="pre">LowerIntrin</span></code>
+处理 target-specific intrinsics。</p></li>
+<li><p><strong>device</strong>：<code class="docutils literal notranslate"><span class="pre">LowerWarpMemory</span></code> 将 warp-scoped buffers 转换为
 shuffles，随后执行 <code class="docutils literal notranslate"><span class="pre">StmtSimplify</span></code> 和 <code class="docutils literal notranslate"><span class="pre">LowerIntrin</span></code>。</p></li>
 </ul>
 </section>
@@ -473,7 +473,7 @@ shuffles，随后执行 <code class="docutils literal notranslate"><span class="
 <li><p><strong>``LowerTIRxCleanup``</strong> 运行 <code class="docutils literal notranslate"><span class="pre">LayoutApplier</span></code>，将使用
 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 的 buffer access 变成具体的物理地址计算
 （<code class="docutils literal notranslate"><span class="pre">addr</span> <span class="pre">=</span> <span class="pre">data</span> <span class="pre">+</span> <span class="pre">elem_offset</span> <span class="pre">+</span> <span class="pre">layout.apply(coord)</span></code>），再展平 buffers，
-并将 execution-scope ids lowering 为 thread axes，例如
+并将 execution-scope ids 转换为 thread axes，例如
 <code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> / <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> 通过 <code class="docutils literal notranslate"><span class="pre">launch_thread</span></code> 变为
 <code class="docutils literal notranslate"><span class="pre">blockIdx</span></code> / <code class="docutils literal notranslate"><span class="pre">threadIdx</span></code>。</p></li>
 </ul>

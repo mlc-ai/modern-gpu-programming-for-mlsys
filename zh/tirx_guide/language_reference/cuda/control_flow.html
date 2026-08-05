@@ -197,7 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -338,8 +338,8 @@
                   
   <section id="id1">
 <h1>控制流<a class="headerlink" href="#id1" title="Link to this heading">#</a></h1>
-<p>TIRx 的控制流包括 <code class="docutils literal notranslate"><span class="pre">if</span></code>、多种 loop 和 <code class="docutils literal notranslate"><span class="pre">while</span></code>，它们会生成对应的 CUDA
-控制流。</p>
+<p>TIRx 提供 <code class="docutils literal notranslate"><span class="pre">if</span></code>、多种 loop 和 <code class="docutils literal notranslate"><span class="pre">while</span></code>，它们会直接映射到对应的 CUDA
+控制流结构。</p>
 <section id="if">
 <h2>if<a class="headerlink" href="#if" title="Link to this heading">#</a></h2>
 <p>Python 的 <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code> 会变成 CUDA 的 <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code>。可以根据
@@ -361,9 +361,9 @@ warp 中选出一个 thread 发出指令：</p>
 <span class="p">}</span>
 </pre></div>
 </div>
-<p>如果只需要在表达式中选择值，不需要控制流分支，可以使用
-<code class="docutils literal notranslate"><span class="pre">T.if_then_else(cond,</span> <span class="pre">a,</span> <span class="pre">b)</span></code>。它会 lowering 为三元表达式，不会产生
-control-flow divergence：</p>
+<p>如果需要在表达式中选择值，而不在 TIRx 中建立显式控制流分支，可以使用
+<code class="docutils literal notranslate"><span class="pre">T.if_then_else(cond,</span> <span class="pre">a,</span> <span class="pre">b)</span></code>。它会转换为三元表达式；最终使用哪些机器
+指令实现这个表达式，仍由 backend 决定：</p>
 <div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">O_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">)</span><span class="w"> </span><span class="o">?</span><span class="w"> </span><span class="n">A_ptr</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0f</span><span class="p">;</span>
 </pre></div>
 </div>
@@ -378,10 +378,11 @@ control-flow divergence：</p>
 就会 deadlock。只需要同步一个 warpgroup 时，应使用 warpgroup-scoped
 <code class="docutils literal notranslate"><span class="pre">T.cuda.warpgroup_sync(id)</span></code>，详见第三部分的 warp-specialized GEMM 和
 <a class="reference internal" href="threads_sync.html"><span class="doc">CUDA C++/PTX Intrinsics</span></a>。</p>
-<p>初始化 barrier 时也要注意参与范围。<code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 的 <code class="docutils literal notranslate"><span class="pre">.init()</span></code> 会 lowering
-为 single-thread guard（<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code>）。如果再把它放进另一个
-divergent branch，barrier 可能没有被初始化，进而导致 unspecified launch
-failure。</p>
+<p>初始化 barrier 时也要注意参与范围。高层 <code class="docutils literal notranslate"><span class="pre">MBarrier.init()</span></code> wrapper 会生成
+single-thread guard（<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code>）。如果再把它放进另一个
+divergent branch，barrier 可能没有初始化，进而导致 unspecified launch
+failure。原始的 <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.init</span></code> intrinsic 不会自动添加这个 guard；
+调用者必须自行选出负责初始化的 thread。</p>
 </section>
 <section id="loop">
 <h2>loop<a class="headerlink" href="#loop" title="Link to this heading">#</a></h2>
@@ -414,7 +415,7 @@ failure。</p>
     <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
 </pre></div>
 </div>
-<p>它会 lowering 为带有提前退出 <code class="docutils literal notranslate"><span class="pre">break</span></code> 的 <code class="docutils literal notranslate"><span class="pre">while</span> <span class="pre">(1)</span></code>。其中计数器使用
+<p>它会转换为带有提前退出 <code class="docutils literal notranslate"><span class="pre">break</span></code> 的 <code class="docutils literal notranslate"><span class="pre">while</span> <span class="pre">(1)</span></code>。其中计数器使用
 一个只有一个元素的 register buffer：</p>
 <div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="kt">int</span><span class="w"> </span><span class="n">i_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span>
 <span class="n">i_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>

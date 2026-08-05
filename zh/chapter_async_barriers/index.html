@@ -197,7 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernel</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -323,7 +323,7 @@
                 <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1"><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#phase">phase 如何区分不同轮次</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">常见的同步规则</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">常见的数据交接</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#barrier-stage">用 barrier 管理 stage 复用</a></li>
 </ul>
             </nav>
@@ -429,7 +429,7 @@ if stage == 1:
 <p><code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 描述的是软件访问 circular buffer 的轮次，与两次 TMA 传输在硬件上谁先完成无关。因此，深度为 <code class="docutils literal notranslate"><span class="pre">S</span></code> 的 TMA pipeline 通常为每个 stage 准备一个记录 TMA 完成状态的 <code class="docutils literal notranslate"><span class="pre">full</span></code> barrier，再通过 phase parity 区分同一个 stage 的前后两轮。完整的 buffer 复用协议还需要下文介绍的 <code class="docutils literal notranslate"><span class="pre">empty</span></code> barriers。</p>
 </section>
 <section id="id2">
-<h2>常见的同步规则<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
+<h2>常见的数据交接<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
 <p>在 Tensor Core kernel 中，<code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 主要用于协调以下三种数据交接。</p>
 <p><strong>threads 向异步硬件交接数据。</strong> 如果 threads 先写入 shared memory，随后由 TMA store 或 MMA 读取这块数据，kernel 必须先完成相应的同步和顺序保证。否则，异步操作可能在 shared-memory buffer 尚未写完时就开始读取。</p>
 <p><strong>TMA 向 MMA 交接数据。</strong> TMA load 异步填充 SMEM tile。producer 让 <code class="docutils literal notranslate"><span class="pre">mbarrier</span></code> 同时追踪 arrival 和传输字节数；执行 MMA 的 consumer 等到 barrier 完成当前 phase，并满足相应指令的顺序要求后，才能读取这个 tile。下面的交互图展示了这条时间线。</p>
@@ -497,7 +497,7 @@ if stage == 1:
     <ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1"><code class="docutils literal notranslate"><span class="pre">mbarrier</span></code></a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#phase">phase 如何区分不同轮次</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">常见的同步规则</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">常见的数据交接</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#barrier-stage">用 barrier 管理 stage 复用</a></li>
 </ul>
   </nav></div>

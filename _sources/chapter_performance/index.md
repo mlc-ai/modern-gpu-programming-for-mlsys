@@ -139,7 +139,7 @@ Once a kernel is known to be memory-bound, there are two avenues for optimizatio
 traffic to raise arithmetic intensity, or, when the traffic cannot be reduced further, bring
 effective bandwidth as close as possible to the hardware limit.
 
-Fusion is often the most direct method. A common source of low arithmetic intensity is that one kernel writes an intermediate tensor to HBM, and the next operation immediately reads it back. After fusing the producer, which creates the intermediate, with the consumer, which uses it, the intermediate can stay in registers or on-chip storage such as SMEM or TMEM, avoiding that HBM round trip.
+Fusion is often the most direct method. A common source of low arithmetic intensity is an intermediate tensor that one kernel writes to HBM and the next operation immediately reads back. Fusing the operation that produces the intermediate with the operation that consumes it can keep the value in registers or on-chip storage such as SMEM or TMEM, avoiding the HBM round trip.
 
 - Fuse GEMM with an elementwise epilogue.
 - Fuse normalization into an adjacent operator.
@@ -238,7 +238,7 @@ implementation that approaches that ceiling.
 
 A large fp16 GEMM may be compute-bound in theory. That only means the HBM-level memory roof is not the main limit; it does not mean any implementation will reach the Tensor Core compute roof. Closing the gap requires the right instructions, layouts, staging, synchronization, and scheduling. The later GEMM chapters show this on B200 through a sequence of steps: each step keeps the same basic algorithm but changes how the tile is computed or scheduled.
 
-In the GEMM optimization ladder, the first large measured jump is the move from the thread-copy tiled path to the TMA-backed path. The former uses ordinary CTA threads to copy tiles from GMEM to SMEM; the latter delegates this regular tile movement to the TMA hardware engine, letting the kernel feed Tensor Cores through hardware-managed bulk copies.
+In the GEMM optimization ladder, the first large measured jump is the move from the thread-copy tiled path to the TMA-backed path. The former uses ordinary CTA threads to copy tiles from GMEM to SMEM; the latter delegates this regular tile movement to the TMA hardware engine. TMA fills SMEM through hardware-managed bulk copies, and the MMA path then reads those tiles from SMEM.
 
 After that first jump, subsequent optimizations address one question: how can the kernel reduce
 waiting among data movement, Tensor Core computation, and the epilogue? Software pipelining and warp
@@ -257,7 +257,7 @@ CTA clusters, and multi-consumer execution each change.
 
 ## Reducing Idle Time Through Overlap
 
-Once a GEMM is compute-bound and already uses Tensor Cores, the remaining gap usually comes from hardware idle time.
+Once a GEMM is compute-bound and already uses Tensor Cores, the remaining gap usually reflects periods when one or more execution paths are not fully utilized.
 
 A simple kernel might do this:
 
@@ -282,7 +282,7 @@ store tile k - 1
 ```
 
 On Blackwell, TMA, `tcgen05.mma`, and the epilogue/store path primarily execute these three stages,
-while `mbarrier` coordinates data handoffs among them.
+while `mbarrier` coordinates completion and buffer ownership between them.
 
 Overlap does not remove dependencies. The MMA for tile `k` must still wait for that tile to load, and
 the epilogue must still wait for the MMA to complete. The kernel can instead advance independent
@@ -302,7 +302,7 @@ each CTA uses a large amount of shared memory, fewer CTAs or warps fit on the SM
 Many modern Tensor Core kernels intentionally spend resources in ways that reduce occupancy. Multi-stage shared memory pipelines consume SMEM. Large register fragments consume registers. TMEM allocations consume Tensor Memory capacity. Warp specialization may reserve whole warps for producer or consumer roles.
 
 This is a deliberate tradeoff. Rather than hiding latency with many resident warps, these kernels
-explicitly overlap stages within a smaller number of resident CTAs. A low-occupancy kernel can still
+explicitly overlap stages within a smaller number of resident CTAs. A low-occupancy kernel may still
 perform well if its pipeline keeps TMA, Tensor Cores, and the store path active.
 
 Each approach has its place. Kernels with irregular memory access or limited opportunities for an

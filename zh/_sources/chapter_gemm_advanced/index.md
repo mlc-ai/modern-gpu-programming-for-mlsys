@@ -57,7 +57,7 @@ Load 与 MMA 之间通过两个 barriers 交接 SMEM buffer：
 
 ### 四个 Barriers
 
-三个并发角色之间需要四个 barriers。正向路径 TMA → MMA → Writeback 表示数据已经准备好；反向路径 Writeback → MMA → TMA 表示 buffer 已经释放。Barrier 名称采用 `source2destination`，例如 `tma2mma` 表示 TMA 向 MMA 发送通知。
+三个并发角色之间需要四个 barriers。正向路径 TMA → MMA → Writeback 表示数据已经准备好；反向路径 Writeback → MMA → TMA 则把各自保护的 buffer 或资源交还给前一角色复用。Barrier 名称采用 `source2destination`，例如 `tma2mma` 表示 TMA 向 MMA 发送通知。
 
 | Barrier | 类型 | 方向 | 含义 |
 |---------|------|------|------|
@@ -76,8 +76,8 @@ Barrier 类型取决于 producer 如何报告完成。**TMA load** 使用带 byt
 
 ```python
 tma_ps = PipelineState(PIPE_DEPTH, phase=1)   # Producer starts ready (phase=1)
-# tma_ps.stage = current stage index
-# tma_ps.phase = current phase (0 or 1)
+# tma_ps.stage 表示当前 stage index
+# tma_ps.phase 表示当前 phase（0 或 1）
 tma_ps.advance()                          # Advance to next stage
 ```
 
@@ -200,7 +200,7 @@ def hgemm_v7(M, N, K):
         n_st = T.meta_var(tile_scheduler.n_idx * BLK_N)
 
         # =============================================
-        # Warpgroup 1: TMA Producer (warp 3) + MMA Consumer (warp 0)
+        # Warpgroup 1：TMA producer（warp 3）+ MMA consumer（warp 0）
         # =============================================
         if wg_id == 1:
             if warp_id == 3:
@@ -235,7 +235,7 @@ def hgemm_v7(M, N, K):
 
                 if T.filter(lane_id, T.ptx.elect_sync()):
                     while tile_scheduler.valid():
-                        # Wait for TMEM to be free from previous tile's writeback
+                        # 等待上一块 tile 的 writeback 释放 TMEM
                         ld2mma.wait(ld_ps.stage, ld_ps.phase)
                         ld_ps.advance()
 
@@ -249,37 +249,37 @@ def hgemm_v7(M, N, K):
                             mma2tma.arrive(mma_ps.stage, cta_group=1, cta_mask=0)
                             mma_ps.advance()
 
-                        # Signal results ready for writeback
+                        # 通知 writeback：结果已经准备好
                         mma2ld.arrive(0, cta_group=1, cta_mask=0)
                         tile_scheduler.next_tile()
 
         # =============================================
-        # Warpgroup 0: Writeback
+        # Warpgroup 0：writeback
         # =============================================
         elif wg_id == 0:
             wb_ps = PipelineState(1, phase=0)
             reg_f16 = T.alloc_local((BLK_N,), d_type)
 
             while tile_scheduler.valid():
-                # Wait for MMA results
+                # 等待 MMA 结果
                 mma2ld.wait(wb_ps.stage, wb_ps.phase)
                 wb_ps.advance()
                 T.ptx.tcgen05.fence.after_thread_sync()
 
-                # Read TMEM -> registers (warpgroup scope)
+                # 以 warpgroup scope 读取 TMEM -> registers
                 reg = T.alloc_local((BLK_N,), acc_type)
                 reg_wg = reg.view(128, BLK_N,
                     layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
                 Tx.wg.copy_async(reg_wg[:], tmem[:, :BLK_N])
                 T.ptx.tcgen05.wait.ld()
 
-                # Signal TMEM free (all 128 threads arrive)
+                # 所有 128 个 threads 报告 arrival，通知 MMA 可以复用 TMEM
                 ld2mma.arrive(0, cta_id=0, pred=True)
 
-                # Cast fp32 -> fp16
+                # 转换 fp32 -> fp16
                 Tx.cast(reg_f16[:], reg[:])
 
-                # Write to Dsmem + TMA store
+                # 写入 Dsmem，再执行 TMA store
                 Tx.copy(Dsmem[warp_id * 32 + lane_id, :], reg_f16[:])
                 T.ptx.fence.proxy_async("shared::cta")
                 T.cuda.warpgroup_sync(10)
@@ -500,7 +500,7 @@ def hgemm_v8(M, N, K):
         tma2mma_cta0 = tma2mma.remote_view(0)
 
         # =============================================
-        # Warpgroup 1: TMA Producer (warp 3) + MMA Consumer (warp 0)
+        # Warpgroup 1：TMA producer（warp 3）+ MMA consumer（warp 0）
         # =============================================
         if wg_id == 1:
             if warp_id == 3:
@@ -552,7 +552,7 @@ def hgemm_v8(M, N, K):
                             tile_scheduler.next_tile()
 
         # =============================================
-        # Warpgroup 0: Writeback (256 columns in 2 x 128-column chunks)
+        # Warpgroup 0：writeback（将 256 columns 分成两个 128-column chunks）
         # =============================================
         elif wg_id == 0:
             wb_ps = PipelineState(1, phase=0)
@@ -750,7 +750,7 @@ def hgemm_v9(M, N, K):
         tma2mma_cta0 = tma2mma.remote_view(0)
 
         # =============================================
-        # Warpgroup 2: TMA Producer (warp 3) + 2 MMA Consumers (warp 0, 1)
+        # Warpgroup 2：TMA producer（warp 3）+ 两个 MMA consumers（warp 0、1）
         # =============================================
         if wg_id == 2:
             if warp_id == 3:
@@ -809,7 +809,7 @@ def hgemm_v9(M, N, K):
                             tile_scheduler.next_tile()
 
         # =============================================
-        # Warpgroup 0/1: Writeback (each reads its consumer's TMEM range)
+        # Warpgroup 0/1：writeback（分别读取对应 consumer 的 TMEM range）
         # =============================================
         elif wg_id < NUM_CONSUMER:
             wb_ps = PipelineState(1, phase=0)
@@ -820,7 +820,7 @@ def hgemm_v9(M, N, K):
                 wb_ps.advance()
                 T.ptx.tcgen05.fence.after_thread_sync()
 
-                # Read TMEM in EPI_N=64 column chunks (4 iterations for 256 cols)
+                # 以 EPI_N=64 为单位分块读取 TMEM（256 columns 共需四轮）
                 for i in T.unroll(MMA_N // EPI_N):
                     reg = T.alloc_local((EPI_N,), acc_type)
                     reg_wg = reg.view(128, EPI_N,
@@ -876,7 +876,7 @@ def hgemm_v9(M, N, K):
 
 表中给出具体时间的版本都在相同的 `M=N=K=4096` 规模下测量，因此可以直接比较。第 1 步的 70 ms 来自一个采用相同串行数据路径的完整矩阵 baseline，并不是直接运行 {ref}`chap_gemm_basics` 中只计算一个 $128\times128$ tile 的 `hgemm_v1`。基础章节使用较小规模讲解第 1 至 3 步；表中的第 1、3 步则是相应思路扩展到完整矩阵后的测量结果。
 
-第 2 步仍然只计算一个 output tile，不能与表中的完整矩阵结果直接比较。第 5、6 步则是从 TMA load 逐步过渡到 warp specialization 的中间版本，相关机制都包含在第 7 步中；表格只保留这一段的起点和终点。因此，第 2、5、6 步以横线表示，也不计算对应的单步加速比。
+第 2 步仍然只计算一个 output tile，不能与表中的完整矩阵结果直接比较。第 5、6 步则是从 TMA load 逐步过渡到 warp specialization 的中间版本，相关机制都包含在第 7 步中；表格只保留这一段的起点和终点。因此，第 2、5、6 步以横线表示，不展示它们相对第 1 步的累计加速比。
 
 这些数字来自同一次 B200 reference run，只用于比较本章各版本在相同条件下的相对变化，不代表其他输入规模或测试环境下的硬件峰值。
 
