@@ -16,7 +16,7 @@
 - **第一部分：理解 GPU。** 这一部分介绍 GPU 的整体架构组织、编写高性能 kernel 的通用方法，以及数据布局、异步内存操作和协作等关键概念，并建立后续章节所依赖的硬件理解。
 - **第二部分：TIRx 概览。** 这一部分介绍 TIRx 的核心组成部分，为理解后续章节中的代码示例做准备。
 - **第三部分：GEMM：从 Tiled 到 SOTA。** 这一部分完整讲解如何优化一个 tiled GEMM，并逐步加入 TMA pipelining、persistent scheduling、warp specialization 和 2-CTA cluster。
-- **第四部分：Flash Attention 4。** 这一部分基于第三部分的技术构建完整的 attention kernel：两个 MMA，中间插入 softmax，并包含 online-softmax rescaling、causal masking 和 GQA。
+- **第四部分：Flash Attention 4。** 这一部分基于第三部分的技术构建完整的 attention kernel：两个 MMA，中间插入 softmax，并包含 online-softmax rescaling、causal mask 和 GQA。
 - **参考资料。** TIRx 语言参考、编译器内部机制，以及异步 kernel 调试指南。
 
 ## 已发布章节

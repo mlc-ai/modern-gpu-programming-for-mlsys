@@ -31,11 +31,11 @@ TMA 在写入 shared memory 时还可以应用 swizzle，让 tile 直接采用�
 
 第二类是本次 copy 的参数，包括 tile 在 global tensor 中的起始坐标，以及 shared memory 中的目标地址。可以把两者的分工理解为：descriptor 说明“整个 tensor 怎样组织”，指令参数说明“这一次从哪里开始搬、搬到哪里”。
 
-发出 TMA 指令时，warp 仍然按照 SIMT 模型执行，只有被选中的 thread 参与这条指令，同一 warp 中的其他 threads 会被屏蔽。这个状态只持续到请求提交完成。随后，TMA engine 异步搬运数据，发起操作的 warp 和 CTA 中的其他 warps 都可以继续执行；真正使用这块数据前，再等待搬运完成。
+发出 TMA 指令时，warp 仍然按照 SIMT 模型执行，只有被选中的 thread 参与这条指令，同一 warp 中的其他 threads 会被屏蔽。这个状态只持续到请求提交完成。随后，TMA engine 异步完成数据搬运，发起操作的 warp 和 CTA 中的其他 warps 可以继续执行其他工作。Consumer 读取目标数据前，必须等待搬运完成。
 
 ## TMA 如何写入 swizzled layout
 
-回到上面的交互图，先选择 `None`。此时 tile 的每一行都按原来的顺序写入 shared memory，逻辑 sector `c` 仍然落在物理 sector `c`。
+回到上面的交互图，先选择 **无**。此时 tile 的每一行都按原来的顺序写入 shared memory，逻辑 sector `c` 仍然落在物理 sector `c`。
 
 再切换到 `128B`。图中一行包含 8 个 16-byte sectors，正好是 128 bytes。对于这个简化且对齐的例子，第 `row` 行的逻辑 sector `col` 会写到：
 
@@ -81,35 +81,33 @@ global[row, j] = global3[group, row, col]
 ```
 *切换 `Col offset` 可以选择原矩阵的前 128 列或后 128 列；将鼠标悬停在蓝色区域的任意 cell 上，可以查看对应的 16-byte sector 写入 shared memory 后的位置。*
 
-### 128-byte swizzle 的分组要求
+### 128-byte swizzle 与 row layout
 
-为什么要把 256-byte 的一行拆成两个 128-byte groups？除了满足 TMA box 的宽度限制，分组还会改变跨行访问落到哪些 shared-memory banks。
+`SWIZZLE_128B` 始终以连续的 128 bytes 为宽度进行重排。图中每个 sector 是 16 bytes，因此一个 swizzle span 固定包含 8 个 sectors；即使逻辑行有 16 个 sectors，硬件也不会把整行作为一个 256-byte swizzle 单元。这里需要比较的不是 swizzle 是否按 8 个 sectors 分组，而是这两个 128-byte spans 在内存中如何排列。
 
-考虑一个 `16×16` sector grid。每个 sector 是 16 bytes，因此一行共 256 bytes。现在从连续 8 行中各读取同一个 sector column，一共会发出 8 次并行的 16-byte 访问。
+考虑一个 `16×16` sector grid。每行包含 16 个 sectors，共 256 bytes。现在从连续 8 行中各读取同一个 sector column，一共会发出 8 次并行的 16-byte 访问。一次访问覆盖 4 个相邻的 shared-memory banks；为了便于观察，下面把 32 个 banks 分成 8 个 bank sectors，记为 `S0` 到 `S7`。
 
-一次 16-byte 访问会覆盖 4 个相邻的 shared-memory banks。为了便于观察，下面把 32 个 banks 按每 4 个相邻 banks 分成 8 个 bank sectors，记为 `S0` 到 `S7`。不同访问如果落到同一个 bank sector，就会争用同一组 banks。
+如果保留普通的 256-byte row stride，相邻逻辑行的起点相隔两个 128-byte spans。设 `span = col // 8`，`local_col = col % 8`，那么对应的 bank sector 为：
 
-先把每行拆成两个 128-byte groups。设完整 grid 中的列号为 `col`，那么 `col // 8` 选择左、右两个 groups，`local_col = col % 8` 表示组内列号。对于 rows 0–7，swizzle 后的 bank sector 是：
+```text
+bank_sector = local_col XOR ((2·row + span) % 8)
+```
+
+连续 8 行只会得到 4 个不同的 bank sectors，每个 sector 被访问两次，因此形成 2-way conflict。这个 layout 只是用来说明 row stride 的影响；由于其最内层维度为 256 bytes，不能作为一个 `SWIZZLE_128B` TMA box。
+
+将逻辑坐标改写为 `(group, row, local_col)` 后，每个 group 都包含 8 个 sectors，组内相邻行的 stride 为 128 bytes。此时 bank sector 为：
 
 ```text
 bank_sector = local_col XOR (row % 8)
 ```
 
-连续 8 行会得到 8 个不同的结果，因此这些访问可以并行完成。
+连续 8 行会落到 8 个不同的 bank sectors，可以并行完成访问。
 
-如果不分组，仍然保留 256-byte row stride，那么每跨过一行就相当于跨过两个 128-byte 单元。用于 XOR 的编号也会每行前进 2：
-
-```text
-bank_sector = local_col XOR ((2·row + col // 8) % 8)
-```
-
-这时只有 4 个不同的结果，每个 bank sector 被访问两次，形成 2-way conflict。这里的未分组状态只是一个对照，它并不是合法的 `SWIZZLE_128B` TMA box。
-
-下面的交互图展示了这两种情况。左侧选择原始 grid 中的一个 `Column` 和连续 8 行，右侧带黑色边框的 cells 显示这些访问在 swizzled layout 中的位置。`Tiling` 选择“是”时，每行先拆成 `g0` 和 `g1` 两个 128-byte groups；选择“否”时，则保留 256-byte row stride 作为对照。底部的 `S0` 到 `S7` 汇总各次访问使用的 bank sectors。`dtype` 只改变一个 sector 中包含多少个元素，不影响这里的地址映射。
+下面的交互图展示这两种 row layouts。选择 `128B groups` 时，两个 spans 被显式排列为 `g0` 和 `g1`；选择 `256B stride` 时，swizzle 仍然只在各个 128-byte span 内重排，但逻辑行保留原来的 256-byte stride。右侧带黑色边框的 cells 表示当前选中的 column 在 swizzled layout 中的位置，底部则汇总它们使用的 bank sectors。`dtype` 只改变一个 sector 中包含多少个元素，不影响地址映射。
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe class="demo-tma3d" src="../demo_zh/tiling_constraint.html?v=tutorial-review-20260713" title="128-byte 分组对 bank conflict 的影响" loading="lazy"
+<iframe class="demo-tma3d" src="../demo_zh/tiling_constraint.html?v=row-layout-20260805" title="128-byte 分组对 bank conflict 的影响" loading="lazy"
         style="width:100%; min-width:1320px; height:640px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 <script>
@@ -124,9 +122,9 @@ bank_sector = local_col XOR ((2·row + col // 8) % 8)
 })();
 </script>
 ```
-*切换是否进行 tiling，再选择 column 和连续的 8 行，可以比较分组前后两种 layout 的 bank-sector 使用情况。*
+*切换 row layout，再选择 column 和连续的 8 行，可以比较 128-byte groups 与 256-byte row stride 的 bank-sector 使用情况。*
 
-在 tile 尺寸和目标访问模式允许时，通常选择能够容纳的最宽 swizzle，使访问分散到更多 banks。宽度为 `N` bytes 的 swizzle atom 要求连续维度至少能够容纳 `N` bytes；如果放不下 128-byte atom，就要改用 64-byte 或 32-byte swizzle（{ref}`chap_data_layout`）。
+选择 swizzle mode 时，TMA box 的最内层连续维度不能超过对应的 swizzle width；例如，`SWIZZLE_128B` 要求该维度不超过 128 bytes。如果实际数据宽度小于 swizzle width，shared-memory allocation 仍需为完整宽度预留空间。实际 kernel 应根据 tile 宽度和访问方式，在 128-byte、64-byte 和 32-byte swizzle 中选择合适的模式（{ref}`chap_data_layout`）。
 
 ## 如何等待 TMA load 完成
 
