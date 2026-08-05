@@ -54,6 +54,13 @@ chapter_gemm_advanced/index
 ```
 
 ```{toctree}
+:caption: 第四部分：Flash Attention 4
+:maxdepth: 1
+
+chapter_flash_attention/index
+```
+
+```{toctree}
 :caption: 参考资料
 :maxdepth: 1
 
