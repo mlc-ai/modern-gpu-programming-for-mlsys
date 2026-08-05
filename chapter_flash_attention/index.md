@@ -4,9 +4,9 @@
 :::{admonition} Overview
 :class: overview
 
-- FlashAttention streams K and V in blocks and retains only an exponent reference, a weight sum, and a weighted output for each query row.
-- Each K/V block passes through a score MMA, online softmax, and a value MMA; the intermediate `S`, `P`, and `O` tiles share TMEM.
-- Warp specialization and barriers connect TMA, Tensor Cores, and CUDA cores while supporting causal masking and GQA.
+- FlashAttention streams K and V in blocks and uses online softmax to maintain an exponent reference, an unnormalized weight sum, and an output accumulator for each query row, avoiding a round trip of the full score matrix through GMEM.
+- For each K/V block, a QKᵀ MMA produces `S`, softmax transforms `S` into `P`, and a PV MMA uses `P` and `V` to update `O`; these three tiles partition or reuse the same TMEM allocation over time.
+- FA4 uses warp specialization to separate TMA loads, QKᵀ/PV MMAs, softmax/correction, and writeback. Barriers control data handoffs and buffer reuse, while causal masking and GQA respectively change the valid score range and the interpretation of Q rows.
 :::
 
 Attention is one of the core computations in a Transformer and a major performance and memory bottleneck for long sequences. Flash Attention 4 (FA4), the subject of this chapter, is an attention forward kernel optimized for Blackwell GPUs. Given query `Q`, key `K`, and value `V`, it computes:
@@ -17,7 +17,7 @@ Here, `QKᵀ` gives the attention scores between queries and keys, and $d$ is th
 
 FlashAttention divides the computation into blocks and keeps only the current tiles and per-row softmax state on chip, avoiding the full score matrix while preserving the result of standard attention. Each generation mainly changes how this algorithm maps to the GPU. FlashAttention-2 improved work partitioning across thread blocks and warps. FlashAttention-3 used TMA, WGMMA, and warp specialization on Hopper to interleave data movement, the two MMAs, and softmax. FA4 targets Blackwell and reorganizes the pipeline around `tcgen05` and TMEM.
 
-The preceding GEMM chapters introduced these Blackwell hardware paths: TMA moves tiles, `tcgen05` executes MMA, and TMEM holds accumulators. FA4 connects them into a different computation chain: a score MMA computes the score tile `S = QK^T`, CUDA cores turn `S` into the unnormalized attention-weight tile `P`, and a value MMA uses `P` and `V` to update the output accumulator `O`. Whenever softmax changes its exponent reference, the existing `O` in TMEM must first be converted to the new scale.
+The preceding GEMM chapters introduced these Blackwell hardware paths: TMA moves tiles, `tcgen05` executes MMA, and TMEM holds accumulators. FA4 connects them into a different computation chain: a QKᵀ MMA computes the score tile `S = QK^T`, CUDA cores turn `S` into the unnormalized attention-weight tile `P`, and a PV MMA uses `P` and `V` to update the output accumulator `O`. Following the FA4 paper, this chapter calls these two operations the QKᵀ MMA and the PV MMA. Whenever softmax changes its exponent reference, the existing `O` in TMEM must first be converted to the new scale.
 
 This chapter follows that computation through the kernel: how `S`, `P`, and `O` use TMEM, how the warpgroups divide the work, and how barriers hand data from TMA to Tensor Cores, softmax, and writeback.
 
@@ -147,44 +147,44 @@ store O
 
 `new_ref` is the exponent reference selected for this iteration. If the old reference is retained, `acc_scale=1` and the running state is unchanged. If the candidate reference is adopted, the kernel first uses `acc_scale` to convert the old `row_sum` and `O`. It then computes the current block's `P` against `new_ref`. Only after every K/V block has been processed does the kernel compute the final `O / row_sum`. *Rescaling and Writeback* explains how WG2 performs or skips the conversion of `O`.
 
-If every score in a row is masked, `new_ref` remains `-inf`, and evaluating `S - new_ref` directly would produce `-inf - (-inf)`. In that case, `row_max_safe` uses zero instead, so the score exponentials remain zero and the row's `P`, `row_sum`, and `O` remain zero as well.
+If a row has not encountered any valid score through the current block, both its old reference and the current block maximum are `-inf`, so `new_ref` is also `-inf`. Evaluating `S - new_ref` directly would then produce `-inf - (-inf)`. In this case, `row_max_safe` uses zero so that the masked scores have zero exponentials and `P`, `row_sum`, and `O` remain zero. If an earlier block already contributed valid scores, a later fully masked block contributes only zeros and does not clear the accumulated `row_sum` or `O`.
 
 To evaluate `exp2`, the [FA4 paper](https://arxiv.org/abs/2603.05451) proposes sending a tuned fraction of the elements through a cubic FP32 FMA polynomial and the rest through hardware `exp2`, allowing the FMA and exponential units to share the work. The current TIRx implementation follows that mixed strategy: `ex2_emulation_2` handles a tuned subset, while the remaining elements call `T.ptx.exp2`. This changes how the exponential is evaluated, not the online-softmax recurrence above.
 
 When this algorithm is mapped to the kernel, each K/V block produces or updates three kinds of tiles. Their storage locations determine the layouts and barriers that follow:
 
-- `S` is the score tile. The score MMA writes it to TMEM.
+- `S` is the score tile. The QKᵀ MMA writes it to TMEM.
 - `P` is the unnormalized attention-weight tile. Softmax reads `S` from TMEM into registers, computes `P = exp2((S - row_max_safe) * scale_log2)`, and writes `P` back to TMEM.
-- `O` is the output accumulator tile. The value MMA reads `P` from TMEM and `V` from SMEM, then accumulates into `O` in TMEM.
+- `O` is the output accumulator tile. The PV MMA reads `P` from TMEM and `V` from SMEM, then accumulates into `O` in TMEM.
 
-When the exponent reference changes, the old `O` is read from TMEM, rescaled in registers, and written back to TMEM before the next value MMA accumulates into it.
+When the exponent reference changes, the old `O` is read from TMEM, rescaled in registers, and written back to TMEM before the next PV MMA accumulates into it.
 
 ## Tile-Primitive Graph
 
 With the roles of `S`, `P`, and `O` established, we can expand one K/V block into its concrete data paths:
 
 ```text
-Q, K:  GMEM --TMA load--> SMEM --score MMA--> S in TMEM
+Q, K:  GMEM --TMA load--> SMEM --QKᵀ MMA--> S in TMEM
 S:     TMEM --tcgen05.ld--> registers --softmax--> P in registers
 P:     registers --TMEM store--> P in TMEM
 V:     GMEM --TMA load--> V in SMEM
-P, V:  P in TMEM + V in SMEM --value MMA--> O in TMEM
+P, V:  P in TMEM + V in SMEM --PV MMA--> O in TMEM
 
 when needed: O in TMEM --tcgen05.ld--> registers --rescale/TMEM store--> O in TMEM
 at the end: O in TMEM --tcgen05.ld--> registers --normalize/cast--> O in SMEM --TMA store--> O in GMEM
 ```
 
-The score MMA reads only Q and K and produces `S`. Softmax then loads `S` from TMEM, computes `P` in registers, and stores `P` back to TMEM. The value MMA combines that `P` with V from SMEM to update `O` in TMEM. Later K/V blocks may first rescale the existing `O`; after the final block, the epilogue normalizes and stores the result.
+The QKᵀ MMA reads only Q and K and produces `S`. Softmax then loads `S` from TMEM, computes `P` in registers, and stores `P` back to TMEM. The PV MMA combines that `P` with V from SMEM to update `O` in TMEM. Later K/V blocks may first rescale the existing `O`; after the final block, the epilogue normalizes and stores the result.
 
 The table below maps these paths to the concrete TIRx primitives and hardware instructions:
 
 | Stage | Tile movement or compute | TIRx primitive | Hardware path |
 |-------|--------------------------|----------------|---------------|
 | Load Q/K/V | GMEM tiles -> SMEM tiles | `Tx.copy_async(..., dispatch="tma")` | TMA load |
-| Score MMA | Q in SMEM and K in SMEM -> score tile `S` in TMEM | `Tx.warp.gemm_async(..., dispatch="tcgen05")` | `tcgen05.mma` |
+| QKᵀ MMA | Q in SMEM and K in SMEM -> score tile `S` in TMEM | `Tx.warp.gemm_async(..., dispatch="tcgen05")` | `tcgen05.mma` |
 | Softmax read | `S` in TMEM -> warpgroup register tile | `Tx.wg.copy_async(reg, tmem)` | `tcgen05.ld` |
 | Softmax write | unnormalized weight tile `P` in registers -> fp16 TMEM view | `Tx.copy_async(tmem_as_f16, reg)` | TMEM store, followed by `tcgen05.wait.st()` |
-| Value MMA | `P` in TMEM and V in SMEM -> output accumulator `O` in TMEM | `Tx.warp.gemm_async(..., dispatch="tcgen05")` | `tcgen05.mma` with a TMEM operand |
+| PV MMA | `P` in TMEM and V in SMEM -> output accumulator `O` in TMEM | `Tx.warp.gemm_async(..., dispatch="tcgen05")` | `tcgen05.mma` with a TMEM operand |
 | Correction | `O` in TMEM -> registers -> `O` in TMEM | TMEM readback, register multiply, TMEM store | `tcgen05.ld` / TMEM store |
 | Epilogue | final `O` in TMEM -> registers -> SMEM -> GMEM | TMEM readback, `Tx.copy`, TMA store | `tcgen05.ld` + TMA store |
 
@@ -201,7 +201,7 @@ The four warpgroups divide the work as follows:
 | Owner | Role | What it does |
 |-------|------|--------------|
 | WG3, warp 1 | TMA load | Loads Q, K, and V tiles from GMEM to SMEM |
-| WG3, warp 0 | MMA | Issues both score MMA and value MMA |
+| WG3, warp 0 | MMA | Issues both QKᵀ MMA and PV MMA |
 | WG3, warp 2 | TMA store | Stores final O tiles from SMEM to GMEM |
 | WG0 | Softmax for Q stage 0 | Reads S from TMEM, computes P, writes P to TMEM |
 | WG1 | Softmax for Q stage 1 | Same work for the second Q pipeline stage |
@@ -218,6 +218,38 @@ Both `wg_id` and `warp_id` range from 0 through 3. The former selects the thread
 
 Within WG3, warp 1, warp 0, and warp 2 submit TMA loads, MMAs, and TMA stores, respectively. One elected lane in each warp issues the instruction; the TMA engine or Tensor Core performs the operation. WG0 and WG1 execute softmax across their full warpgroups, while WG2 handles rescaling and the epilogue. The FA4 code calls the rescaling of `O` correction.
 
+### Redistributing Registers Across Roles
+
+Warp specialization partitions more than work. It also lets the kernel concentrate register capacity in the roles that need it. WG3 mostly issues TMA and MMA instructions and does not retain large intermediate tiles. WG0 and WG1, in contrast, need every thread to hold an entire row of 128 fp32 scores together with softmax temporaries. Reserving that worst-case register budget for all 512 threads in the CTA would exceed the available register capacity.
+
+The kernel therefore uses `setmaxnreg` to adjust the per-thread register limit for each role dynamically:
+
+```python
+if wg_id == 3:
+    Tx.ptx.setmaxnreg(False, 48)       # WG3 releases excess registers
+elif wg_id < 2:
+    Tx.ptx.setmaxnreg(True, 200)       # WG0/WG1 acquire registers for softmax
+
+with WarpgroupRole(wg_id, 2, regs=64): # WG2 performs correction / epilogue
+    ...
+```
+
+In this configuration, each thread in WG0 and WG1 may use up to 200 32-bit registers, each WG2 thread uses 64, and each WG3 thread uses 48. Across the four 128-thread warpgroups, these budgets add up to:
+
+```text
+128 × (200 + 200 + 64 + 48) = 65,536 32-bit registers
+```
+
+This redistribution gives the softmax threads enough registers to retain a full score row without reserving the same large allocation for the instruction-issuing threads in WG3.
+
+### Differences Between the Paper and the Current TIRx Kernel
+
+This chapter follows the default path in `flash_attention4.py`. It uses the overall FA4 pipeline from the paper, but two implementation choices differ.
+
+First, the paper sequences the exponential-heavy regions of WG0 and WG1 so that the two softmax warpgroups do not compete for the exponential units at the same time. The current source retains `bar_s0_s1_sequence` and the corresponding synchronization branches, but sets `USE_S0_S1_BARRIER=False` by default. The default path described here therefore does not enable that ordering constraint.
+
+Second, the paper uses otherwise idle TMEM to communicate correction statistics. The current TIRx implementation instead writes per-row `acc_scale` values and the final `row_sum` values to the SMEM buffer `sScale`, then hands them from the softmax warpgroups to WG2 through `softmax_corr.full/empty`. The mailbox described later is this TIRx-specific SMEM path, not the paper's TMEM communication path.
+
 ## Conventions for Reading the Code
 
 The excerpts in this chapter come from [`flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/main/tirx_kernels/attention/flash_attention4.py), so they refer to shapes, stage indices, and phase variables defined elsewhere in the kernel. The table below collects the names that recur later but are not self-explanatory:
@@ -226,10 +258,10 @@ The excerpts in this chapter come from [`flash_attention4.py`](https://github.co
 |------|---------|
 | `q_stage`, `i_q` | Current Q pipeline stage, 0 or 1; inside the WG0/WG1 softmax branches, `wg_id` is the same stage index |
 | `MMA_N` | Base width of the score tile and TMEM regions, currently 128 columns |
-| `MMA_K`, `K_SPLIT` | Each value-MMA inner-K step consumes 16 positions; `K_SPLIT = 6 * MMA_K = 96` divides the 128 positions into segments of 96 and 32 |
-| `should_accumulate` | Whether the current value MMA initializes `O` or accumulates into an existing `O` |
+| `MMA_K`, `K_SPLIT` | Each PV MMA inner-K step consumes 16 positions; `K_SPLIT = 6 * MMA_K = 96` divides the 128 positions into segments of 96 and 32 |
+| `should_accumulate` | Whether the current PV MMA initializes `O` or accumulates into an existing `O` |
 | `phase_tmem` | Phase parity expected by barriers associated with the current `P` and `O` iteration |
-| `should_rescale` | Per-row flag indicating whether the old `O` must be rescaled before the next value MMA |
+| `should_rescale` | Per-row flag indicating whether the old `O` must be rescaled before the next PV MMA |
 | `rescale_threshold` | Threshold for delaying an exponent-reference update, currently 8.0 |
 | `scale_log2` | Softmax scale for base-2 exponentiation, `log2(e)/sqrt(d)` |
 | `acc_scale` | Per-row scale passed from softmax to WG2 to adjust the old `row_sum` and `O` |
@@ -244,16 +276,18 @@ The initialization count is not always a thread count. A regular `MBarrier` coun
 
 In the current implementation, `q_load.full` and `kv_load.full` use `TMABar`; `q_load.empty`, `kv_load.empty`, `s_ready`, and `o_ready` use `TCGen05Bar`; all remaining barriers use regular `MBarrier`. The table below gives the completion condition for one phase of each barrier slot. The Q pipeline has two slots, the K/V pipeline has three, and the other staged barriers in the table have two slots each.
 
+For a `TCGen05Bar`, the table describes the barrier's logical contract: which data it protects and which role may proceed after completion. An actual `tcgen05.commit` makes the barrier track the relevant asynchronous `tcgen05` operations issued earlier by the same issuing thread; it does not promise that only the one MMA named in the table is included. Read the QKᵀ/PV MMA labels as the last result or last use relevant to that handoff. The hardware completion dependency may be more conservative.
+
 | Barrier | Threads participating in the notification | Completion condition for one phase | What becomes safe |
 |---------|------|------------------------------------|-------------------|
-| `q_load.full` | one elected TMA-load thread | the thread reports one arrival; TMA then completes `CTA_GROUP * BLK_M * HEAD_DIM * 2` bytes of Q traffic | the score MMA may read the Q SMEM tile |
-| `q_load.empty` | one elected MMA thread | the thread submits a completion notification; the Tensor Core updates the barrier after the score MMAs that still read this Q stage finish | TMA may overwrite the stage with the next query tile |
-| `kv_load.full` | one elected TMA-load thread | the thread reports one arrival; TMA then completes `CTA_GROUP * BLK_N * HEAD_DIM * 2` bytes of K or V traffic | the score or value MMA may read the current K/V SMEM tile |
-| `kv_load.empty` | one elected MMA thread | the thread submits a completion notification; the Tensor Core updates the barrier after the score/value MMAs that read this stage finish | TMA may reuse the K/V stage |
-| `s_ready` | one elected MMA thread | the Tensor Core reports one notification when the score MMA completes | softmax may read the S TMEM tile |
-| `p_o_rescale` | 128 softmax threads + 128 WG2 threads | the two groups report 256 arrivals in total | the first value MMA may read `P[:, 0:96]` and initialize or accumulate into O |
-| `p_ready_2` | the 128 threads in the softmax warpgroup | the warpgroup reports 128 arrivals | the second value MMA may read `P[:, 96:128]` |
-| `o_ready` | one elected MMA thread | the Tensor Core reports one notification when the final value-MMA segment completes | the epilogue may read the final O accumulator |
+| `q_load.full` | one elected TMA-load thread | the thread reports one arrival; TMA then completes `CTA_GROUP * BLK_M * HEAD_DIM * 2` bytes of Q traffic | the QKᵀ MMA may read the Q SMEM tile |
+| `q_load.empty` | one elected MMA thread | the thread submits a completion notification; the Tensor Core updates the barrier after the QKᵀ MMAs that still read this Q stage finish | TMA may overwrite the stage with the next query tile |
+| `kv_load.full` | one elected TMA-load thread | the thread reports one arrival; TMA then completes `CTA_GROUP * BLK_N * HEAD_DIM * 2` bytes of K or V traffic | the QKᵀ or PV MMA may read the current K/V SMEM tile |
+| `kv_load.empty` | one elected MMA thread | the thread submits a completion notification; the Tensor Core updates the barrier after both MMAs that read this stage finish | TMA may reuse the K/V stage |
+| `s_ready` | one elected MMA thread | the Tensor Core reports one notification when the QKᵀ MMA completes | softmax may read the S TMEM tile |
+| `p_o_rescale` | 128 softmax threads + 128 WG2 threads | the two groups report 256 arrivals in total | the first PV MMA may read `P[:, 0:96]` and initialize or accumulate into O |
+| `p_ready_2` | the 128 threads in the softmax warpgroup | the warpgroup reports 128 arrivals | the second PV MMA may read `P[:, 96:128]` |
+| `o_ready` | one elected MMA thread | the Tensor Core reports one notification when the final PV MMA segment completes | the epilogue may read the final O accumulator |
 | `softmax_corr.full` | the 128 threads in the softmax warpgroup | the warpgroup reports 128 arrivals | WG2 may read `acc_scale` or the final `row_sum` from the mailbox |
 | `softmax_corr.empty` | the 128 threads in WG2 | WG2 reports 128 arrivals | softmax may advance and reuse the mailbox |
 | `corr_epi.full` | the 128 threads in WG2 | WG2 reports 128 arrivals | the TMA-store warp may read the completed `O_smem` tile |
@@ -261,25 +295,25 @@ In the current implementation, `q_load.full` and `kv_load.full` use `TMABar`; `q
 
 Every count in the table applies to one slot in its current phase. Multiple slots keep independent barrier state for different pipeline stages; they do not multiply the expected arrival count. The later sections revisit each barrier at its corresponding wait and arrive sites.
 
-## Score MMA and Value MMA
+## QKᵀ MMA and PV MMA
 
 For a fixed Q stage, the kernel processes the streamed K/V blocks one at a time. Each block passes through three steps:
 
 ```text
-Q, K -> score MMA -> S
+Q, K -> QKᵀ MMA -> S
 S    -> softmax   -> P
-P, V -> value MMA -> O
+P, V -> PV MMA -> O
 ```
 
-The score MMA first produces the current block's attention scores `S`. Softmax converts `S` into the unnormalized weights `P`, and the value MMA then computes `P @ V`. The first K/V block initializes `O`; later blocks accumulate into the same `O` tile. Once all blocks have been processed, the epilogue divides `O` by `row_sum` to produce the final output.
+The QKᵀ MMA first produces the current block's attention scores `S`. Softmax converts `S` into the unnormalized weights `P`, and the PV MMA then computes `P @ V`. The first K/V block initializes `O`; later blocks accumulate into the same `O` tile. Once all blocks have been processed, the epilogue divides `O` by `row_sum` to produce the final output.
 
 The following sections examine these three steps in order. For each tile operation, we identify the threads that execute it, the layouts of its operands and result, the hardware path selected by dispatch, and the barrier that hands the result to the next role.
 
 The code uses `S_region`, `P_region`, and `O_region` to name the parts of one TMEM allocation that hold the three tile types. Both `q_stage` and `i_q` identify the current Q stage and take the value 0 or 1. Using the same stage index with all three regions selects the `S`, `P`, and `O` tiles for the same Q tile. For now, treat them as named TMEM regions; [TMEM Layout and Reuse](#tmem-layout-and-reuse) explains their physical column ranges.
 
-### Score MMA
+### QKᵀ MMA
 
-For the current Q stage and K block, the score MMA computes:
+For the current Q stage and K block, the QKᵀ MMA computes:
 
 $$S = Q_{\text{block}}K_{\text{block}}^{\top}$$
 
@@ -299,13 +333,13 @@ if T.ptx.elect_sync():
 
 We can ask the same four questions the GEMM chapters asked of every tile op: who runs it, where the tiles live, how it dispatches, and how it hands off:
 
-> **Tile-primitive readout: Score MMA**
+> **Tile-primitive readout: QKᵀ MMA**
 > - Scope: WG3 warp 0 executes the warp-scoped tile operation; one elected lane commits its completion notification.
 > - Layout: Q, K in SMEM → `S` in TMEM (`S_region[q_stage]`).
 > - Dispatch: `tcgen05`.
 > - Handoff: `s_ready` (→ softmax).
 
-`s_ready` is a `TCGen05Bar` that tracks Tensor Core completion. Here, `s_ready.arrive(q_stage)` emits a `tcgen05.commit` that associates the previously issued score MMA with the barrier for this stage. Only one elected lane issues the commit. The hardware reports completion only after the Tensor Core has finished writing `S`, so the softmax warpgroup waits for `s_ready` before reading `S_region[q_stage]`.
+`s_ready` is a `TCGen05Bar` that tracks Tensor Core completion. Here, `s_ready.arrive(q_stage)` emits a `tcgen05.commit` that associates the previously issued QKᵀ MMA with the barrier for this stage. Only one elected lane issues the commit. The hardware reports completion only after the Tensor Core has finished writing `S`, so the softmax warpgroup waits for `s_ready` before reading `S_region[q_stage]`.
 
 ### Softmax Between MMAs
 
@@ -319,7 +353,7 @@ Between the two MMAs sits softmax, the stage that turns the score tile `S` into 
 
 Each score tile has 128 rows, and each softmax warpgroup has 128 threads, so the kernel assigns logical row `r` to thread `r`. The `wg_local_layout` encodes this mapping: each thread ultimately processes one row of 128 scores.
 
-Each thread keeps the complete row in a 128-value fp32 register buffer named `s_chunk_buf`. After WG0 or WG1 waits on `s_ready`, it fills that buffer with four 32-column `tcgen05.ld` operations rather than one full-row load:
+Each thread keeps the complete row in a 128-value fp32 register buffer named `s_chunk_buf`. The 200-register limit assigned to WG0 and WG1 above primarily makes room for this buffer and the remaining softmax temporaries. After WG0 or WG1 waits on `s_ready`, it fills that buffer with four 32-column `tcgen05.ld` operations rather than one full-row load:
 
 ```python
 for chunk_idx in Tx.unroll(BLK_N // SOFTMAX_LD_CHUNK):
@@ -334,11 +368,62 @@ for chunk_idx in Tx.unroll(BLK_N // SOFTMAX_LD_CHUNK):
     )
 ```
 
-Here `SOFTMAX_LD_CHUNK=32`. The loads are chunked, not the softmax computation: after all four loads, the full set of 128 scores is live in each thread's registers. Splitting the load avoids giving one `tcgen05.ld` 128 register operands and limits each instruction to 32. Each thread then processes its complete row:
+Here `SOFTMAX_LD_CHUNK=32`. The TMEM load is chunked, not the softmax computation. The current implementation divides the row into four smaller register fragments and fills 32 values at a time, controlling the register-tuple size of each tile operation. After all four loads, the complete set of 128 scores is live in each thread's registers. This is the load granularity chosen by the current kernel; softmax itself still processes the complete row. Each thread then:
 
 1. finds the maximum of the 128 current scores and combines it with the saved `row_max` to choose the exponent reference and `acc_scale`,
 2. computes the row's $p_{ij}$ values and converts the fp32 results to fp16 to form `P`,
 3. sums those $p_{ij}$ values to update `row_sum`.
+
+The following excerpt omits profiling and the optional WG0/WG1 ordering barrier while retaining the main computation. It first selects the new reference and uses the threshold to decide whether the old `O` needs rescaling:
+
+```python
+row_max_old = row_max[0]
+with Tx.thread():
+    if is_first:
+        Tx.max(tile_max, s_chunk_buf)
+    else:
+        tile_max[0] = row_max_old
+        Tx.max(tile_max, s_chunk_buf, accum=True)
+
+row_max_new = tile_max[0]
+row_max_safe = Tx.if_then_else(tile_max[0] == -float("inf"), 0.0, tile_max[0])
+if is_first:
+    acc_scale = Tx.float32(1.0)
+else:
+    acc_scale_ = (row_max_old - row_max_safe) * scale_log2
+    if acc_scale_ >= -rescale_threshold:
+        row_max_new = row_max_old
+        row_max_safe = row_max_old
+        acc_scale = Tx.float32(1.0)
+    else:
+        acc_scale = Tx.ptx.exp2(acc_scale_)
+row_max[0] = row_max_new
+```
+
+It then converts the scores to base-2 exponent arguments, computes the fp32 weights, and casts them to the fp16 `P` consumed by the PV MMA. The implementation selects between hardware `exp2` and `ex2_emulation_2`:
+
+```python
+Tx.fma(s_chunk, s_chunk, scale_log2, -row_max_safe * scale_log2)
+for frag_idx in Tx.unroll(4):
+    with Tx.thread():
+        s_chunk_local = s_chunk_buf.local(BLK_N)
+        for i in Tx.unroll(BLK_N // 4 // 2):
+            idx = Tx.meta_var(frag_idx * BLK_N // 4 + 2 * i)
+            if i * 2 % 16 < 16 - 4 or frag_idx >= 4 - 1 or apply_mask:
+                s_chunk_local[idx] = Tx.ptx.exp2(s_chunk_local[idx])
+                s_chunk_local[idx + 1] = Tx.ptx.exp2(s_chunk_local[idx + 1])
+            else:
+                ex2_emulation_2(
+                    s_chunk_local,
+                    idx,
+                    s_chunk_local[idx],
+                    s_chunk_local[idx + 1],
+                )
+    Tx.cast(
+        p_chunk[:, frag_idx * BLK_N // 4 : (frag_idx + 1) * BLK_N // 4],
+        s_chunk[:, frag_idx * BLK_N // 4 : (frag_idx + 1) * BLK_N // 4],
+    )
+```
 
 Softmax then writes `P` back to TMEM as four 32-column chunks. The code stores the first three chunks, waits for those TMEM stores to finish, and reports that the first 96 columns are ready:
 
@@ -357,13 +442,25 @@ T.ptx.tcgen05.wait.st()
 p_ready_2.arrive(wg_id)
 ```
 
-The first value MMA reads `P[:, 0:96]` and updates `O`, so it must wait for two independent conditions: softmax has stored that portion of `P`, and WG2 has made `O` ready for initialization or accumulation. `p_o_rescale` joins those two completion signals. The final 32 columns use a separate `p_ready_2` handoff, so the first MMA does not need to wait for the final TMEM store.
+The fp32 `P` values remain in `s_chunk_buf`. After WG2 consumes `acc_scale` and returns the mailbox slot, the softmax warpgroup uses those values to update the denominator:
 
-Why write `P` back to TMEM when it was just computed in registers? In this kernel, the value MMA requires its `P` operand in an MMA-readable TMEM layout; it cannot consume values scattered across the softmax threads' private registers. `P_region` is an fp16 view of the same physical TMEM allocation. Writing `P` there turns the per-thread softmax results into the matrix operand expected by the next MMA.
+```python
+softmax_corr.empty.wait(wg_id, phase_q)
+with Tx.thread():
+    if is_first:
+        Tx.sum(row_sum, s_chunk_buf)
+    else:
+        row_sum[0] = row_sum[0] * acc_scale
+        Tx.sum(row_sum, s_chunk_buf, accum=True)
+```
 
-### Value MMA
+The first PV MMA reads `P[:, 0:96]` and updates `O`, so it must wait for two independent conditions: softmax has stored that portion of `P`, and WG2 has made `O` ready for initialization or accumulation. `p_o_rescale` joins those two completion signals. The final 32 columns use a separate `p_ready_2` handoff, so the first MMA does not need to wait for the final TMEM store.
 
-Once the current block's `P` and V are ready, the value MMA updates `O` as follows:
+Why write `P` back to TMEM when it was just computed in registers? In this kernel, the PV MMA requires its `P` operand in an MMA-readable TMEM layout; it cannot consume values scattered across the softmax threads' private registers. `P_region` is an fp16 view of the same physical TMEM allocation. Writing `P` there turns the per-thread softmax results into the matrix operand expected by the next MMA.
+
+### PV MMA
+
+Once the current block's `P` and V are ready, the PV MMA updates `O` as follows:
 
 ```text
 first K/V block: O = P_block @ V_block
@@ -398,7 +495,7 @@ Tx.warp.gemm_async(
 )
 ```
 
-> **Tile-primitive readout: Value MMA**
+> **Tile-primitive readout: PV MMA**
 > - Scope: WG3 warp 0 executes the warp-scoped tile operation.
 > - Layout: `P` in TMEM + V in SMEM → `O` in TMEM (`O_region[i_q]`).
 > - Dispatch: `tcgen05` with a TMEM operand.
@@ -409,11 +506,11 @@ Tx.warp.gemm_async(
 Here inner K is the reduction dimension of `P(128×128) @ V(128×d)`: the 128 positions in the current K/V block. Each `MMA_K=16` step consumes 16 positions. The kernel groups the first six steps into a 96-position sub-MMA and handles the remaining 32 positions in a second sub-MMA:
 
 1. Softmax writes `P` in four 32-column chunks.
-2. As soon as the first three chunks are ready, the value MMA starts on the first 96 columns of `P` and the matching rows of `V`.
+2. As soon as the first three chunks are ready, the PV MMA starts on the first 96 columns of `P` and the matching rows of `V`.
 3. The final 32 columns wait for `p_ready_2`.
 4. A second MMA consumes that final chunk and finishes the tile.
 
-The split reduces the time the Tensor Core spends waiting for `P` writeback. If all 128 reduction positions were handed off as one unit, the value MMA could not begin until all four `P` chunks were in TMEM. Instead, it starts on the first 96 columns while the softmax warpgroup performs the final 32-column TMEM store and completion handoff.
+The split reduces the time the Tensor Core spends waiting for `P` writeback. If all 128 reduction positions were handed off as one unit, the PV MMA could not begin until all four `P` chunks were in TMEM. Instead, it starts on the first 96 columns while the softmax warpgroup performs the final 32-column TMEM store and completion handoff.
 
 ## TMEM Layout and Reuse
 
@@ -423,24 +520,7 @@ FA4 allocates 128 rows by 512 physical TMEM columns for each CTA, with one 32-bi
 2 stages × (128 columns for S + 128 columns for O) = 512 columns
 ```
 
-There is no third, disjoint region for `P`. Because `P` uses fp16, each physical 32-bit TMEM column holds two fp16 values, so a 128-column `P` tile occupies only 64 physical columns. After softmax has read `S`, the kernel reuses the second half of that stage's `S` region for `P`. The figure shows this overlap:
-
-![TMEM Layout](../img/tmem_layout_v3.png)
-
-The figure uses both fp32 and fp16 logical column numbers. The table below maps those views to physical 32-bit TMEM columns; all ranges are half-open:
-
-| Region | Access view | Columns in that view | Physical 32-bit columns |
-|---|---|---:|---:|
-| `S0` | fp32 `tmem` | `[0, 128)` | `[0, 128)` |
-| `S1` | fp32 `tmem` | `[128, 256)` | `[128, 256)` |
-| `O0` | fp32 `tmem` | `[256, 384)` | `[256, 384)` |
-| `O1` | fp32 `tmem` | `[384, 512)` | `[384, 512)` |
-| `P0` | fp16 `tmem_as_f16` | `[128, 256)` | `[64, 128)`, overlapping the second half of `S0` |
-| `P1` | fp16 `tmem_as_f16` | `[384, 512)` | `[192, 256)`, overlapping the second half of `S1` |
-
-This reuse requires three operations to occur in order. Softmax must read the complete `S` tile into registers before `P` overwrites the second half of `S`. The value MMA must wait until the corresponding `P` chunks have been stored. The next score MMA must not overwrite the region again until the current `P` has been consumed. `s_ready`, `p_o_rescale`, `p_ready_2`, and program order within the MMA warp jointly enforce these conditions.
-
-The kernel creates the two aliases with `T.TMEMPool`. `tmem` addresses the allocation in fp32 columns. `move_base_to(0)` rewinds the allocation point, allowing `tmem_as_f16` to address the same physical bytes in fp16 columns:
+The source first creates two buffers over this allocation. `move_base_to(0)` rewinds the allocation cursor, so `tmem_as_f16` starts at the same physical TMEM column as `tmem`:
 
 ```python
 tmem_pool = T.TMEMPool(
@@ -452,7 +532,25 @@ tmem_as_f16 = tmem_pool.alloc((128, N_COLS_TMEM * 2), "float16")
 tmem_pool.commit()
 ```
 
-The fp16 view exposes twice as many indexable columns as the fp32 view. The kernel then uses `T.TMEMStages` to define the `S`, `P`, and `O` regions for each Q stage:
+The two buffers contain the same number of bits per row:
+
+```text
+tmem:         512 × 32 bits = 16384 bits
+tmem_as_f16: 1024 × 16 bits = 16384 bits
+```
+
+`tmem_as_f16` is therefore another indexing scheme for the same TMEM row, not a second allocation. Hardware still divides each row into 512 cells, each 32 bits wide; we call the cell index the physical column. Through the fp16 buffer, each cell appears as two independently indexed 16-bit element slots:
+
+```text
+physical column p (32 bits)
+┌────────────────┬────────────────┐
+│ fp16 slot 2p   │ fp16 slot 2p+1 │
+└────────────────┴────────────────┘
+```
+
+Thus `tmem[:, p]` addresses the entire cell as one fp32 value, while `tmem_as_f16[:, 2p]` and `tmem_as_f16[:, 2p+1]` address its two fp16 values.
+
+The source then defines two pipeline stages for `S`, `P`, and `O`:
 
 ```python
 S_region = T.TMEMStages(
@@ -469,27 +567,64 @@ P_region = T.TMEMStages(
 )
 ```
 
-Adjacent stages in `S_region` and `O_region` are 128 physical columns apart. The same distance is 256 logical columns in the fp16 view, which is why `P_region` uses a stage stride of `MMA_N * 2`.
+Here `MMA_N=BLK_N=128`, and the Q pipeline has two stages. `S_region` and `O_region` index the fp32 buffer, so their indices are also physical column numbers. `P_region` indexes the fp16 buffer, so dividing an index by two gives its physical column.
+
+For `P0`, let `n` denote the logical column within the tile:
+
+```text
+P_region[0, n]
+    -> tmem_as_f16[:, 128 + n]       # col_start = 128
+    -> physical column 64 + n // 2
+```
+
+`P0[:, 0]` and `P0[:, 1]` therefore occupy the two 16-bit halves of physical column 64. `P0[:, 2]` and `P0[:, 3]` occupy physical column 65. The 128 fp16 values fill 64 physical columns, `[64, 128)`.
+
+For stage 1, the fp16 start is `128 + 1 × 256 = 384`:
+
+```text
+P_region[1, n]
+    -> tmem_as_f16[:, 384 + n]
+    -> physical column 192 + n // 2
+```
+
+`P1` therefore occupies physical columns `[192, 256)`. The figure and table summarize the final placement of every region:
+
+![TMEM Layout](../img/tmem_layout_v3.png)
+
+| Region | Data stored in each row | Physical columns occupied |
+|---|---:|---:|
+| `S0` | 128 fp32 scores | `[0, 128)` |
+| `P0` | 128 fp16 weights | `[64, 128)`, reusing the second half of `S0` |
+| `S1` | 128 fp32 scores | `[128, 256)` |
+| `P1` | 128 fp16 weights | `[192, 256)`, reusing the second half of `S1` |
+| `O0` | 128 fp32 accumulator values | `[256, 384)` |
+| `O1` | 128 fp32 accumulator values | `[384, 512)` |
+
+There is no third, disjoint region for `P`. The overlap is temporal reuse; `S` and `P` do not coexist in those bits. For stage 0, the QKᵀ MMA first writes the complete `S0` tile to physical columns `[0, 128)`. After softmax has loaded all of `S0` into registers, it packs the 128 fp16 `P0` values two per column and writes them to `[64, 128)`. That store overwrites the final 64 fp32 scores, which are no longer needed.
+
+This reuse requires three operations to occur in order. Softmax must read the complete `S` tile into registers before `P` overwrites the second half of `S`. The PV MMA must wait until the corresponding `P` chunks have been stored. The next QKᵀ MMA must not overwrite the region again until the current `P` has been consumed.
+
+Ordinary source-level program order alone does not establish these conditions. Completion of the QKᵀ MMA is committed to `s_ready`, which releases softmax; softmax uses the scores only after its TMEM-to-register loads have completed. When writing `P`, `tcgen05.wait::st` first waits for the asynchronous TMEM stores, after which the softmax threads arrive on `p_o_rescale` or `p_ready_2`; the PV MMA waits on the matching barrier before reading. Finally, WG3 warp 0 issues the PV MMA and the following QKᵀ MMA as a fixed `tcgen05` sequence from the same issuing thread, and lowering must preserve the required `tcgen05` dependencies between them. Together, these completion and ordering mechanisms prevent the aliased TMEM region from being read or overwritten too early.
 
 Once these regions are defined, the compute code can index `S_region[...]`, `P_region[...]`, and `O_region[...]` by stage without computing raw TMEM column numbers.
 
 ## Key Barrier Protocols
 
-The summary table above identifies every barrier's notifier, completion condition, and released operation. This section expands only the two protocols that are easiest to confuse: the conditions that the score and value MMAs wait for, and the full/empty handshake through which softmax and WG2 reuse an SMEM exchange slot for per-row state.
+The summary table above identifies every barrier's notifier, completion condition, and released operation. This section expands only the two protocols that are easiest to confuse: the conditions that the QKᵀ and PV MMAs wait for, and the full/empty handshake through which softmax and WG2 reuse an SMEM exchange slot for per-row state.
 
 ### What Each MMA Waits For
 
-The next figure shows the readiness gates for the score MMA and for each of the two value-MMA segments: which operands and accumulator state must be ready before each segment can be issued.
+The next figure shows the readiness gates for the QKᵀ MMA and for each of the two PV MMA segments: which operands and accumulator state must be ready before each segment can be issued.
 
 ![Flash Attention 4 MMA Input Gates](../img/flash_attention_main_handoff.png)
 
-The upper path is the score MMA. `q_load.full` proves that the current Q stage is in SMEM, while `kv_load.full` proves that the current K stage is in SMEM. The score MMA can produce `S` only after both conditions hold.
+The upper path is the QKᵀ MMA. `q_load.full` proves that the current Q stage is in SMEM, while `kv_load.full` proves that the current K stage is in SMEM. The QKᵀ MMA can produce `S` only after both conditions hold.
 
-The lower half separates the value MMA into the two segments issued by the code. The first segment covers inner-K positions `0:96`. `kv_load.full` proves that the complete `V` tile is in SMEM, while `p_o_rescale` combines two conditions: `P[:, 0:96]` is in TMEM, and the `O` slot may be initialized or accumulated into. The first K/V block initializes `O` directly; later blocks must first complete the required rescale or establish that this round can skip it.
+The lower half separates the PV MMA into the two segments issued by the code. The first segment covers inner-K positions `0:96`. `kv_load.full` proves that the complete `V` tile is in SMEM, while `p_o_rescale` combines two conditions: `P[:, 0:96]` is in TMEM, and the `O` slot may be initialized or accumulated into. The first K/V block initializes `O` directly; later blocks must first complete the required rescale or establish that this round can skip it.
 
 After issuing the first segment, the same MMA warp waits on `p_ready_2`, then issues the second segment with `P[:, 96:128]` and `V[96:128, :]`, using `accum=True` to update the same `O` tile. It does not wait on `kv_load.full` again because that barrier already proved that the complete `V` tile was ready. `p_ready_2` gates only the second segment, so it does not delay the first.
 
-The expected arrival count of `p_o_rescale` is 256. The softmax warpgroup contributes 128 arrivals after storing the first 96 columns of `P`, and WG2 contributes another 128 after making `O` ready. For the first K/V block, no old `O` exists, so WG2 contributes its half in advance. On later blocks, it arrives after completing the rescale or determining that no rescale is needed. All 256 arrivals must occur before the first value-MMA segment can begin. The expected count of `p_ready_2` is 128; the softmax warpgroup contributes those arrivals after storing the final 32 columns, releasing only the second segment.
+The expected arrival count of `p_o_rescale` is 256. The softmax warpgroup contributes 128 arrivals after storing the first 96 columns of `P`, and WG2 contributes another 128 after making `O` ready. For the first K/V block, no old `O` exists, so WG2 contributes its half in advance. On later blocks, it arrives after completing the rescale or determining that no rescale is needed. All 256 arrivals must occur before the first PV MMA segment can begin. The expected count of `p_ready_2` is 128; the softmax warpgroup contributes those arrivals after storing the final 32 columns, releasing only the second segment.
 
 ### Passing Per-Row State from Softmax to WG2
 
@@ -510,9 +645,9 @@ The first K/V block has no old `O`, so it does not need an `acc_scale`. Softmax 
 
 The kernel interleaves correction for two Q stages. After processing stage `i_q`, WG2 calls `softmax_corr.empty.arrive(1 - i_q)` to release the other softmax stage, keeping WG0 and WG1 in their fixed alternating order. During the epilogue, after reading the final `row_sum`, WG2 returns the slot for the same `i_q`. The figure therefore describes one mailbox slot; the stage index in code also reflects this two-stage interleaving.
 
-`softmax_corr.empty` and `p_o_rescale` serve different purposes. The former advances the softmax mailbox protocol. The latter proves to the value MMA that both `P` and `O` satisfy the first sub-MMA's input conditions.
+`softmax_corr.empty` and `p_o_rescale` serve different purposes. The former advances the softmax mailbox protocol. The latter proves to the PV MMA that both `P` and `O` satisfy the first sub-MMA's input conditions.
 
-Most barriers that FA4 adds beyond GEMM surround softmax. Register computation, the TMEM rewrite of `P`, and the optional rescale of `O` now sit between the score and value MMAs, so each boundary needs an explicit readiness or reuse signal.
+Most barriers that FA4 adds beyond GEMM surround softmax. Register computation, the TMEM rewrite of `P`, and the optional rescale of `O` now sit between the QKᵀ and PV MMAs, so each boundary needs an explicit readiness or reuse signal.
 
 ## Pipeline Timeline
 
@@ -533,14 +668,14 @@ Read this as a timeline rather than a barrier graph. It shows which roles are ac
 Each row matches one of the code's role branches:
 
 - WG3 warp 1 issues TMA loads.
-- WG3 warp 0 issues both score MMA and value MMA.
+- WG3 warp 0 issues both QKᵀ MMA and PV MMA.
 - WG0 and WG1 run softmax for the two Q stages.
 - WG2 releases both `O` slots before the first iteration, rescales `O` as needed on later iterations, and finally normalizes the output.
 - WG3 warp 2 issues the TMA store.
 
 Following the figure from left to right traces one representative pipeline wave. Here $n$ is the number of K/V blocks needed by these two query tiles. The kernel starts at the last valid block and visits `n-1`, `n-2`, and so on. The load warp begins with `Q0`, `K[n-1]`, `Q1`, and `V[n-1]`, then continues with lower-index K/V blocks. The MMA warp produces `S0` and `S1`, and WG0/WG1 turn them into `P0` and `P1`.
 
-It is important that the MMA warp does *not* run all the score MMAs and then all the value MMAs. Once both Q stages are primed, it interleaves the two kinds: a value MMA for the current `V` block, then a score MMA for the next `K` block, and so on:
+It is important that the MMA warp does *not* run all the QKᵀ MMAs and then all the PV MMAs. Once both Q stages are primed, it interleaves the two kinds: a PV MMA for the current `V` block, then a QKᵀ MMA for the next `K` block, and so on:
 
 ```text
 score Q0*K[n-1]
@@ -555,7 +690,7 @@ value P0*V[n-2]
 
 This interleaving is the reason the score, softmax, correction, and value rows all overlap in the figure instead of running in tidy succession.
 
-The `pre-release O0/O1` event at the left of the timeline occurs before the main loop. TMEM contains no old `O` yet, so WG2 immediately contributes arrivals to both `p_o_rescale` slots and lets the first value MMAs initialize `O0` and `O1` with `accum=false`. In the steady-state loop, WG2 rescales an old `O` as needed after the corresponding softmax produces `acc_scale`, then releases the next value MMA. The ellipsis carries this interleaving through `V[0]`. Only after the final two value MMAs finish does WG2 normalize `O0` and `O1`; WG3 warp 2 then issues the two TMA stores in order.
+The `pre-release O0/O1` event at the left of the timeline occurs before the main loop. TMEM contains no old `O` yet, so WG2 immediately contributes arrivals to both `p_o_rescale` slots and lets the first PV MMAs initialize `O0` and `O1` with `accum=false`. In the steady-state loop, WG2 rescales an old `O` as needed after the corresponding softmax produces `acc_scale`, then releases the next PV MMA. The ellipsis carries this interleaving through `V[0]`. Only after the final two PV MMAs finish does WG2 normalize `O0` and `O1`; WG3 warp 2 then issues the two TMA stores in order.
 
 Q tiles, K/V blocks, and TMEM slots advance at different rates. The kernel uses `PipelineState` for the K/V ring and separate local phase variables for the Q and TMEM slots. Each path can therefore wait on its own barrier and reuse storage independently after the corresponding consumer is finished.
 
@@ -591,13 +726,13 @@ p_o_rescale.arrive(i_q)
 softmax_corr.empty.arrive(1 - i_q)
 ```
 
-Skipping the data path does not skip the synchronization protocol. Every warp still contributes the arrivals required by `p_o_rescale` and `softmax_corr.empty`, allowing the value MMA to proceed and returning the softmax mailbox for reuse.
+Skipping the data path does not skip the synchronization protocol. Every warp still contributes the arrivals required by `p_o_rescale` and `softmax_corr.empty`, allowing the PV MMA to proceed and returning the softmax mailbox for reuse.
 
 > **Tile-primitive readout: Correction (rescale)**
 > - Scope: WG2; each warp independently checks and processes its own 32 rows.
 > - Layout: `O` in TMEM → registers → `O` in TMEM (`O_region[i_q]`).
 > - Dispatch: `tcgen05.ld` to read, TMEM store to write; register multiply between them.
-> - Handoff: waits `softmax_corr.full`; arrives `p_o_rescale` (→ value MMA) and `softmax_corr.empty` (→ softmax).
+> - Handoff: waits `softmax_corr.full`; arrives `p_o_rescale` (→ PV MMA) and `softmax_corr.empty` (→ softmax).
 
 Tracing the synchronization from end to end:
 
@@ -605,27 +740,39 @@ Tracing the synchronization from end to end:
 2. WG2 waits on `softmax_corr.full`.
 3. Each WG2 warp checks its 32 rows and updates `O` in TMEM only when needed.
 4. WG2 completes the required arrivals on `p_o_rescale` and `softmax_corr.empty`, whether or not the data path ran.
-5. WG3's value MMA can now consume `P` and accumulate into the rescaled `O` tile.
+5. WG3's PV MMA can now consume `P` and accumulate into the rescaled `O` tile.
 
 Once the K/V loop ends, WG2 switches from correction to epilogue. It waits for the final `row_sum`, `o_ready`, and a reusable `O_smem` stage. It then reads the final `O` from TMEM, multiplies by `1 / row_sum`, casts to fp16, and writes `O_smem`. `corr_epi.full` hands that tile to WG3, whose TMA store warp writes it to GMEM.
 
-One limitation is worth flagging for anyone who plans to extend this kernel. It computes the forward output only, whereas a training forward pass would normally also store the log-sum-exp (LSE) the backward pass needs. This kernel keeps `row_max` as an unscaled `QK^T` exponent reference; because of the delayed-update rule, it need not equal the exact maximum seen so far. `row_sum` accumulates $\exp((s_{ij}-\mathrm{row\_max}_i)/\sqrt d)$. Adding the subtracted reference back gives the natural-log LSE:
+Extending this kernel to a training forward pass would normally require writing the log-sum-exp (LSE) for reuse by the backward pass; otherwise, backward must recompute it. The current implementation writes only the output `O`.
 
-$$\mathrm{LSE}_i = \log(\mathrm{row\_sum}_i) + \mathrm{row\_max}_i / \sqrt{d}$$
+Let $r_i$ denote the exponent reference ultimately stored in `row_max`. The source selects this reference from the unscaled $QK^T$ scores and applies `scale_log2` only when evaluating the exponential. Delayed rescaling means that $r_i$ need not equal the exact row maximum, but every accumulated weight is represented relative to the same $r_i$:
 
-This formula applies to valid rows with `row_sum > 0`; a row with no valid key has LSE $-\infty$. This implementation is forward-output only and does not write LSE.
+$$
+\mathrm{row\_sum}_i
+= \sum_{j\in\mathrm{valid}}
+  \exp\left(\frac{s_{ij}-r_i}{\sqrt d}\right)
+= \sum_{j\in\mathrm{valid}}
+  2^{(s_{ij}-r_i)\,\mathrm{scale\_log2}}.
+$$
+
+Restoring the reference gives the natural-log LSE of the scaled logits:
+
+$$\mathrm{LSE}_i = \log(\mathrm{row\_sum}_i) + r_i / \sqrt{d}$$
+
+The derivation requires only that `row_sum` and $r_i$ use the same reference; $r_i$ does not have to be the exact maximum. The formula applies to valid rows with `row_sum > 0`; a row with no valid key has LSE $-\infty$. This implementation does not write LSE.
 
 ## Causal Masking
 
-Causal attention allows each query to use only keys at or before its own position. When Q and K have the same sequence length, the valid region lies on and below the main diagonal of the score matrix. For unequal lengths, the kernel shifts that boundary by `SEQ_LEN_KV - SEQ_LEN_Q`. It enforces the boundary at both the block and element levels.
+Causal attention allows each query to use only keys at or before its own position. When Q and K have the same sequence length, the valid region lies on and below the main diagonal of the score matrix. For unequal lengths, the current implementation uses a bottom-right-aligned causal mask: query position `i` may access at most key position `i + SEQ_LEN_KV - SEQ_LEN_Q`, clipped to `SEQ_LEN_KV - 1`. The kernel enforces this boundary at both the block and element levels.
 
 At the block level, `get_n_block_max(...)` returns the exclusive upper bound of the K/V blocks needed by the current Q task. The loop visits blocks `0` through `n_block_max - 1` and never loads higher-numbered blocks that contain no valid score.
 
-Blocks that straddle the causal boundary contain both valid and invalid columns. They still run the score MMA, but softmax masks the invalid columns before exponentiation. For each row, it derives a column limit from the query position and block offset, keeps columns at or below that limit, and sets later columns to `-inf` in registers. Those columns do not affect the row maximum, and their $p_{ij}$ values become zero.
+Blocks that straddle the causal boundary contain both valid and invalid columns. They still run the QKᵀ MMA, but softmax masks the invalid columns before exponentiation. For each row, it derives a column limit from the query position and block offset, keeps columns at or below that limit, and sets later columns to `-inf` in registers. Those columns do not affect the row maximum, and their $p_{ij}$ values become zero.
 
 Rather than compare coordinates separately for every element, `mask_r2p(...)` converts the column limit into a set of bit masks. It handles at most 24 elements per mask and uses bit tests to form predicates, which lower to an efficient register-to-predicate path. Blocks that lie fully inside the causal boundary keep every column and need no mask at all.
 
-Seen from the tile-primitive view, causal mode does not rewrite the data path at all. It only trims the K/V trip count and inserts a masking step into the register-resident softmax, between the score MMA and the `P` writeback.
+Seen from the tile-primitive view, causal mode does not rewrite the data path at all. It only trims the K/V trip count and inserts a masking step into the register-resident softmax, between the QKᵀ MMA and the `P` writeback.
 
 ## GQA Support
 
@@ -644,7 +791,7 @@ q_head_offset = row % GQA_RATIO
 q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 ```
 
-The Q load expresses this packing with a 3D view. The source is the natural `Q[batch, seq, qo_head, dim]` layout, while the destination is the same SMEM tile that the score MMA will later read as a flat `128 x HEAD_DIM` operand. The view tells the TMA copy how to interpret the source and destination coordinates; it does not require a separate rearrangement pass:
+The Q load expresses this packing with a 3D view. The source is the natural `Q[batch, seq, qo_head, dim]` layout, while the destination is the same SMEM tile that the QKᵀ MMA will later read as a flat `128 x HEAD_DIM` operand. The view tells the TMA copy how to interpret the source and destination coordinates; it does not require a separate rearrangement pass:
 
 ```python
 Q_smem_3d = Q_smem.view(SMEM_PIPE_DEPTH_Q, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM)
@@ -660,14 +807,16 @@ Tx.copy_async(
 
 K and V are never expanded in memory, and that is the whole point of GQA: the single K/V tile for `kv_head_idx` is reused by all `GQA_RATIO` query heads packed into the Q rows. The output side mirrors the input, with a matching 3D view storing the packed rows back to `O[batch, seq, qo_head, dim]` after the epilogue.
 
-GQA does not change the score-MMA, softmax, or value-MMA tile shapes: the compute path still sees a plain `128 x HEAD_DIM` Q operand. The Q load and O store use 3D views to translate between packed rows and `(sequence, query head)` coordinates. The scheduler's query-tile stride and the causal mask's row position also use `SEQ_Q_PER_TILE` and `GQA_RATIO` to interpret those packed rows.
+GQA does not change the QKᵀ MMA, softmax, or PV MMA tile shapes: the compute path still sees a plain `128 x HEAD_DIM` Q operand. The Q load and O store use 3D views to translate between packed rows and `(sequence, query head)` coordinates. The scheduler's query-tile stride and the causal mask's row position also use `SEQ_Q_PER_TILE` and `GQA_RATIO` to interpret those packed rows.
 
 ## Tile Scheduling
 
 The scheduler maps each CTA to a `(batch, kv_head, m_block)` attention task. One `m_block` contains the two Q stages introduced earlier, so each task advances two query tiles together. The scheduling strategy depends on whether masking makes those tasks equal in cost:
 
 - Non-causal mode uses `FlashAttentionLinearScheduler`. Every task visits the same number of K/V blocks, so the kernel launches a fixed set of persistent CTAs. After completing one task, each CTA advances its linear task index by `num_ctas` and processes the next assignment.
-- Causal mode uses `FlashAttentionLPTScheduler`. A Q block near the beginning may visit only one K/V block, while a later Q block may visit all of them. This implementation launches one CTA per task and places heavier blocks earlier in the launch order to reduce the finishing-time imbalance. It also keeps nearby batch/head tasks together for L2 locality.
+- Causal mode uses `FlashAttentionLPTScheduler`. A Q block near the beginning may visit only one K/V block, while a later Q block may visit all of them. The scheduler first reverses the `m_block` order so that later, heavier blocks enter the launch order first, reducing the finishing-time imbalance across CTAs. It also groups the flattened `batch × kv_head` index by `L2_SWIZZLE`: before advancing to the next `m_block`, it visits the batch/KV-head tasks in the current group. This keeps a bounded group of K/V working sets active in L2 as the scheduler advances through `m_block`. The current implementation launches one CTA per causal task.
+
+The scheduling constants in the current source are tuned for the B200 configuration used in this book; they are not universal Blackwell parameters. `max_ctas=148` caps the non-causal persistent worker count at 148, while `SM_NUMBER=148` also participates in profiler-buffer indexing. `L2_SIZE=50 MiB` is the usable cache budget assumed when computing `L2_SWIZZLE`, not the GPU's full reported L2 capacity. A Blackwell GPU with a different SM count or cache configuration should retune these values or receive them from the target configuration.
 
 For all their differences, the two schedulers expose an identical loop interface:
 
@@ -680,11 +829,20 @@ while scheduler.valid():
     scheduler.next_tile()
 ```
 
-The difference lies in `next_tile()`: non-causal mode advances a persistent CTA to another task, while a causal CTA owns only its current task and therefore exits the loop. Both modes run the same local primitives inside the loop: TMA load, score MMA, softmax, value MMA, correction, and TMA store.
+The difference lies in `next_tile()`: non-causal mode advances a persistent CTA to another task, while a causal CTA owns only its current task and therefore exits the loop. Both modes run the same local primitives inside the loop: TMA load, QKᵀ MMA, softmax, PV MMA, correction, and TMA store.
 
 ## Compile and Verify
 
 The preceding sections used excerpts from the complete kernel. To run FA4, import [`flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/main/tirx_kernels/attention/flash_attention4.py) from `tirx-kernels`, compile it, and compare its output with a PyTorch reference. Unlike the GEMM examples, this kernel is created with `get_flash_attention4_kernel` and accepts an additional `profiler_buffer` argument for its built-in profiler:
+
+The current `flash_attention4.py` is specialized for fixed tile shapes rather than serving as a general attention interface. Its inputs must satisfy these constraints:
+
+- `NUM_QO_HEADS` must be divisible by `NUM_KV_HEADS`, producing an integral `GQA_RATIO`.
+- `GQA_RATIO` must divide `BLK_M=128`, so the 128 packed Q rows map evenly back to sequence positions.
+- `HEAD_DIM` must currently be 128; the TMEM regions, PV MMA, and epilogue are organized around that width.
+- On the non-causal path, `SEQ_LEN_KV` must be divisible by `BLK_N=128`. The code rounds the K/V block count up but does not apply a tail mask to a final partial non-causal block. The built-in causal and non-causal test configurations both use multiples of 128.
+
+The example checks these requirements before compiling:
 
 ```python
 import torch
@@ -694,6 +852,11 @@ from tirx_kernels.attention.flash_attention4 import (
     get_flash_attention4_kernel, PROFILER_BUFFER_SIZE)
 
 B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
+assert Hq % Hkv == 0
+assert 128 % (Hq // Hkv) == 0
+assert D == 128
+assert S % 128 == 0
+
 Q = torch.randn(B, S, Hq, D, dtype=torch.float16, device="cuda")
 K = torch.randn(B, S, Hkv, D, dtype=torch.float16, device="cuda")
 V = torch.randn(B, S, Hkv, D, dtype=torch.float16, device="cuda")
@@ -716,33 +879,18 @@ print(f"FA4: B={B} S={S} Hq={Hq} Hkv={Hkv} D={D}, non-causal -> PASS")
 
 **Expected output**: `... -> PASS`. The kernel accumulates online softmax in fp32, but several finite-precision effects still separate it from the PyTorch float32 reference above: fp16 storage and rounding of inputs and operands, the finite precision of both hardware `exp2` and the cubic polynomial approximation, blockwise accumulation with a different summation order, and the final fp16 cast of `O`. The `rtol`/`atol` values match the source kernel's own test and cover these effects together. A larger error usually points back to the softmax handoffs: a missing `s_ready`, `p_o_rescale`, or `p_ready_2` wait, or a `row_max` / `row_sum` update that did not reach the correction path.
 
-## Differences from GEMM
-
-The table below compares FA4 with GEMM along the axes that changed:
-
-| Aspect | GEMM | Flash Attention 4 |
-|--------|------|-------------------|
-| MMA phases | one repeated MMA | score MMA and value MMA |
-| Work between MMAs | none beyond pipeline handoffs | online softmax, masking, and O rescaling |
-| Running state | accumulator only | exponent reference, row sum, O accumulator |
-| Main intermediate | accumulator TMEM tile | S, P, and O TMEM tile regions |
-| Warp roles | TMA producer, MMA consumer, writeback | TMA load, MMA, softmax, correction, TMA store |
-| Barriers | mostly load/compute/writeback handoffs | additional score/softmax/value/correction handoffs |
-| Scheduling unit | output matrix tile | attention task: `(batch, kv_head, m_block)` |
-
-These differences all follow from the same structural change: FA4 has two MMA phases with softmax between them. It still uses the TIRx contracts introduced in the preceding chapters:
-
-- the tile primitive says what tile moves or computes,
-- the surrounding scope says which threads cooperate,
-- the layout says where the tile lives,
-- the barrier says when the next role may consume it.
-
-FA4's complexity comes from the larger set of simultaneously live tile values and the denser handoffs among score MMA, softmax, value MMA, and rescaling.
+FA4 reuses the TMA, `tcgen05`, TMEM, and barrier machinery developed for the GEMM kernels, but its dependency chain is longer: the QKᵀ MMA produces `S`, softmax transforms `S` into `P`, and the PV MMA uses `P` and `V` to update `O`. Because `S`, `P`, and `O` pass between different warpgroups and reuse the same TMEM allocation, the kernel must overlap these stages while ensuring that each tile is read or overwritten only after the corresponding handoff completes.
 
 ## Exercises
 
-1. Follow the `Q/K/V -> S -> P -> O` path. For each handoff, identify the producer, consumer, source tile, destination tile, and hardware path. Which steps do not exist in GEMM?
-2. Why must softmax write the unnormalized weight tile `P` back to TMEM instead of leaving it in the registers held by the softmax warpgroup?
-3. Which physical TMEM columns hold `S0`, `S1`, `P0`, `P1`, `O0`, and `O1`? Why does `P_region` use a stage stride of `MMA_N * 2`?
-4. Trace one K/V block through `s_ready`, `p_o_rescale`, `p_ready_2`, and `o_ready`. For each barrier, identify who waits, who arrives, and which data becomes safe to read.
-5. Choose an epilogue `Tx.copy_async`, the fp32-to-fp16 `Tx.cast`, or the second value sub-MMA. Describe its scope, layout, dispatch, and handoff, then check those claims against the corresponding guard, allocation, and wait in the kernel.
+1. Let $r_i$ be the final exponent reference for one row. Starting from the definition of `row_sum`, derive
+   $\mathrm{LSE}_i=\log(\mathrm{row\_sum}_i)+r_i/\sqrt d$, and explain why $r_i$ need not equal the exact row maximum.
+2. Let `rescale_threshold=8`. For `delta=-6` and `delta=-10`, determine whether the kernel keeps the old reference or adopts the candidate reference. What is `acc_scale` in each case, and which case requires rescaling the existing `O`?
+3. Trace these four paths separately: Q/K in SMEM → S in TMEM, S in TMEM → P in TMEM, P in TMEM + V in SMEM → O in TMEM, and O in TMEM → O in GMEM. For each path, identify the executing role, tile primitive, and hardware path. Which paths do not exist in the preceding GEMM kernel?
+4. Softmax initially leaves its result in registers owned by WG0 or WG1. Why can the PV MMA issued by WG3 not consume those registers directly, and why does writing `P` to TMEM solve the problem?
+5. A column $c$ in the fp16 view maps to physical 32-bit column $\lfloor c/2\rfloor$. Use this relation to derive the physical column ranges of `S0`, `S1`, `P0`, `P1`, `O0`, and `O1`. Which regions overlap physically, and why is the `P_region` stage stride `MMA_N * 2`?
+6. `p_o_rescale` has an expected arrival count of 256. How many arrivals come from the softmax warpgroup and from WG2, and what condition does each group certify? What can happen to the first PV MMA if the count is mistakenly set to 128 or 384?
+7. Why does the kernel hand `P` to the PV MMA as the first 96 columns and the final 32 columns? State which range is protected by `p_o_rescale` and by `p_ready_2`, then explain what overlap would be lost if the first PV MMA also waited for all 128 columns.
+8. Draw a simplified timeline in which the two Q stages process two consecutive K/V blocks. Mark the TMA loads from WG3 warp 1, the QKᵀ/PV MMAs from WG3 warp 0, softmax in WG0/WG1, and correction in WG2. Then identify which storage each of `q_load.empty`, `kv_load.empty`, and `softmax_corr.empty` allows the kernel to reuse.
+9. Let `SEQ_LEN_Q=6` and `SEQ_LEN_KV=8` with a bottom-right-aligned causal mask. What is the largest key index visible to query positions 0 and 5? With `BLK_N=4`, classify the K/V blocks for each query as fully valid, partially valid, or skipped. How does this difference affect causal task cost and scheduling order?
+10. Let `num_qo_heads=32`, `num_kv_heads=8`, and `BLK_M=128`. Compute `GQA_RATIO` and `SEQ_Q_PER_TILE`. For `kv_head_idx=3`, map packed rows 0, 5, and 127 to `(sequence offset, query head)`, and explain why all 128 rows can share one K/V tile.

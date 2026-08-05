@@ -81,8 +81,8 @@ def main(lang="en", font_path=None):
         8.0,
         6.18,
         tr(
-            "representative issue order; the MMA warp interleaves value MMA for current V with score MMA for next K",
-            "一种典型的发起顺序：MMA warp 交错执行当前 V 的 value MMA 和下一个 K 的 score MMA",
+            "representative issue order; the MMA warp interleaves PV MMA for current V with QK$^{\\mathsf{T}}$ MMA for next K",
+            "一种典型的发起顺序：MMA warp 交错执行当前 V 的 PV MMA 和下一个 K 的 QK$^{\\mathsf{T}}$ MMA",
         ),
         ha="center",
         fontsize=9,
@@ -117,21 +117,21 @@ def main(lang="en", font_path=None):
         block(ax, x, 5.12, 0.88, 0.62, text, COLORS["tma"], fs=8)
     ax.text(11.55, 5.43, "...", fontsize=13, color="#6b7280")
 
-    # MMA issue order: bootstrap scores, then interleave PV for current V with QK for next K.
+    # MMA issue order: bootstrap QK^T, then interleave PV for current V with QK^T for next K.
     mma_blocks = [
-        (4.0, "score\nQ0 @ K[n-1]^T", COLORS["mma"]),
-        (5.1, "score\nQ1 @ K[n-1]^T", COLORS["mma"]),
-        (6.35, "value\nP0 @ V[n-1]", COLORS["mma"]),
-        (7.45, "score\nQ0 @ K[n-2]^T", COLORS["mma"]),
-        (8.55, "value\nP1 @ V[n-1]", COLORS["mma"]),
-        (9.65, "score\nQ1 @ K[n-2]^T", COLORS["mma"]),
-        (10.75, "value\nP0 @ V[n-2]", COLORS["mma"]),
+        (4.0, "QK$^{\\mathsf{T}}$ MMA\nQ0 @ K[n-1]^T", COLORS["mma"]),
+        (5.1, "QK$^{\\mathsf{T}}$ MMA\nQ1 @ K[n-1]^T", COLORS["mma"]),
+        (6.35, "PV MMA\nP0 @ V[n-1]", COLORS["mma"]),
+        (7.45, "QK$^{\\mathsf{T}}$ MMA\nQ0 @ K[n-2]^T", COLORS["mma"]),
+        (8.55, "PV MMA\nP1 @ V[n-1]", COLORS["mma"]),
+        (9.65, "QK$^{\\mathsf{T}}$ MMA\nQ1 @ K[n-2]^T", COLORS["mma"]),
+        (10.75, "PV MMA\nP0 @ V[n-2]", COLORS["mma"]),
     ]
     for x, text, color in mma_blocks:
-        block(ax, x, 4.12, 0.98, 0.66, text, color, fs=8)
+        block(ax, x, 4.12, 0.98, 0.66, text, color, fs=7.4)
     ax.text(11.82, 4.43, "...", fontsize=13, color="#6b7280")
-    block(ax, 12.35, 4.12, 0.92, 0.66, "value\nP0 @ V[0]", COLORS["mma"], fs=7.7)
-    block(ax, 13.37, 4.12, 0.92, 0.66, "value\nP1 @ V[0]", COLORS["mma"], fs=7.7)
+    block(ax, 12.35, 4.12, 0.92, 0.66, "PV MMA\nP0 @ V[0]", COLORS["mma"], fs=7.2)
+    block(ax, 13.37, 4.12, 0.92, 0.66, "PV MMA\nP1 @ V[0]", COLORS["mma"], fs=7.2)
 
     # Softmax and correction events. Keep one dependency loop per Q stage readable.
     block(ax, 4.75, 3.12, 1.05, 0.66, tr("softmax S0\nwrite P0", "softmax S0\n写入 P0"), COLORS["softmax"], fs=8)

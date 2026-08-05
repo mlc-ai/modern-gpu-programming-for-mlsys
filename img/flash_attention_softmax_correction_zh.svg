@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-08-05T04:00:30.043916</dc:date>
+    <dc:date>2026-08-05T15:11:10.348263</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -40,7 +40,7 @@ Q 38.0295 74.018153 38.0295 76.173578
 L 38.0295 114.971215
 Q 38.0295 117.126639 40.4475 117.126639
 z
-" clip-path="url(#p218332e46b)" style="fill: #fde68a; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
+" clip-path="url(#pda06415889)" style="fill: #fde68a; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
    </g>
    <g id="patch_3">
     <path d="M 176.46 117.126639
@@ -53,7 +53,7 @@ Q 174.042 74.018153 174.042 76.173578
 L 174.042 114.971215
 Q 174.042 117.126639 176.46 117.126639
 z
-" clip-path="url(#p218332e46b)" style="fill: #ddd6fe; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
+" clip-path="url(#pda06415889)" style="fill: #ddd6fe; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
    </g>
    <g id="patch_4">
     <path d="M 324.5625 117.126639
@@ -66,7 +66,7 @@ Q 322.1445 74.018153 322.1445 76.173578
 L 322.1445 114.971215
 Q 322.1445 117.126639 324.5625 117.126639
 z
-" clip-path="url(#p218332e46b)" style="fill: #fde68a; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
+" clip-path="url(#pda06415889)" style="fill: #fde68a; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
    </g>
    <g id="patch_5">
     <path d="M 457.5525 117.126639
@@ -79,7 +79,7 @@ Q 455.1345 74.018153 455.1345 76.173578
 L 455.1345 114.971215
 Q 455.1345 117.126639 457.5525 117.126639
 z
-" clip-path="url(#p218332e46b)" style="fill: #ccfbf1; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
+" clip-path="url(#pda06415889)" style="fill: #ccfbf1; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
    </g>
    <g id="patch_6">
     <path d="M 602.6325 117.126639
@@ -92,57 +92,57 @@ Q 600.2145 74.018153 600.2145 76.173578
 L 600.2145 114.971215
 Q 600.2145 117.126639 602.6325 117.126639
 z
-" clip-path="url(#p218332e46b)" style="fill: #fde68a; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
+" clip-path="url(#pda06415889)" style="fill: #fde68a; stroke: #1f2937; stroke-width: 1.15; stroke-linejoin: miter"/>
    </g>
    <g id="patch_7">
     <path d="M 148.238439 95.572396
 Q 161.348443 95.572396 173.060904 95.572396
-" clip-path="url(#p218332e46b)" style="fill: none; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: none; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
     <path d="M 168.660904 93.372396
 L 173.060904 95.572396
 L 168.660904 97.772396
 z
-" clip-path="url(#p218332e46b)" style="fill: #4b5563; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: #4b5563; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
    </g>
    <g id="patch_8">
     <path d="M 296.340939 95.572396
 Q 309.450943 95.572396 321.163404 95.572396
-" clip-path="url(#p218332e46b)" style="fill: none; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: none; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
     <path d="M 316.763404 93.372396
 L 321.163404 95.572396
 L 316.763404 97.772396
 z
-" clip-path="url(#p218332e46b)" style="fill: #4b5563; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: #4b5563; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
    </g>
    <g id="patch_9">
     <path d="M 429.330939 95.572396
 Q 442.440943 95.572396 454.153404 95.572396
-" clip-path="url(#p218332e46b)" style="fill: none; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: none; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
     <path d="M 449.753404 93.372396
 L 454.153404 95.572396
 L 449.753404 97.772396
 z
-" clip-path="url(#p218332e46b)" style="fill: #4b5563; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: #4b5563; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
    </g>
    <g id="patch_10">
     <path d="M 574.410939 95.572396
 Q 587.520943 95.572396 599.233404 95.572396
-" clip-path="url(#p218332e46b)" style="fill: none; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: none; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
     <path d="M 594.833404 93.372396
 L 599.233404 95.572396
 L 594.833404 97.772396
 z
-" clip-path="url(#p218332e46b)" style="fill: #4b5563; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: #4b5563; stroke: #4b5563; stroke-width: 1.25; stroke-linecap: round"/>
    </g>
    <g id="patch_11">
     <path d="M 652.136121 115.645346
 Q 373.528119 215.272364 96.341332 116.154352
-" clip-path="url(#p218332e46b)" style="fill: none; stroke: #7c3aed; stroke-width: 1.35; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: none; stroke: #7c3aed; stroke-width: 1.35; stroke-linecap: round"/>
     <path d="M 99.743662 119.707401
 L 96.341332 116.154352
 L 101.225169 115.564318
 z
-" clip-path="url(#p218332e46b)" style="fill: #7c3aed; stroke: #7c3aed; stroke-width: 1.35; stroke-linecap: round"/>
+" clip-path="url(#pda06415889)" style="fill: #7c3aed; stroke: #7c3aed; stroke-width: 1.35; stroke-linecap: round"/>
    </g>
    <g id="text_1">
     <!-- Softmax 与 WG2 的 Scale Slot 交接 -->
@@ -3785,7 +3785,7 @@ z
      <use xlink:href="#NotoSansCJKsc-Regular-7f29" transform="translate(1096.599823 0)"/>
      <use xlink:href="#NotoSansCJKsc-Regular-653e" transform="translate(1196.599808 0)"/>
     </g>
-    <!-- 不能证明：任一段 value MMA 可以开始 -->
+    <!-- 不能证明：任一段 PV MMA 可以开始 -->
     <g style="fill: #374151" transform="translate(433.3725 239.460415) scale(0.092 -0.092)">
      <defs>
       <path id="NotoSansCJKsc-Regular-4efb" d="M 2195 198
@@ -3884,6 +3884,19 @@ C 1779 4659 2387 4845 2848 5056
 L 2451 5414
 C 2054 5203 1370 4960 768 4800
 L 755 4806
+z
+" transform="scale(0.015625)"/>
+      <path id="NotoSansCJKsc-Regular-56" d="M 1504 0
+L 2189 0
+L 3680 4691
+L 3078 4691
+L 2323 2150
+C 2163 1600 2048 1152 1869 602
+L 1843 602
+C 1670 1152 1549 1600 1389 2150
+L 627 4691
+L 6 4691
+L 1504 0
 z
 " transform="scale(0.015625)"/>
       <path id="NotoSansCJKsc-Regular-41" d="M 26 0
@@ -4003,20 +4016,17 @@ z
      <use xlink:href="#NotoSansCJKsc-Regular-4e00" transform="translate(599.999908 0)"/>
      <use xlink:href="#NotoSansCJKsc-Regular-6bb5" transform="translate(699.999893 0)"/>
      <use xlink:href="#NotoSansCJKsc-Regular-20" transform="translate(799.999878 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-76" transform="translate(822.399872 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-61" transform="translate(874.499863 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-6c" transform="translate(930.79985 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-75" transform="translate(959.199844 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-65" transform="translate(1019.899841 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-20" transform="translate(1075.299835 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-4d" transform="translate(1097.699829 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-4d" transform="translate(1178.899811 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-41" transform="translate(1260.099792 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-20" transform="translate(1320.89978 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-53ef" transform="translate(1343.299774 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-4ee5" transform="translate(1443.299759 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-5f00" transform="translate(1543.299744 0)"/>
-     <use xlink:href="#NotoSansCJKsc-Regular-59cb" transform="translate(1643.299728 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-50" transform="translate(822.399872 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-56" transform="translate(885.69986 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-20" transform="translate(943.199844 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-4d" transform="translate(965.599838 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-4d" transform="translate(1046.79982 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-41" transform="translate(1127.999802 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-20" transform="translate(1188.799789 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-53ef" transform="translate(1211.199783 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-4ee5" transform="translate(1311.199768 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-5f00" transform="translate(1411.199753 0)"/>
+     <use xlink:href="#NotoSansCJKsc-Regular-59cb" transform="translate(1511.199738 0)"/>
     </g>
     <!-- 第一段由 p_o_rescale 放行；第二段由 p_ready_2 放行 -->
     <g style="fill: #374151" transform="translate(433.3725 250.90694) scale(0.092 -0.092)">
@@ -4199,7 +4209,7 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="p218332e46b">
+  <clipPath id="pda06415889">
    <rect x="7.2" y="7.2" width="725.4" height="288.288"/>
   </clipPath>
  </defs>

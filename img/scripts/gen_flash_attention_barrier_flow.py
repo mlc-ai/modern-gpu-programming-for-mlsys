@@ -98,11 +98,11 @@ def gen_main_handoff(lang="en"):
         color="#4b5563",
     )
 
-    # ---- Score MMA gate (top): Q and K must be in SMEM. ----
-    ax.text(0.5, 7.10, tr("Score MMA gate", "Score MMA"), fontsize=11.5, weight="bold", color="#1f2937")
+    # ---- QK^T MMA gate (top): Q and K must be in SMEM. ----
+    ax.text(0.5, 7.10, tr(r"QK$^{\mathsf{T}}$ MMA gate", r"QK$^{\mathsf{T}}$ MMA"), fontsize=11.5, weight="bold", color="#1f2937")
     box(ax, 0.6, 6.28, 1.95, 0.62, tr("Q tile\nin SMEM", "SMEM 中的\nQ tile"), COLORS["smem"], fs=8.8)
     box(ax, 0.6, 5.46, 1.95, 0.62, tr("K tile\nin SMEM", "SMEM 中的\nK tile"), COLORS["smem"], fs=8.8)
-    box(ax, 7.15, 5.72, 2.4, 0.95, tr("score MMA\nQ,K -> S", "score MMA\nQ,K -> S"), COLORS["mma"], fs=10.5)
+    box(ax, 7.15, 5.72, 2.4, 0.95, tr("QK$^{\\mathsf{T}}$ MMA\nQ,K -> S", "QK$^{\\mathsf{T}}$ MMA\nQ,K -> S"), COLORS["mma"], fs=10.5)
     arrow(ax, 2.55, 6.59, 7.15, 6.35, rad=-0.04)
     arrow(ax, 2.55, 5.77, 7.15, 6.04, rad=0.04)
     label(ax, 4.70, 6.66, "q_load.full", fs=8.3)
@@ -110,13 +110,13 @@ def gen_main_handoff(lang="en"):
     ax.text(8.35, 5.50, tr("fires when both SMEM tiles are ready", "两块 SMEM tile 就绪后发起"), ha="center", fontsize=7.8,
             color="#6b7280", style="italic")
 
-    # ---- Value MMA gate (bottom): two separately issued inner-K slices. ----
-    ax.text(0.5, 4.63, tr("Value MMA gates", "Value MMA 的两段计算"), fontsize=11.5, weight="bold", color="#1f2937")
+    # ---- PV MMA gate (bottom): two separately issued inner-K slices. ----
+    ax.text(0.5, 4.63, tr("PV MMA gates", "PV MMA 的两段计算"), fontsize=11.5, weight="bold", color="#1f2937")
 
     # First sub-MMA consumes the first 96 positions and may initialize or accumulate O.
     box(ax, 0.6, 3.72, 2.35, 0.62, tr("V rows 0:96\nin SMEM", "SMEM 中 V 的行 0:96"), COLORS["smem"], fs=8.6)
     box(ax, 0.6, 2.76, 3.25, 0.72, tr("P cols 0:96 in TMEM\n+ O slot ready (WG2)", "TMEM 中 P 的列 0:96\n+ O slot 已准备好（WG2）"), COLORS["tmem"], fs=8.2)
-    box(ax, 6.10, 3.03, 3.20, 0.98, tr("first value MMA\ninner-K 0:96\ninitialize or accumulate O", "第一段 value MMA\ninner-K 0:96\n初始化或累加 O"), COLORS["mma"], fs=8.8)
+    box(ax, 6.10, 3.03, 3.20, 0.98, tr("first PV MMA\ninner-K 0:96\ninitialize or accumulate O", "第一段 PV MMA\ninner-K 0:96\n初始化或累加 O"), COLORS["mma"], fs=8.8)
     arrow(ax, 2.95, 4.03, 6.10, 3.73, rad=-0.04)
     arrow(ax, 3.85, 3.12, 6.10, 3.36, rad=0.02)
     label(ax, 4.55, 4.04, "kv_load.full", fs=8.3)
@@ -125,7 +125,7 @@ def gen_main_handoff(lang="en"):
     # Second sub-MMA waits only for the final P chunk; V was already proved ready.
     box(ax, 0.6, 1.55, 2.35, 0.62, tr("V rows 96:128\nin SMEM", "SMEM 中 V 的行 96:128"), COLORS["smem"], fs=8.6)
     box(ax, 0.6, 0.58, 3.25, 0.72, tr("P cols 96:128\nin TMEM", "TMEM 中 P 的列 96:128"), COLORS["tmem"], fs=8.4)
-    box(ax, 6.10, 0.86, 3.20, 0.98, tr("second value MMA\ninner-K 96:128\naccumulate into the same O", "第二段 value MMA\ninner-K 96:128\n累加到同一块 O"), COLORS["mma"], fs=8.8)
+    box(ax, 6.10, 0.86, 3.20, 0.98, tr("second PV MMA\ninner-K 96:128\naccumulate into the same O", "第二段 PV MMA\ninner-K 96:128\n累加到同一块 O"), COLORS["mma"], fs=8.8)
     arrow(ax, 2.95, 1.86, 6.10, 1.56, rad=-0.04)
     arrow(ax, 3.85, 0.94, 6.10, 1.20, rad=0.02)
     arrow(ax, 7.70, 3.03, 7.70, 1.84, color="#374151")
@@ -214,11 +214,11 @@ def gen_softmax_correction(lang="en"):
         tr(
             "not: P has been written to TMEM\n"
             "not: O has been rescaled\n"
-            "not: either value-MMA segment may start\n"
+            "not: either PV MMA segment may start\n"
             "first segment: p_o_rescale; second: p_ready_2",
             "不能证明：P 已经写入 TMEM\n"
             "不能证明：O 已经完成重缩放\n"
-            "不能证明：任一段 value MMA 可以开始\n"
+            "不能证明：任一段 PV MMA 可以开始\n"
             "第一段由 p_o_rescale 放行；第二段由 p_ready_2 放行",
         ),
         fontsize=9.2,
