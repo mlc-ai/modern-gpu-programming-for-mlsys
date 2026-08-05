@@ -2,6 +2,8 @@
 # Migrated off d2lbook to plain Sphinx + MyST-Parser + sphinx-book-theme.
 # Build:  sphinx-build -b html . _build/html
 
+from pathlib import Path
+
 project = "Modern GPU Programming For MLSys"
 author = "MLC Community"
 copyright = "2026, MLC Community"
@@ -76,7 +78,17 @@ def add_language_switch_button(app, pagename, templatename, context, doctree):
     if header_buttons is None:
         return
 
-    zh_url = context["pathto"]("zh/index.html", 1)
+    zh_source_root = Path(app.srcdir) / "zh"
+    has_translation = any(
+        (zh_source_root / f"{pagename}{suffix}").is_file()
+        for suffix in source_suffix
+    )
+    target_page = (
+        pagename
+        if has_translation or pagename in {"search", "genindex"}
+        else "index"
+    )
+    zh_url = context["pathto"](f"zh/{target_page}.html", 1)
     header_buttons.append(
         {
             "type": "javascript",

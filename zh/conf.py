@@ -1,6 +1,8 @@
 # Sphinx configuration for the Chinese edition.
 # Build: sphinx-build -b html zh _build/html/zh
 
+from pathlib import Path
+
 project = "面向 MLSys 的现代 GPU 编程"
 author = "MLC Community"
 copyright = "2026, MLC Community"
@@ -58,7 +60,17 @@ def add_language_switch_button(app, pagename, templatename, context, doctree):
     if header_buttons is None:
         return
 
-    en_url = context["pathto"]("../index.html", 1)
+    en_source_root = Path(app.srcdir).parent
+    has_translation = any(
+        (en_source_root / f"{pagename}{suffix}").is_file()
+        for suffix in source_suffix
+    )
+    target_page = (
+        pagename
+        if has_translation or pagename in {"search", "genindex"}
+        else "index"
+    )
+    en_url = context["pathto"](f"../{target_page}.html", 1)
     header_buttons.append(
         {
             "type": "javascript",
