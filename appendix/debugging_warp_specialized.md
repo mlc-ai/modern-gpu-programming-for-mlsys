@@ -1,9 +1,9 @@
 (chap_warp_spec_debug)=
 # Debugging Warp-Specialized Kernels
 
-GEMM Steps 7-9 in {ref}`chap_gemm_advanced` overlap TMA load, `tcgen05` MMA, and TMEM/SMEM writeback. The same debugging method applies to Flash Attention handoffs: identify the roles, identify the storage each role owns, then verify the generated CUDA against that model.
+GEMM Steps 7–9 in {ref}`chap_gemm_advanced` overlap TMA load, `tcgen05` MMA, and TMEM/SMEM writeback. The same debugging method applies to the handoffs among QKᵀ MMA, softmax, PV MMA, and correction in Flash Attention: identify the roles and the storage each role owns, then verify the generated CUDA against that model.
 
-Do not start by rewriting the kernel. First make sure the run is valid, then inspect the generated CUDA. After environment and compile-time issues are ruled out, runtime failures in these kernels usually reduce to a broken handoff: an uninitialized barrier, the wrong arrival count, a collective hidden inside a role guard, a stale barrier phase, or storage reused before the producer has made its writes visible.
+Do not start by rewriting the kernel. First verify the environment and reproduce the failure with the smallest correctness test, then inspect the generated CUDA. After environment and compile-time issues are ruled out, runtime failures in these kernels usually reduce to a broken handoff: an uninitialized barrier, the wrong arrival count, a collective hidden inside a role guard, a stale barrier phase, or storage reused before the producer has made its writes visible.
 
 ## Before Debugging the Kernel
 
@@ -27,7 +27,7 @@ These kernels target Blackwell (`sm_100a`). If Python imports a stale TVM checko
 7. Change one handoff at a time: init count, arrive/wait phase, role guard, fence, TMA store drain, TMEM alloc/dealloc, or tile-scheduler advance.
 8. Re-run correctness before measuring performance.
 
-## What Transfers
+## Map the Data Handoffs
 
 For any asynchronous kernel, make a small worksheet before changing code:
 
@@ -44,15 +44,15 @@ Then verify the generated CUDA against the worksheet:
 - Barrier inits appear before guarded role branches.
 - Collective operations are not accidentally narrowed by lane, warp, or warpgroup guards.
 - Arrive/wait phases match the handoff table.
-- TMA store drains, TMEM dealloc, and SMEM reuse happen only after the lifetime table says they are legal.
+- TMA store completion is awaited, TMEM is deallocated, and SMEM is reused only when the lifetime table says each action is safe.
 
-Use the same worksheet for TMA->MMA->writeback GEMM pipelines and for the score/softmax/value/correction handoffs in Flash Attention.
+Use the same worksheet for TMA → MMA → writeback GEMM pipelines and for the handoffs among QKᵀ MMA, softmax, PV MMA, and correction in Flash Attention.
 
 ## If Compilation Fails
 
 Fix compile-time failures before debugging runtime synchronization:
 
-| Symptom | Likely area | First check |
+| Symptom | Likely cause | First check |
 |---|---|---|
 | Unknown TIRx API or attribute error | Installed wheel does not match the tutorial code | Print `tvm.__file__` and `tvm.__version__`; compare the API name with {ref}`chap_language_reference`. |
 | Unsupported `dispatch=` | The selected target or primitive does not support that path | Check the `dispatch` argument and target capability; `tcgen05` paths in this tutorial require Blackwell. |
@@ -133,7 +133,7 @@ Check these before changing the algorithm:
 
 Start from the symptom, but treat it as a clue rather than a final diagnosis:
 
-| Clue | Likely area | First check |
+| Clue | Likely cause | First check |
 |---|---|---|
 | Kernel hangs, then the runtime reports an unspecified launch failure | Deadlock | Barrier init placement, arrival count, `cta_sync()` placement, and `next_tile()` participation |
 | Illegal memory access, XID, or later unrelated CUDA calls also fail | Crash / poisoned context | Restart Python, then check pointer ranges, storage lifetime, and collective participation |
@@ -185,13 +185,13 @@ Classify wrong output by pattern before guessing. Whole row stripes often point 
 - **Missing `fence.proxy_async("shared::cta")` before TMA store.** The TMA engine may not see SMEM writes from threads.
 - **Missing `cp_async.bulk.commit_group()` plus `wait_group(0)` after TMA store.** The next tile can reuse Dsmem before the store drains.
 - **Persistent kernel fails intermittently at small sizes such as 1024x1024.** Larger sizes can mask the race with longer K-loops. Re-check phase reset between tiles and the TMA-store commit/wait.
-- **Missing `fence.after_thread_sync()` between MMA completion and TMEM load.** The `mma2ld` wait confirms that the MMA has completed, but a writeback thread still needs `T.ptx.tcgen05.fence.after_thread_sync()` before issuing `tcgen05.ld`. This orders the new thread's TMEM load after the cross-thread completion notification. Steps 7-9 place the fence immediately after `mma2ld.wait`. This is a `tcgen05` ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.
+- **Missing `fence.after_thread_sync()` between MMA completion and TMEM load.** The `mma2ld` wait confirms that the MMA has completed, but a writeback thread still needs `T.ptx.tcgen05.fence.after_thread_sync()` before issuing `tcgen05.ld`. This orders the new thread's TMEM load after the cross-thread completion notification. Steps 7–9 place the fence immediately after `mma2ld.wait`. This is a `tcgen05` ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.
 
 ## Correct but Slow
 
 If the output is correct but performance is far below expectation, use the same inspection loop:
 
-| Clue | Likely area | First check |
+| Clue | Likely cause | First check |
 |---|---|---|
 | Generated CUDA has no `cp.async.bulk.tensor` | Copy did not lower to TMA | Check `dispatch="tma"`, target capability, and operand layout |
 | Generated CUDA has no `tcgen05` path | MMA did not lower to Blackwell Tensor Core instructions | Check `dispatch="tcgen05"`, target capability, and operand layouts |

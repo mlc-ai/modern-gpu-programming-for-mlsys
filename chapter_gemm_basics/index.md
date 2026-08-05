@@ -628,6 +628,6 @@ def hgemm_v3(M, N, K):
 
 ## Exercises
 
-1. In Steps 1-3, `Tx.copy` moves A and B tiles into SMEM before MMA. Why does the kernel need `T.cuda.cta_sync()` before `Tx.gemm_async` reads those SMEM tiles?
+1. In Steps 1-3, `Tx.cta.copy` moves A and B tiles into SMEM before MMA. Why does the kernel need `T.cuda.cta_sync()` before `Tx.gemm_async` reads those SMEM tiles?
 2. In Step 2, what happens if `phase_mma ^= 1` is removed from the K-loop? Does the kernel wait for every MMA, or can a later wait pass too early?
 3. For `M=N=4096` and `BLK_M=BLK_N=128`, what is the Step 3 grid shape, and how many CTAs does it launch? For CTA `(bx, by)`, which other CTAs independently read the same A tiles, and which independently read the same B tiles? Does the current kernel explicitly share that data?

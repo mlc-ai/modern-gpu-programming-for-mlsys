@@ -66,7 +66,7 @@ declares a ``float4`` register directly (you index it as ``v[0]``), and a
 ``float32x4`` ``vload`` / ``vstore`` then moves it as one 16-byte access. The vector
 dtype is not tied to ``vload`` — any buffer or scalar can carry it.
 
-so the dtype → CUDA mapping is:
+The resulting dtype → CUDA mapping is:
 
 .. list-table::
    :header-rows: 1

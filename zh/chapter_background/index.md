@@ -65,7 +65,7 @@ TMEM 需要由程序显式管理。Kernel 必须分配和释放 TMEM；MMA 完�
 
 一个 cluster 可以包含位于不同 SM 上的多个 CTA。每个 CTA 仍然拥有自己的 shared memory，但 distributed shared memory（DSMEM）允许同一 cluster 内的其他 CTA 访问其中的数据。
 
-这种能力可以避免不必要的 GMEM 往返。一个 CTA 可以直接访问另一个 CTA 的 SMEM，而不需要让对方先写回 GMEM、再重新读取。使用异步操作搬运这些数据时，completion barrier 会在搬运完成后通知后续计算继续执行。
+这种能力可以避免不必要的 GMEM 往返。一个 CTA 可以直接访问另一个 CTA 的 SMEM，而不需要让对方先写回 GMEM、再重新读取。使用异步操作搬运这些数据时，操作完成后会更新 completion barrier；consumer 必须等待 barrier 完成，才能使用结果。
 
 下图展示了一个 2-CTA cluster 中的 DSMEM 访问路径。每个 CTA 仍然拥有自己的 SMEM，但可以读取另一个 CTA 的 SMEM。
 
@@ -80,7 +80,7 @@ TMEM 需要由程序显式管理。Kernel 必须分配和释放 TMEM；MMA 完�
 
 在图中的 2-CTA GEMM 中，每个 CTA 都保存自己的 A 和 B 分片，同时通过 DSMEM 读取另一个 CTA 的 B 分片。这里的“共享”并不表示两个 CTA 的 SMEM 被合并成一块；它只表示 cluster 内的 CTA 可以跨 SM 访问对方的数据。
 
-在此基础上，两个 CTA 还可以组成 `cta_group=2`，共同执行 cooperative MMA，生成一个更大的输出 tile。
+在此基础上，两个 CTA 还可以组成 CTA pair，并以 `cta_group::2` 模式执行 cooperative MMA，生成一个更大的输出 tile。
 
 ## 计算核心：CUDA Core 和 Tensor Core
 
@@ -93,7 +93,7 @@ Tensor Core 的算术吞吐量远高于 CUDA Core，通常可以达到后者 10 
 
 不同 GPU 架构不仅改变 Tensor Core 的吞吐量，也改变它们的编程方式和 accumulator 的存放位置。Hopper 引入了异步 warpgroup MMA（`wgmma.mma_async`）；Blackwell 的第五代 Tensor Core，也就是 `tcgen05`，则把 accumulator 放入 Tensor Memory，而不是寄存器中。后续章节会专门讨论这一点。
 
-Cluster 在 GEMM 中还会带来两个重要用法。**2-CTA cooperative MMA** 允许两个 CTA 各自提供一部分 SMEM operand，共同发起一个更大的 Tensor Core MMA tile。**TMA multicast** 允许一次 GMEM load 把同一个 tile 送到多个 CTA，避免每个 CTA 分别读取同一份数据造成冗余 global memory traffic。二者都依赖前面介绍的 cluster 和 DSMEM 机制。
+Cluster 让 GEMM 可以采用两种重要的协作方式。**2-CTA cooperative MMA** 允许两个 CTA 各自提供一部分 SMEM operand，共同完成一个更大的 Tensor Core MMA tile。**TMA multicast** 允许一次 GMEM load 把同一个 tile 送到多个 CTA，避免每个 CTA 分别读取同一份数据造成冗余 global memory traffic。二者都依赖前面介绍的 cluster 和 DSMEM 机制。
 
 
 ## GEMM 数据流水线
@@ -111,7 +111,7 @@ Cluster 在 GEMM 中还会带来两个重要用法。**2-CTA cooperative MMA** �
 
 单个 GEMM tile 通常会经过三个阶段。
 
-1. **Load：** TMA copy 把 A 或 B 的 operand tile 从 GMEM 搬到 SMEM。一个 thread 发起这次 copy，并记录预计到达的字节数。随着数据写入 SMEM，TMA 引擎会更新进度；所有预期字节到达后，completion barrier 才会被触发。
+1. **Load：** TMA copy 把 A 或 B 的 operand tile 从 GMEM 搬到 SMEM。一个 thread 发起这次 copy，并记录预计到达的字节数。随着数据写入 SMEM，TMA 引擎会更新进度；所有预期字节到达后，completion barrier 才会完成。
 2. **Compute：** `tcgen05` MMA 从 SMEM 读取 operand tile，并把乘积累加到 TMEM tile 中。一个选定的 thread 提交这次 MMA；计算完成后，硬件会向对应的 barrier 发出完成信号。
 3. **Epilogue：** warpgroup 把 TMEM accumulator 读回寄存器，将结果转换成输出 dtype，再写回 GMEM。这一步通常会先经过 SMEM staging，也可能使用 TMA store 完成最终写回。
 

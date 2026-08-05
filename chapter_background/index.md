@@ -97,8 +97,8 @@ A cluster can contain CTAs running on different SMs. Each CTA still owns its own
 
 This capability avoids unnecessary round trips through GMEM. One CTA can directly access another
 CTA's SMEM without requiring the owner to write the data back to GMEM for the peer to reload. When
-an asynchronous operation moves such data, a completion barrier notifies later computation after the
-transfer finishes.
+an asynchronous operation moves such data, it updates a completion barrier after the transfer
+finishes; consumers wait on that barrier before using the result.
 
 The figure below shows the DSMEM access path in a 2-CTA cluster. Each CTA retains its own SMEM but can
 read the other CTA's SMEM.
@@ -115,8 +115,8 @@ In the 2-CTA GEMM shown above, each CTA stores its own slices of A and B and rea
 slice through DSMEM. Here, sharing does not merge the two SMEM allocations. It means only that CTAs
 in the same cluster can access one another's data across SMs.
 
-The two CTAs can also form `cta_group=2` and execute a cooperative MMA that produces a larger output
-tile.
+The two CTAs can form a CTA pair and execute a cooperative MMA in `cta_group::2` mode, producing a
+larger output tile.
 
 ## Compute: CUDA Cores and Tensor Cores
 
@@ -139,8 +139,8 @@ and accumulator placement. Hopper introduced asynchronous warpgroup MMA (`wgmma.
 Blackwell's fifth-generation Tensor Core, `tcgen05`, stores accumulators in Tensor Memory rather than
 registers. Later chapters discuss these differences in detail.
 
-Clusters also introduce two important GEMM uses. **2-CTA cooperative MMA** allows two CTAs to each
-provide part of the SMEM operands and jointly issue a larger Tensor Core MMA tile. **TMA multicast**
+Clusters enable two forms of collaboration that are important for GEMM. **2-CTA cooperative MMA**
+allows two CTAs to each provide part of the SMEM operands for a larger Tensor Core MMA tile. **TMA multicast**
 allows one GMEM load to deliver the same tile to multiple CTAs, avoiding redundant global memory
 traffic from each CTA loading the same data separately. Both rely on the cluster and DSMEM mechanism
 introduced earlier.
@@ -164,7 +164,8 @@ A single GEMM tile usually flows through three stages.
 
 1. **Load:** A TMA copy moves an A or B operand tile from GMEM to SMEM. One thread issues the copy and
    records the expected number of arriving bytes. As data reaches SMEM, the TMA engine updates the
-   progress count. The completion barrier fires only after all expected bytes have arrived.
+   progress count. The completion barrier becomes complete only after all expected bytes have
+   arrived.
 2. **Compute:** A `tcgen05` MMA reads operand tiles from SMEM and accumulates the product into a TMEM
    tile. One designated thread commits the MMA; when computation completes, the hardware signals the
    corresponding barrier.

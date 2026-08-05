@@ -210,10 +210,10 @@ dynamic shared memory allocation。Static shared memory 的大小在编译期
 
    .. code-block:: python
 
-       # device kernel attribute:
+       # device kernel 属性：
        "tirx.kernel_launch_params": ["blockIdx.x", "threadIdx.x", "tirx.use_dyn_shared_memory"]
 
-       # host-side launch call  (..., gridDim.x, blockDim.x, dyn_shared_bytes):
+       # host 侧 launch 调用（..., gridDim.x, blockDim.x, dyn_shared_bytes）：
        T.call_packed("dyn_kernel", A.data, B.data, C.data, 1, 64, 512)
 
    运行时，这里的 ``512`` 会成为 ``cuLaunchKernelEx`` 调用中的
@@ -230,28 +230,29 @@ helper，以及将 cursor 回退以复用空间的 ``move_base_to``：
 
 .. code-block:: python
 
-    pool = T.SMEMPool()                          # bump allocator over shared.dyn
-    As = pool.alloc((BM, BK), "float16", align=128)   # carve a tile
+    pool = T.SMEMPool()                          # shared.dyn 上的 bump allocator
+    As = pool.alloc((BM, BK), "float16", align=128)   # 分配一个 tile
     Bs = pool.alloc((BK, BN), "float16", align=128)
-    Cs = pool.alloc_mma((BM, BN), "float16")     # MMA-compatible, swizzle inferred
-    pool.commit()                                 # finalize the pool's size
-    # pool.move_base_to(offset) rewinds the cursor to reuse space
+    Cs = pool.alloc_mma((BM, BN), "float16")     # 自动推导 MMA-compatible swizzle
+    pool.commit()                                 # 确定 pool 的最终大小
+    # pool.move_base_to(offset) 将 cursor 回退到可复用的位置
 
 下方的 TMEM pool 建立在 ``SMEMPool`` 之上。
 
 Registers
 ---------
 
-Per-thread 临时数据位于 registers 中。使用
-``T.alloc_local(shape, dtype)``（即 ``scope="local"``）分配；它只属于当前
-thread，并会生成保存在 registers 中的 local array。
+Per-thread 临时数据使用 ``local`` scope。通过
+``T.alloc_local(shape, dtype)`` 分配后，这些数据只属于当前 thread。使用
+静态索引的 local arrays 通常会被 scalarize 到 registers；使用动态索引，或
+register pressure 较高时，也可能进入 local memory。
 
 .. code-block:: python
 
-    r = T.alloc_local((4,), "float32")   # per-thread register array
+    r = T.alloc_local((4,), "float32")   # 每个 thread 私有的 register array
     for k in T.unroll(4):
         r[k] = A[tx, k]
-    # ... compute on r[0..3] ...
+    # ... 使用 r[0..3] 计算 ...
 
 .. code-block:: c++
 
@@ -281,7 +282,7 @@ Scalar 本质上是只有**一个元素**的 register array。可以直接分配
 
 .. code-block:: python
 
-    phase = T.alloc_local((1,), "int32")   # 1-element register array
+    phase = T.alloc_local((1,), "int32")   # 单元素 register array
     phase[0] = 0
     while phase[0] < 4:
         acc = acc + A[tx, phase[0]]
@@ -292,20 +293,20 @@ Scalar 本质上是只有**一个元素**的 register array。可以直接分配
 
 .. code-block:: python
 
-    phase: T.int32 = 0                 # mutable scalar (sugar for the above)
+    phase: T.int32 = 0                 # mutable scalar，是上一种写法的语法糖
     while phase < 4:
         acc = acc + A[tx, phase]
         phase += 1
 
-    s = T.local_scalar("int32")        # explicit form; assign by name (s = ..., not s[0])
-    acc: T.float32 = 0.0               # a type-annotated assignment also makes one
+    s = T.local_scalar("int32")        # 显式形式；通过名称赋值，而不是 s[0]
+    acc: T.float32 = 0.0               # 带类型注解的赋值也会创建 scalar
 
 两种写法在 parse 后会得到结构完全相同的 TIRx。Parser 会将
 ``phase: T.int32`` 解析为单元素 ``local`` buffer，将 ``phase`` 和
 ``phase += 1`` 解析为 ``phase[0]`` 和 ``phase[0] += 1``。对两个 kernels
 调用 ``tvm.ir.assert_structural_equal`` 会通过；printer 甚至会把显式的
 ``alloc_local`` 加 ``[0]`` 重新输出为 scalar 语法。因此，parse 完成后两者
-没有区别，都会 lowering 为 ``alignas(64) int phase_ptr[1];``。Scalar
+没有区别，都会生成 ``alignas(64) int phase_ptr[1];``。Scalar
 只是省去了 ``[0]``。``T.local_scalar``、``T.shared_scalar`` 和
 ``T.alloc_scalar`` 可以显式选择 scope。
 
@@ -324,15 +325,15 @@ Scalar 本质上是只有**一个元素**的 register array。可以直接分配
 
 .. code-block:: python
 
-    n: T.let = M * K               # immutable binding (LetStmt)
-    half: T.let[T.int32] = N // 2  # ... with an explicit type
+    n: T.let = M * K               # immutable binding（LetStmt）
+    half: T.let[T.int32] = N // 2  # 显式指定类型
 
 它会生成普通的 C scalar variable，而不是 array，也不需要 ``[0]``。例如，
 运行时变量 ``m`` 上的 ``half: T.let = m * 2`` 会生成：
 
 .. code-block:: c++
 
-    int half = m * 2;     // the `let` -> a const-like local
+    int half = m * 2;     // `let` 生成类似 const 的 local variable
 
 由于值不会改变，simplifier 可以自由执行 propagation 和 common
 subexpression elimination。因此在使用位置可能直接看到 ``m * 2``，也可能
@@ -368,15 +369,15 @@ offset 上 ``decl`` tensor views，结束时由一个 warp 释放：
 
 .. code-block:: python
 
-    addr = T.alloc_shared((1,), "uint32")             # slot for the allocated base
-    if warp_id == alloc_warp:                         # tcgen05.alloc is warp-uniform
+    addr = T.alloc_shared((1,), "uint32")             # 保存 allocation base 的 slot
+    if warp_id == alloc_warp:                         # tcgen05.alloc 是 warp-uniform
         T.ptx.tcgen05.alloc(T.address_of(addr), n_cols=512, cta_group=cta_group)
     acc = T.decl_buffer((CTA_M, 512), "float32", scope="tmem",
-                        allocated_addr=0, layout=tmem_layout)   # view at column 0
-    # ... use acc as a gemm_async / copy_async operand ...
+                        allocated_addr=0, layout=tmem_layout)   # column 0 处的 view
+    # ... 将 acc 用作 gemm_async / copy_async operand ...
     if warp_id == alloc_warp:
         T.ptx.tcgen05.relinquish_alloc_permit(cta_group=cta_group)
-        T.ptx.tcgen05.dealloc(addr, n_cols=512, cta_group=cta_group)
+        T.ptx.tcgen05.dealloc(addr[0], n_cols=512, cta_group=cta_group)
 
 此时 column offsets 和 ``tmem_layout`` （datapath D/F layout）都需要手工
 管理。下面的 pool 会自动生成同样的步骤。
@@ -389,13 +390,13 @@ datapath layout：
 
 .. code-block:: python
 
-    tmem_addr = pool.alloc((1,), "uint32")          # pool = the kernel's smem pool
+    tmem_addr = pool.alloc((1,), "uint32")          # pool 是 kernel 的 SMEM pool
     tmem_pool = T.TMEMPool(pool, total_cols=512, cta_group=cta_group,
                            tmem_addr=tmem_addr)
-    acc = tmem_pool.alloc((CTA_M, 512), "float32")  # allocated_addr set for you
-    tmem_pool.commit()                               # emits tcgen05.alloc (one warp)
-    # ... use acc ...
-    tmem_pool.dealloc()                              # emits tcgen05.dealloc (one warp)
+    acc = tmem_pool.alloc((CTA_M, 512), "float32")  # 自动设置 allocated_addr
+    tmem_pool.commit()                               # 由一个 warp 发出 tcgen05.alloc
+    # ... 使用 acc ...
+    tmem_pool.dealloc()                              # 由一个 warp 发出 tcgen05.dealloc
 
 完整示例见第三部分的 GEMM kernels。
 

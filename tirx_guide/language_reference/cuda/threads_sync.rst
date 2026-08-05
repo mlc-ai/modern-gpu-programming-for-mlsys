@@ -18,8 +18,8 @@
 CUDA C++/PTX intrinsics
 =======================
 
-When no tile primitive covers what you need, two escape hatches reach the hardware
-directly: **call a backend intrinsic** (the ``T.cuda.*`` / ``T.ptx.*`` namespaces
+When no tile primitive covers the required operation, two lower-level options are
+available: **call a backend intrinsic** (the ``T.cuda.*`` / ``T.ptx.*`` namespaces
 from ``tvm.backend.cuda``), or **inline raw CUDA** source.
 
 Calling backend intrinsics
@@ -78,9 +78,10 @@ misusing any of them usually leads to silent corruption or deadlock.
 The ``T.ptx.mbarrier.try_wait(bar, phase)`` intrinsic blocks until the barrier's
 internal phase *differs* from the ``phase`` argument provided by the caller.
 Consequently, when reusing a barrier across loop iterations, the caller must flip
-its local phase tracker (``phase ^= 1``) after every wait. Failing to do so causes
-subsequent waits to return immediately, allowing the engine to read half-written
-memory. :ref:`chap_gemm_basics` walks through the full phase-tracking table.
+its local phase tracker (``phase ^= 1``) after every wait. Failing to do so can
+cause a later wait to return for an earlier phase, allowing a consumer to access
+data before the current producer or asynchronous operation has finished.
+:ref:`chap_gemm_basics` walks through the full phase-tracking table.
 
 **Election.** ``T.ptx.elect_sync()`` elects a *single active lane within a warp*,
 not lane 0, and not one thread per CTA. To narrow an issuer down to exactly one
@@ -93,9 +94,10 @@ requires *every* CTA thread to arrive. Once warpgroups specialize onto different
 code paths, placing a ``cta_sync()`` inside a warpgroup branch deadlocks the kernel
 because the other warpgroups never reach it. The hardware provides 16 named
 barriers (IDs 0 to 15); ``T.cuda.warpgroup_sync(10)`` synchronizes only the threads
-of one warpgroup. Distinct warpgroups take distinct IDs (e.g.,
-``warpgroup_sync(wg_id + 10)``) so they never collide on the same hardware barrier.
-See :ref:`chap_gemm_advanced`.
+of one warpgroup. Independent synchronizations that may be active at the same time
+must use distinct IDs (for example, ``warpgroup_sync(wg_id + 10)``). An ID may be
+reused after the preceding synchronization that used it has completed. See
+:ref:`chap_gemm_advanced`.
 
 **Fences.** Fences order a producer's writes before a consumer (often an
 asynchronous engine) reads them:

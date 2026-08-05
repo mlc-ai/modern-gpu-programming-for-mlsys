@@ -22,7 +22,7 @@ This chapter broadens cooperation in three steps. Step 7 assigns TMA, MMA, and w
 In the single-warpgroup kernel, every thread follows the same load, compute, and writeback path. The Tensor Cores have no work while data is being loaded, and the TMA engine may sit idle during computation. Warp specialization assigns these jobs to different warps and uses a software pipeline to pass data between them, allowing several stages to run concurrently.
 
 > **Step 7 execution structure**
-> - Scope: one warpgroup walking load → MMA → writeback in order becomes three concurrent roles (TMA producer, MMA consumer, writeback) connected by full/empty barriers.
+> - Scope: the sequential load → MMA → writeback path in one warpgroup becomes three concurrent roles (TMA producer, MMA consumer, and writeback) connected by full/empty barriers.
 > - Layout: unchanged, same SMEM stages and TMEM accumulator as Step 6.
 > - Dispatch: unchanged, TMA loads, `tcgen05` MMA.
 
@@ -57,7 +57,7 @@ With `WG_NUMBER=2`, the kernel uses two warpgroups and assigns load, compute, an
 
 ### Four Barriers
 
-The three concurrent roles communicate through four barriers. The forward path, TMA → MMA → Writeback, reports that data is ready. The reverse path, Writeback → MMA → TMA, releases a buffer for reuse. Barrier names follow `source2destination`; for example, `tma2mma` carries the notification from TMA to MMA.
+The three concurrent roles communicate through four barriers. The forward path, TMA → MMA → Writeback, reports that data is ready. The reverse path, Writeback → MMA → TMA, returns each protected buffer or resource to the preceding role for reuse. Barrier names follow `source2destination`; for example, `tma2mma` carries the notification from TMA to MMA.
 
 | Barrier | Type | Direction | Meaning |
 |---------|------|-----------|---------|
@@ -876,7 +876,7 @@ The table below follows the progression from the naive baseline to the warp-spec
 
 Every row with a measured time uses the same `M=N=K=4096` problem, so those rows can be compared directly. The 70 ms in Step 1 comes from a full-matrix baseline with the same sequential data path; it is not a run of the single-tile `hgemm_v1` from {ref}`chap_gemm_basics`. The introductory chapter uses smaller problems to explain Steps 1 through 3, while the Step 1 and Step 3 rows here measure the corresponding full-matrix implementations.
 
-Step 2 still computes only one output tile, so it is not directly comparable with the full-matrix results. Steps 5 and 6 are intermediate versions between the TMA-load kernel and the warp-specialized kernel; their mechanisms are retained in Step 7. The table therefore shows only the endpoints of that interval. Steps 2, 5, and 6 use dashes and have no standalone speedup.
+Step 2 still computes only one output tile, so it is not directly comparable with the full-matrix results. Steps 5 and 6 are intermediate versions between the TMA-load kernel and the warp-specialized kernel; their mechanisms are retained in Step 7. The table therefore shows only the endpoints of that interval. Steps 2, 5, and 6 use dashes, so no cumulative speedup relative to Step 1 is shown for them.
 
 These numbers come from one B200 reference run. They are intended to compare the versions in this tutorial under the same conditions, rather than to represent peak performance for other problem sizes or environments.
 

@@ -1,12 +1,13 @@
 (chap_warp_spec_debug)=
-# 调试 Warp-Specialized Kernel
+# 调试 Warp-Specialized Kernels
 
-第三部分 GEMM 的第 7-9 步让 TMA load、`tcgen05` MMA 和 TMEM/SMEM writeback
-重叠执行。Flash Attention 也使用类似的数据交接方式。调试这类 kernel 时，
-可以先确定各个角色及其使用的存储空间，再检查生成的 CUDA 是否符合这个模型。
+第三部分 GEMM 的第 7 至第 9 步让 TMA load、`tcgen05` MMA 和 TMEM/SMEM
+writeback 重叠执行。Flash Attention 中的 QKᵀ MMA、softmax、PV MMA 和
+correction 也使用类似的交接方式。调试这类 kernel 时，可以先确定各个角色及其
+使用的存储空间，再检查生成的 CUDA 是否符合这个模型。
 
-不要一开始就重写 kernel。先确认运行环境正确，并用最小测试稳定复现问题，
-然后再检查生成的 CUDA。排除环境和编译问题后，这类 kernel 的运行时故障通常
+不要一开始就重写 kernel。先确认运行环境无误，并用最小的正确性测试稳定复现
+问题，再检查生成的 CUDA。排除环境和编译问题后，这类 kernel 的运行时故障通常
 来自某次数据交接：barrier 没有初始化、arrival count 错误、collective 的参与
 范围被角色分支缩小、wait 使用了旧的 barrier phase，或者 producer 的写入尚未
 可见，存储空间就被提前复用。
@@ -22,11 +23,11 @@ python -c "import torch; print(torch.cuda.get_device_name(), torch.cuda.get_devi
 
 这些 kernel 面向 Blackwell（`sm_100a`）。如果 Python 导入了旧的 TVM
 checkout，或者当前 GPU 不是 Blackwell 架构，应先修正环境，再修改 kernel。
-随后先运行最小的正确性测试，例如 `run_correctness()`；正确性通过后再看性能。
+环境确认无误后，先运行最小的正确性测试，例如 `run_correctness()`；正确性通过后再看性能。
 
 ## 调试步骤
 
-1. 用仍能复现问题的最小 shape 运行。如果发生 illegal memory access，下一次运行前先重启 Python。
+1. 将输入缩小到仍能稳定复现问题的最小 shape。如果发生 illegal memory access，下一次运行前先重启 Python。
 2. 如果编译失败，先检查已安装的 API、target、`dispatch=` 和 buffer scope，再检查运行时同步代码。
 3. 保存 `inspect_source("cuda")` 的输出。先搜索 role guard、`mbarrier_init`、`tcgen05`、`cp.async.bulk.tensor` 和 `cta_sync()`，再回头阅读 Python。
 4. 针对出错的 kernel 路径，写出 roles、storage、handoff 和 lifetime 表。
@@ -52,20 +53,20 @@ checkout，或者当前 GPU 不是 Blackwell 架构，应先修正环境，再�
 - Barrier 初始化出现在各个角色分支之前。
 - Collective 没有被 lane、warp 或 warpgroup guard 意外缩小参与范围。
 - Arrive/wait phase 与 handoff 表一致。
-- 完成相应的 wait，并且 lifetime 表允许之后，才释放 TMEM 或复用 SMEM。
+- 必须确认 TMA store 已经完成，并且 lifetime 表表明相关资源可以复用，之后才能释放 TMEM 或复用相应的 SMEM。
 
-这张表既适用于 GEMM 的 TMA -> MMA -> writeback pipeline，也适用于
-Flash Attention 中 score、softmax、value 和 correction 之间的交接。
+这张表既适用于 GEMM 的 TMA → MMA → writeback pipeline，也适用于
+Flash Attention 中 QKᵀ MMA、softmax、PV MMA 和 correction 之间的交接。
 
 ## 编译失败
 
 先解决编译问题，再调试运行时同步：
 
-| 现象 | 可能的位置 | 首先检查 |
+| 现象 | 可能原因 | 首先检查 |
 |---|---|---|
-| TIRx API 未知或发生 attribute error | 安装的 wheel 与教程代码不匹配 | 输出 `tvm.__file__` 和 `tvm.__version__`，并对照 {ref}`chap_language_reference` 检查 API 名称。 |
+| 找不到 TIRx API，或出现 attribute error | 安装的 wheel 与教程代码不匹配 | 输出 `tvm.__file__` 和 `tvm.__version__`，并对照 {ref}`chap_language_reference` 检查 API 名称。 |
 | 不支持指定的 `dispatch=` | 当前 target 或 primitive 不支持这条路径 | 检查 `dispatch` 参数和 target capability；本教程中的 `tcgen05` 路径需要 Blackwell。 |
-| Buffer scope 不匹配 | Buffer 通过错误的硬件路径使用 | 检查表中的 storage：TMEM 必须通过 `tcgen05` 访问，TMA 搬运的 buffer 必须使用兼容的 GMEM/SMEM layout。 |
+| Buffer scope 不匹配 | Buffer 被交给了不匹配的硬件路径 | 检查表中的 storage：TMEM 必须通过 `tcgen05` 访问，TMA 搬运的 buffer 必须使用兼容的 GMEM/SMEM layout。 |
 | 编译成功，但生成的 CUDA 中没有预期路径 | Dispatch 没有生成预期的硬件指令 | 修改算法前，先在生成的 CUDA 中搜索 `tcgen05` 和 `cp.async.bulk.tensor`。 |
 
 ## 检查生成的代码
@@ -109,25 +110,25 @@ print(cuda_source)
 guard；在生成的 CUDA 中，应搜索上表对应的表达式。
 
 ```c
-// (1) Barrier inits: top level, CTA thread 0 only
+// (1) Barrier 初始化：位于顶层，只由 CTA thread 0 执行
 if (threadIdx.x < 1) {
   mbarrier_init(tma2mma[0..1], 1);
   mbarrier_init(mma2tma[0..1], 1);
   mbarrier_init(mma2ld, 1);
-  mbarrier_init(ld2mma, 128);   // arrived by all 128 WG0 threads
+  mbarrier_init(ld2mma, 128);   // WG0 的 128 个 threads 全部执行 arrival
 }
 
-// (2) TMEM alloc: WG0 warp 0, all lanes of the issuing warp
+// (2) TMEM 分配：WG0 warp 0，发出指令的 warp 中所有 lanes 都参与
 if (wg_id == 0 && warp_id == 0) tcgen05_alloc(..., 512);
 
-// (3) Fences + cta_sync, then phase init: producer=1, consumer=0
+// (3) 执行 fences 和 cta_sync，再初始化 phase：producer=1，consumer=0
 
 // (4) Warp-specialized loop
 if (wg_id == 1 && warp_id == 3 && elect_sync) { /* TMA  */ while(valid){ ... next_tile(); } }
 if (wg_id == 1 && warp_id == 0 && elect_sync) { /* MMA  */ while(valid){ ... next_tile(); } }
 if (wg_id == 0)                                { /* WB   */ while(valid){ ... next_tile(); } }
 
-// (5) Cleanup: issuing warp, no lane guard
+// (5) 清理：由发出指令的 warp 执行，不使用 lane guard
 cta_sync();
 if (warp_id == 0) { tcgen05_relinquish_alloc_permit(); tcgen05_dealloc(..., 512); }
 ```
@@ -143,7 +144,7 @@ if (warp_id == 0) { tcgen05_relinquish_alloc_permit(); tcgen05_dealloc(..., 512)
 
 现象只能作为线索，不应直接当作最终诊断：
 
-| 线索 | 可能的位置 | 首先检查 |
+| 线索 | 可能原因 | 首先检查 |
 |---|---|---|
 | Kernel 卡住，随后 runtime 报告 unspecified launch failure | Deadlock | Barrier 初始化的位置、arrival count、`cta_sync()` 的位置和 `next_tile()` 的参与范围 |
 | Illegal memory access、XID，或之后无关的 CUDA 调用也失败 | Crash / poisoned context | 重启 Python，再检查 pointer 范围、storage lifetime 和 collective 的参与范围 |
@@ -201,20 +202,20 @@ descriptor、operand 设置或未初始化的 accumulation。数值有限但错�
 - **TMA store 前缺少 `fence.proxy_async("shared::cta")`。** TMA engine 可能看不到 threads 对 SMEM 的写入。
 - **TMA store 后缺少 `cp_async.bulk.commit_group()` 和 `wait_group(0)`。** Store 尚未完成，下一 tile 就复用了 Dsmem。
 - **Persistent kernel 在 `1024×1024` 等较小 shape 上偶发失败。** 更大的 shape 和更长的 K-loop 可能掩盖竞争。重新检查 tiles 之间的 phase reset 和 TMA store commit/wait。
-- **等待 MMA 完成后直接读取 TMEM。** `mma2ld.wait` 只能确认 MMA 已经完成；writeback thread 在随后发出 `tcgen05.ld` 前，还需要执行 `T.ptx.tcgen05.fence.after_thread_sync()`，把这次 TMEM load 排在跨 thread 的完成通知之后。第 7-9 步都将它放在 `mma2ld.wait` 之后。这个 fence 只负责 `tcgen05` 指令之间的顺序；等待 TMA load 和让普通 thread 的 SMEM 写入对 TMA engine 可见，分别使用各自的 mbarrier 和 proxy fence 协议。
+- **等待 MMA 完成后直接读取 TMEM。** `mma2ld.wait` 只能确认 MMA 已经完成；writeback thread 在随后发出 `tcgen05.ld` 前，还需要执行 `T.ptx.tcgen05.fence.after_thread_sync()`，把这次 TMEM load 排在跨 thread 的完成通知之后。第 7 至第 9 步都将它放在 `mma2ld.wait` 之后。这个 fence 只负责 `tcgen05` 指令之间的顺序；等待 TMA load 和让普通 thread 的 SMEM 写入对 TMA engine 可见，分别使用各自的 mbarrier 和 proxy fence 协议。
 
 ## 结果正确但性能较差
 
 如果结果正确，但性能远低于预期，可以继续使用同一套检查流程：
 
-| 线索 | 可能的位置 | 首先检查 |
+| 线索 | 可能原因 | 首先检查 |
 |---|---|---|
 | 生成的 CUDA 中没有 `cp.async.bulk.tensor` | Copy 没有生成 TMA 路径 | 检查 `dispatch="tma"`、target capability 和 operand layout |
 | 生成的 CUDA 中没有 `tcgen05` | MMA 没有生成 Blackwell Tensor Core 指令 | 检查 `dispatch="tcgen05"`、target capability 和 operand layout |
 | TMA 与 MMA 没有重叠 | Pipeline 太浅，或者 phase 使 producer/consumer 串行执行 | 检查生成 CUDA 中 wait、arrive 和 advance 的顺序 |
 | 小 shape 正确，但大 shape 性能差 | Register spill、occupancy 或 staging buffer 压力 | 检查 compiler resource report；减小 tile、分块 writeback，或降低 pipeline depth |
 
-## 提交有效的问题报告
+## 提交高质量的问题报告
 
 如果完成上述检查后问题仍然存在，请先缩小复现范围，再到
 [Apache TVM GitHub 仓库](https://github.com/apache/tvm/issues)提交 issue。

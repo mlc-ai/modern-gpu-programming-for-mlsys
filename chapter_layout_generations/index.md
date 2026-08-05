@@ -266,7 +266,7 @@ S[(4, 32, 4) : (4@TCol, 1@TLane, 1@TCol)]
 
 `S[...]` maps `(Mgroup, lane, sfk)` to byte positions in TMEM. In a typed TIRx layout, `@TCol` strides are measured in buffer elements. A scale factor is 8 bits here, so the logical TCol position is `4*Mgroup+sfk`; every four consecutive positions pack into one 32-bit hardware TCol cell. Equivalently, `hardware_TCol=(4*Mgroup+sfk)//4` and `byte_in_word=(4*Mgroup+sfk)%4`.
 
-`R[...]` adds four replicas along `TLane`. The `.32x128b.warpx4` form of `tcgen05.cp` creates this layout: it writes one 32-lane window, then broadcasts the same data into the other three warp windows.
+`R[...]` adds four replicas along `TLane`. The `.32x128b.warpx4` form of `tcgen05.cp` creates this layout by multicasting the same base tile into four 32-lane warp windows.
 
 ### Word-Level Replication for `scale_vec`
 

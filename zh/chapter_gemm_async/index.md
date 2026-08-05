@@ -170,41 +170,41 @@ def hgemm_v4(M, N, K):
         for k in range(K_TILES):
             k_st = T.meta_var(k * BLK_K)
 
-            # Single thread issues TMA load
+            # 由一个 thread 发起 TMA load
             if tid == 0:
                 tma_load(k_st)
 
-            # Wait for TMA to finish; the mbarrier release carries SMEM
-            # visibility to the subsequent MMA, so no extra fence is needed.
+            # 等待 TMA 完成；mbarrier 提供后续 MMA 读取 SMEM 所需的可见性，
+            # 因此这里不需要额外的 fence。
             T.ptx.mbarrier.try_wait(tma_bar.ptr_to([0]), phase_tma)
 
-            # Single thread issues MMA
+            # 由一个 thread 发起 MMA
             if tid == 0:
                 mma(accum=k != 0)
 
-            # Wait for MMA to finish
+            # 等待 MMA 完成
             T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
             phase_tma ^= 1
             phase_mma ^= 1
 
-        # --- TMA Store Writeback ---
+        # --- 使用 TMA store 写回 ---
         Dreg = T.alloc_local((BLK_N,), acc_type)
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
 
-        # Read TMEM -> registers (async; wait.ld then cta_sync to ensure read completes)
+        # 异步读取 TMEM -> registers；先执行 wait.ld，再用 cta_sync 同步 threads
         Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
         T.ptx.tcgen05.wait.ld()
         T.cuda.cta_sync()
-        # Cast fp32 -> fp16
+        # 转换 fp32 -> fp16
         Tx.cast(Dreg_f16[:], Dreg[:])
-        # Write registers -> Dsmem, flush, then sync
+        # 写入 registers -> Dsmem，建立可见性后再同步
         Tx.copy(Dsmem[warp_id * 32 + lane_id, 0:BLK_N], Dreg_f16[:])
         T.ptx.fence.proxy_async("shared::cta")
         T.cuda.warpgroup_sync(10)
-        # TMA store: Dsmem -> GMEM. One selected thread starts the store and drains the
-        # store group before Dsmem is reused.
+        # TMA store：Dsmem -> GMEM。一个 selected thread 发起 store；
+        # 复用 Dsmem 前必须等待该 store group 完成。
         if tid == 0:
             Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
                           Dsmem[:, :], dispatch="tma")
@@ -212,7 +212,7 @@ def hgemm_v4(M, N, K):
             T.ptx.cp_async.bulk.wait_group(0)
         T.cuda.warpgroup_sync(10)
 
-        # --- Deallocate TMEM ---
+        # --- 释放 TMEM ---
         T.cuda.cta_sync()
         if warp_id == 0:
             T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
@@ -316,7 +316,7 @@ def hgemm_v5(M, N, K):
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     K_TILES = K // BLK_K
 
-    # Double-buffered layouts: first dimension is pipeline stage
+    # 双缓冲 layout：第一维表示 pipeline stage
     A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (PIPE_DEPTH, BLK_M, BLK_K))
     B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM,
@@ -339,7 +339,7 @@ def hgemm_v5(M, N, K):
         # --- SMEM allocation ---
         pool = T.SMEMPool()
         tmem_addr = pool.alloc((1,), "uint32")
-        # Double-buffered TMA barriers (one per stage), single MMA barrier
+        # 每个双缓冲 stage 使用一个 TMA barrier；所有 stages 共用一个 MMA barrier
         tma_bar = pool.alloc((PIPE_DEPTH,), "uint64", align=8)
         mma_bar = pool.alloc((1,), "uint64", align=8)
         pool.move_base_to(1024)
@@ -348,7 +348,7 @@ def hgemm_v5(M, N, K):
         Dsmem = pool.alloc((BLK_M, BLK_N), d_type, layout=D_layout)
         pool.commit()
 
-        # Initialize barriers: PIPE_DEPTH for TMA, 1 for MMA
+        # 初始化 barriers：TMA 使用 PIPE_DEPTH 个，MMA 使用 1 个
         if warp_id == 0:
             if lane_id == 0:
                 T.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
@@ -404,23 +404,23 @@ def hgemm_v5(M, N, K):
         for k in range(K_TILES):
             stage = k % PIPE_DEPTH
 
-            # Wait for TMA to finish loading this stage
+            # 等待 TMA 完成当前 stage 的加载
             T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma)
 
-            # MMA on this stage's data
+            # 使用当前 stage 的数据执行 MMA
             if tid == 0:
                 mma(stage, accum=(k != 0))
 
             T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
             phase_mma ^= 1
 
-            # Issue next prefetch load (k + PIPE_DEPTH)
+            # 发起下一次 prefetch（k + PIPE_DEPTH）
             next_k = k + PIPE_DEPTH
             if next_k < K_TILES:
                 if tid == 0:
                     tma_load(stage, next_k * BLK_K)
 
-            # TMA phase flips when stage wraps around
+            # stage index 绕回时翻转 TMA phase
             if stage == PIPE_DEPTH - 1:
                 phase_tma ^= 1
 
@@ -443,7 +443,7 @@ def hgemm_v5(M, N, K):
             T.ptx.cp_async.bulk.wait_group(0)
         T.cuda.warpgroup_sync(10)
 
-        # Deallocate TMEM
+        # 释放 TMEM
         T.cuda.cta_sync()
         if warp_id == 0:
             T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
@@ -579,7 +579,7 @@ def hgemm_v6(M, N, K):
             layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)])
         )
 
-        # Tile scheduler: assigns tiles to CTAs in L2-friendly order
+        # Tile scheduler：按有利于 L2 locality 的顺序将 tiles 分配给 CTAs
         tile_scheduler = ClusterPersistentScheduler2D(
             "ts",
             num_m_tiles=M // BLK_M,
@@ -615,7 +615,7 @@ def hgemm_v6(M, N, K):
 
         # === Outer loop: iterate over tiles ===
         while tile_scheduler.valid():
-            # Get current tile position from scheduler
+            # 从 scheduler 取得当前 tile 坐标
             m_st = T.meta_var(tile_scheduler.m_idx * BLK_M)
             n_st = T.meta_var(tile_scheduler.n_idx * BLK_N)
 
@@ -623,7 +623,7 @@ def hgemm_v6(M, N, K):
             phase_tma: T.int32 = 0
             phase_mma: T.int32 = 0
 
-            # Prefetch first PIPE_DEPTH stages
+            # 预取最初的 PIPE_DEPTH 个 stages
             if tid == 0:
                 for s in range(min(PIPE_DEPTH, K_TILES)):
                     tma_load(s, s * BLK_K, m_st, n_st)
@@ -665,7 +665,7 @@ def hgemm_v6(M, N, K):
             T.cuda.cta_sync()
             tile_scheduler.next_tile()  # Move to next tile
 
-        # Deallocate TMEM
+        # 释放 TMEM
         T.cuda.cta_sync()
         if warp_id == 0:
             T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)

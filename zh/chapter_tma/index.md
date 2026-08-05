@@ -6,7 +6,7 @@
 
 - TMA 负责在 global memory 和 shared memory 之间异步搬运 tile。一个 warp 中只需一个 thread 发起操作，后续的地址计算和数据传输由硬件完成。
 - tensor map descriptor 说明 global tensor 如何组织，包括 shape、strides、tile shape 和 swizzle mode；TMA 指令再给出当前 tile 的坐标和 shared-memory 地址。执行 load 时，TMA 可以在写入 shared memory 的同时应用 swizzle，使 tile 直接采用后续 MMA 所需的布局。
-- TMA load 和 store 使用不同的完成通知。Load 通过 `mbarrier` 按已传输的字节数判断数据是否就绪；store 通过 commit group 和 wait group 确认 source buffer 可以复用。
+- TMA load 和 store 使用不同的完成通知。Load 通过 `mbarrier` 登记待传输的字节数，并在该计数归零后确认数据已经就绪；store 通过 commit group 和 wait group 确认 source buffer 可以复用。
 :::
 
 先看 GEMM mainloop 中最常见的场景。Tensor Core 正在计算第 $k$ 个 tile 时，下一组 A、B tiles 必须在当前计算结束前搬入 shared memory。数据如果没有按时到达，Tensor Core 就只能停下来等待，pipeline 中也会出现气泡（pipeline bubble），也就是计算单元因等待数据而空闲的周期。

@@ -33,13 +33,13 @@ The dot product of $q_i$ and $k_j$ gives the scalar score at position $(i,j)$:
 
 $$s_{ij}=q_i\cdot k_j$$
 
-Fixing query vector $q_i$ and taking its dot product with every key vector $k_j$ produces the scores $s_{ij}$ for that query. These scores form row $i$ of the score matrix $S=QK^\top$. Basic online softmax first takes the largest score in that row as the reference for exponentiation:
+Fixing query vector $q_i$ and taking its dot product with every key vector $k_j$ produces the scores $s_{ij}$ for that query. These scores form row $i$ of the score matrix $S=QK^\top$. Let $m_i^{\max}$ denote the exact largest score in that row:
 
-$$m_i=\max_j s_{ij}$$
+$$m_i^{\max}=\max_j s_{ij}$$
 
-Subtracting $m_i$ before exponentiation makes the largest exponent input in the row zero and avoids excessively large values. The same shift applies to both the numerator and denominator, so the normalized softmax result is unchanged. The unnormalized attention weight at each position is:
+Basic stable softmax uses $m_i^{\max}$ as its exponent reference. Subtracting it before exponentiation makes the largest exponent input in the row zero and avoids excessively large values. The same shift applies to both the numerator and denominator, so the normalized softmax result is unchanged. The unnormalized attention weight at each position is:
 
-$$p_{ij}=\exp\left(\frac{s_{ij}-m_i}{\sqrt d}\right)$$
+$$p_{ij}=\exp\left(\frac{s_{ij}-m_i^{\max}}{\sqrt d}\right)$$
 
 Summing the $p_{ij}$ values in the row gives the unnormalized weight sum $\ell_i$. Using the same $p_{ij}$ values to weight the value vectors gives an output vector $o_i$ that has not yet been divided by $\ell_i$:
 
@@ -51,7 +51,7 @@ The final output is:
 
 $$O_i=\frac{o_i}{\ell_i}$$
 
-FlashAttention processes K/V in blocks. Once a block's scores have been consumed, they can be discarded; later blocks need only the running $m_i$, $\ell_i$, and $o_i$. Both $\ell_i$ and $o_i$ were accumulated using the reference $m_i$ in effect at the time. If a later block adopts a larger reference, the old state must first be converted to the new scale before the current block's contribution can be added.
+FlashAttention processes K/V in blocks. Once a block's scores have been consumed, they can be discarded. For each row, the kernel retains an exponent reference $r_i$, the running denominator $\ell_i$, and the running weighted sum $o_i$. Basic online softmax updates $r_i$ to the largest score seen so far, whereas FA4 may temporarily keep an older value. Both $\ell_i$ and $o_i$ are accumulated relative to the current $r_i$. If a later block adopts a larger reference, the old state must first be converted to the new scale before the current block's contribution can be added.
 
 Basic online softmax performs this conversion whenever it encounters a larger row maximum. FA4 first checks the gap between the old and candidate references. When the gap is small enough, it retains the old reference and avoids immediately rescaling the accumulated output. To understand this optimization, we first derive the scale conversion caused by changing the reference.
 
@@ -63,35 +63,35 @@ The natural exponential can then be written as:
 
 $$\exp\left(\frac{s-m}{\sqrt d}\right)=2^{(s-m)\alpha}$$
 
-The code calls $\alpha$ `scale_log2`. Let $m_{\mathrm{old}}$ be the reference used by the running state and $m_{\mathrm{block}}$ be the row maximum of the current block. With $c$ denoting the candidate, the candidate reference is:
+The code calls $\alpha$ `scale_log2`. Let $r_{\mathrm{old}}$ be the reference used by the running state and $m_{\mathrm{block}}$ be the row maximum of the current block. With $c$ denoting the candidate, the candidate reference is:
 
-$$m_c=\max(m_{\mathrm{old}},m_{\mathrm{block}})$$
+$$r_c=\max(r_{\mathrm{old}},m_{\mathrm{block}})$$
 
 Define their signed gap in the base-2 exponent domain as $\delta$, corresponding to the code variable `delta`:
 
-$$\delta=(m_{\mathrm{old}}-m_c)\alpha\le 0$$
+$$\delta=(r_{\mathrm{old}}-r_c)\alpha\le 0$$
 
-$\delta$ is the old reference minus the candidate reference, measured in base-2 exponent units. Thus $-\delta$ is the amount by which the candidate exceeds the old reference. Because $m_c\ge m_{\mathrm{old}}$, $\delta$ cannot be positive.
+$\delta$ is the old reference minus the candidate reference, measured in base-2 exponent units. Thus $-\delta$ is the amount by which the candidate exceeds the old reference. Because $r_c\ge r_{\mathrm{old}}$, $\delta$ cannot be positive.
 
 The [FA4 paper](https://arxiv.org/abs/2603.05451) typically sets the threshold to $\tau=\log_2(256)=8$. When $-\delta=8$, retaining the old reference lets the largest unnormalized weight in the current block reach $2^8=256$; switching to the candidate reference would instead multiply the old state by $2^\delta=1/256$. The threshold therefore permits at most a 256-fold scale gap before rescaling: `delta >= -8` retains the old reference, whereas `delta < -8` changes the reference. Using this threshold to delay rescaling reduces the data movement and multiplications performed by the correction path; the value 8 balances fewer rescaling operations against bounded exponent growth.
 
-If this iteration adopts the candidate reference $m_c$, every exponential accumulated under the old reference must be multiplied by the same factor:
+If this iteration adopts the candidate reference $r_c$, every exponential accumulated under the old reference must be multiplied by the same factor:
 
-$$e^{(s-m_c)/\sqrt d}
-=e^{(s-m_{\mathrm{old}})/\sqrt d}
-\cdot e^{(m_{\mathrm{old}}-m_c)/\sqrt d}$$
+$$e^{(s-r_c)/\sqrt d}
+=e^{(s-r_{\mathrm{old}})/\sqrt d}
+\cdot e^{(r_{\mathrm{old}}-r_c)/\sqrt d}$$
 
 Writing this conversion factor as $a_{\mathrm{scale}}$ gives:
 
 $$a_{\mathrm{scale}}
-=e^{(m_{\mathrm{old}}-m_c)/\sqrt d}
+=e^{(r_{\mathrm{old}}-r_c)/\sqrt d}
 =2^\delta$$
 
-After switching to the candidate reference $m_c$, the accumulated denominator $\ell_i$ and weighted sum $o_i$ remain on the old scale. The kernel first multiplies both by $a_{\mathrm{scale}}=2^\delta$ to convert them to the new scale, then adds the current block's contributions. In the pseudocode below, $\ell_i$ and $o_i$ become `row_sum` and `O`, while `acc_scale = exp2(delta)` computes the conversion factor.
+After switching to the candidate reference $r_c$, the accumulated denominator $\ell_i$ and weighted sum $o_i$ remain on the old scale. The kernel first multiplies both by $a_{\mathrm{scale}}=2^\delta$ to convert them to the new scale, then adds the current block's contributions. In the pseudocode below, $\ell_i$ and $o_i$ become `row_sum` and `O`, while `acc_scale = exp2(delta)` computes the conversion factor.
 
 The three values retained across K/V blocks map to the pseudocode as follows:
 
-- `row_max`: the reference subtracted from every score in the row before exponentiation, namely $m_i$. The basic algorithm uses the largest score seen so far; FA4 may retain the old value while the threshold permits it.
+- `row_max`: the exponent reference $r_i$ subtracted from every score in the row. Basic online softmax uses the largest score seen so far; FA4 may retain the old reference while the threshold permits it. Despite its name, `row_max` therefore need not equal the exact maximum $m_i^{\max}$ at every iteration.
 - `row_sum`: the sum of $p_{ij}$ over all key positions processed so far, namely $\ell_i$.
 - `O`: the weighted sum $o_i$ formed from the same $p_{ij}$ values. It is divided by `row_sum` only after all blocks have been processed.
 

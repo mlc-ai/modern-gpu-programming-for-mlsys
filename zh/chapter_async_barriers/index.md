@@ -89,7 +89,7 @@ Iteration 2 回到 stage 0，这次等待 phase 1；完成后，stage 0 的 barr
 
 `phase_tma` 描述的是软件访问 circular buffer 的轮次，与两次 TMA 传输在硬件上谁先完成无关。因此，深度为 `S` 的 TMA pipeline 通常为每个 stage 准备一个记录 TMA 完成状态的 `full` barrier，再通过 phase parity 区分同一个 stage 的前后两轮。完整的 buffer 复用协议还需要下文介绍的 `empty` barriers。
 
-## 常见的同步规则
+## 常见的数据交接
 
 在 Tensor Core kernel 中，`mbarrier` 主要用于协调以下三种数据交接。
 

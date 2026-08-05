@@ -142,7 +142,7 @@ R[2 : 4@warpid]
 
 表示沿 `warpid` 轴放置 2 份副本，两份之间相隔 4 个 warps。
 
-GPU 硬件经常需要将同一份数据广播到多个 warps、lanes 或存储区域。Replica 直接将这种行为表示为“一项逻辑数据对应多个物理坐标”。
+Replica 表示同一个逻辑元素具有多个物理坐标。它只记录这些副本应当位于哪里；副本如何生成或使用，由实际消费这个 layout 的 tile 操作决定。
 
 ### Offset
 
@@ -406,7 +406,7 @@ TileLayout(S[(8, 64) : (64@m, 1@m)])
 m = 64 * i + j
 ```
 
-每行包含 64 个 float16，也就是 128 bytes。固定 `j` 并沿 column 读取时，每换一行都会前进 128 bytes，多个访问可能重复落到同一组 banks。
+每行包含 64 个 float16，也就是 128 bytes。如果一组 threads 从不同行读取同一个 column `j`，相邻地址之间会相隔 128 bytes，因此可能反复落到同一组 banks。
 
 Swizzle 让 address 的低位同时依赖较高的 row bits，使原本落到同一个 bank 的 column access 分散到多个 banks。
 

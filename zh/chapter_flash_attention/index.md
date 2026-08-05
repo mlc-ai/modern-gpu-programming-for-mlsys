@@ -33,13 +33,13 @@ $q_i$ 和 $k_j$ 的点积得到位置 $(i,j)$ 上的标量 score：
 
 $$s_{ij}=q_i\cdot k_j$$
 
-固定第 $i$ 个 query vector $q_i$ 后，让它分别与所有 key vectors $k_j$ 做点积，就得到这一行的 scores $s_{ij}$。这些 scores 组成 score matrix $S=QK^\top$ 的第 $i$ 行。基础 online softmax 先取这一行的最大值，作为计算指数时的参考值：
+固定第 $i$ 个 query vector $q_i$ 后，让它分别与所有 key vectors $k_j$ 做点积，就得到这一行的 scores $s_{ij}$。这些 scores 组成 score matrix $S=QK^\top$ 的第 $i$ 行。把这一行真实的最大 score 记为 $m_i^{\max}$：
 
-$$m_i=\max_j s_{ij}$$
+$$m_i^{\max}=\max_j s_{ij}$$
 
-计算指数前统一减去 $m_i$，可以让这一行最大的指数输入变成 0，避免指数值过大。这项平移会同时作用于 softmax 的分子和分母，因此不会改变最终的归一化结果。每个位置的未归一化 attention weight 为：
+基础的稳定 softmax 会用 $m_i^{\max}$ 作为指数参考值。计算指数前统一减去它，可以让这一行最大的指数输入变成 0，避免指数值过大。这项平移会同时作用于 softmax 的分子和分母，因此不会改变最终的归一化结果。每个位置的未归一化 attention weight 为：
 
-$$p_{ij}=\exp\left(\frac{s_{ij}-m_i}{\sqrt d}\right)$$
+$$p_{ij}=\exp\left(\frac{s_{ij}-m_i^{\max}}{\sqrt d}\right)$$
 
 将这一行的所有 $p_{ij}$ 相加，得到未归一化权重之和 $\ell_i$。再用同一组 $p_{ij}$ 对 value vectors 加权求和，得到尚未除以 $\ell_i$ 的 output vector $o_i$：
 
@@ -51,7 +51,7 @@ $$o_i=\sum_j p_{ij}v_j$$
 
 $$O_i=\frac{o_i}{\ell_i}$$
 
-FlashAttention 按 block 处理 K/V。一个 block 的 scores 使用完后就可以丢弃，后续计算只需要保留当前的 $m_i$、$\ell_i$ 和 $o_i$。其中，$\ell_i$ 和 $o_i$ 都是使用当时的参考值 $m_i$ 计算并累积的。因此，后续 block 一旦改用更大的参考值，旧状态就必须先换算到新尺度，才能与当前 block 的贡献相加。
+FlashAttention 按 block 处理 K/V。一个 block 的 scores 使用完后就可以丢弃；kernel 只需为每一行保留指数参考值 $r_i$、running denominator $\ell_i$ 和 running weighted sum $o_i$。基础 online softmax 会把 $r_i$ 更新为截至当前最大的 score，而 FA4 可以暂时保留旧值。$\ell_i$ 和 $o_i$ 都是相对于当前 $r_i$ 累加的，因此后续 block 一旦改用更大的参考值，旧状态就必须先换算到新尺度，才能与当前 block 的贡献相加。
 
 基础 online softmax 每次发现更大的逐行最大值都会完成这次换算。FA4 则先比较新旧参考值的差距：差距较小时继续使用旧值，从而避免立即重缩放已经累积的 output。要理解这项优化，先把参考值变化时的尺度转换写清楚。
 
@@ -63,35 +63,35 @@ $$\alpha=\frac{\log_2(e)}{\sqrt d}$$
 
 $$\exp\left(\frac{s-m}{\sqrt d}\right)=2^{(s-m)\alpha}$$
 
-代码将 $\alpha$ 记为 `scale_log2`。设旧状态使用参考值 $m_{\mathrm{old}}$，当前 block 的逐行最大值为 $m_{\mathrm{block}}$。用下标 $c$ 表示 candidate，本轮可选的新参考值为：
+代码将 $\alpha$ 记为 `scale_log2`。设旧状态使用参考值 $r_{\mathrm{old}}$，当前 block 的逐行最大值为 $m_{\mathrm{block}}$。用下标 $c$ 表示 candidate，本轮可选的新参考值为：
 
-$$m_c=\max(m_{\mathrm{old}},m_{\mathrm{block}})$$
+$$r_c=\max(r_{\mathrm{old}},m_{\mathrm{block}})$$
 
 再定义二者在 base-2 exponent 中的有符号差距 $\delta$，它对应代码变量 `delta`：
 
-$$\delta=(m_{\mathrm{old}}-m_c)\alpha\le 0$$
+$$\delta=(r_{\mathrm{old}}-r_c)\alpha\le 0$$
 
-$\delta$ 是旧参考值减去候选参考值后的有符号结果；$-\delta$ 才表示候选参考值高出了多少个 base-2 exponent units。由于 $m_c\ge m_{\mathrm{old}}$，$\delta$ 不会大于 0。
+$\delta$ 是旧参考值减去候选参考值后的有符号结果；$-\delta$ 才表示候选参考值高出了多少个 base-2 exponent units。由于 $r_c\ge r_{\mathrm{old}}$，$\delta$ 不会大于 0。
 
 在 [FA4 论文](https://arxiv.org/abs/2603.05451)中，阈值通常取 $\tau=\log_2(256)=8$。当 $-\delta=8$ 时，继续使用旧参考值会让当前 block 的最大未归一化权重达到 $2^8=256$；若切换到候选参考值，旧状态则要乘 $2^\delta=1/256$。因此，阈值 8 表示允许新旧尺度相差最多 256 倍，超过后才执行重缩放：`delta >= -8` 时保留旧参考值，`delta < -8` 时切换参考值。这种通过阈值延迟重缩放的做法，是 FA4 为减少 correction 的数据搬运和乘法开销而引入的执行优化；取值 8 则在减少重缩放次数和限制指数增长之间作了折中。
 
-如果本轮改用候选参考值 $m_c$，此前相对于旧参考值计算的每个指数都要乘同一个系数：
+如果本轮改用候选参考值 $r_c$，此前相对于旧参考值计算的每个指数都要乘同一个系数：
 
-$$e^{(s-m_c)/\sqrt d}
-=e^{(s-m_{\mathrm{old}})/\sqrt d}
-\cdot e^{(m_{\mathrm{old}}-m_c)/\sqrt d}$$
+$$e^{(s-r_c)/\sqrt d}
+=e^{(s-r_{\mathrm{old}})/\sqrt d}
+\cdot e^{(r_{\mathrm{old}}-r_c)/\sqrt d}$$
 
 将这个尺度转换系数记为 $a_{\mathrm{scale}}$，则：
 
 $$a_{\mathrm{scale}}
-=e^{(m_{\mathrm{old}}-m_c)/\sqrt d}
+=e^{(r_{\mathrm{old}}-r_c)/\sqrt d}
 =2^\delta$$
 
-切换到候选参考值 $m_c$ 后，之前累积的归一化分母 $\ell_i$ 和未归一化加权和 $o_i$ 仍处于旧尺度。Kernel 先将两者同时乘以 $a_{\mathrm{scale}}=2^\delta$，转换到新尺度，再与当前 block 的结果相加。下面映射到伪代码时，$\ell_i$ 和 $o_i$ 分别记为 `row_sum` 和 `O`，转换系数则由 `acc_scale = exp2(delta)` 计算。
+切换到候选参考值 $r_c$ 后，之前累积的归一化分母 $\ell_i$ 和未归一化加权和 $o_i$ 仍处于旧尺度。Kernel 先将两者同时乘以 $a_{\mathrm{scale}}=2^\delta$，转换到新尺度，再与当前 block 的结果相加。下面映射到伪代码时，$\ell_i$ 和 $o_i$ 分别记为 `row_sum` 和 `O`，转换系数则由 `acc_scale = exp2(delta)` 计算。
 
 对应到下面的伪代码，需要跨 K/V blocks 保留的三项状态分别是：
 
-- `row_max`：计算指数时从这一行所有 scores 中共同减去的参考值，也就是 $m_i$。基础算法使用当前最大 score；FA4 在阈值允许时可以继续使用旧值。
+- `row_max`：计算指数时从这一行所有 scores 中减去的参考值 $r_i$。基础 online softmax 使用截至当前最大的 score；FA4 在阈值允许时可以继续使用旧参考值。因此，尽管变量名是 `row_max`，它并不保证在每个 iteration 都等于真实最大值 $m_i^{\max}$。
 - `row_sum`：已经处理过的所有 key positions 的 $p_{ij}$ 之和，也就是 $\ell_i$。
 - `O`：使用同一组 $p_{ij}$ 得到的加权和 $o_i$；所有 blocks 处理完成后再除以 `row_sum`。
 
@@ -721,7 +721,7 @@ if any_needs_rescale != 0:
     # 当前 warp：TMEM -> registers -> multiply -> TMEM
     ...
 
-# correction loop 交错归还另一个 Q stage
+# correction loop 在此归还另一个 Q stage
 p_o_rescale.arrive(i_q)
 softmax_corr.empty.arrive(1 - i_q)
 ```
@@ -827,7 +827,7 @@ while scheduler.valid():
     m_block_idx = scheduler.m_block_idx
     batch_idx = scheduler.batch_idx
     kv_head_idx = scheduler.head_idx
-    # process one Q block against its K/V block range
+    # 使用对应范围内的 K/V blocks 处理一个 Q block
     scheduler.next_tile()
 ```
 
@@ -872,7 +872,7 @@ with target:
 ex.mod(Q, K, V, O, prof)
 torch.cuda.synchronize()
 
-# torch reference; enable_gqa lets the 32 query heads share the 8 KV heads
+# torch reference；enable_gqa 允许 32 个 query heads 共享 8 个 KV heads
 qt, kt, vt = (x.transpose(1, 2).float() for x in (Q, K, V))
 ref = F.scaled_dot_product_attention(qt, kt, vt, enable_gqa=True).transpose(1, 2).half()
 torch.testing.assert_close(O, ref, rtol=1e-2, atol=1e-2)

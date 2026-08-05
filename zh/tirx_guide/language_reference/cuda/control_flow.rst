@@ -18,8 +18,8 @@
 控制流
 ======
 
-TIRx 的控制流包括 ``if``、多种 loop 和 ``while``，它们会生成对应的 CUDA
-控制流。
+TIRx 提供 ``if``、多种 loop 和 ``while``，它们会直接映射到对应的 CUDA
+控制流结构。
 
 if
 --
@@ -46,9 +46,9 @@ warp 中选出一个 thread 发出指令：
       A_ptr[tx] = A_ptr[tx] + 1.0f;
     }
 
-如果只需要在表达式中选择值，不需要控制流分支，可以使用
-``T.if_then_else(cond, a, b)``。它会 lowering 为三元表达式，不会产生
-control-flow divergence：
+如果需要在表达式中选择值，而不在 TIRx 中建立显式控制流分支，可以使用
+``T.if_then_else(cond, a, b)``。它会转换为三元表达式；最终使用哪些机器
+指令实现这个表达式，仍由 backend 决定：
 
 .. code-block:: c++
 
@@ -67,10 +67,11 @@ Uniform 与 Divergent 控制流
 ``T.cuda.warpgroup_sync(id)``，详见第三部分的 warp-specialized GEMM 和
 :doc:`threads_sync`。
 
-初始化 barrier 时也要注意参与范围。``mbarrier`` 的 ``.init()`` 会 lowering
-为 single-thread guard（``if (threadIdx.x < 1)``）。如果再把它放进另一个
-divergent branch，barrier 可能没有被初始化，进而导致 unspecified launch
-failure。
+初始化 barrier 时也要注意参与范围。高层 ``MBarrier.init()`` wrapper 会生成
+single-thread guard（``if (threadIdx.x < 1)``）。如果再把它放进另一个
+divergent branch，barrier 可能没有初始化，进而导致 unspecified launch
+failure。原始的 ``T.ptx.mbarrier.init`` intrinsic 不会自动添加这个 guard；
+调用者必须自行选出负责初始化的 thread。
 
 loop
 ----
@@ -110,7 +111,7 @@ while
         A[i] = A[i] + T.float32(1.0)
         i += 1
 
-它会 lowering 为带有提前退出 ``break`` 的 ``while (1)``。其中计数器使用
+它会转换为带有提前退出 ``break`` 的 ``while (1)``。其中计数器使用
 一个只有一个元素的 register buffer：
 
 .. code-block:: c++
