@@ -49,6 +49,18 @@ def main(lang="en", font_path=None):
     ax.axis("off")
 
     ax.text(256, 2.95, tr("TMEM Layout: 128 rows x 512 columns", "TMEM 布局：128 行 x 512 列"), ha="center", va="center", fontsize=16, weight="bold")
+    ax.text(
+        256,
+        2.67,
+        tr(
+            "suffix 0 or 1 identifies the Q stage; regions for one stage are not contiguous",
+            "后缀 0 或 1 表示 Q stage；同一 stage 的 regions 并不连续",
+        ),
+        ha="center",
+        va="center",
+        fontsize=9.5,
+        color="#555555",
+    )
 
     # Axis.
     y_axis = 2.15
@@ -57,11 +69,6 @@ def main(lang="en", font_path=None):
         ax.plot([x, x], [y_axis - 0.08, y_axis + 0.08], color="#222222", linewidth=1.2)
         ax.text(x, y_axis + 0.2, str(x), ha="center", va="bottom", fontsize=9, color="#333333")
     ax.text(512, y_axis - 0.24, tr("TMEM column coordinate", "TMEM 列坐标"), ha="right", va="top", fontsize=9.5, color="#555555")
-
-    # Q-stage labels.
-    ax.plot([256, 256], [-0.2, 2.1], color="#777777", linewidth=1.1, linestyle="--", zorder=0)
-    ax.text(96, 1.78, tr("Q stage 0 (WG0)", "Q stage 0（WG0）"), color="#3976c6", ha="center", fontsize=12, weight="bold")
-    ax.text(352, 1.78, tr("Q stage 1 (WG1)", "Q stage 1（WG1）"), color="#1f9d55", ha="center", fontsize=12, weight="bold")
 
     # Row labels.
     ax.text(-20, 1.35, "S (fp32)", color="#cc3333", ha="right", va="center", fontsize=11, weight="bold")
@@ -86,8 +93,8 @@ def main(lang="en", font_path=None):
         256,
         -0.38,
         tr(
-            "S and P slots are reused after the matching barrier handoff; O slots hold the running output accumulator.",
-            "完成相应的 barrier 交接后，S 和 P 可以复用同一位置；O slots 保存持续更新的输出 accumulator。",
+            "P0 aliases physical columns 64-127 of S0; P1 aliases 192-255 of S1. O0 and O1 occupy separate columns.",
+            "P0 覆盖 S0 的物理列 64-127，P1 覆盖 S1 的物理列 192-255；O0 和 O1 使用独立的 columns。",
         ),
         ha="center",
         va="center",

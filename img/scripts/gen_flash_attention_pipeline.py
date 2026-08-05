@@ -71,14 +71,14 @@ def main(lang="en", font_path=None):
     configure_font(lang, font_path)
     zh = lang == "zh"
     tr = lambda en, cn: cn if zh else en
-    fig, ax = plt.subplots(figsize=(15.5, 7.5))
-    ax.set_xlim(0, 13.3)
+    fig, ax = plt.subplots(figsize=(18.0, 7.5))
+    ax.set_xlim(0, 16.0)
     ax.set_ylim(-0.25, 6.65)
     ax.axis("off")
 
-    ax.text(6.65, 6.45, tr("Flash Attention 4 Pipeline Structure", "Flash Attention 4 Pipeline 结构"), ha="center", fontsize=17, weight="bold")
+    ax.text(8.0, 6.45, tr("Flash Attention 4 Pipeline Timeline", "Flash Attention 4 Pipeline 时间线"), ha="center", fontsize=17, weight="bold")
     ax.text(
-        6.65,
+        8.0,
         6.18,
         tr(
             "representative issue order; the MMA warp interleaves value MMA for current V with score MMA for next K",
@@ -88,8 +88,8 @@ def main(lang="en", font_path=None):
         fontsize=9,
         color="#4b5563",
     )
-    arrow(ax, 1.75, 5.95, 12.75, 5.95, color="#9ca3af")
-    ax.text(7.25, 6.02, tr("time", "时间"), ha="center", va="bottom", fontsize=8, color="#6b7280", style="italic", zorder=2)
+    arrow(ax, 1.75, 5.95, 15.55, 5.95, color="#9ca3af")
+    ax.text(8.65, 6.02, tr("time", "时间"), ha="center", va="bottom", fontsize=8, color="#6b7280", style="italic", zorder=2)
 
     rows = [
         ("WG3 warp 1", tr("TMA load", "TMA 加载"), 5.0),
@@ -101,7 +101,7 @@ def main(lang="en", font_path=None):
     ]
     for name, role, y in rows:
         block(ax, 0.15, y + 0.12, 1.35, 0.62, f"{name}\n{role}", COLORS["label"], fs=8)
-        ax.plot([1.75, 13.0], [y + 0.43, y + 0.43], color="#e5e7eb", lw=1, zorder=0)
+        ax.plot([1.75, 15.8], [y + 0.43, y + 0.43], color="#e5e7eb", lw=1, zorder=0)
 
     # TMA load order from the source: Q0, K_last, Q1, V_last, then K/V stream.
     for x, text in [
@@ -115,31 +115,37 @@ def main(lang="en", font_path=None):
         (10.3, tr("load V[n-3]", "加载 V[n-3]")),
     ]:
         block(ax, x, 5.12, 0.88, 0.62, text, COLORS["tma"], fs=8)
-    ax.text(11.45, 5.43, "...", fontsize=13, color="#6b7280")
+    ax.text(11.55, 5.43, "...", fontsize=13, color="#6b7280")
 
     # MMA issue order: bootstrap scores, then interleave PV for current V with QK for next K.
     mma_blocks = [
-        (4.0, "score\nQ0*K[n-1]", COLORS["mma"]),
-        (5.1, "score\nQ1*K[n-1]", COLORS["mma"]),
-        (6.35, "value\nP0*V[n-1]", COLORS["mma"]),
-        (7.45, "score\nQ0*K[n-2]", COLORS["mma"]),
-        (8.55, "value\nP1*V[n-1]", COLORS["mma"]),
-        (9.65, "score\nQ1*K[n-2]", COLORS["mma"]),
-        (10.75, "value\nP0*V[n-2]", COLORS["mma"]),
+        (4.0, "score\nQ0 @ K[n-1]^T", COLORS["mma"]),
+        (5.1, "score\nQ1 @ K[n-1]^T", COLORS["mma"]),
+        (6.35, "value\nP0 @ V[n-1]", COLORS["mma"]),
+        (7.45, "score\nQ0 @ K[n-2]^T", COLORS["mma"]),
+        (8.55, "value\nP1 @ V[n-1]", COLORS["mma"]),
+        (9.65, "score\nQ1 @ K[n-2]^T", COLORS["mma"]),
+        (10.75, "value\nP0 @ V[n-2]", COLORS["mma"]),
     ]
     for x, text, color in mma_blocks:
         block(ax, x, 4.12, 0.98, 0.66, text, color, fs=8)
-    ax.text(11.95, 4.43, tr("... after last K/V", "... 直到最后一组 K/V"), fontsize=8, color="#6b7280")
+    ax.text(11.82, 4.43, "...", fontsize=13, color="#6b7280")
+    block(ax, 12.35, 4.12, 0.92, 0.66, "value\nP0 @ V[0]", COLORS["mma"], fs=7.7)
+    block(ax, 13.37, 4.12, 0.92, 0.66, "value\nP1 @ V[0]", COLORS["mma"], fs=7.7)
 
     # Softmax and correction events. Keep one dependency loop per Q stage readable.
     block(ax, 4.75, 3.12, 1.05, 0.66, tr("softmax S0\nwrite P0", "softmax S0\n写入 P0"), COLORS["softmax"], fs=8)
     block(ax, 5.85, 2.12, 1.05, 0.66, tr("softmax S1\nwrite P1", "softmax S1\n写入 P1"), COLORS["softmax"], fs=8)
-    block(ax, 6.05, 1.12, 1.02, 0.66, tr("release /\nrescale O0", "释放 /\n重缩放 O0"), COLORS["corr"], fs=8)
-    block(ax, 8.25, 1.12, 1.02, 0.66, tr("release /\nrescale O1", "释放 /\n重缩放 O1"), COLORS["corr"], fs=8)
+    block(ax, 1.82, 1.12, 1.12, 0.66, tr("pre-release\nO0 / O1", "预先放行\nO0 / O1"), COLORS["corr"], fs=8)
+    block(ax, 8.55, 1.12, 1.02, 0.66, tr("rescale O0\nif needed", "按需重缩放\nO0"), COLORS["corr"], fs=8)
+    block(ax, 10.45, 1.12, 1.02, 0.66, tr("rescale O1\nif needed", "按需重缩放\nO1"), COLORS["corr"], fs=8)
     block(ax, 8.35, 3.12, 1.05, 0.66, tr("softmax S0\nwrite P0", "softmax S0\n写入 P0"), COLORS["softmax"], fs=8)
     block(ax, 10.25, 2.12, 1.05, 0.66, tr("softmax S1\nwrite P1", "softmax S1\n写入 P1"), COLORS["softmax"], fs=8)
-    block(ax, 11.25, 1.12, 1.08, 0.66, tr("normalize\nO0/O1", "归一化\nO0/O1"), COLORS["corr"], fs=8)
-    block(ax, 12.0, 0.12, 0.9, 0.62, tr("store O", "写回 O"), COLORS["tma"], fs=8)
+    ax.text(11.82, 3.43, "...", fontsize=13, color="#6b7280")
+    ax.text(11.82, 2.43, "...", fontsize=13, color="#6b7280")
+    ax.text(11.82, 1.43, "...", fontsize=13, color="#6b7280")
+    block(ax, 14.48, 1.12, 1.08, 0.66, tr("normalize\nO0 / O1", "归一化\nO0 / O1"), COLORS["corr"], fs=8)
+    block(ax, 14.78, 0.12, 0.92, 0.62, tr("store O0,\nthen O1", "先写回 O0\n再写回 O1"), COLORS["tma"], fs=8)
 
     # Keep this as a timeline. Barrier-level dependencies are shown in
     # flash_attention_barrier_flow_v2.png; drawing them again here makes
