@@ -135,7 +135,14 @@ for each (K_block, V_block):
     row_max_safe = 0 if new_ref == -inf else new_ref
     P = exp2((S - row_max_safe) * scale_log2)
     row_sum = row_sum * acc_scale + rowsum(P)
-    O = O * acc_scale[:, None] + P @ V_block
+
+    block_O = P @ V_block
+    if first_block:
+        O = block_O
+    elif all(acc_scale == 1):
+        O += block_O
+    else:
+        O = O * acc_scale[:, None] + block_O
 
     row_max = new_ref
     first_block = false
@@ -145,7 +152,7 @@ for each row:
 store O
 ```
 
-`new_ref` 是本轮最终采用的指数参考值。保留旧参考值时，`acc_scale=1`，原有状态不需要改变；采用候选参考值时，kernel 先用 `acc_scale` 转换旧的 `row_sum` 和 `O`。当前 block 的 `P` 随后统一按照 `new_ref` 计算。所有 K/V blocks 处理完成后，kernel 才计算最终的 `O / row_sum`。“重缩放与结果写回”一节会说明 WG2 如何执行或跳过 `O` 的尺度转换。
+`new_ref` 是本轮最终采用的指数参考值。保留旧参考值时，`acc_scale=1`，原有状态不需要改变，`block_O` 可以直接累加；采用候选参考值时，kernel 先用 `acc_scale` 转换旧的 `row_sum` 和 `O`，再加入 `block_O`。这里用 `all(acc_scale == 1)` 简化表示可以跳过 `O` 重缩放的情况；实际 kernel 会对 WG2 中每个 warp 负责的 32 行分别判断。所有 K/V blocks 处理完成后，kernel 才计算最终的 `O / row_sum`。“重缩放与结果写回”一节会展开这项判断。
 
 如果某一行截至当前 block 仍没有出现任何有效 score，该行的旧参考值和当前 block maximum 都是 `-inf`，因此 `new_ref` 也为 `-inf`。直接计算 `S - new_ref` 会出现 `-inf - (-inf)`；`row_max_safe` 在这种情况下改用 0，使被 mask 的 scores 的指数为 0，`P`、`row_sum` 和 `O` 也保持为 0。如果该行在更早的 blocks 中已经出现过有效 score，那么后续一个全被 mask 的 block 只会产生全 0 的新贡献，不会清空之前累积的 `row_sum` 和 `O`。
 

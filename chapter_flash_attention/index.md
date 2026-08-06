@@ -135,7 +135,14 @@ for each (K_block, V_block):
     row_max_safe = 0 if new_ref == -inf else new_ref
     P = exp2((S - row_max_safe) * scale_log2)
     row_sum = row_sum * acc_scale + rowsum(P)
-    O = O * acc_scale[:, None] + P @ V_block
+
+    block_O = P @ V_block
+    if first_block:
+        O = block_O
+    elif all(acc_scale == 1):
+        O += block_O
+    else:
+        O = O * acc_scale[:, None] + block_O
 
     row_max = new_ref
     first_block = false
@@ -145,7 +152,7 @@ for each row:
 store O
 ```
 
-`new_ref` is the exponent reference selected for this iteration. If the old reference is retained, `acc_scale=1` and the running state is unchanged. If the candidate reference is adopted, the kernel first uses `acc_scale` to convert the old `row_sum` and `O`. It then computes the current block's `P` against `new_ref`. Only after every K/V block has been processed does the kernel compute the final `O / row_sum`. *Rescaling and Writeback* explains how WG2 performs or skips the conversion of `O`.
+`new_ref` is the exponent reference selected for this iteration. If the old reference is retained, `acc_scale=1`, the running state needs no conversion, and `block_O` can be accumulated directly. If the candidate reference is adopted, the kernel converts the old `row_sum` and `O` with `acc_scale` before adding `block_O`. Here, `all(acc_scale == 1)` is a compact way to express when rescaling `O` can be skipped. The actual kernel applies this test separately to the 32 rows owned by each warp in WG2. Only after every K/V block has been processed does the kernel compute the final `O / row_sum`. *Rescaling and Writeback* develops this test in detail.
 
 If a row has not encountered any valid score up to and including the current block, both its old reference and the current block maximum are `-inf`, so `new_ref` is also `-inf`. Evaluating `S - new_ref` directly would then produce `-inf - (-inf)`. In this case, `row_max_safe` uses zero so that the masked scores have zero exponentials and `P`, `row_sum`, and `O` remain zero. If an earlier block already contributed valid scores, a later fully masked block contributes only zeros and does not clear the accumulated `row_sum` or `O`.
 
