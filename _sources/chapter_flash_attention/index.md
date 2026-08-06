@@ -135,7 +135,14 @@ for each (K_block, V_block):
     row_max_safe = 0 if new_ref == -inf else new_ref
     P = exp2((S - row_max_safe) * scale_log2)
     row_sum = row_sum * acc_scale + rowsum(P)
-    O = O * acc_scale[:, None] + P @ V_block
+
+    block_O = P @ V_block
+    if first_block:
+        O = block_O
+    elif all(acc_scale == 1):
+        O += block_O
+    else:
+        O = O * acc_scale[:, None] + block_O
 
     row_max = new_ref
     first_block = false
@@ -145,7 +152,7 @@ for each row:
 store O
 ```
 
-`new_ref` is the exponent reference selected for this iteration. If the old reference is retained, `acc_scale=1` and the running state is unchanged. If the candidate reference is adopted, the kernel first uses `acc_scale` to convert the old `row_sum` and `O`. It then computes the current block's `P` against `new_ref`. Only after every K/V block has been processed does the kernel compute the final `O / row_sum`. *Rescaling and Writeback* explains how WG2 performs or skips the conversion of `O`.
+`new_ref` is the exponent reference selected for this iteration. If the old reference is retained, `acc_scale=1`, the running state needs no conversion, and `block_O` can be accumulated directly. If the candidate reference is adopted, the kernel converts the old `row_sum` and `O` with `acc_scale` before adding `block_O`. Here, `all(acc_scale == 1)` is a compact way to express when rescaling `O` can be skipped. The actual kernel applies this test separately to the 32 rows owned by each warp in WG2. Only after every K/V block has been processed does the kernel compute the final `O / row_sum`. *Rescaling and Writeback* develops this test in detail.
 
 If a row has not encountered any valid score up to and including the current block, both its old reference and the current block maximum are `-inf`, so `new_ref` is also `-inf`. Evaluating `S - new_ref` directly would then produce `-inf - (-inf)`. In this case, `row_max_safe` uses zero so that the masked scores have zero exponentials and `P`, `row_sum`, and `O` remain zero. If an earlier block already contributed valid scores, a later fully masked block contributes only zeros and does not clear the accumulated `row_sum` or `O`.
 
@@ -196,7 +203,9 @@ Compared with GEMM, FA4 inserts softmax between two MMAs: `S` must be read from 
 
 With the data path established, the next step is to assign each stage to a set of threads. A CTA contains four warpgroups, each made up of four warps and 128 threads, for 512 threads in total. We abbreviate warpgroup 0 through 3 as WG0 through WG3.
 
-The kernel keeps two Q tiles in flight. Each tile uses a reusable slot that includes a Q buffer in SMEM, the corresponding `S`, `P`, and `O` regions in TMEM, and the barriers that protect those values. The code calls these slots Q stages and numbers them stage 0 and stage 1. WG0 runs softmax for stage 0, WG1 runs softmax for stage 1, WG3 issues TMA and MMA work for both stages, and WG2 handles their rescaling and epilogues.
+The kernel keeps two Q tiles in flight. Each tile uses a reusable slot that includes a Q buffer in SMEM, the corresponding `S`, `P`, and `O` regions in TMEM, and the barriers that protect those values. The code calls these slots Q stages and numbers them stage 0 and stage 1. WG0 runs softmax for stage 0, WG1 runs softmax for stage 1, WG3 issues TMA and MMA work for both stages, and WG2 handles correction and the epilogue for both stages.
+
+Correction is the rescaling of `O` derived above. When the exponent reference changes, WG2 multiplies the existing `O` in TMEM by `acc_scale` when necessary. After all K/V blocks have been processed, WG2 divides `O` by `row_sum`, converts the output type, and writes the result to an SMEM staging buffer for the TMA store to GMEM.
 
 The four warpgroups divide the work as follows:
 
@@ -207,7 +216,7 @@ The four warpgroups divide the work as follows:
 | WG3, warp 2 | TMA store | Stores final O tiles from SMEM to GMEM |
 | WG0 | Softmax for Q stage 0 | Reads S from TMEM, computes P, writes P to TMEM |
 | WG1 | Softmax for Q stage 1 | Same work for the second Q pipeline stage |
-| WG2 | Correction and epilogue | Rescales O in TMEM, normalizes, stages output |
+| WG2 | Correction and epilogue | Rescales `O` in TMEM when needed; finally normalizes and converts the result, then writes it to an SMEM staging buffer |
 
 The code selects each thread's role with two thread coordinates:
 
@@ -218,7 +227,7 @@ warp_id = T.warp_id_in_wg([4])
 
 Both `wg_id` and `warp_id` range from 0 through 3. The former selects the thread's warpgroup, and the latter selects a warp within that warpgroup. The kernel branches on these values to enter the corresponding role.
 
-Within WG3, warp 1, warp 0, and warp 2 submit TMA loads, MMAs, and TMA stores, respectively. One elected lane in each warp issues each instruction; the TMA engine or Tensor Core performs the operation. WG0 and WG1 execute softmax across their full warpgroups, while WG2 handles rescaling and the epilogue. The FA4 code calls the rescaling of `O` correction.
+WG3 issues the asynchronous hardware instructions: warp 1 issues TMA loads, warp 0 issues QKᵀ and PV MMAs, and warp 2 issues TMA stores. One elected lane in the corresponding warp submits each operation; the TMA engine or Tensor Core performs the actual transfer or matrix computation. WG0 and WG1 each use a full 128-thread warpgroup to run softmax for one Q stage. WG2 also operates at warpgroup scope and performs `O` correction and the final epilogue.
 
 ### Redistributing Registers Across Roles
 

@@ -135,7 +135,14 @@ for each (K_block, V_block):
     row_max_safe = 0 if new_ref == -inf else new_ref
     P = exp2((S - row_max_safe) * scale_log2)
     row_sum = row_sum * acc_scale + rowsum(P)
-    O = O * acc_scale[:, None] + P @ V_block
+
+    block_O = P @ V_block
+    if first_block:
+        O = block_O
+    elif all(acc_scale == 1):
+        O += block_O
+    else:
+        O = O * acc_scale[:, None] + block_O
 
     row_max = new_ref
     first_block = false
@@ -145,7 +152,7 @@ for each row:
 store O
 ```
 
-`new_ref` 是本轮最终采用的指数参考值。保留旧参考值时，`acc_scale=1`，原有状态不需要改变；采用候选参考值时，kernel 先用 `acc_scale` 转换旧的 `row_sum` 和 `O`。当前 block 的 `P` 随后统一按照 `new_ref` 计算。所有 K/V blocks 处理完成后，kernel 才计算最终的 `O / row_sum`。“重缩放与结果写回”一节会说明 WG2 如何执行或跳过 `O` 的尺度转换。
+`new_ref` 是本轮最终采用的指数参考值。保留旧参考值时，`acc_scale=1`，原有状态不需要改变，`block_O` 可以直接累加；采用候选参考值时，kernel 先用 `acc_scale` 转换旧的 `row_sum` 和 `O`，再加入 `block_O`。这里用 `all(acc_scale == 1)` 简化表示可以跳过 `O` 重缩放的情况；实际 kernel 会对 WG2 中每个 warp 负责的 32 行分别判断。所有 K/V blocks 处理完成后，kernel 才计算最终的 `O / row_sum`。“重缩放与结果写回”一节会展开这项判断。
 
 如果某一行截至当前 block 仍没有出现任何有效 score，该行的旧参考值和当前 block maximum 都是 `-inf`，因此 `new_ref` 也为 `-inf`。直接计算 `S - new_ref` 会出现 `-inf - (-inf)`；`row_max_safe` 在这种情况下改用 0，使被 mask 的 scores 的指数为 0，`P`、`row_sum` 和 `O` 也保持为 0。如果该行在更早的 blocks 中已经出现过有效 score，那么后续一个全被 mask 的 block 只会产生全 0 的新贡献，不会清空之前累积的 `row_sum` 和 `O`。
 
@@ -196,7 +203,9 @@ QKᵀ MMA 只读取 Q 和 K，生成 `S`。Softmax 随后将 `S` 从 TMEM 读到
 
 确定数据路径之后，下一步是将各个阶段分配给具体的 threads。一个 CTA 包含 4 个 warpgroups，每个 warpgroup 又包含 4 个 warps、共 128 个 threads，因此整个 CTA 有 512 个 threads。下文将 warpgroup 0 至 3 简写为 WG0 至 WG3。
 
-Kernel 同时让两块 Q tiles 处于处理流程中。每块 Q tile 都分配一个可循环复用的 slot，其中包括 SMEM 中的 Q buffer、TMEM 中对应的 `S`、`P`、`O` 区域，以及保护这些数据的 barriers。代码将这样的 slot 称为 Q stage，并将两个 slots 分别编号为 stage 0 和 stage 1。WG0 负责 stage 0 的 softmax，WG1 负责 stage 1 的 softmax；WG3 为两个 stages 发起 TMA 和 MMA，WG2 处理两者的重缩放与 epilogue。
+Kernel 同时让两块 Q tiles 处于处理流程中。每块 Q tile 都分配一个可循环复用的 slot，其中包括 SMEM 中的 Q buffer、TMEM 中对应的 `S`、`P`、`O` 区域，以及保护这些数据的 barriers。代码将这样的 slot 称为 Q stage，并将两个 slots 分别编号为 stage 0 和 stage 1。WG0 负责 stage 0 的 softmax，WG1 负责 stage 1 的 softmax；WG3 为两个 stages 发起 TMA 和 MMA，WG2 处理两个 stages 的 correction 和 epilogue。
+
+这里的 correction 就是前面推导的 `O` 重缩放：指数参考值改变时，WG2 按需将 TMEM 中已有的 `O` 乘以 `acc_scale`。所有 K/V blocks 处理完成后，WG2 再用 `row_sum` 归一化 `O`、转换输出类型，并将结果写入 SMEM staging buffer，供 TMA store 写回 GMEM。
 
 四个 warpgroups 的具体分工如下：
 
@@ -207,7 +216,7 @@ Kernel 同时让两块 Q tiles 处于处理流程中。每块 Q tile 都分配�
 | WG3, warp 2 | TMA store | 将最终的 O tiles 从 SMEM 写回 GMEM |
 | WG0 | Q stage 0 的 softmax | 从 TMEM 读取 S，计算 P，再将 P 写回 TMEM |
 | WG1 | Q stage 1 的 softmax | 为第二个 Q pipeline stage 执行相同工作 |
-| WG2 | 重缩放和 epilogue | 对 TMEM 中的 O 执行 rescale、normalization 和 output staging |
+| WG2 | Correction 和 epilogue | 按需重缩放 TMEM 中的 `O`；最后执行归一化和类型转换，并将结果写入 SMEM staging buffer |
 
 代码使用两个 thread coordinates 选择当前 thread 的角色：
 
@@ -218,7 +227,7 @@ warp_id = T.warp_id_in_wg([4])
 
 `wg_id` 和 `warp_id` 的取值都为 0–3：前者选择当前 thread 所属的 warpgroup，后者选择该 warpgroup 内的 warp。Kernel 根据这两个值进入对应的 role branch。
 
-WG3 中，warp 1、warp 0 和 warp 2 分别提交 TMA load、MMA 和 TMA store。每个 warp 只由一个 elected lane 发出指令，实际操作由 TMA engine 或 Tensor Core 完成。WG0、WG1 以完整 warpgroup 执行 softmax，WG2 负责重缩放与 epilogue；FA4 代码将 `O` 的重缩放称为 correction。
+WG3 是异步硬件指令的发起者：warp 1 发起 TMA load，warp 0 发起 QKᵀ MMA 和 PV MMA，warp 2 发起 TMA store。每项操作都由对应 warp 中的一个 elected lane 提交，实际的数据搬运或矩阵计算由 TMA engine 或 Tensor Core 完成。WG0 和 WG1 各用完整的 128-thread warpgroup 执行一个 Q stage 的 softmax；WG2 同样以 warpgroup 为执行范围，完成 `O` correction 和最终 epilogue。
 
 ### Registers 如何在角色之间分配
 
