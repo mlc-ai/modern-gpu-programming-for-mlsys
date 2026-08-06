@@ -4,9 +4,9 @@
 :::{admonition} Overview
 :class: overview
 
-- FlashAttention streams K and V in blocks and uses online softmax to maintain an exponent reference, an unnormalized weight sum, and an output accumulator for each query row, avoiding a round trip of the full score matrix through GMEM.
-- For each K/V block, a QKᵀ MMA produces `S`, softmax transforms `S` into `P`, and a PV MMA uses `P` and `V` to update `O`; these three tiles partition or reuse the same TMEM allocation over time.
-- FA4 uses warp specialization to separate TMA loads, QKᵀ/PV MMAs, softmax/correction, and writeback. Barriers control data handoffs and buffer reuse, while causal masking and GQA respectively change the valid score range and the interpretation of Q rows.
+- FlashAttention processes `K` and `V` in blocks and maintains row-wise state with online softmax, avoiding a full score-matrix write to GMEM.
+- FA4 reorganizes the pipeline for Blackwell: separate roles execute QKᵀ MMA, softmax, PV MMA, and output correction, while TMEM carries `S`, `P`, and `O` between them.
+- Conditional rescaling avoids many TMEM round trips for `O`, while hardware `exp2` and an FMA-based polynomial approximation share the exponential work.
 :::
 
 Attention is a core operation in Transformer models and one of the main performance and memory bottlenecks for long sequences. This chapter studies Flash Attention 4 (FA4), an attention forward kernel optimized for Blackwell GPUs. Given query `Q`, key `K`, and value `V`, it computes:
@@ -17,9 +17,11 @@ Here, `QKᵀ` gives the attention scores between queries and keys, and $d$ is th
 
 FlashAttention divides the computation into blocks and keeps only the current tiles and per-row softmax state on chip, avoiding the full score matrix while preserving the result of standard attention. Successive versions differ mainly in how this algorithm maps to the GPU. FlashAttention-2 improved work partitioning across thread blocks and warps. FlashAttention-3 used TMA, WGMMA, and warp specialization on Hopper to interleave data movement, the two MMAs, and softmax. FA4 targets Blackwell and reorganizes the pipeline around `tcgen05` and TMEM.
 
+The [FA4 paper](https://arxiv.org/abs/2603.05451) notes that, from Hopper to Blackwell, Tensor Core matrix-multiply throughput grew faster than exponential throughput, general-purpose floating-point throughput, and on-chip data movement. As the QKᵀ and PV MMAs become shorter, softmax exponentials, `O` rescaling, and TMEM/SMEM traffic account for a larger share of execution time. FA4 therefore cannot be obtained by simply replacing FA3's WGMMA instructions with `tcgen05.mma`; it must also reorganize where intermediate results live, which warpgroups execute each stage, and how those stages overlap.
+
 The preceding GEMM chapters introduced these Blackwell hardware paths: TMA moves tiles, `tcgen05` executes MMA, and TMEM holds accumulators. FA4 connects them into a different computation chain: a QKᵀ MMA computes the score tile `S = QKᵀ`, CUDA cores turn `S` into the unnormalized attention-weight tile `P`, and a PV MMA uses `P` and `V` to update the output accumulator `O`. Following the terminology in the FA4 paper, this chapter calls these operations the QKᵀ MMA and the PV MMA. Whenever softmax changes its exponent reference, the existing `O` in TMEM must first be converted to the new scale.
 
-This chapter follows that computation through the kernel: how `S`, `P`, and `O` are placed in TMEM, how the warpgroups divide the work, and how barriers hand data among TMA, Tensor Cores, softmax, and writeback.
+This chapter is organized around three questions: how TMEM connects the two MMAs with softmax, how conditional rescaling reduces the number of `O` rescaling operations, and how multiple floating-point execution paths share exponential evaluation. We first derive the mathematical dependencies, then examine the TMEM layouts of `S`, `P`, and `O`, the division of work among warpgroups, and the barriers that hand off data and storage resources.
 
 ## Algorithm Structure
 
@@ -149,7 +151,9 @@ store O
 
 If a row has not encountered any valid score up to and including the current block, both its old reference and the current block maximum are `-inf`, so `new_ref` is also `-inf`. Evaluating `S - new_ref` directly would then produce `-inf - (-inf)`. In this case, `row_max_safe` uses zero so that the masked scores have zero exponentials and `P`, `row_sum`, and `O` remain zero. If an earlier block already contributed valid scores, a later fully masked block contributes only zeros and does not clear the accumulated `row_sum` or `O`.
 
-To evaluate `exp2`, the [FA4 paper](https://arxiv.org/abs/2603.05451) proposes evaluating a tuned fraction of the elements with a cubic polynomial implemented using FP32 FMA instructions and sending the rest to the hardware `exp2` units. This lets the FMA and exponential units share the work. The current TIRx implementation follows that mixed strategy: `ex2_emulation_2` handles a tuned subset, while the remaining elements use `T.ptx.exp2`. This changes how the exponential is evaluated, not the online-softmax recurrence above.
+Rewriting the natural exponential in base-2 form is only an algebraic transformation; by itself, it does not remove the throughput bottleneck in the exponential path. If every element still uses the hardware `exp2` path, those units can continue to limit softmax throughput.
+
+FA4 therefore divides exponential evaluation between two execution paths. In the [paper](https://arxiv.org/abs/2603.05451), some elements use hardware `exp2`, while others use a cubic polynomial evaluated with FP32 FMA instructions. In the current TIRx implementation, `ex2_emulation_2` provides the latter path. Hardware exponential units and FMA units can then work concurrently, reducing dependence on a single execution path. This changes how the exponential is evaluated, not the online-softmax recurrence above.
 
 When this algorithm is mapped to the kernel, each K/V block produces or updates three kinds of tiles. Their storage locations determine the layouts and barriers that follow:
 
@@ -725,6 +729,8 @@ softmax_corr.empty.arrive(1 - i_q)
 ```
 
 Skipping the data path does not skip the synchronization protocol. Every warp still contributes the arrivals required by `p_o_rescale` and `softmax_corr.empty`, allowing the PV MMA to proceed and returning the softmax mailbox for reuse.
+
+Conditional rescaling therefore acts as a two-level filter. The threshold test first makes `acc_scale = 1` for many rows; `any_sync` then checks whether all 32 rows owned by the current warp can skip the correction data path. Even when it skips the TMEM load, multiply, and store, the warp still performs the barrier arrivals required to advance the pipeline.
 
 When correction is required, each warp applies the following TMEM -> registers -> TMEM tile operation to its own stripe of `O` rows:
 
