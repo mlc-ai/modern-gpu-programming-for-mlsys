@@ -893,14 +893,11 @@ FA4 复用了 GEMM kernel 中的 TMA、`tcgen05`、TMEM 和 barrier 机制，但
 
 ## 练习
 
-1. 设一行最终使用的指数参考值为 $r_i$。从 `row_sum` 的定义出发，推导
-   $\mathrm{LSE}_i=\log(\mathrm{row\_sum}_i)+r_i/\sqrt d$，并说明为什么 $r_i$ 不必等于这一行的真实 maximum。
-2. 设 `rescale_threshold=8`。当 `delta=-6` 和 `delta=-10` 时，kernel 分别会保留旧参考值还是采用候选参考值？对应的 `acc_scale` 是多少？哪种情况需要重缩放已有的 `O`？
-3. 分别追踪以下四段数据路径：Q/K SMEM → S TMEM、S TMEM → P TMEM、P TMEM + V SMEM → O TMEM，以及 O TMEM → O GMEM。对每一段列出执行角色、tile primitive 和硬件路径，并指出其中哪些步骤在前面的 GEMM kernel 中不存在。
-4. Softmax 的结果最初位于 WG0 或 WG1 的 registers 中。为什么 WG3 发起的 PV MMA 不能直接使用这些 registers，而必须先将 `P` 写入 TMEM？
-5. 根据 fp16 view 中的 column $c$ 对应物理 32-bit column $\lfloor c/2\rfloor$，推导 `S0`、`S1`、`P0`、`P1`、`O0` 和 `O1` 的物理 column ranges。哪些 regions 会发生物理重叠？为什么 `P_region` 的 stage stride 是 `MMA_N * 2`？
-6. `p_o_rescale` 的 expected arrival count 为 256。说明 softmax warpgroup 和 WG2 各自贡献多少次 arrivals，以及这两组 arrivals 分别证明了什么。如果误设为 128 或 384，第一段 PV MMA 可能出现什么结果？
-7. `P` 为什么按前 96 columns 和最后 32 columns 分两段交给 PV MMA？分别说明 `p_o_rescale` 和 `p_ready_2` 保护的数据范围，并分析如果第一段 PV MMA 也等待全部 128 columns，会失去哪部分重叠机会。
-8. 画出两个 Q stages 连续处理两个 K/V blocks 的简化时间线，标出 WG3 warp 1 的 TMA load、WG3 warp 0 的 QKᵀ/PV MMA、WG0/WG1 的 softmax，以及 WG2 的重缩放。再说明 `q_load.empty`、`kv_load.empty` 和 `softmax_corr.empty` 各自允许哪块存储被复用。
-9. 设 `SEQ_LEN_Q=6`、`SEQ_LEN_KV=8`，并采用右对齐 causal mask。Query positions 0 和 5 分别可以访问到哪个最大 key index？若 `BLK_N=4`，它们各自需要处理哪些完整、部分有效或完全跳过的 K/V blocks？这会怎样影响 causal tasks 的工作量和调度顺序？
-10. 设 `num_qo_heads=32`、`num_kv_heads=8`、`BLK_M=128`。求 `GQA_RATIO` 和 `SEQ_Q_PER_TILE`；当 `kv_head_idx=3` 时，分别将 packed rows 0、5 和 127 映射到 `(sequence offset, query head)`，并说明为什么这 128 行可以共享同一份 K/V tile。
+1. 考虑一个 query row，设 `scale_log2=1`、`rescale_threshold=8`、`row_max=2`、`row_sum=3`、`O=[4,6]`。下一个 block 的 `S=[5,4]`，`V=[[1,0],[0,1]]`。计算 `candidate_max`、`delta`、`new_ref`、`acc_scale`、`P`，以及更新后的 `row_sum` 和 `O`。再将 `S` 改为 `[11,10]` 重算，并解释为什么只有第二种情况需要重缩放旧状态。
+2. 分别追踪以下四段数据路径：Q/K SMEM → S TMEM、S TMEM → P TMEM、P TMEM + V SMEM → O TMEM，以及 O TMEM → O GMEM。对每一段列出执行角色、源和目标存储位置、tile primitive 与硬件路径，并指出其中哪些步骤在前面的 GEMM kernel 中不存在。
+3. 根据 fp16 view 中的 column $c$ 对应物理 32-bit column $\lfloor c/2\rfloor$，推导 `S0`、`S1`、`P0`、`P1`、`O0` 和 `O1` 的物理 column ranges。哪些 regions 会发生重叠？哪些 waits 或 barriers 能防止重叠区域被过早读取或覆盖？
+4. 追踪一个 K/V block 依次经过 `s_ready`、`p_o_rescale`、`p_ready_2` 和 `o_ready` 的过程。对每个 barrier，说明谁执行 wait、谁贡献 arrivals，以及随后哪块 tile 可以安全使用。为什么 `p_o_rescale` 需要等待 256 次 arrivals？将 `P` 按 96 columns 和 32 columns 分两段交给 PV MMA，又获得了什么重叠机会？
+5. Driver warpgroup 将每个 thread 的 register 上限降到 48，两个 softmax warpgroups 将上限提高到 200，WG2 则使用 64。计算四个 128-thread warpgroups 的 register 总预算，再与 CTA 中所有 threads 都使用 200 个 registers 的情况比较。Softmax 角色为什么需要最大的配额？降低 WG3 的上限又如何使这项分配成为可能？
+6. Kernel 已经将自然指数改写为 base-2 `exp2`，为什么 hardware exponential path 仍可能成为 softmax 的瓶颈？说明将元素分配给硬件 `exp2` 和基于 FMA 的三次多项式近似后，执行单元的利用方式发生了什么变化，以及哪些 online-softmax 公式保持不变。
+7. 设 `SEQ_LEN_Q=6`、`SEQ_LEN_KV=8`，并采用右对齐 causal mask。Query positions 0 和 5 分别可以访问到哪个最大 key index？若 `BLK_N=4`，它们各自需要处理哪些完整、部分有效或完全跳过的 K/V blocks？这会怎样影响 causal tasks 的工作量和调度顺序？
+8. 设 `num_qo_heads=32`、`num_kv_heads=8`、`BLK_M=128`。求 `GQA_RATIO` 和 `SEQ_Q_PER_TILE`；当 `kv_head_idx=3` 时，分别将 packed rows 0、5 和 127 映射到 `(sequence offset, query head)`，并说明为什么这 128 行可以共享同一份 K/V tile。
