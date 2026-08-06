@@ -196,7 +196,9 @@ Compared with GEMM, FA4 inserts softmax between two MMAs: `S` must be read from 
 
 With the data path established, the next step is to assign each stage to a set of threads. A CTA contains four warpgroups, each made up of four warps and 128 threads, for 512 threads in total. We abbreviate warpgroup 0 through 3 as WG0 through WG3.
 
-The kernel keeps two Q tiles in flight. Each tile uses a reusable slot that includes a Q buffer in SMEM, the corresponding `S`, `P`, and `O` regions in TMEM, and the barriers that protect those values. The code calls these slots Q stages and numbers them stage 0 and stage 1. WG0 runs softmax for stage 0, WG1 runs softmax for stage 1, WG3 issues TMA and MMA work for both stages, and WG2 handles their rescaling and epilogues.
+The kernel keeps two Q tiles in flight. Each tile uses a reusable slot that includes a Q buffer in SMEM, the corresponding `S`, `P`, and `O` regions in TMEM, and the barriers that protect those values. The code calls these slots Q stages and numbers them stage 0 and stage 1. WG0 runs softmax for stage 0, WG1 runs softmax for stage 1, WG3 issues TMA and MMA work for both stages, and WG2 handles correction and the epilogue for both stages.
+
+Correction is the rescaling of `O` derived above. When the exponent reference changes, WG2 multiplies the existing `O` in TMEM by `acc_scale` when necessary. After all K/V blocks have been processed, WG2 divides `O` by `row_sum`, converts the output type, and writes the result to an SMEM staging buffer for the TMA store to GMEM.
 
 The four warpgroups divide the work as follows:
 
@@ -207,7 +209,7 @@ The four warpgroups divide the work as follows:
 | WG3, warp 2 | TMA store | Stores final O tiles from SMEM to GMEM |
 | WG0 | Softmax for Q stage 0 | Reads S from TMEM, computes P, writes P to TMEM |
 | WG1 | Softmax for Q stage 1 | Same work for the second Q pipeline stage |
-| WG2 | Correction and epilogue | Rescales O in TMEM, normalizes, stages output |
+| WG2 | Correction and epilogue | Rescales `O` in TMEM when needed; finally normalizes and converts the result, then writes it to an SMEM staging buffer |
 
 The code selects each thread's role with two thread coordinates:
 
@@ -218,7 +220,7 @@ warp_id = T.warp_id_in_wg([4])
 
 Both `wg_id` and `warp_id` range from 0 through 3. The former selects the thread's warpgroup, and the latter selects a warp within that warpgroup. The kernel branches on these values to enter the corresponding role.
 
-Within WG3, warp 1, warp 0, and warp 2 submit TMA loads, MMAs, and TMA stores, respectively. One elected lane in each warp issues each instruction; the TMA engine or Tensor Core performs the operation. WG0 and WG1 execute softmax across their full warpgroups, while WG2 handles rescaling and the epilogue. The FA4 code calls the rescaling of `O` correction.
+WG3 issues the asynchronous hardware instructions: warp 1 issues TMA loads, warp 0 issues QKᵀ and PV MMAs, and warp 2 issues TMA stores. One elected lane in the corresponding warp submits each operation; the TMA engine or Tensor Core performs the actual transfer or matrix computation. WG0 and WG1 each use a full 128-thread warpgroup to run softmax for one Q stage. WG2 also operates at warpgroup scope and performs `O` correction and the final epilogue.
 
 ### Redistributing Registers Across Roles
 
