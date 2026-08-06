@@ -4,9 +4,9 @@
 :::{admonition} 概览
 :class: overview
 
-- FlashAttention 按 block 流式处理 K、V，并通过 online softmax 为每个 query row 维护指数参考值、未归一化权重之和与 output accumulator，从而不必将完整的 score matrix 写入 GMEM。
-- 对每个 K/V block，QKᵀ MMA 生成 `S`，softmax 将 `S` 转换为 `P`，PV MMA 再用 `P` 和 `V` 更新 `O`；这三个 tiles 分区或分时复用同一块 TMEM allocation。
-- FA4 使用 warp specialization 分开执行 TMA load、QKᵀ/PV MMA、softmax/correction 和结果写回，并通过 barriers 控制各阶段的数据交接与 buffer 复用；causal mask 和 GQA 则分别改变有效 score 范围与 Q rows 的解释方式。
+- FlashAttention 按 block 处理 `K`、`V`，并通过 online softmax 维护逐行状态，从而避免将完整的 score matrix 写入 GMEM。
+- FA4 面向 Blackwell 重新组织 pipeline：不同角色分别执行 QKᵀ MMA、softmax、PV MMA 和 output correction，`S`、`P`、`O` 则通过 TMEM 在这些角色之间交接。
+- Conditional rescaling 尽量跳过 `O` 的 TMEM 数据往返；指数计算则由硬件 `exp2` 和基于 FMA 的多项式近似共同承担。
 :::
 
 Attention 是 Transformer 的核心计算之一，也是长序列场景中主要的性能和内存瓶颈之一。本章讨论的 Flash Attention 4（FA4）是针对 Blackwell GPU 优化的 attention forward kernel。给定 query `Q`、key `K` 和 value `V`，它计算：
@@ -17,9 +17,11 @@ $$O = \text{softmax}(QK^{\top} / \sqrt{d})V$$
 
 FlashAttention 的核心做法是将计算分块，只在片上保留当前 tiles 和逐行 softmax 状态，从而避免保存完整的 score matrix，计算结果仍与标准 attention 相同。各版本的主要区别在于如何把这套算法映射到当代 GPU。FlashAttention-2 改进了 thread blocks 和 warps 之间的任务划分。FlashAttention-3 在 Hopper 上使用 TMA、WGMMA 和 warp specialization，将数据搬运、两次 MMA 与 softmax 交错执行。FA4 则面向 Blackwell，围绕 `tcgen05` 和 TMEM 重新组织这条 pipeline。
 
+[FA4 论文](https://arxiv.org/abs/2603.05451)指出，从 Hopper 到 Blackwell，Tensor Core 的矩阵乘吞吐量提升得比 exponential、普通浮点运算和片上数据搬运能力更快。QKᵀ MMA 和 PV MMA 所需的时间缩短后，softmax 中的指数计算、`O` 的重缩放以及 TMEM/SMEM 数据移动会占据更明显的执行时间。因此，FA4 不能只把 FA3 的 WGMMA 换成 `tcgen05.mma`，还需要重新安排中间结果的位置、warpgroup 的角色和各阶段的执行顺序。
+
 前面的 GEMM kernel 已经介绍了这些 Blackwell 硬件路径：TMA 搬运 tiles，`tcgen05` 执行 MMA，accumulator 保存在 TMEM 中。FA4 将它们连接成一条新的计算链：QKᵀ MMA 先计算 score tile `S = QK^T`，CUDA cores 再将 `S` 转换为尚未归一化的权重 tile `P`，PV MMA 最后用 `P` 和 `V` 更新 output accumulator `O`。本章沿用 FA4 论文的写法，将这两次操作分别称为 QKᵀ MMA 和 PV MMA。当 softmax 使用的指数参考值发生变化时，TMEM 中已有的 `O` 还需要先转换到新的尺度。
 
-本章沿着这条计算路径，依次说明 `S`、`P` 和 `O` 如何使用 TMEM，各个 warpgroups 如何分工，以及 barriers 如何在 TMA、Tensor Core、softmax 和结果写回之间交接数据。
+本章围绕三个问题展开：TMEM 如何连接两次 MMA 与 softmax，conditional rescaling 如何减少 `O` 的重缩放次数，以及不同浮点执行路径如何共同承担指数计算。下面先推导这些操作的数学关系，再说明 `S`、`P` 和 `O` 的 TMEM layout、各个 warpgroups 的分工，以及 barriers 如何交接数据和存储资源。
 
 ## 算法结构
 
@@ -149,7 +151,9 @@ store O
 
 如果某一行截至当前 block 仍没有出现任何有效 score，该行的旧参考值和当前 block maximum 都是 `-inf`，因此 `new_ref` 也为 `-inf`。直接计算 `S - new_ref` 会出现 `-inf - (-inf)`；`row_max_safe` 在这种情况下改用 0，使被 mask 的 scores 的指数为 0，`P`、`row_sum` 和 `O` 也保持为 0。如果该行在更早的 blocks 中已经出现过有效 score，那么后续一个全被 mask 的 block 只会产生全 0 的新贡献，不会清空之前累积的 `row_sum` 和 `O`。
 
-实际计算 `exp2` 时，[FA4 论文](https://arxiv.org/abs/2603.05451)提出让一部分元素使用 FP32 FMA 计算三次多项式近似，其余元素仍使用硬件 `exp2`，从而让 FMA 与 exponential units 分担这项工作。当前 TIRx 实现采用同样的混合方式：`ex2_emulation_2` 处理经过调优的一部分元素，其余元素调用 `T.ptx.exp2`。这只改变指数的实现路径，不改变上面的 online-softmax 更新公式。
+将自然指数改写成 base-2 exponential 只是数学形式的转换，本身并不能消除 exponential path 的吞吐瓶颈。如果所有元素仍然通过硬件 `exp2` 计算，执行这条路径的单元依然可能限制 softmax 的速度。
+
+FA4 因此把指数计算分配到两条执行路径：[论文](https://arxiv.org/abs/2603.05451)中，一部分元素使用硬件 `exp2`，另一部分使用 FP32 FMA 指令计算三次多项式近似。当前 TIRx 实现中的 `ex2_emulation_2` 负责后一条路径。这样，hardware exponential units 和 FMA units 可以并行工作，减少 softmax 对单一执行路径的依赖。这项调整只改变指数的实现方式，不改变上面的 online-softmax 更新公式。
 
 将这套算法映射到 kernel 后，每个 K/V block 会产生或更新三类 tiles；它们的存储位置决定了后面的 layout 和 barrier：
 
@@ -728,6 +732,8 @@ softmax_corr.empty.arrive(1 - i_q)
 
 跳过数据操作后，同步协议仍然要继续。每个 warp 无论是否实际修改 `O`，都必须完成 `p_o_rescale` 和 `softmax_corr.empty` 所需的 arrival，分别允许 PV MMA 继续执行，并允许 softmax 再次写入对应的 `sScale` slot。
 
+Conditional rescaling 最终形成两级筛选：阈值判断先让许多 rows 得到 `acc_scale = 1`，`any_sync` 再判断当前 warp 的 32 行是否都能跳过 correction 数据路径。即使跳过 TMEM load、multiply 和 store，这个 warp 仍会完成推进 pipeline 所需的 barrier arrivals。
+
 需要 correction 时，每个 warp 对自己负责的 `O` row stripe 执行 TMEM → registers → TMEM tile operation：
 
 > **Tile primitive：重缩放（rescale）**
@@ -887,14 +893,11 @@ FA4 复用了 GEMM kernel 中的 TMA、`tcgen05`、TMEM 和 barrier 机制，但
 
 ## 练习
 
-1. 设一行最终使用的指数参考值为 $r_i$。从 `row_sum` 的定义出发，推导
-   $\mathrm{LSE}_i=\log(\mathrm{row\_sum}_i)+r_i/\sqrt d$，并说明为什么 $r_i$ 不必等于这一行的真实 maximum。
-2. 设 `rescale_threshold=8`。当 `delta=-6` 和 `delta=-10` 时，kernel 分别会保留旧参考值还是采用候选参考值？对应的 `acc_scale` 是多少？哪种情况需要重缩放已有的 `O`？
-3. 分别追踪以下四段数据路径：Q/K SMEM → S TMEM、S TMEM → P TMEM、P TMEM + V SMEM → O TMEM，以及 O TMEM → O GMEM。对每一段列出执行角色、tile primitive 和硬件路径，并指出其中哪些步骤在前面的 GEMM kernel 中不存在。
-4. Softmax 的结果最初位于 WG0 或 WG1 的 registers 中。为什么 WG3 发起的 PV MMA 不能直接使用这些 registers，而必须先将 `P` 写入 TMEM？
-5. 根据 fp16 view 中的 column $c$ 对应物理 32-bit column $\lfloor c/2\rfloor$，推导 `S0`、`S1`、`P0`、`P1`、`O0` 和 `O1` 的物理 column ranges。哪些 regions 会发生物理重叠？为什么 `P_region` 的 stage stride 是 `MMA_N * 2`？
-6. `p_o_rescale` 的 expected arrival count 为 256。说明 softmax warpgroup 和 WG2 各自贡献多少次 arrivals，以及这两组 arrivals 分别证明了什么。如果误设为 128 或 384，第一段 PV MMA 可能出现什么结果？
-7. `P` 为什么按前 96 columns 和最后 32 columns 分两段交给 PV MMA？分别说明 `p_o_rescale` 和 `p_ready_2` 保护的数据范围，并分析如果第一段 PV MMA 也等待全部 128 columns，会失去哪部分重叠机会。
-8. 画出两个 Q stages 连续处理两个 K/V blocks 的简化时间线，标出 WG3 warp 1 的 TMA load、WG3 warp 0 的 QKᵀ/PV MMA、WG0/WG1 的 softmax，以及 WG2 的重缩放。再说明 `q_load.empty`、`kv_load.empty` 和 `softmax_corr.empty` 各自允许哪块存储被复用。
-9. 设 `SEQ_LEN_Q=6`、`SEQ_LEN_KV=8`，并采用右对齐 causal mask。Query positions 0 和 5 分别可以访问到哪个最大 key index？若 `BLK_N=4`，它们各自需要处理哪些完整、部分有效或完全跳过的 K/V blocks？这会怎样影响 causal tasks 的工作量和调度顺序？
-10. 设 `num_qo_heads=32`、`num_kv_heads=8`、`BLK_M=128`。求 `GQA_RATIO` 和 `SEQ_Q_PER_TILE`；当 `kv_head_idx=3` 时，分别将 packed rows 0、5 和 127 映射到 `(sequence offset, query head)`，并说明为什么这 128 行可以共享同一份 K/V tile。
+1. 考虑一个 query row，设 `scale_log2=1`、`rescale_threshold=8`、`row_max=2`、`row_sum=3`、`O=[4,6]`。下一个 block 的 `S=[5,4]`，`V=[[1,0],[0,1]]`。计算 `candidate_max`、`delta`、`new_ref`、`acc_scale`、`P`，以及更新后的 `row_sum` 和 `O`。再将 `S` 改为 `[11,10]` 重算，并解释为什么只有第二种情况需要重缩放旧状态。
+2. 分别追踪以下四段数据路径：Q/K SMEM → S TMEM、S TMEM → P TMEM、P TMEM + V SMEM → O TMEM，以及 O TMEM → O GMEM。对每一段列出执行角色、源和目标存储位置、tile primitive 与硬件路径，并指出其中哪些步骤在前面的 GEMM kernel 中不存在。
+3. 根据 fp16 view 中的 column $c$ 对应物理 32-bit column $\lfloor c/2\rfloor$，推导 `S0`、`S1`、`P0`、`P1`、`O0` 和 `O1` 的物理 column ranges。哪些 regions 会发生重叠？哪些 waits 或 barriers 能防止重叠区域被过早读取或覆盖？
+4. 追踪一个 K/V block 依次经过 `s_ready`、`p_o_rescale`、`p_ready_2` 和 `o_ready` 的过程。对每个 barrier，说明谁执行 wait、谁贡献 arrivals，以及随后哪块 tile 可以安全使用。为什么 `p_o_rescale` 需要等待 256 次 arrivals？将 `P` 按 96 columns 和 32 columns 分两段交给 PV MMA，又获得了什么重叠机会？
+5. Driver warpgroup 将每个 thread 的 register 上限降到 48，两个 softmax warpgroups 将上限提高到 200，WG2 则使用 64。计算四个 128-thread warpgroups 的 register 总预算，再与 CTA 中所有 threads 都使用 200 个 registers 的情况比较。Softmax 角色为什么需要最大的配额？降低 WG3 的上限又如何使这项分配成为可能？
+6. Kernel 已经将自然指数改写为 base-2 `exp2`，为什么 hardware exponential path 仍可能成为 softmax 的瓶颈？说明将元素分配给硬件 `exp2` 和基于 FMA 的三次多项式近似后，执行单元的利用方式发生了什么变化，以及哪些 online-softmax 公式保持不变。
+7. 设 `SEQ_LEN_Q=6`、`SEQ_LEN_KV=8`，并采用右对齐 causal mask。Query positions 0 和 5 分别可以访问到哪个最大 key index？若 `BLK_N=4`，它们各自需要处理哪些完整、部分有效或完全跳过的 K/V blocks？这会怎样影响 causal tasks 的工作量和调度顺序？
+8. 设 `num_qo_heads=32`、`num_kv_heads=8`、`BLK_M=128`。求 `GQA_RATIO` 和 `SEQ_Q_PER_TILE`；当 `kv_head_idx=3` 时，分别将 packed rows 0、5 和 127 映射到 `(sequence offset, query head)`，并说明为什么这 128 行可以共享同一份 K/V tile。

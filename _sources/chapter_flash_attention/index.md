@@ -4,9 +4,9 @@
 :::{admonition} Overview
 :class: overview
 
-- FlashAttention streams K and V in blocks and uses online softmax to maintain an exponent reference, an unnormalized weight sum, and an output accumulator for each query row, avoiding a round trip of the full score matrix through GMEM.
-- For each K/V block, a QKᵀ MMA produces `S`, softmax transforms `S` into `P`, and a PV MMA uses `P` and `V` to update `O`; these three tiles partition or reuse the same TMEM allocation over time.
-- FA4 uses warp specialization to separate TMA loads, QKᵀ/PV MMAs, softmax/correction, and writeback. Barriers control data handoffs and buffer reuse, while causal masking and GQA respectively change the valid score range and the interpretation of Q rows.
+- FlashAttention processes `K` and `V` in blocks and maintains row-wise state with online softmax, avoiding a full score-matrix write to GMEM.
+- FA4 reorganizes the pipeline for Blackwell: separate roles execute QKᵀ MMA, softmax, PV MMA, and output correction, while TMEM carries `S`, `P`, and `O` between them.
+- Conditional rescaling avoids many TMEM round trips for `O`, while hardware `exp2` and an FMA-based polynomial approximation share the exponential work.
 :::
 
 Attention is a core operation in Transformer models and one of the main performance and memory bottlenecks for long sequences. This chapter studies Flash Attention 4 (FA4), an attention forward kernel optimized for Blackwell GPUs. Given query `Q`, key `K`, and value `V`, it computes:
@@ -17,9 +17,11 @@ Here, `QKᵀ` gives the attention scores between queries and keys, and $d$ is th
 
 FlashAttention divides the computation into blocks and keeps only the current tiles and per-row softmax state on chip, avoiding the full score matrix while preserving the result of standard attention. Successive versions differ mainly in how this algorithm maps to the GPU. FlashAttention-2 improved work partitioning across thread blocks and warps. FlashAttention-3 used TMA, WGMMA, and warp specialization on Hopper to interleave data movement, the two MMAs, and softmax. FA4 targets Blackwell and reorganizes the pipeline around `tcgen05` and TMEM.
 
+The [FA4 paper](https://arxiv.org/abs/2603.05451) notes that, from Hopper to Blackwell, Tensor Core matrix-multiply throughput grew faster than exponential throughput, general-purpose floating-point throughput, and on-chip data movement. As the QKᵀ and PV MMAs become shorter, softmax exponentials, `O` rescaling, and TMEM/SMEM traffic account for a larger share of execution time. FA4 therefore cannot be obtained by simply replacing FA3's WGMMA instructions with `tcgen05.mma`; it must also reorganize where intermediate results live, which warpgroups execute each stage, and how those stages overlap.
+
 The preceding GEMM chapters introduced these Blackwell hardware paths: TMA moves tiles, `tcgen05` executes MMA, and TMEM holds accumulators. FA4 connects them into a different computation chain: a QKᵀ MMA computes the score tile `S = QKᵀ`, CUDA cores turn `S` into the unnormalized attention-weight tile `P`, and a PV MMA uses `P` and `V` to update the output accumulator `O`. Following the terminology in the FA4 paper, this chapter calls these operations the QKᵀ MMA and the PV MMA. Whenever softmax changes its exponent reference, the existing `O` in TMEM must first be converted to the new scale.
 
-This chapter follows that computation through the kernel: how `S`, `P`, and `O` are placed in TMEM, how the warpgroups divide the work, and how barriers hand data among TMA, Tensor Cores, softmax, and writeback.
+This chapter is organized around three questions: how TMEM connects the two MMAs with softmax, how conditional rescaling reduces the number of `O` rescaling operations, and how multiple floating-point execution paths share exponential evaluation. We first derive the mathematical dependencies, then examine the TMEM layouts of `S`, `P`, and `O`, the division of work among warpgroups, and the barriers that hand off data and storage resources.
 
 ## Algorithm Structure
 
@@ -149,7 +151,9 @@ store O
 
 If a row has not encountered any valid score up to and including the current block, both its old reference and the current block maximum are `-inf`, so `new_ref` is also `-inf`. Evaluating `S - new_ref` directly would then produce `-inf - (-inf)`. In this case, `row_max_safe` uses zero so that the masked scores have zero exponentials and `P`, `row_sum`, and `O` remain zero. If an earlier block already contributed valid scores, a later fully masked block contributes only zeros and does not clear the accumulated `row_sum` or `O`.
 
-To evaluate `exp2`, the [FA4 paper](https://arxiv.org/abs/2603.05451) proposes evaluating a tuned fraction of the elements with a cubic polynomial implemented using FP32 FMA instructions and sending the rest to the hardware `exp2` units. This lets the FMA and exponential units share the work. The current TIRx implementation follows that mixed strategy: `ex2_emulation_2` handles a tuned subset, while the remaining elements use `T.ptx.exp2`. This changes how the exponential is evaluated, not the online-softmax recurrence above.
+Rewriting the natural exponential in base-2 form is only an algebraic transformation; by itself, it does not remove the throughput bottleneck in the exponential path. If every element still uses the hardware `exp2` path, those units can continue to limit softmax throughput.
+
+FA4 therefore divides exponential evaluation between two execution paths. In the [paper](https://arxiv.org/abs/2603.05451), some elements use hardware `exp2`, while others use a cubic polynomial evaluated with FP32 FMA instructions. In the current TIRx implementation, `ex2_emulation_2` provides the latter path. Hardware exponential units and FMA units can then work concurrently, reducing dependence on a single execution path. This changes how the exponential is evaluated, not the online-softmax recurrence above.
 
 When this algorithm is mapped to the kernel, each K/V block produces or updates three kinds of tiles. Their storage locations determine the layouts and barriers that follow:
 
@@ -726,6 +730,8 @@ softmax_corr.empty.arrive(1 - i_q)
 
 Skipping the data path does not skip the synchronization protocol. Every warp still contributes the arrivals required by `p_o_rescale` and `softmax_corr.empty`, allowing the PV MMA to proceed and returning the softmax mailbox for reuse.
 
+Conditional rescaling therefore acts as a two-level filter. The threshold test first makes `acc_scale = 1` for many rows; `any_sync` then checks whether all 32 rows owned by the current warp can skip the correction data path. Even when it skips the TMEM load, multiply, and store, the warp still performs the barrier arrivals required to advance the pipeline.
+
 When correction is required, each warp applies the following TMEM -> registers -> TMEM tile operation to its own stripe of `O` rows:
 
 > **Tile primitive: Correction (rescale)**
@@ -885,14 +891,11 @@ FA4 reuses the TMA, `tcgen05`, TMEM, and barrier machinery developed for the GEM
 
 ## Exercises
 
-1. Let $r_i$ be the final exponent reference for one row. Starting from the definition of `row_sum`, derive
-   $\mathrm{LSE}_i=\log(\mathrm{row\_sum}_i)+r_i/\sqrt d$, and explain why $r_i$ need not equal the exact row maximum.
-2. Let `rescale_threshold=8`. For `delta=-6` and `delta=-10`, determine whether the kernel keeps the old reference or adopts the candidate reference. What is `acc_scale` in each case, and which case requires rescaling the existing `O`?
-3. Trace these four paths separately: Q/K in SMEM → S in TMEM, S in TMEM → P in TMEM, P in TMEM + V in SMEM → O in TMEM, and O in TMEM → O in GMEM. For each path, identify the executing role, tile primitive, and hardware path. Which paths do not exist in the preceding GEMM kernel?
-4. Softmax initially leaves its result in registers owned by WG0 or WG1. Why can the PV MMA issued by WG3 not consume those registers directly, and why does writing `P` to TMEM solve the problem?
-5. A column $c$ in the fp16 view maps to physical 32-bit column $\lfloor c/2\rfloor$. Use this relation to derive the physical column ranges of `S0`, `S1`, `P0`, `P1`, `O0`, and `O1`. Which regions overlap physically, and why is the `P_region` stage stride `MMA_N * 2`?
-6. `p_o_rescale` has an expected arrival count of 256. How many arrivals come from the softmax warpgroup and from WG2, and what condition does each group certify? What can happen to the first PV MMA if the count is mistakenly set to 128 or 384?
-7. Why does the kernel hand `P` to the PV MMA as the first 96 columns and the final 32 columns? State which range is protected by `p_o_rescale` and by `p_ready_2`, then explain what overlap would be lost if the first PV MMA also waited for all 128 columns.
-8. Draw a simplified timeline in which the two Q stages process two consecutive K/V blocks. Mark the TMA loads from WG3 warp 1, the QKᵀ/PV MMAs from WG3 warp 0, softmax in WG0/WG1, and correction in WG2. Then identify which storage each of `q_load.empty`, `kv_load.empty`, and `softmax_corr.empty` allows the kernel to reuse.
-9. Let `SEQ_LEN_Q=6` and `SEQ_LEN_KV=8` with a bottom-right-aligned causal mask. What is the largest key index visible to query positions 0 and 5? With `BLK_N=4`, classify the K/V blocks for each query as fully valid, partially valid, or skipped. How does this difference affect causal task cost and scheduling order?
-10. Let `num_qo_heads=32`, `num_kv_heads=8`, and `BLK_M=128`. Compute `GQA_RATIO` and `SEQ_Q_PER_TILE`. For `kv_head_idx=3`, map packed rows 0, 5, and 127 to `(sequence offset, query head)`, and explain why all 128 rows can share one K/V tile.
+1. Consider one query row with `scale_log2=1`, `rescale_threshold=8`, `row_max=2`, `row_sum=3`, and `O=[4,6]`. Let the next block have `S=[5,4]` and `V=[[1,0],[0,1]]`. Compute `candidate_max`, `delta`, `new_ref`, `acc_scale`, `P`, and the updated `row_sum` and `O`. Repeat with `S=[11,10]`, and explain why only the second case rescales the old state.
+2. Trace these four paths separately: Q/K in SMEM → S in TMEM, S in TMEM → P in TMEM, P in TMEM + V in SMEM → O in TMEM, and O in TMEM → O in GMEM. For each path, identify the executing role, source and destination storage, tile primitive, and hardware path. Which paths do not exist in the preceding GEMM kernel?
+3. A column $c$ in the fp16 view maps to physical 32-bit column $\lfloor c/2\rfloor$. Use this relation to derive the physical column ranges of `S0`, `S1`, `P0`, `P1`, `O0`, and `O1`. Which regions overlap, and which waits or barriers prevent an overlapping region from being read or overwritten too early?
+4. Trace one K/V block through `s_ready`, `p_o_rescale`, `p_ready_2`, and `o_ready`. For each barrier, identify who waits, who contributes arrivals, and which tile becomes safe to consume. Why does `p_o_rescale` expect 256 arrivals, and what overlap is gained by handing `P` to the PV MMA as 96 columns followed by 32 columns?
+5. The driver warpgroup reduces its register ceiling to 48 registers per thread, the two softmax warpgroups raise theirs to 200, and WG2 uses 64. Compute the total register budget for the four 128-thread warpgroups, then compare it with assigning 200 registers to every thread in the CTA. Why do the softmax roles need the largest allocation, and how does reducing WG3's ceiling make that allocation possible?
+6. The kernel already rewrites the natural exponential as base-2 `exp2`. Why can the hardware exponential path still bottleneck softmax? Explain how splitting the elements between hardware `exp2` and the FMA-based cubic approximation changes execution-unit utilization, and identify which online-softmax equations remain unchanged.
+7. Let `SEQ_LEN_Q=6` and `SEQ_LEN_KV=8` with a bottom-right-aligned causal mask. What is the largest key index visible to query positions 0 and 5? With `BLK_N=4`, classify the K/V blocks for each query as fully valid, partially valid, or skipped. How does this difference affect causal task cost and scheduling order?
+8. Let `num_qo_heads=32`, `num_kv_heads=8`, and `BLK_M=128`. Compute `GQA_RATIO` and `SEQ_Q_PER_TILE`. For `kv_head_idx=3`, map packed rows 0, 5, and 127 to `(sequence offset, query head)`, and explain why all 128 rows can share one K/V tile.
