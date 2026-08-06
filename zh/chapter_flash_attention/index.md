@@ -17,8 +17,6 @@ $$O = \text{softmax}(QK^{\top} / \sqrt{d})V$$
 
 FlashAttention 的核心做法是将计算分块，只在片上保留当前 tiles 和逐行 softmax 状态，从而避免保存完整的 score matrix，计算结果仍与标准 attention 相同。各版本的主要区别在于如何把这套算法映射到当代 GPU。FlashAttention-2 改进了 thread blocks 和 warps 之间的任务划分。FlashAttention-3 在 Hopper 上使用 TMA、WGMMA 和 warp specialization，将数据搬运、两次 MMA 与 softmax 交错执行。FA4 则面向 Blackwell，围绕 `tcgen05` 和 TMEM 重新组织这条 pipeline。
 
-[FA4 论文](https://arxiv.org/abs/2603.05451)指出，从 Hopper 到 Blackwell，Tensor Core 的矩阵乘吞吐量提升得比 exponential、普通浮点运算和片上数据搬运能力更快。QKᵀ MMA 和 PV MMA 所需的时间缩短后，softmax 中的指数计算、`O` 的重缩放以及 TMEM/SMEM 数据移动会占据更明显的执行时间。因此，FA4 不能只把 FA3 的 WGMMA 换成 `tcgen05.mma`，还需要重新安排中间结果的位置、warpgroup 的角色和各阶段的执行顺序。
-
 前面的 GEMM kernel 已经介绍了这些 Blackwell 硬件路径：TMA 搬运 tiles，`tcgen05` 执行 MMA，accumulator 保存在 TMEM 中。FA4 将它们连接成一条新的计算链：QKᵀ MMA 先计算 score tile `S = QK^T`，CUDA cores 再将 `S` 转换为尚未归一化的权重 tile `P`，PV MMA 最后用 `P` 和 `V` 更新 output accumulator `O`。本章沿用 FA4 论文的写法，将这两次操作分别称为 QKᵀ MMA 和 PV MMA。当 softmax 使用的指数参考值发生变化时，TMEM 中已有的 `O` 还需要先转换到新的尺度。
 
 本章围绕三个问题展开：TMEM 如何连接两次 MMA 与 softmax，conditional rescaling 如何减少 `O` 的重缩放次数，以及不同浮点执行路径如何共同承担指数计算。下面先推导这些操作的数学关系，再说明 `S`、`P` 和 `O` 的 TMEM layout、各个 warpgroups 的分工，以及 barriers 如何交接数据和存储资源。
@@ -897,7 +895,7 @@ FA4 复用了 GEMM kernel 中的 TMA、`tcgen05`、TMEM 和 barrier 机制，但
 2. 分别追踪以下四段数据路径：Q/K SMEM → S TMEM、S TMEM → P TMEM、P TMEM + V SMEM → O TMEM，以及 O TMEM → O GMEM。对每一段列出执行角色、源和目标存储位置、tile primitive 与硬件路径，并指出其中哪些步骤在前面的 GEMM kernel 中不存在。
 3. 根据 fp16 view 中的 column $c$ 对应物理 32-bit column $\lfloor c/2\rfloor$，推导 `S0`、`S1`、`P0`、`P1`、`O0` 和 `O1` 的物理 column ranges。哪些 regions 会发生重叠？哪些 waits 或 barriers 能防止重叠区域被过早读取或覆盖？
 4. 追踪一个 K/V block 依次经过 `s_ready`、`p_o_rescale`、`p_ready_2` 和 `o_ready` 的过程。对每个 barrier，说明谁执行 wait、谁贡献 arrivals，以及随后哪块 tile 可以安全使用。为什么 `p_o_rescale` 需要等待 256 次 arrivals？将 `P` 按 96 columns 和 32 columns 分两段交给 PV MMA，又获得了什么重叠机会？
-5. Driver warpgroup 将每个 thread 的 register 上限降到 48，两个 softmax warpgroups 将上限提高到 200，WG2 则使用 64。计算四个 128-thread warpgroups 的 register 总预算，再与 CTA 中所有 threads 都使用 200 个 registers 的情况比较。Softmax 角色为什么需要最大的配额？降低 WG3 的上限又如何使这项分配成为可能？
+5. 负责发起 TMA 和 MMA 指令的 WG3 将每个 thread 的 register 上限降到 48，两个 softmax warpgroups WG0/WG1 将上限提高到 200，WG2 则使用 64。计算四个 128-thread warpgroups 的 register 总预算，再与 CTA 中所有 threads 都使用 200 个 registers 的情况比较。Softmax 角色为什么需要最大的配额？降低 WG3 的上限又如何使这项分配成为可能？
 6. Kernel 已经将自然指数改写为 base-2 `exp2`，为什么 hardware exponential path 仍可能成为 softmax 的瓶颈？说明将元素分配给硬件 `exp2` 和基于 FMA 的三次多项式近似后，执行单元的利用方式发生了什么变化，以及哪些 online-softmax 公式保持不变。
 7. 设 `SEQ_LEN_Q=6`、`SEQ_LEN_KV=8`，并采用右对齐 causal mask。Query positions 0 和 5 分别可以访问到哪个最大 key index？若 `BLK_N=4`，它们各自需要处理哪些完整、部分有效或完全跳过的 K/V blocks？这会怎样影响 causal tasks 的工作量和调度顺序？
 8. 设 `num_qo_heads=32`、`num_kv_heads=8`、`BLK_M=128`。求 `GQA_RATIO` 和 `SEQ_Q_PER_TILE`；当 `kv_head_idx=3` 时，分别将 packed rows 0、5 和 127 映射到 `(sequence offset, query head)`，并说明为什么这 128 行可以共享同一份 K/V tile。
