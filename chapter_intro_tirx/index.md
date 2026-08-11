@@ -15,7 +15,7 @@
 The examples in this chapter require a Blackwell GPU (`sm_100a`, such as a B200), the TIRx compiler, and a CUDA-enabled build of PyTorch. TIRx is available as the `tvm.tirx` module in the Apache TVM wheel. Compiling CUDA through NVRTC also requires `cuda-bindings`, so install both packages:
 
 ```bash
-pip install apache-tvm cuda-bindings
+pip install apache-tvm==0.26.0 cuda-bindings
 ```
 
 After installation, verify that TVM and TIRx import correctly:
