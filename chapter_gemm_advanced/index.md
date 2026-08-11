@@ -109,7 +109,7 @@ Each CTA has 16 such barrier slots, numbered 0 through 15. Threads participating
 In Step 7, `BLK_N=128`, so the writeback warpgroup can read the entire TMEM tile into registers in one pass and issue one TMA store. The sequence is:
 
 1. Wait for MMA with `mma2ld.wait(wb_ps.stage, wb_ps.phase)`, then execute `T.ptx.tcgen05.fence.after_thread_sync()` to order the subsequent `tcgen05.ld` after the cross-thread completion notification.
-2. Read TMEM into registers. Each thread receives 128 fp32 values; the warpgroup issues `Tx.copy_async(reg_wg, tmem[:, :BLK_N])` and waits for the load with `T.ptx.tcgen05.wait.ld()`.
+2. Read TMEM into registers. Each thread receives 128 fp32 values; the warpgroup issues `Tx.wg.copy_async(reg_wg, tmem[:, :BLK_N])` and waits for the load with `T.ptx.tcgen05.wait.ld()`.
 3. Have all 128 writeback threads execute `ld2mma.arrive(0)`, indicating that the TMEM region can be used by the next tile. With no remote rank, `arrive()` targets the current CTA's local barrier, and every writeback thread reports one arrival. Steps 8 and 9 instead use a `remote_view(0)` so both CTAs update CTA 0's barrier.
 4. Convert fp32 to fp16 in registers.
 5. Write the registers to `Dsmem`, then execute `fence.proxy_async("shared::cta")` and `warpgroup_sync(10)`.
