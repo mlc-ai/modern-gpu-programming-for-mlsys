@@ -100,7 +100,7 @@
   var EXPL = {
     scope:    "<b>Scope — which threads run each operation.</b> Operations name the group of threads that runs them: <code>Tx.cta.copy</code> uses all 128 threads of the CTA, the MMA is narrowed to <em>one elected thread</em> (<code>elect_sync</code>) because <code>tcgen05.mma</code> is a single-instruction cooperative op, and <code>Tx.wg.copy_async</code> reads the accumulator back with the full 128-thread warpgroup.",
     layout:   "<b>Layout — where each tile lives.</b> Every operand carries an explicit placement: A and B go into SMEM under a swizzled <code>mma_shared_layout</code> the Tensor Core requires, and the accumulator lives in TMEM, declared with a <code>TileLayout</code> over <code>TLane</code>/<code>TCol</code>. The MMA reads these layouts to know how the tiles are physically arranged.",
-    dispatch: "<b>Dispatch — which hardware path runs the op.</b> When more than one lowering exists, <code>dispatch=\"tcgen05\"</code> selects the Blackwell Tensor Core, so the tile MMA lowers to <code>tcgen05.mma</code> writing TMEM. Swap the path (or the copy to TMA) without touching scope or layout.",
+    dispatch: "<b>Dispatch — which hardware path runs the op.</b> When more than one lowering exists, <code>dispatch=\"tcgen05\"</code> selects the Blackwell Tensor Core, so the tile MMA lowers to <code>tcgen05.mma</code> writing TMEM. A dispatch is valid only when that implementation supports the operation's scope and operand layouts; changing a copy to TMA also requires a single-thread issuer and TMA-compatible layouts.",
     none:     "Each line of this single-MMA GEMM is a choice along one of TIRx's three design elements. Click <b>Scope</b>, <b>Layout</b>, or <b>Dispatch</b> to spotlight the lines it controls."
   };
 

@@ -98,7 +98,7 @@ Scan for these strings before reading the full kernel:
 
 A correctly compiled Step 7 kernel has this top-level shape. The guards below are written with role names for readability; in generated CUDA, search for the corresponding expressions from the table above.
 
-```c
+```text
 // (1) Barrier inits: top level, CTA thread 0 only
 if (threadIdx.x < 1) {
   mbarrier_init(tma2mma[0..1], 1);

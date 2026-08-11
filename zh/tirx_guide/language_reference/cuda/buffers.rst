@@ -210,7 +210,7 @@ dynamic shared memory allocation。Static shared memory 的大小在编译期
    ``"tirx.use_dyn_shared_memory"`` tag。Host launcher 计算总 byte 数，并将
    它作为最后一个 launch argument：
 
-   .. code-block:: python
+   .. code-block:: text
 
        # device kernel 属性：
        "tirx.kernel_launch_params": ["blockIdx.x", "threadIdx.x", "tirx.use_dyn_shared_memory"]

@@ -207,7 +207,7 @@ with views decl'd at offsets inside it.
    ``tirx.kernel_launch_params``, and the host launcher computes the total bytes and
    passes them as the last launch argument:
 
-   .. code-block:: python
+   .. code-block:: text
 
        # device kernel attribute:
        "tirx.kernel_launch_params": ["blockIdx.x", "threadIdx.x", "tirx.use_dyn_shared_memory"]

@@ -420,7 +420,7 @@ def hgemm_v5(M, N, K):
                 if tid == 0:
                     tma_load(stage, next_k * BLK_K)
 
-            # TMA phase flips when stage wraps around
+            # Flip TMA phase after the last stage, for the next ring traversal
             if stage == PIPE_DEPTH - 1:
                 phase_tma ^= 1
 

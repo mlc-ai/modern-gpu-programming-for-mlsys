@@ -230,7 +230,7 @@ warp_id = T.warp_id_in_wg([4])
 
 `wg_id` 和 `warp_id` 的取值都为 0–3：前者选择当前 thread 所属的 warpgroup，后者选择该 warpgroup 内的 warp。Kernel 根据这两个值进入对应的 role branch。
 
-WG3 是异步硬件指令的发起者：warp 1 发起 TMA load，warp 0 发起 QKᵀ MMA 和 PV MMA，warp 2 发起 TMA store。每项操作都由对应 warp 中的一个 elected lane 提交，实际的数据搬运或矩阵计算由 TMA engine 或 Tensor Core 完成。WG0 和 WG1 各用完整的 128-thread warpgroup 执行一个 Q stage 的 softmax；WG2 同样以 warpgroup 为执行范围，完成 `O` correction 和最终 epilogue。
+WG3 是异步硬件指令的发起者：warp 1 发起 TMA load，warp 0 发起 QKᵀ MMA 和 PV MMA，warp 2 发起 TMA store。每项操作都由对应 warp 中的一个 elected lane 提交，实际的数据搬运或矩阵计算由 TMA engine 或 Tensor Core 完成。WG0 和 WG1 各用完整的 128-thread warpgroup 执行一个 Q stage 的 softmax；WG2 同样以 warpgroup 为执行范围，完成 `O` correction，并在 non-causal 路径中完成最终 epilogue。
 
 ### Registers 如何在角色之间分配
 
@@ -244,7 +244,7 @@ if wg_id == 3:
 elif wg_id < 2:
     T.ptx.setmaxnreg(True, 200)        # WG0/WG1 为 softmax 增加 registers
 elif wg_id == 2:
-    T.ptx.setmaxnreg(False, 64)        # WG2 执行 correction / epilogue
+    T.ptx.setmaxnreg(False, 64)        # WG2 执行 correction / non-causal epilogue
     ...
 ```
 
@@ -278,7 +278,7 @@ elif wg_id == 2:
 | `should_rescale` | 当前 row 的旧 `O` 是否需要在下一次 PV MMA 前重缩放 |
 | `rescale_threshold` | 延迟更新指数参考值的阈值，当前为 8.0 |
 | `scale_log2` | base-2 指数使用的 softmax scale，即 `log2(e)/sqrt(d)` |
-| `acc_scale` | Softmax 交给 WG2、用于调整旧 `row_sum` 和 `O` 的逐行 scale |
+| `acc_scale` | Softmax 计算的逐行 scale：softmax 用它更新旧 `row_sum`，WG2 则使用传递过来的值重缩放 TMEM 中的旧 `O` |
 
 ### Barrier 的分工与完成条件
 
@@ -526,7 +526,7 @@ Tx.warp.gemm_async(
 1. Softmax 将 `P` 分成四个 32-column chunks 写入 TMEM。
 2. Non-causal 的前三个 chunks（或 causal 的前两个）准备好后，PV MMA 立即处理 `P` 的前 `K_SPLIT` columns 和 V 中对应的 rows。
 3. 其余 chunks 通过 `p_ready_2` 单独等待。
-4. 第二段 MMA 处理最后一个 chunk，完成当前 tile。
+4. 第二段 MMA 处理剩余部分，完成当前 tile。
 
 这样拆分可以减少 Tensor Core 等待 `P` writeback 的时间。如果把 128 个归约位置作为一个整体交接，PV MMA 必须等四个 `P` chunks 全部写入 TMEM 后才能开始。现在，前 `K_SPLIT` columns 写完后，第一段 MMA 就可以启动，并与 softmax warpgroup 对其余 columns 的 TMEM stores 及完成通知并行推进。
 
@@ -632,7 +632,7 @@ Views 定义完成后，计算代码可用结构化下标选中 `S`、`P` 和 `O
 
 上半部分是 QKᵀ MMA。`q_load.full` 确认当前 Q stage 已经进入 SMEM，`kv_load.full` 确认当前 K stage 已经进入 SMEM；两个条件都满足后，QKᵀ MMA 才能生成 `S`。
 
-下半部分把 PV MMA 拆成代码中实际发出的两段。图中标出 non-causal 的 96+32 split；causal specialization 使用 64+64。`kv_load.full` 确认整块 `V` 已经进入 SMEM，`p_o_rescale` 则同时等待 `P[:, 0:K_SPLIT]` 写入 TMEM，并确认 `O` slot 可以初始化或继续累加。第一个 K/V block 可以直接初始化 `O`；后续 blocks 则要先完成必要的重缩放，或者确认本轮可以跳过重缩放。
+下半部分把 PV MMA 拆成代码中实际发出的两段，并用通用的 `K_SPLIT` 标出边界。Non-causal 路径使用 `K_SPLIT=96`，得到 96+32；causal specialization 使用 `K_SPLIT=64`，得到 64+64。`kv_load.full` 确认整块 `V` 已经进入 SMEM，`p_o_rescale` 则同时等待 `P[:, 0:K_SPLIT]` 写入 TMEM，并确认 `O` slot 可以初始化或继续累加。第一个 K/V block 可以直接初始化 `O`；后续 blocks 则要先完成必要的重缩放，或者确认本轮可以跳过重缩放。
 
 第一段发出后，同一个 MMA warp 等待 `p_ready_2`，再使用 `P[:, K_SPLIT:128]` 和 `V[K_SPLIT:128, :]` 发出第二段，并以 `accum=True` 累加到同一块 `O`。第二段不需要再次等待 `kv_load.full`，因为整块 `V` 在第一段开始前已经确认就绪。`p_ready_2` 只放行第二段，不会推迟第一段的启动。
 
@@ -798,7 +798,7 @@ Causal attention 要求每个 query 只能访问当前位置及之前的 keys。
 
 `mask_r2p(...)` 不为每个元素单独比较坐标，而是把 column limit 转换成若干 bit masks。实现每次处理最多 32 个元素，随后用 bit test 生成 predicates；这些操作会 lower 到高效的 register-to-predicate 路径。完全位于 causal 边界内的 blocks 中，所有 columns 都有效，不需要 mask。
 
-从 tile primitive 的角度看，causal mode 没有改变数据路径。它只会缩短 K/V loop，并在 QKᵀ MMA 与 `P` writeback 之间、register-resident softmax 内部应用 causal mask。
+Causal mode 保留总体的 QKᵀ MMA → softmax → PV MMA 链路，但会改变几处 scheduling 和交接细节：缩短 K/V loop，在 register-resident softmax 内部应用 mask，将 PV split 改为 64+64，并把最终 epilogue 移到 WG0/WG1，省去最后一次向 WG2 传递 `row_sum`。
 
 ## GQA 支持
 

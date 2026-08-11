@@ -172,7 +172,7 @@ Take a one-line scale kernel:
 **After ``SplitHostDevice`` + ``LowerIket`` + ``MakePackedAPI``** the one function has become two —
 a host launcher and a device kernel:
 
-.. code-block:: python
+.. code-block:: text
 
     @I.ir_module
     class Module:

@@ -173,7 +173,7 @@ LowerTIRx 内部做了什么
 经过 ``SplitHostDevice``、``LowerIket`` 和 ``MakePackedAPI`` 后，一个 function 会拆成 host
 launcher 和 device kernel：
 
-.. code-block:: python
+.. code-block:: text
 
     @I.ir_module
     class Module:

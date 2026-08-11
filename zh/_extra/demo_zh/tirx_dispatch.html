@@ -100,7 +100,7 @@
   var EXPL = {
     scope:    "<b>Scope 决定哪些 threads 执行操作。</b><code>Tx.cta.copy</code> 由 CTA 的 128 个 threads 协作完成；<code>Tx.gemm_async</code> 只由 <code>elect_sync</code> 选出的一个 thread 发出；<code>Tx.wg.copy_async</code> 则由整个 warpgroup 协作读取 accumulator。",
     layout:   "<b>Layout 决定 tile 如何映射到物理位置。</b>A 和 B 在 SMEM 中使用 <code>mma_shared_layout</code> 生成的 swizzled layout；accumulator 位于 TMEM，并通过 <code>TLane</code> 和 <code>TCol</code> 描述二维坐标。",
-    dispatch: "<b>Dispatch 决定操作使用哪种硬件实现。</b><code>dispatch=\"tcgen05\"</code> 选择 Blackwell Tensor Core 路径，编译器会将这项 tile GEMM 展开成写入 TMEM 的 <code>tcgen05.mma</code> 指令。",
+    dispatch: "<b>Dispatch 决定操作使用哪种硬件实现。</b><code>dispatch=\"tcgen05\"</code> 选择 Blackwell Tensor Core 路径，编译器会将这项 tile GEMM 展开成写入 TMEM 的 <code>tcgen05.mma</code> 指令。所选实现必须兼容当前操作的 scope 和 operand layouts；将 copy 改为 TMA 时，还必须使用 single-thread issuer 和 TMA-compatible layouts。",
     none:     "点击 <b>Scope</b>、<b>Layout</b> 或 <b>Dispatch</b>，可以高亮它控制的代码行。"
   };
 

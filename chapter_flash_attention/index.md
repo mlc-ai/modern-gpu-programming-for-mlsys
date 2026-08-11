@@ -231,7 +231,7 @@ warp_id = T.warp_id_in_wg([4])
 
 Both `wg_id` and `warp_id` range from 0 through 3. The former selects the thread's warpgroup, and the latter selects a warp within that warpgroup. The kernel branches on these values to enter the corresponding role.
 
-WG3 issues the asynchronous hardware instructions: warp 1 issues TMA loads, warp 0 issues QKᵀ and PV MMAs, and warp 2 issues TMA stores. One elected lane in the corresponding warp submits each operation; the TMA engine or Tensor Core performs the actual transfer or matrix computation. WG0 and WG1 each use a full 128-thread warpgroup to run softmax for one Q stage. WG2 also operates at warpgroup scope and performs `O` correction and the final epilogue.
+WG3 issues the asynchronous hardware instructions: warp 1 issues TMA loads, warp 0 issues QKᵀ and PV MMAs, and warp 2 issues TMA stores. One elected lane in the corresponding warp submits each operation; the TMA engine or Tensor Core performs the actual transfer or matrix computation. WG0 and WG1 each use a full 128-thread warpgroup to run softmax for one Q stage. WG2 also operates at warpgroup scope and performs `O` correction and, on the non-causal path, the final epilogue.
 
 ### Redistributing Registers Across Roles
 
@@ -245,7 +245,7 @@ if wg_id == 3:
 elif wg_id < 2:
     T.ptx.setmaxnreg(True, 200)        # WG0/WG1 acquire registers for softmax
 elif wg_id == 2:
-    T.ptx.setmaxnreg(False, 64)        # WG2 performs correction / epilogue
+    T.ptx.setmaxnreg(False, 64)        # WG2 performs correction / non-causal epilogue
     ...
 ```
 
@@ -279,7 +279,7 @@ The excerpts in this chapter are lightly abbreviated from the [Apache TVM 0.26-c
 | `should_rescale` | Per-row flag indicating whether the old `O` must be rescaled before the next PV MMA |
 | `rescale_threshold` | Threshold for delaying an exponent-reference update, currently 8.0 |
 | `scale_log2` | Softmax scale for base-2 exponentiation, `log2(e)/sqrt(d)` |
-| `acc_scale` | Per-row scale passed from softmax to WG2 to adjust the old `row_sum` and `O` |
+| `acc_scale` | Per-row scale computed by softmax and used in two places: softmax applies it locally to update the old `row_sum`, while WG2 receives it to rescale the old `O` in TMEM |
 
 ### Barrier Roles and Completion Conditions
 
@@ -527,7 +527,7 @@ Here, inner K is the reduction dimension of `P(128×128) @ V(128×d)`: the 128 p
 1. Softmax writes `P` in four 32-column chunks.
 2. As soon as the first three non-causal chunks (or two causal chunks) are ready, the PV MMA starts on the first `K_SPLIT` columns of `P` and the matching rows of `V`.
 3. The remaining chunks wait for `p_ready_2`.
-4. A second MMA consumes that final chunk and finishes the tile.
+4. A second MMA consumes the remaining segment and finishes the tile.
 
 The split reduces the time the Tensor Core spends waiting for `P` writeback. If all 128 reduction positions were handed off as one unit, the PV MMA could not begin until all four `P` chunks were in TMEM. Instead, it starts on the first `K_SPLIT` columns while the softmax warpgroup performs the remaining TMEM stores and completion handoff.
 
@@ -633,7 +633,7 @@ The next figure shows the readiness gates for the QKᵀ MMA and for each of the 
 
 The upper path is the QKᵀ MMA. `q_load.full` proves that the current Q stage is in SMEM, while `kv_load.full` proves that the current K stage is in SMEM. The QKᵀ MMA can produce `S` only after both conditions hold.
 
-The lower half separates the PV MMA into the two segments issued by the code. It labels the non-causal 96+32 split; the causal specialization uses 64+64. `kv_load.full` proves that the complete `V` tile is in SMEM, while `p_o_rescale` combines two conditions: `P[:, 0:K_SPLIT]` is in TMEM, and the `O` slot may be initialized or accumulated into. The first K/V block initializes `O` directly; later blocks must first complete the required rescale or confirm that the current round does not need one.
+The lower half separates the PV MMA into the two segments issued by the code and labels their boundary with the generic `K_SPLIT`. The non-causal path uses `K_SPLIT=96`, giving 96+32; the causal specialization uses `K_SPLIT=64`, giving 64+64. `kv_load.full` proves that the complete `V` tile is in SMEM, while `p_o_rescale` combines two conditions: `P[:, 0:K_SPLIT]` is in TMEM, and the `O` slot may be initialized or accumulated into. The first K/V block initializes `O` directly; later blocks must first complete the required rescale or confirm that the current round does not need one.
 
 After issuing the first segment, the same MMA warp waits on `p_ready_2`, then issues the second segment with `P[:, K_SPLIT:128]` and `V[K_SPLIT:128, :]`, using `accum=True` to update the same `O` tile. It does not wait on `kv_load.full` again because that barrier already proved that the complete `V` tile was ready. `p_ready_2` gates only the second segment, so it does not delay the first.
 
@@ -797,7 +797,7 @@ Blocks that straddle the causal boundary contain both valid and invalid columns.
 
 Rather than compare coordinates separately for every element, `mask_r2p(...)` converts the column limit into a set of bit masks. It handles at most 32 elements per mask and uses bit tests to form predicates, which lower to an efficient register-to-predicate path. Blocks that lie fully inside the causal boundary keep every column and need no mask at all.
 
-Seen from the tile-primitive view, causal mode does not change the data path. It only trims the K/V trip count and inserts a masking step into the register-resident softmax, between the QKᵀ MMA and the `P` writeback.
+Causal mode keeps the overall QKᵀ MMA → softmax → PV MMA chain, but it changes several scheduling and handoff details: it trims the K/V trip count, inserts masking into the register-resident softmax, changes the PV split to 64+64, and moves the final epilogue into WG0/WG1, eliminating its final `row_sum` handoff to WG2.
 
 ## GQA Support
 

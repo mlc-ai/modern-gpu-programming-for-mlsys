@@ -145,7 +145,7 @@ function bracketBody(piece, prefix) {
 function callBody(src, name) {
   const s = src.trim();
   const open = s.indexOf('(');
-  if (open < 0 || s.slice(0, open).trim().toLowerCase() !== name.toLowerCase()) return null;
+  if (open < 0 || s.slice(0, open).trim() !== name) return null;
   let depth = 0;
   let close = -1;
   for (let i = open; i < s.length; i++) {
@@ -167,13 +167,41 @@ function parseComposeLayout(src) {
   //               tile_layout=TileLayout(...), swizzle_inner=True)
   const body = callBody(src, 'ComposeLayout');
   if (body === null) return { swizzle: null, rest: src };
-  const args = splitTopLevel(body, ',').map((s) => s.trim()).filter((s) => s.length);
+  const args = splitTopLevel(body, ',').map((s) => s.trim());
+  // Python permits one trailing comma, but not a missing argument in any other
+  // position. Keep the demo's accepted call syntax aligned with ComposeLayout.
+  if (args.length && args[args.length - 1] === '') args.pop();
+  if (args.some((s) => s === '')) throw new Error('empty ComposeLayout argument');
+  const params = ['per_element', 'swizzle_len', 'atom_len', 'tile_layout', 'swizzle_inner'];
   const positional = [];
-  const named = {};
+  const named = Object.create(null);
+  let sawNamed = false;
   for (const arg of args) {
-    const eq = arg.indexOf('=');
-    if (eq < 0) positional.push(arg);
-    else named[arg.slice(0, eq).trim()] = arg.slice(eq + 1).trim();
+    const kv = splitTopLevel(arg, '=').map((s) => s.trim());
+    if (kv.length === 1) {
+      if (sawNamed) throw new Error('positional argument follows keyword argument');
+      if (positional.length === params.length) {
+        throw new Error('ComposeLayout takes at most 5 arguments');
+      }
+      positional.push(kv[0]);
+    } else if (kv.length === 2 && kv[0] !== '' && kv[1] !== '') {
+      sawNamed = true;
+      const name = kv[0];
+      if (!params.includes(name)) {
+        throw new Error('unexpected ComposeLayout keyword "' + name + '"');
+      }
+      if (Object.hasOwn(named, name)) {
+        throw new Error('duplicate ComposeLayout keyword "' + name + '"');
+      }
+      named[name] = kv[1];
+    } else {
+      throw new Error('bad ComposeLayout argument "' + arg + '"');
+    }
+  }
+  for (let i = 0; i < positional.length; i++) {
+    if (Object.hasOwn(named, params[i])) {
+      throw new Error('multiple values for ComposeLayout argument "' + params[i] + '"');
+    }
   }
   const pick = (name, index) => named[name] === undefined ? positional[index] : named[name];
   const perRaw = pick('per_element', 0);
@@ -197,8 +225,8 @@ function parseComposeLayout(src) {
   const innerRaw = pick('swizzle_inner', 4);
   let inner = true;
   if (innerRaw !== undefined) {
-    if (/^(true|1)$/i.test(innerRaw)) inner = true;
-    else if (/^(false|0)$/i.test(innerRaw)) inner = false;
+    if (/^(True|1)$/.test(innerRaw)) inner = true;
+    else if (/^(False|0)$/.test(innerRaw)) inner = false;
     else throw new Error('swizzle_inner must be True or False');
   }
   return { swizzle: { per_element, swizzle_len, atom_len, inner }, rest: tileBody.trim() };
@@ -335,8 +363,11 @@ function updateSwizzleControls(enabled) {
 
 function computeSwizzle() {
   const mode = swmodeSel ? swmodeSel.value : 'off';
-  if (mode === 'off') return (ST.layout && ST.layout.swizzle) ? ST.layout.swizzle : null;
   const bits = +(dtypeSel ? dtypeSel.value : 16) || 16;
+  if (mode === 'off') {
+    const parsed = ST.layout && ST.layout.swizzle;
+    return parsed ? { ...parsed, bits } : null;
+  }
   const per_element = Math.floor(128 / bits).toString(2).length - 1;
   return {
     per_element, swizzle_len: SWIZZLE_LEN[mode] || 0, atom_len: 3, inner: true,
@@ -530,7 +561,8 @@ function draw() {
     status.innerHTML += ` &nbsp;<span style="color:var(--dim)">` +
       `${label}${s.bits ? ', ' + s.bits + '-bit' : ''} → ComposeLayout(` +
       `per_element=${s.per_element}, swizzle_len=${s.swizzle_len}, ` +
-      `atom_len=${s.atom_len}, tile_layout=TileLayout(...))</span>`;
+      `atom_len=${s.atom_len}, tile_layout=TileLayout(...)` +
+      `${s.inner ? '' : ', swizzle_inner=False'})</span>`;
   }
   document.getElementById('n0').textContent = `${tr('logical shape', '逻辑 shape')} (${ST.shape.join(', ')})`;
   document.getElementById('nphys').textContent =
@@ -695,7 +727,8 @@ function drawFormula() {
     const o0 = owners[0];
     const sw = ST.swizzle;
     const bytes = (sw.bits || 32) / 8;
-    html += `<br>swizzle(${sw.per_element},${sw.swizzle_len},${sw.atom_len}): ` +
+    html += `<br>swizzle(${sw.per_element},${sw.swizzle_len},${sw.atom_len}, ` +
+      `inner=${sw.inner ? 'True' : 'False'}): ` +
       `m=${o0.m || 0} → elem ${o0.__sm} → byte ${o0.__sm * bytes} → ` +
       `<b>bank ${o0.bank}</b>, line ${o0.line} (${bytes}-byte dtype, 4-byte banks ×32)`;
   }

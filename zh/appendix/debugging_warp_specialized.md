@@ -109,7 +109,7 @@ print(cuda_source)
 正确编译的第 7 步 kernel 顶层结构如下。为了便于阅读，这里用角色名称写
 guard；在生成的 CUDA 中，应搜索上表对应的表达式。
 
-```c
+```text
 // (1) Barrier 初始化：位于顶层，只由 CTA thread 0 执行
 if (threadIdx.x < 1) {
   mbarrier_init(tma2mma[0..1], 1);
