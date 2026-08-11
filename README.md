@@ -67,7 +67,7 @@ python -c "import tvm, tvm.tirx; print(tvm.__version__)"
 reference checks) — see <https://pytorch.org>.
 
 **3. (Optional) install the reference kernels.** Use the companion revision tested with
-Apache TVM 0.26.0 (the companion's `main` branch may track newer TVM APIs):
+Apache TVM 0.26.0:
 
 ```bash
 git clone https://github.com/mlc-ai/tirx-kernels.git
