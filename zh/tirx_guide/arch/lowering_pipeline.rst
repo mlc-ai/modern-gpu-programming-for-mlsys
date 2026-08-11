@@ -74,7 +74,7 @@ Pass 执行顺序
      - 将 ``bfloat16`` 计算改写为合法形式，其中计算会提升到 f32
    * - 7
      - ``NarrowDataType(32)``
-     - 在能够证明安全时，将 index 和 loop 的 ``PrimExpr`` dtype 缩窄为 32 bits
+     - 在能够证明安全时，将 index 和 loop 的 scalar ``Expr`` type 缩窄为 32 bits
    * - 8
      - ``VectorizeLoop``
      - 将 ``T.vectorized`` loops 改写为 vector operations；设置
@@ -102,12 +102,16 @@ Pass 执行顺序
      - 在 ``launch_thread`` 边界处，将每个 kernel 拆分为 **host** function
        和 **device** function
    * - 16
+     - ``LowerIket``
+     - 普通 build 中移除 frontend-only NVIDIA IKET annotations；IRModule 显式
+       启用 IKET 时则生成 IKET metadata 和 placeholders
+   * - 17
      - ``MakePackedAPI``
      - 将 host function 改写为 TVM launcher 使用的 packed-function ABI
-   * - 17
+   * - 18
      - ``FP8StorageLegalize``
      - 将 ``float8`` storage 打包为 backend 支持的容器类型
-   * - 18
+   * - 19
      - ``BF16StorageLegalize``
      - 将 ``bfloat16`` storage 改写为合法形式
 
@@ -133,7 +137,7 @@ LowerTIRx 内部做了什么
   的实现。
 - **``LowerTIRxCleanup``** 运行 ``LayoutApplier``，将使用
   ``TileLayout`` 的 buffer access 变成具体的物理地址计算
-  （``addr = data + elem_offset + layout.apply(coord)``），再展平 buffers，
+  （``addr = data + elem_offset + layout.apply(*coord, shape=shape)``），再展平 buffers，
   并将 execution-scope ids 转换为 thread axes，例如
   ``T.cta_id`` / ``T.thread_id`` 通过 ``launch_thread`` 变为
   ``blockIdx`` / ``threadIdx``。
@@ -166,10 +170,10 @@ LowerTIRx 内部做了什么
         tx: T.let = threadIdx_x
         B_1[threadIdx_x] = A_1[threadIdx_x] * T.float32(2.0)
 
-经过 ``SplitHostDevice`` 和 ``MakePackedAPI`` 后，一个 function 会拆成 host
+经过 ``SplitHostDevice``、``LowerIket`` 和 ``MakePackedAPI`` 后，一个 function 会拆成 host
 launcher 和 device kernel：
 
-.. code-block:: python
+.. code-block:: text
 
     @I.ir_module
     class Module:

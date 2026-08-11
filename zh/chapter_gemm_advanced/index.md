@@ -108,9 +108,9 @@ PTX 将这种通过数字 ID 选择的 CTA barrier 称为 named barrier。这里
 
 第 7 步中 `BLK_N=128`，writeback warpgroup 可以一次将整个 TMEM tile 读入 registers，再发起一次 TMA store。执行顺序如下：
 
-1. 使用 `mma2ld.wait(phase)` 等待 MMA 完成，再执行 `T.ptx.tcgen05.fence.after_thread_sync()`，将后续的 `tcgen05.ld` 排在这次跨 thread 的完成通知之后。
-2. 将 TMEM 读入 registers。每个 thread 接收 128 个 fp32 values；warpgroup 先执行 `Tx.copy_async(reg_wg, tmem[:, :BLK_N])`，再使用 `T.ptx.tcgen05.wait.ld()` 等待 load 完成。
-3. 所有 128 个 writeback threads 执行 `ld2mma.arrive(0, cta_id=0, pred=True)`，通知 MMA 当前 TMEM 已经可以供下一个 tile 使用。`cta_id=0` 表示更新当前 CTA 的 local barrier；`pred=True` 表示每个 writeback thread 都执行 arrival。第 8 步会改用 `cta_mask` 通知 cluster 中的 CTAs。
+1. 使用 `mma2ld.wait(wb_ps.stage, wb_ps.phase)` 等待 MMA 完成，再执行 `T.ptx.tcgen05.fence.after_thread_sync()`，将后续的 `tcgen05.ld` 排在这次跨 thread 的完成通知之后。
+2. 将 TMEM 读入 registers。每个 thread 接收 128 个 fp32 values；warpgroup 先执行 `Tx.wg.copy_async(reg_wg, tmem[:, :BLK_N])`，再使用 `T.ptx.tcgen05.wait.ld()` 等待 load 完成。
+3. 所有 128 个 writeback threads 执行 `ld2mma.arrive(0)`，通知 MMA 当前 TMEM 已经可以供下一个 tile 使用。没有指定 remote rank 时，`arrive()` 会更新当前 CTA 的 local barrier，每个 writeback thread 都报告一次 arrival。第 8、9 步则使用 `remote_view(0)`，让两个 CTA 都更新 CTA 0 的 barrier。
 4. 在 registers 中将 fp32 转换为 fp16。
 5. 将 registers 写入 `Dsmem`，再执行 `fence.proxy_async("shared::cta")` 和 `warpgroup_sync(10)`。
 6. 使用 `cp_async.bulk.commit_group()` 和 `wait_group(0)`，通过 TMA 将 `Dsmem` 写回 GMEM。
@@ -126,9 +126,9 @@ import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
-from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode
-from tvm.tirx.lang.pipeline import TMABar, TCGen05Bar, MBarrier, PipelineState
-from tvm.tirx.lang.tile_scheduler import ClusterPersistentScheduler2D
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
+from tvm.backend.cuda.lang.pipeline import TMABar, TCGen05Bar, MBarrier, PipelineState
+from tvm.backend.cuda.lang.tile_scheduler import ClusterPersistentScheduler2D
 
 SM_COUNT = 148  # Number of SMs on NVIDIA B200 GPU
 F16_SIZE = 2
@@ -144,9 +144,9 @@ def hgemm_v7(M, N, K):
     PIPE_DEPTH = 2
     WG_NUMBER = 2
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
-    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
 
     @T.prim_func
     def kernel(
@@ -211,11 +211,11 @@ def hgemm_v7(M, N, K):
                 def tma_load(k_offset):
                     Tx.copy_async(Asmem[tma_ps.stage, :, :],
                                   A[m_st:m_st+BLK_M, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=1,
+                                  dispatch="tma_auto", cta_group=1,
                                   mbar=tma2mma.ptr_to([tma_ps.stage]))
                     Tx.copy_async(Bsmem[tma_ps.stage, :, :],
                                   B[n_st:n_st+BLK_N, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=1,
+                                  dispatch="tma_auto", cta_group=1,
                                   mbar=tma2mma.ptr_to([tma_ps.stage]))
 
                 if T.filter(lane_id, T.ptx.elect_sync()):
@@ -274,7 +274,7 @@ def hgemm_v7(M, N, K):
                 T.ptx.tcgen05.wait.ld()
 
                 # 所有 128 个 threads 报告 arrival，通知 MMA 可以复用 TMEM
-                ld2mma.arrive(0, cta_id=0, pred=True)
+                ld2mma.arrive(0)
 
                 # 转换 fp32 -> fp16
                 Tx.cast(reg_f16[:], reg[:])
@@ -286,7 +286,7 @@ def hgemm_v7(M, N, K):
                 if warp_id == 0:
                     if lane_id == 0:
                         Tx.copy_async(D[m_st:m_st+BLK_M, n_st:n_st+BLK_N],
-                                      Dsmem[:, :], dispatch="tma")
+                                      Dsmem[:, :], dispatch="tma_auto")
                         T.ptx.cp_async.bulk.commit_group()
                         T.ptx.cp_async.bulk.wait_group(0)
                 T.cuda.warpgroup_sync(10)
@@ -438,9 +438,9 @@ def hgemm_v8(M, N, K):
     WG_NUMBER = 2
     F16_SIZE = 2  # fp16
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
-    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, 128))
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, 128))
 
     @T.prim_func
     def kernel(
@@ -498,6 +498,7 @@ def hgemm_v8(M, N, K):
 
         # --- Cross-CTA barrier view ---
         tma2mma_cta0 = tma2mma.remote_view(0)
+        ld2mma_cta0 = ld2mma.remote_view(0)
 
         # =============================================
         # Warpgroup 1：TMA producer（warp 3）+ MMA consumer（warp 0）
@@ -510,11 +511,11 @@ def hgemm_v8(M, N, K):
                 def tma_load(k_offset):
                     Tx.copy_async(Asmem[tma_ps.stage, :, :],
                                   A[m_st:m_st+BLK_M, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
                     Tx.copy_async(Bsmem[tma_ps.stage, :, :],
                                   B[n_st:n_st+BLK_N, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
 
                 if T.filter(lane_id, T.ptx.elect_sync()):
@@ -577,12 +578,12 @@ def hgemm_v8(M, N, K):
                         if lane_id == 0:
                             n_st_epi = T.meta_var(n_idx * 256 + no * 128)
                             Tx.copy_async(D[m_st:m_st+BLK_M, n_st_epi:n_st_epi+128],
-                                          Dsmem[:, :], dispatch="tma")
+                                          Dsmem[:, :], dispatch="tma_auto")
                             T.ptx.cp_async.bulk.commit_group()
                             T.ptx.cp_async.bulk.wait_group(0)
                     T.cuda.warpgroup_sync(10)
 
-                ld2mma.arrive(0, cta_id=0, pred=True)
+                ld2mma_cta0.arrive(0)
                 tile_scheduler.next_tile()
 
         # --- Cleanup ---
@@ -686,11 +687,11 @@ def hgemm_v9(M, N, K):
     WG_NUMBER = 3
     F16_SIZE = 2  # fp16
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                  (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                  (PIPE_DEPTH, BLK_N, BLK_K))
-    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                  (NUM_CONSUMER, BLK_M, EPI_N))
 
     @T.prim_func
@@ -748,6 +749,7 @@ def hgemm_v9(M, N, K):
         n_st = T.meta_var((n_idx * CTA_GROUP + cbx) * BLK_N)
 
         tma2mma_cta0 = tma2mma.remote_view(0)
+        ld2mma_cta0 = ld2mma.remote_view(0)
 
         # =============================================
         # Warpgroup 2：TMA producer（warp 3）+ 两个 MMA consumers（warp 0、1）
@@ -762,15 +764,15 @@ def hgemm_v9(M, N, K):
                     m_st_c1 = T.meta_var(m_st + CTA_GROUP * BLK_M)
                     Tx.copy_async(Asmem[tma_ps.stage, 0, :, :],
                                   A[m_st:m_st+BLK_M, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
                     Tx.copy_async(Asmem[tma_ps.stage, 1, :, :],
                                   A[m_st_c1:m_st_c1+BLK_M, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
                     Tx.copy_async(Bsmem[tma_ps.stage, :, :],
                                   B[n_st:n_st+BLK_N, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
 
                 if T.filter(lane_id, T.ptx.elect_sync()):
@@ -840,12 +842,12 @@ def hgemm_v9(M, N, K):
                             n_st_epi = T.meta_var(n_idx * MMA_N + i * EPI_N)
                             Tx.copy_async(
                                 D[m_st_epi:m_st_epi+BLK_M, n_st_epi:n_st_epi+EPI_N],
-                                Dsmem[wg_id, :, :], dispatch="tma")
+                                Dsmem[wg_id, :, :], dispatch="tma_auto")
                             T.ptx.cp_async.bulk.commit_group()
                             T.ptx.cp_async.bulk.wait_group(0)
                     T.cuda.warpgroup_sync(wg_id + 10)
 
-                ld2mma.arrive(wg_id, cta_id=0, pred=True)
+                ld2mma_cta0.arrive(wg_id)
                 tile_scheduler.next_tile()
 
         # --- Cleanup ---

@@ -63,10 +63,10 @@
     ["from tvm.script import tirx as T", null],
     ["from tvm.script.tirx import tile as Tx", null],
     ["from tvm.tirx.layout import TileLayout, S, TLane, TCol", null],
-    ["from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode", null],
+    ["from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode", null],
     ["", null],
-    ["A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))  ## swizzled SMEM layout", "layout"],
-    ["B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))", "layout"],
+    ["A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))  ## swizzled SMEM layout", "layout"],
+    ["B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))", "layout"],
     ["", null],
     ["@T.prim_func", null],
     ["def kernel(A, B, D):", null],
@@ -77,10 +77,11 @@
     ["    Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout)   ## A in SMEM", "layout"],
     ["    Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout)   ## B in SMEM", "layout"],
     ["    tmem = T.decl_buffer((128, 512), \"float32\", scope=\"tmem\",     ## accumulator in TMEM", "layout"],
+    ["                         allocated_addr=tmem_addr[0],", "layout"],
     ["                         layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))", "layout"],
     ["", null],
-    ["    Tx.cta.copy(Asmem[:, :], A[m0:m0+BLK_M, :])   ## all 128 threads cooperate", "scope"],
-    ["    Tx.cta.copy(Bsmem[:, :], B[n0:n0+BLK_N, :])", "scope"],
+    ["    Tx.cta.copy(Asmem[:, :], A[m_st:m_st+BLK_M, :])   ## all 128 threads cooperate", "scope"],
+    ["    Tx.cta.copy(Bsmem[:, :], B[n_st:n_st+BLK_N, :])", "scope"],
     ["    T.cuda.cta_sync()", null],
     ["", null],
     ["    if warp_id == 0:                     ## one elected thread", "scope"],
@@ -88,16 +89,18 @@
     ["            Tx.gemm_async(tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],", null],
     ["                          accum=False,", null],
     ["                          dispatch=\"tcgen05\")   ## Blackwell Tensor Core path", "dispatch"],
-    ["    T.ptx.mbarrier.try_wait(mma_bar, phase)", null],
+    ["            T.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)", null],
+    ["    T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)", null],
     ["", null],
     ["    Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])   ## warpgroup reads TMEM", "scope"],
+    ["    T.ptx.tcgen05.wait.ld()", null],
     ["    Tx.cast(Dreg_f16[:], Dreg[:])", null],
-    ["    Tx.copy(D[m_thr, n0:n0+BLK_N], Dreg_f16[:])", null]
+    ["    Tx.copy(D[m_thr, n_st:n_st+BLK_N], Dreg_f16[:])", null]
   ];
   var EXPL = {
     scope:    "<b>Scope — which threads run each operation.</b> Operations name the group of threads that runs them: <code>Tx.cta.copy</code> uses all 128 threads of the CTA, the MMA is narrowed to <em>one elected thread</em> (<code>elect_sync</code>) because <code>tcgen05.mma</code> is a single-instruction cooperative op, and <code>Tx.wg.copy_async</code> reads the accumulator back with the full 128-thread warpgroup.",
-    layout:   "<b>Layout — where each tile lives.</b> Every operand carries an explicit placement: A and B go into SMEM under a swizzled <code>tma_shared_layout</code> the Tensor Core requires, and the accumulator lives in TMEM, declared with a <code>TileLayout</code> over <code>TLane</code>/<code>TCol</code>. The MMA reads these layouts to know how the tiles are physically arranged.",
-    dispatch: "<b>Dispatch — which hardware path runs the op.</b> When more than one lowering exists, <code>dispatch=\"tcgen05\"</code> selects the Blackwell Tensor Core, so the tile MMA lowers to <code>tcgen05.mma</code> writing TMEM. Swap the path (or the copy to TMA) without touching scope or layout.",
+    layout:   "<b>Layout — where each tile lives.</b> Every operand carries an explicit placement: A and B go into SMEM under a swizzled <code>mma_shared_layout</code> the Tensor Core requires, and the accumulator lives in TMEM, declared with a <code>TileLayout</code> over <code>TLane</code>/<code>TCol</code>. The MMA reads these layouts to know how the tiles are physically arranged.",
+    dispatch: "<b>Dispatch — which hardware path runs the op.</b> When more than one lowering exists, <code>dispatch=\"tcgen05\"</code> selects the Blackwell Tensor Core, so the tile MMA lowers to <code>tcgen05.mma</code> writing TMEM. A dispatch is valid only when that implementation supports the operation's scope and operand layouts; changing a copy to TMA also requires a single-thread issuer and TMA-compatible layouts.",
     none:     "Each line of this single-MMA GEMM is a choice along one of TIRx's three design elements. Click <b>Scope</b>, <b>Layout</b>, or <b>Dispatch</b> to spotlight the lines it controls."
   };
 

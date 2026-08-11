@@ -113,7 +113,7 @@ asynchronous engine) reads them:
    * - ``T.ptx.fence.mbarrier_init()``
      - mbarrier initialization before later arrivals or waits use the barrier
    * - ``T.ptx.tcgen05.fence.after_thread_sync()``
-     - a conservative ordering fence on the ``tcgen05`` writeback edge (Steps 8 and 9 add it; it is not needed on the TMA-to-MMA path)
+     - a conservative ordering fence on the ``tcgen05`` writeback edge (Steps 7–9 add it; it is not needed on the TMA-to-MMA path)
 
 Inlining raw CUDA
 -----------------

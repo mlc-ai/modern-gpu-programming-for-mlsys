@@ -108,9 +108,9 @@ Each CTA has 16 such barrier slots, numbered 0 through 15. Threads participating
 
 In Step 7, `BLK_N=128`, so the writeback warpgroup can read the entire TMEM tile into registers in one pass and issue one TMA store. The sequence is:
 
-1. Wait for MMA with `mma2ld.wait(phase)`, then execute `T.ptx.tcgen05.fence.after_thread_sync()` to order the subsequent `tcgen05.ld` after the cross-thread completion notification.
-2. Read TMEM into registers. Each thread receives 128 fp32 values; the warpgroup issues `Tx.copy_async(reg_wg, tmem[:, :BLK_N])` and waits for the load with `T.ptx.tcgen05.wait.ld()`.
-3. Have all 128 writeback threads execute `ld2mma.arrive(0, cta_id=0, pred=True)`, indicating that the TMEM region can be used by the next tile. `cta_id=0` selects the current CTA's local barrier, and `pred=True` makes every writeback thread report an arrival. Step 8 uses `cta_mask` to notify both CTAs in a cluster.
+1. Wait for MMA with `mma2ld.wait(wb_ps.stage, wb_ps.phase)`, then execute `T.ptx.tcgen05.fence.after_thread_sync()` to order the subsequent `tcgen05.ld` after the cross-thread completion notification.
+2. Read TMEM into registers. Each thread receives 128 fp32 values; the warpgroup issues `Tx.wg.copy_async(reg_wg, tmem[:, :BLK_N])` and waits for the load with `T.ptx.tcgen05.wait.ld()`.
+3. Have all 128 writeback threads execute `ld2mma.arrive(0)`, indicating that the TMEM region can be used by the next tile. With no remote rank, `arrive()` targets the current CTA's local barrier, and every writeback thread reports one arrival. Steps 8 and 9 instead use a `remote_view(0)` so both CTAs update CTA 0's barrier.
 4. Convert fp32 to fp16 in registers.
 5. Write the registers to `Dsmem`, then execute `fence.proxy_async("shared::cta")` and `warpgroup_sync(10)`.
 6. Use TMA to store `Dsmem` to GMEM, with `cp_async.bulk.commit_group()` and `wait_group(0)` tracking completion.
@@ -126,9 +126,9 @@ import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
-from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode
-from tvm.tirx.lang.pipeline import TMABar, TCGen05Bar, MBarrier, PipelineState
-from tvm.tirx.lang.tile_scheduler import ClusterPersistentScheduler2D
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
+from tvm.backend.cuda.lang.pipeline import TMABar, TCGen05Bar, MBarrier, PipelineState
+from tvm.backend.cuda.lang.tile_scheduler import ClusterPersistentScheduler2D
 
 SM_COUNT = 148  # Number of SMs on NVIDIA B200 GPU
 F16_SIZE = 2
@@ -144,9 +144,9 @@ def hgemm_v7(M, N, K):
     PIPE_DEPTH = 2
     WG_NUMBER = 2
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
-    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
 
     @T.prim_func
     def kernel(
@@ -211,11 +211,11 @@ def hgemm_v7(M, N, K):
                 def tma_load(k_offset):
                     Tx.copy_async(Asmem[tma_ps.stage, :, :],
                                   A[m_st:m_st+BLK_M, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=1,
+                                  dispatch="tma_auto", cta_group=1,
                                   mbar=tma2mma.ptr_to([tma_ps.stage]))
                     Tx.copy_async(Bsmem[tma_ps.stage, :, :],
                                   B[n_st:n_st+BLK_N, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=1,
+                                  dispatch="tma_auto", cta_group=1,
                                   mbar=tma2mma.ptr_to([tma_ps.stage]))
 
                 if T.filter(lane_id, T.ptx.elect_sync()):
@@ -274,7 +274,7 @@ def hgemm_v7(M, N, K):
                 T.ptx.tcgen05.wait.ld()
 
                 # Signal TMEM free (all 128 threads arrive)
-                ld2mma.arrive(0, cta_id=0, pred=True)
+                ld2mma.arrive(0)
 
                 # Cast fp32 -> fp16
                 Tx.cast(reg_f16[:], reg[:])
@@ -286,7 +286,7 @@ def hgemm_v7(M, N, K):
                 if warp_id == 0:
                     if lane_id == 0:
                         Tx.copy_async(D[m_st:m_st+BLK_M, n_st:n_st+BLK_N],
-                                      Dsmem[:, :], dispatch="tma")
+                                      Dsmem[:, :], dispatch="tma_auto")
                         T.ptx.cp_async.bulk.commit_group()
                         T.ptx.cp_async.bulk.wait_group(0)
                 T.cuda.warpgroup_sync(10)
@@ -438,9 +438,9 @@ def hgemm_v8(M, N, K):
     WG_NUMBER = 2
     F16_SIZE = 2  # fp16
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
-    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, 128))
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_M, BLK_K))
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (PIPE_DEPTH, BLK_N, BLK_K))
+    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, 128))
 
     @T.prim_func
     def kernel(
@@ -498,6 +498,7 @@ def hgemm_v8(M, N, K):
 
         # --- Cross-CTA barrier view ---
         tma2mma_cta0 = tma2mma.remote_view(0)
+        ld2mma_cta0 = ld2mma.remote_view(0)
 
         # =============================================
         # Warpgroup 1: TMA Producer (warp 3) + MMA Consumer (warp 0)
@@ -510,11 +511,11 @@ def hgemm_v8(M, N, K):
                 def tma_load(k_offset):
                     Tx.copy_async(Asmem[tma_ps.stage, :, :],
                                   A[m_st:m_st+BLK_M, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
                     Tx.copy_async(Bsmem[tma_ps.stage, :, :],
                                   B[n_st:n_st+BLK_N, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
 
                 if T.filter(lane_id, T.ptx.elect_sync()):
@@ -577,12 +578,12 @@ def hgemm_v8(M, N, K):
                         if lane_id == 0:
                             n_st_epi = T.meta_var(n_idx * 256 + no * 128)
                             Tx.copy_async(D[m_st:m_st+BLK_M, n_st_epi:n_st_epi+128],
-                                          Dsmem[:, :], dispatch="tma")
+                                          Dsmem[:, :], dispatch="tma_auto")
                             T.ptx.cp_async.bulk.commit_group()
                             T.ptx.cp_async.bulk.wait_group(0)
                     T.cuda.warpgroup_sync(10)
 
-                ld2mma.arrive(0, cta_id=0, pred=True)
+                ld2mma_cta0.arrive(0)
                 tile_scheduler.next_tile()
 
         # --- Cleanup ---
@@ -686,11 +687,11 @@ def hgemm_v9(M, N, K):
     WG_NUMBER = 3
     F16_SIZE = 2  # fp16
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                  (PIPE_DEPTH, NUM_CONSUMER, BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                  (PIPE_DEPTH, BLK_N, BLK_K))
-    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                  (NUM_CONSUMER, BLK_M, EPI_N))
 
     @T.prim_func
@@ -748,6 +749,7 @@ def hgemm_v9(M, N, K):
         n_st = T.meta_var((n_idx * CTA_GROUP + cbx) * BLK_N)
 
         tma2mma_cta0 = tma2mma.remote_view(0)
+        ld2mma_cta0 = ld2mma.remote_view(0)
 
         # =============================================
         # Warpgroup 2: TMA Producer (warp 3) + 2 MMA Consumers (warp 0, 1)
@@ -762,15 +764,15 @@ def hgemm_v9(M, N, K):
                     m_st_c1 = T.meta_var(m_st + CTA_GROUP * BLK_M)
                     Tx.copy_async(Asmem[tma_ps.stage, 0, :, :],
                                   A[m_st:m_st+BLK_M, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
                     Tx.copy_async(Asmem[tma_ps.stage, 1, :, :],
                                   A[m_st_c1:m_st_c1+BLK_M, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
                     Tx.copy_async(Bsmem[tma_ps.stage, :, :],
                                   B[n_st:n_st+BLK_N, k_offset:k_offset+BLK_K],
-                                  dispatch="tma", cta_group=CTA_GROUP,
+                                  dispatch="tma_auto", cta_group=CTA_GROUP,
                                   mbar=tma2mma_cta0.ptr_to([tma_ps.stage]))
 
                 if T.filter(lane_id, T.ptx.elect_sync()):
@@ -840,12 +842,12 @@ def hgemm_v9(M, N, K):
                             n_st_epi = T.meta_var(n_idx * MMA_N + i * EPI_N)
                             Tx.copy_async(
                                 D[m_st_epi:m_st_epi+BLK_M, n_st_epi:n_st_epi+EPI_N],
-                                Dsmem[wg_id, :, :], dispatch="tma")
+                                Dsmem[wg_id, :, :], dispatch="tma_auto")
                             T.ptx.cp_async.bulk.commit_group()
                             T.ptx.cp_async.bulk.wait_group(0)
                     T.cuda.warpgroup_sync(wg_id + 10)
 
-                ld2mma.arrive(wg_id, cta_id=0, pred=True)
+                ld2mma_cta0.arrive(wg_id)
                 tile_scheduler.next_tile()
 
         # --- Cleanup ---
