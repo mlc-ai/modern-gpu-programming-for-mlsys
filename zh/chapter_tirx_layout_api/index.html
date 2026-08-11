@@ -334,7 +334,7 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#blackwell-tensor-memory">示例：Blackwell Tensor Memory</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor">Scale Factor 布局</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#layout">常用 Layout 构造函数</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzlelayout-composelayout">SwizzleLayout 与 ComposeLayout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#composelayout">ComposeLayout</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle">为什么需要 Swizzle</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">Swizzle 变换</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">选择 Swizzle 参数</a></li>
@@ -357,7 +357,7 @@
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 使用 <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>、<code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 和 offset 描述逻辑 tile 在命名轴上的放置方式。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">TileLayout.apply()</span></code> 计算逻辑元素的基础物理坐标；replica 信息保存在 <code class="docutils literal notranslate"><span class="pre">layout.replica</span></code> 中，由使用该 layout 的 tile 操作处理。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> 描述 shared memory 中基于 XOR 的地址重排；需要同时表达普通 tile layout 时，可以使用 <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> 组合两者。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> 将仿射 tile mapping 与 shared-memory swizzle 使用的 XOR 地址重排组合起来。</p></li>
 </ul>
 </div>
 <p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">数据布局及其记号</span></a> 介绍了 tile shape、带命名轴的 strides、replication dimension 和固定 offset。本章接着说明如何在 TIRx 程序中构造、使用和查询这些 layout。</p>
@@ -377,7 +377,6 @@
 <p>本章使用的 layout 对象和命名轴都位于 <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code>：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">TileLayout</span><span class="p">,</span>
-    <span class="n">SwizzleLayout</span><span class="p">,</span>
     <span class="n">ComposeLayout</span><span class="p">,</span>
     <span class="n">S</span><span class="p">,</span>
     <span class="n">R</span><span class="p">,</span>
@@ -651,18 +650,20 @@ TCol  = s
 <p>返回 warpgroup-local register tile。它把逻辑 row 映射到 <code class="docutils literal notranslate"><span class="pre">tid_in_wg</span></code>，把同一 row 中的 columns 映射到该 thread 的局部 <code class="docutils literal notranslate"><span class="pre">m</span></code> 轴；使用默认的 <code class="docutils literal notranslate"><span class="pre">rows=128</span></code> 时，每个 thread 持有一行。</p>
 <p>这些构造函数返回的仍是 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>，使用的也是相同的 iter 和命名轴模型；构造函数只是替 kernel 生成了常见的硬件映射。</p>
 </section>
-<section id="swizzlelayout-composelayout">
-<h2>SwizzleLayout 与 ComposeLayout<a class="headerlink" href="#swizzlelayout-composelayout" title="Link to this heading">#</a></h2>
+<section id="composelayout">
+<h2>ComposeLayout<a class="headerlink" href="#composelayout" title="Link to this heading">#</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 是仿射布局，可以描述命名轴上的 strides、replication 和 offsets，适合表示 register fragments、TMEM tiles 和 scale-factor layouts。</p>
-<p>Shared memory swizzle 不属于仿射变换。它通过 XOR 重排线性 shared-memory address，以改变元素落到各个 banks 的方式。因此，TIRx 使用单独的对象表示它：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">SwizzleLayout</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<p>Shared memory swizzle 不属于仿射变换。它通过 XOR 重排线性 shared-memory address，以改变元素落到各个 banks 的方式。TIRx 将这个变换与仿射 mapping 一起放进 <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ComposeLayout</span><span class="p">(</span>
+    <span class="n">per_element</span><span class="o">=</span><span class="n">M</span><span class="p">,</span>
+    <span class="n">swizzle_len</span><span class="o">=</span><span class="n">B</span><span class="p">,</span>
+    <span class="n">atom_len</span><span class="o">=</span><span class="n">S</span><span class="p">,</span>
+    <span class="n">tile_layout</span><span class="o">=</span><span class="n">tile</span><span class="p">,</span>
+    <span class="n">swizzle_inner</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
 </pre></div>
 </div>
-<p>如果只需要描述 swizzle，可以直接把 <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> 绑定到 buffer。需要在仿射 tile mapping 之上叠加 swizzle 时，再使用 <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code>：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ComposeLayout</span><span class="p">(</span><span class="n">swizzle</span><span class="p">,</span> <span class="n">tile</span><span class="p">)</span>
-</pre></div>
-</div>
-<p>这里的 <code class="docutils literal notranslate"><span class="pre">tile</span></code> 必须只产生默认 <code class="docutils literal notranslate"><span class="pre">m</span></code> 轴上的线性地址。计算时，tile layout 先得到这个地址，swizzle 再对它进行重排。这样可以让仿射 Shape-Stride 映射与非仿射 XOR 变换各自保持清晰。</p>
+<p>这里的 <code class="docutils literal notranslate"><span class="pre">tile</span></code> 必须只产生默认 <code class="docutils literal notranslate"><span class="pre">m</span></code> 轴上的线性地址。计算时，tile layout 先得到这个地址，随后 swizzle 参数再进行重排。<code class="docutils literal notranslate"><span class="pre">swizzle_inner=True</span></code> 使用下文介绍的常规方向；设为 <code class="docutils literal notranslate"><span class="pre">False</span></code> 时会镜像 XOR 方向。如果只需要 bare swizzle，可以将这些参数与覆盖一个 swizzle period 的 trivial identity <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 组合。</p>
 </section>
 <section id="swizzle">
 <h2>为什么需要 Swizzle<a class="headerlink" href="#swizzle" title="Link to this heading">#</a></h2>
@@ -680,7 +681,7 @@ TCol  = s
 </section>
 <section id="id5">
 <h2>Swizzle 变换<a class="headerlink" href="#id5" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> 由三个整数参数控制：</p>
+<p><code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> 携带三个整数 swizzle 参数：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>per_element = M
 swizzle_len = B
 atom_len    = S
@@ -712,16 +713,25 @@ addr = (x2 &lt;&lt; M) | low
 </pre></div>
 </div>
 <p>128-byte swizzle 使用：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">SwizzleLayout</span><span class="p">(</span><span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tile</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">64</span><span class="nd">@m</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@m</span><span class="p">)])</span>
+<span class="n">ComposeLayout</span><span class="p">(</span>
+    <span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">tile_layout</span><span class="o">=</span><span class="n">tile</span><span class="p">,</span>
+<span class="p">)</span>
 </pre></div>
 </div>
 <p>这里的 128 bytes 指 swizzle atom 中每一行的宽度；完整 atom 包含 8 行。上述参数既能保持每个 16-byte vector group 连续，又能重排更高的 address bits，打散 column access 的 bank pattern。</p>
 <p>普通 kernel 不需要反复手工推导这些参数。Data type 和 descriptor mode 通常已经决定具体配置；kernel 需要保证 TIRx layout、TMA descriptor 和 MMA 使用同一种 shared-memory 排列。</p>
 <p>一个 swizzled shared-memory allocation 可以写成：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tile</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">64</span><span class="nd">@m</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@m</span><span class="p">)])</span>
-<span class="n">swizzle</span> <span class="o">=</span> <span class="n">SwizzleLayout</span><span class="p">(</span><span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-
-<span class="n">layout</span> <span class="o">=</span> <span class="n">ComposeLayout</span><span class="p">(</span><span class="n">swizzle</span><span class="p">,</span> <span class="n">tile</span><span class="p">)</span>
+<span class="n">layout</span> <span class="o">=</span> <span class="n">ComposeLayout</span><span class="p">(</span>
+    <span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">tile_layout</span><span class="o">=</span><span class="n">tile</span><span class="p">,</span>
+<span class="p">)</span>
 </pre></div>
 </div>
 <p>最终绑定到 shared-memory buffer 上的是组合后的 <code class="docutils literal notranslate"><span class="pre">layout</span></code>。下面用这个 layout 检查一次实际地址映射。</p>
@@ -766,7 +776,7 @@ i = 7: bank 28
 </div>
 <p>8 行都会落到 bank 0。Swizzle 没有改变逻辑 tile，只改变了元素的物理地址，使这个访问模式不再集中到同一个 bank。</p>
 <p>上面的推导只说明这种 float16 按列访问会被分散到 8 个 banks。其他访问是否无冲突，还取决于 data type、每次访问的宽度以及硬件指令采用的 access shape。在本章开头的交互图中切换 data type 和 swizzle mode，可以直接比较不同组合的地址映射。</p>
-<p>对于构造函数已经覆盖的 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 布局，可以直接使用 <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code> 等 helper。其他仿射布局仍然使用 <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>、<code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 和 offset 表示。查询 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 时，<code class="docutils literal notranslate"><span class="pre">apply()</span></code> 只计算逻辑元素的基础物理坐标，不会枚举 replica。Shared-memory swizzle 由 <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> 表示；需要将它叠加到只产生线性 <code class="docutils literal notranslate"><span class="pre">m</span></code> 地址的 tile layout 上时，再使用 <code class="docutils literal notranslate"><span class="pre">ComposeLayout(swizzle,</span> <span class="pre">tile)</span></code>。</p>
+<p>对于构造函数已经覆盖的 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 布局，可以直接使用 <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code> 等 helper。其他仿射布局仍然使用 <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>、<code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 和 offset 表示。查询 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 时，<code class="docutils literal notranslate"><span class="pre">apply()</span></code> 只计算逻辑元素的基础物理坐标，不会枚举 replica。Shared-memory swizzle 使用 <code class="docutils literal notranslate"><span class="pre">ComposeLayout(per_element,</span> <span class="pre">swizzle_len,</span> <span class="pre">atom_len,</span> <span class="pre">tile_layout)</span></code>，其中 tile layout 只产生线性 <code class="docutils literal notranslate"><span class="pre">m</span></code> 地址。</p>
 </section>
 </section>
 
@@ -830,7 +840,7 @@ i = 7: bank 28
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#blackwell-tensor-memory">示例：Blackwell Tensor Memory</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor">Scale Factor 布局</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#layout">常用 Layout 构造函数</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzlelayout-composelayout">SwizzleLayout 与 ComposeLayout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#composelayout">ComposeLayout</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzle">为什么需要 Swizzle</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">Swizzle 变换</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">选择 Swizzle 参数</a></li>

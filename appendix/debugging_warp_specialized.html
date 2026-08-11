@@ -427,7 +427,7 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <ol class="arabic simple">
 <li><p>Reproduce the failure at the smallest shape that still fails. If the failure is an illegal memory access, restart Python before the next run.</p></li>
 <li><p>If compilation fails, check the installed API, target, <code class="docutils literal notranslate"><span class="pre">dispatch=</span></code>, and buffer scopes before reading the runtime synchronization code.</p></li>
-<li><p>Save <code class="docutils literal notranslate"><span class="pre">inspect_source(&quot;cuda&quot;)</span></code> output. Search it for role guards, <code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code>, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>, <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code>, and <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> before reading the Python again.</p></li>
+<li><p>Save <code class="docutils literal notranslate"><span class="pre">inspect_source(&quot;cuda&quot;)</span></code> output. Search it for role guards, <code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code>, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>, <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code>, and <code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code> before reading the Python again.</p></li>
 <li><p>Write the roles / storage / handoff / lifetime table for the kernel path that failed.</p></li>
 <li><p>Check the generated CUDA against that table: barrier inits before role branches, expected TMA producer, MMA issuer(s), writeback group(s), and no CTA-wide collective inside a warpgroup-only branch.</p></li>
 <li><p>Classify the run as a deadlock, crash, wrong result, or correct-but-slow run, then use the matching section below.</p></li>
@@ -564,8 +564,8 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code></p></td>
 <td><p>The copy lowered to TMA</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cta_sync();</span></code></p></td>
-<td><p>CTA-wide barrier; it must not sit inside a <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> branch</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">__syncthreads();</span></code></p></td>
+<td><p>CTA-wide barrier generated from <code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code>; it must not sit inside a <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> branch</p></td>
 </tr>
 </tbody>
 </table>
@@ -574,27 +574,27 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <section id="step-7-reference-skeleton">
 <h2>Step 7 Reference Skeleton<a class="headerlink" href="#step-7-reference-skeleton" title="Link to this heading">#</a></h2>
 <p>A correctly compiled Step 7 kernel has this top-level shape. The guards below are written with role names for readability; in generated CUDA, search for the corresponding expressions from the table above.</p>
-<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// (1) Barrier inits: top level, CTA thread 0 only</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">tma2mma</span><span class="p">[</span><span class="mf">0..1</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
-<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">mma2tma</span><span class="p">[</span><span class="mf">0..1</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
-<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">mma2ld</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
-<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">ld2mma</span><span class="p">,</span><span class="w"> </span><span class="mi">128</span><span class="p">);</span><span class="w">   </span><span class="c1">// arrived by all 128 WG0 threads</span>
-<span class="p">}</span>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>// (1) Barrier inits: top level, CTA thread 0 only
+if (threadIdx.x &lt; 1) {
+  mbarrier_init(tma2mma[0..1], 1);
+  mbarrier_init(mma2tma[0..1], 1);
+  mbarrier_init(mma2ld, 1);
+  mbarrier_init(ld2mma, 128);   // arrived by all 128 WG0 threads
+}
 
-<span class="c1">// (2) TMEM alloc: WG0 warp 0, all lanes of the issuing warp</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="n">tcgen05_alloc</span><span class="p">(...,</span><span class="w"> </span><span class="mi">512</span><span class="p">);</span>
+// (2) TMEM alloc: WG0 warp 0, all lanes of the issuing warp
+if (wg_id == 0 &amp;&amp; warp_id == 0) tcgen05_alloc(..., 512);
 
-<span class="c1">// (3) Fences + cta_sync, then phase init: producer=1, consumer=0</span>
+// (3) Fences + __syncthreads, then phase init: producer=1, consumer=0
 
-<span class="c1">// (4) Warp-specialized loop</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">elect_sync</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* TMA  */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">elect_sync</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* MMA  */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w">                                </span><span class="p">{</span><span class="w"> </span><span class="cm">/* WB   */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+// (4) Warp-specialized loop
+if (wg_id == 1 &amp;&amp; warp_id == 3 &amp;&amp; elect_sync) { /* TMA  */ while(valid){ ... next_tile(); } }
+if (wg_id == 1 &amp;&amp; warp_id == 0 &amp;&amp; elect_sync) { /* MMA  */ while(valid){ ... next_tile(); } }
+if (wg_id == 0)                                { /* WB   */ while(valid){ ... next_tile(); } }
 
-<span class="c1">// (5) Cleanup: issuing warp, no lane guard</span>
-<span class="n">cta_sync</span><span class="p">();</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">tcgen05_relinquish_alloc_permit</span><span class="p">();</span><span class="w"> </span><span class="n">tcgen05_dealloc</span><span class="p">(...,</span><span class="w"> </span><span class="mi">512</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
+// (5) Cleanup: issuing warp, no lane guard
+__syncthreads();
+if (warp_id == 0) { tcgen05_relinquish_alloc_permit(); tcgen05_dealloc(..., 512); }
 </pre></div>
 </div>
 <p>Check these before changing the algorithm:</p>
@@ -722,7 +722,7 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <tbody>
 <tr class="row-even"><td><p>Generated CUDA has no <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code></p></td>
 <td><p>Copy did not lower to TMA</p></td>
-<td><p>Check <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tma&quot;</span></code>, target capability, and operand layout</p></td>
+<td><p>Check <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tma_auto&quot;</span></code>, target capability, and operand layout</p></td>
 </tr>
 <tr class="row-odd"><td><p>Generated CUDA has no <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> path</p></td>
 <td><p>MMA did not lower to Blackwell Tensor Core instructions</p></td>

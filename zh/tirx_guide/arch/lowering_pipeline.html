@@ -400,7 +400,7 @@ axis 只声明一次</p></td>
 </tr>
 <tr class="row-even"><td><p>7</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">NarrowDataType(32)</span></code></p></td>
-<td><p>在能够证明安全时，将 index 和 loop 的 <code class="docutils literal notranslate"><span class="pre">PrimExpr</span></code> dtype 缩窄为 32 bits</p></td>
+<td><p>在能够证明安全时，将 index 和 loop 的 scalar <code class="docutils literal notranslate"><span class="pre">Expr</span></code> type 缩窄为 32 bits</p></td>
 </tr>
 <tr class="row-odd"><td><p>8</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">VectorizeLoop</span></code></p></td>
@@ -437,14 +437,19 @@ axis 只声明一次</p></td>
 和 <strong>device</strong> function</p></td>
 </tr>
 <tr class="row-odd"><td><p>16</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LowerIket</span></code></p></td>
+<td><p>普通 build 中移除 frontend-only NVIDIA IKET annotations；IRModule 显式
+启用 IKET 时则生成 IKET metadata 和 placeholders</p></td>
+</tr>
+<tr class="row-even"><td><p>17</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">MakePackedAPI</span></code></p></td>
 <td><p>将 host function 改写为 TVM launcher 使用的 packed-function ABI</p></td>
 </tr>
-<tr class="row-even"><td><p>17</p></td>
+<tr class="row-odd"><td><p>18</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FP8StorageLegalize</span></code></p></td>
 <td><p>将 <code class="docutils literal notranslate"><span class="pre">float8</span></code> storage 打包为 backend 支持的容器类型</p></td>
 </tr>
-<tr class="row-odd"><td><p>18</p></td>
+<tr class="row-even"><td><p>19</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">BF16StorageLegalize</span></code></p></td>
 <td><p>将 <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> storage 改写为合法形式</p></td>
 </tr>
@@ -472,7 +477,7 @@ shuffles，随后执行 <code class="docutils literal notranslate"><span class="
 的实现。</p></li>
 <li><p><strong>``LowerTIRxCleanup``</strong> 运行 <code class="docutils literal notranslate"><span class="pre">LayoutApplier</span></code>，将使用
 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 的 buffer access 变成具体的物理地址计算
-（<code class="docutils literal notranslate"><span class="pre">addr</span> <span class="pre">=</span> <span class="pre">data</span> <span class="pre">+</span> <span class="pre">elem_offset</span> <span class="pre">+</span> <span class="pre">layout.apply(coord)</span></code>），再展平 buffers，
+（<code class="docutils literal notranslate"><span class="pre">addr</span> <span class="pre">=</span> <span class="pre">data</span> <span class="pre">+</span> <span class="pre">elem_offset</span> <span class="pre">+</span> <span class="pre">layout.apply(*coord,</span> <span class="pre">shape=shape)</span></code>），再展平 buffers，
 并将 execution-scope ids 转换为 thread axes，例如
 <code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> / <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> 通过 <code class="docutils literal notranslate"><span class="pre">launch_thread</span></code> 变为
 <code class="docutils literal notranslate"><span class="pre">blockIdx</span></code> / <code class="docutils literal notranslate"><span class="pre">threadIdx</span></code>。</p></li>
@@ -500,13 +505,13 @@ shuffles，随后执行 <code class="docutils literal notranslate"><span class="
     <span class="n">B_1</span><span class="p">[</span><span class="n">threadIdx_x</span><span class="p">]</span> <span class="o">=</span> <span class="n">A_1</span><span class="p">[</span><span class="n">threadIdx_x</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>经过 <code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code> 和 <code class="docutils literal notranslate"><span class="pre">MakePackedAPI</span></code> 后，一个 function 会拆成 host
+<p>经过 <code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code>、<code class="docutils literal notranslate"><span class="pre">LowerIket</span></code> 和 <code class="docutils literal notranslate"><span class="pre">MakePackedAPI</span></code> 后，一个 function 会拆成 host
 launcher 和 device kernel：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@I</span><span class="o">.</span><span class="n">ir_module</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">Module</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="o">...</span><span class="p">):</span>          <span class="c1"># host: packed-API launcher (computes the grid/block, launches)</span>
-        <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">scale_kernel</span><span class="p">(</span><span class="o">...</span><span class="p">):</span>  <span class="c1"># device: the __global__ body, run on the GPU</span>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>@I.ir_module
+class Module:
+    def main(...):          # host: packed-API launcher (computes the grid/block, launches)
+        ...
+    def scale_kernel(...):  # device: the __global__ body, run on the GPU
 </pre></div>
 </div>
 <p>CUDA backend 随后将 <code class="docutils literal notranslate"><span class="pre">scale_kernel</span></code> 生成 <code class="docutils literal notranslate"><span class="pre">__global__</span></code> function：

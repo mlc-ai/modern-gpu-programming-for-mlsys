@@ -36,7 +36,7 @@ warp 中选出一个 thread 发出指令：
         A[tx] = A[tx] + T.float32(1.0)
 
     if T.ptx.elect_sync():
-        ...                              # one elected lane (e.g. to issue TMA/MMA)
+        pass                             # one elected lane (e.g. to issue TMA/MMA)
 
 .. code-block:: c++
 

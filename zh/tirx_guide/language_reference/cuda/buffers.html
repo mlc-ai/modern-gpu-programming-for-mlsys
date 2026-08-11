@@ -360,17 +360,19 @@
 <p>创建 buffer 的两个基本 API 是：</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">T.alloc_buffer(shape,</span> <span class="pre">dtype,</span> <span class="pre">scope=...,</span> <span class="pre">...)</span></code>：<strong>分配新的 storage</strong>，
-生成一个 <code class="docutils literal notranslate"><span class="pre">AllocBuffer</span></code> node，并返回对应的 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code>。
+生成一个 <code class="docutils literal notranslate"><span class="pre">AllocBuffer</span></code> node，并返回 buffer value，也就是 type 为
+<code class="docutils literal notranslate"><span class="pre">BufferType</span></code> 的 <code class="docutils literal notranslate"><span class="pre">Var</span></code>。
 <code class="docutils literal notranslate"><span class="pre">T.alloc_shared</span></code> 和 <code class="docutils literal notranslate"><span class="pre">T.alloc_local</span></code> 分别是
 <code class="docutils literal notranslate"><span class="pre">scope=&quot;shared&quot;</span></code> 和 <code class="docutils literal notranslate"><span class="pre">scope=&quot;local&quot;</span></code> 的简写。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">T.decl_buffer(shape,</span> <span class="pre">dtype,</span> <span class="pre">data=...,</span> <span class="pre">...)</span></code>：在已有 pointer <code class="docutils literal notranslate"><span class="pre">data</span></code>
 上**声明一个 view**，不会分配 storage。它可以为 pool 的一段区域或
 tensor-memory address 创建 alias，也可以重新解释已有 storage。
-<code class="docutils literal notranslate"><span class="pre">data=None</span></code> 时，它和 <code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code> 一样会分配 storage。</p></li>
+普通 scope 中 <code class="docutils literal notranslate"><span class="pre">data=None</span></code> 时，它和 <code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code> 一样会分配 storage；
+tensor memory 是例外，使用后文介绍的 <code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code>。</p></li>
 </ul>
-<p>Buffer 的 <code class="docutils literal notranslate"><span class="pre">data</span></code> pointer 是 immutable <code class="docutils literal notranslate"><span class="pre">Var</span></code>：<code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code> 创建它，
-<code class="docutils literal notranslate"><span class="pre">decl_buffer</span></code> 接收它。如果已有的是 pointer 表达式，需要先将表达式绑定为
-<code class="docutils literal notranslate"><span class="pre">Var</span></code>，详见 <a class="reference internal" href="data_types.html"><span class="doc">数据类型与表达式</span></a>。</p>
+<p>Buffer 的 <code class="docutils literal notranslate"><span class="pre">data</span></code> property 是 immutable、带类型的 pointer <code class="docutils literal notranslate"><span class="pre">Expr</span></code>，不一定
+是 <code class="docutils literal notranslate"><span class="pre">Var</span></code>。<code class="docutils literal notranslate"><span class="pre">decl_buffer</span></code> 可以直接接收类型兼容的 pointer 表达式，详见
+<a class="reference internal" href="data_types.html"><span class="doc">数据类型与表达式</span></a>。</p>
 <p>两种 API 使用同一个 buffer descriptor，主要参数如下：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
@@ -448,14 +450,14 @@ offset；<code class="docutils literal notranslate"><span class="pre">allocated_
 </div>
 <p>对于非 TMEM buffer，基于 pointer 的 buffer 只是 pointer 加上一组 metadata。
 访问元素时，编译器根据 layout 计算地址：</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">addr</span><span class="p">(</span><span class="n">buffer</span><span class="p">[</span><span class="n">coord</span><span class="p">])</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">data</span> <span class="o">+</span> <span class="n">elem_offset</span> <span class="o">+</span> <span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">coord</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">shape</span><span class="p">)[</span><span class="s2">&quot;m&quot;</span><span class="p">]</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">addr</span><span class="p">(</span><span class="n">buffer</span><span class="p">[</span><span class="n">coord</span><span class="p">])</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">data</span> <span class="o">+</span> <span class="n">elem_offset</span> <span class="o">+</span> <span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="o">*</span><span class="n">coord</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">shape</span><span class="p">)[</span><span class="s2">&quot;m&quot;</span><span class="p">]</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">layout.apply</span></code> 返回各个 physical axis 的映射，其中 <code class="docutils literal notranslate"><span class="pre">&quot;m&quot;</span></code> 分量是 element
 offset。因此，同一个逻辑访问会因为 buffer metadata 不同而生成不同的地址
 计算。下面都在 <code class="docutils literal notranslate"><span class="pre">4×8</span></code> 区域上执行 <code class="docutils literal notranslate"><span class="pre">B[i,</span> <span class="pre">j]</span> <span class="pre">=</span> <span class="pre">A[i,</span> <span class="pre">j]</span> <span class="pre">+</span> <span class="pre">1</span></code>，但用四种
 方式声明 <code class="docutils literal notranslate"><span class="pre">B</span></code>：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">TileLayout</span><span class="p">,</span> <span class="n">S</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">TileLayout</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">laneid</span>
 
 <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>                                       <span class="c1"># row-major</span>
 <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">):(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">)]))</span>  <span class="c1"># column-major</span>
@@ -542,11 +544,11 @@ dynamic shared memory allocation。Static shared memory 的大小在编译期
 kernel 的 <code class="docutils literal notranslate"><span class="pre">tirx.kernel_launch_params</span></code> 中加入
 <code class="docutils literal notranslate"><span class="pre">&quot;tirx.use_dyn_shared_memory&quot;</span></code> tag。Host launcher 计算总 byte 数，并将
 它作为最后一个 launch argument：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># device kernel 属性：</span>
-<span class="s2">&quot;tirx.kernel_launch_params&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="s2">&quot;tirx.use_dyn_shared_memory&quot;</span><span class="p">]</span>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span># device kernel 属性：
+&quot;tirx.kernel_launch_params&quot;: [&quot;blockIdx.x&quot;, &quot;threadIdx.x&quot;, &quot;tirx.use_dyn_shared_memory&quot;]
 
-<span class="c1"># host 侧 launch 调用（..., gridDim.x, blockDim.x, dyn_shared_bytes）：</span>
-<span class="n">T</span><span class="o">.</span><span class="n">call_packed</span><span class="p">(</span><span class="s2">&quot;dyn_kernel&quot;</span><span class="p">,</span> <span class="n">A</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">B</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">C</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>
+# host 侧 launch 调用（..., gridDim.x, blockDim.x, dyn_shared_bytes）：
+T.call_packed(&quot;dyn_kernel&quot;, A.data, B.data, C.data, 1, 64, 512)
 </pre></div>
 </div>
 <p>运行时，这里的 <code class="docutils literal notranslate"><span class="pre">512</span></code> 会成为 <code class="docutils literal notranslate"><span class="pre">cuLaunchKernelEx</span></code> 调用中的
@@ -558,12 +560,12 @@ allocation 的大小推导得到。</p>
 <h3>SMEMPool<a class="headerlink" href="#smempool" title="Link to this heading">#</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">T.SMEMPool</span></code> 自动管理 arena。它使用 bump allocation 计算 offset，因此
 不需要手工 <code class="docutils literal notranslate"><span class="pre">decl</span></code> 每个 view。除了 <code class="docutils literal notranslate"><span class="pre">alloc</span></code> 和 <code class="docutils literal notranslate"><span class="pre">commit</span></code>，它还支持
-per-buffer <code class="docutils literal notranslate"><span class="pre">align=</span></code>、创建 MMA-compatible swizzle layout 的 <code class="docutils literal notranslate"><span class="pre">alloc_mma</span></code>
+per-buffer <code class="docutils literal notranslate"><span class="pre">align=</span></code>、创建 MMA-compatible swizzle layout 的 <code class="docutils literal notranslate"><span class="pre">alloc_tcgen05_mma_AB</span></code>
 helper，以及将 cursor 回退以复用空间的 <code class="docutils literal notranslate"><span class="pre">move_base_to</span></code>：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>                          <span class="c1"># shared.dyn 上的 bump allocator</span>
 <span class="n">As</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BK</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>   <span class="c1"># 分配一个 tile</span>
 <span class="n">Bs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BK</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>
-<span class="n">Cs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc_mma</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">)</span>     <span class="c1"># 自动推导 MMA-compatible swizzle</span>
+<span class="n">Cs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc_tcgen05_mma_AB</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">)</span>  <span class="c1"># 自动推导 MMA-compatible swizzle</span>
 <span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>                                 <span class="c1"># 确定 pool 的最终大小</span>
 <span class="c1"># pool.move_base_to(offset) 将 cursor 回退到可复用的位置</span>
 </pre></div>
@@ -634,17 +636,18 @@ natural alignment。</p>
 <code class="docutils literal notranslate"><span class="pre">T.alloc_scalar</span></code> 可以显式选择 scope。</p>
 <div class="admonition note">
 <p class="admonition-title">备注</p>
-<p><strong>为什么不使用</strong> <code class="docutils literal notranslate"><span class="pre">Var</span></code> <strong>？</strong> TIRx <code class="docutils literal notranslate"><span class="pre">Var</span></code> 是 immutable 的静态绑定，
-与下面的 <code class="docutils literal notranslate"><span class="pre">T.let</span></code> 相同。Scalar 必须是 mutable 的，例如在 loop 或
-accumulator 中重复赋值，因此需要由能够反复 store 的单元素 buffer
-支撑，不能使用 <code class="docutils literal notranslate"><span class="pre">Var</span></code>。</p>
+<p><strong>为什么不使用 scalar-typed</strong> <code class="docutils literal notranslate"><span class="pre">Var</span></code> <strong>？</strong> Typed TIRx 中两种形式都
+具有 <code class="docutils literal notranslate"><span class="pre">Var</span></code> identity。Buffer value 是带 <code class="docutils literal notranslate"><span class="pre">BufferType</span></code> 的 <code class="docutils literal notranslate"><span class="pre">Var</span></code>；store
+修改的是 buffer contents，并不会重新绑定该 <code class="docutils literal notranslate"><span class="pre">Var</span></code>。下方 <code class="docutils literal notranslate"><span class="pre">T.let</span></code>
+创建的则是只有一次 immutable binding 的 scalar-typed <code class="docutils literal notranslate"><span class="pre">Var</span></code>。因此
+mutable scalar 必须由可反复 store contents 的单元素 buffer 支撑。</p>
 </div>
 </section>
 <section id="let">
 <h3><code class="docutils literal notranslate"><span class="pre">let</span></code><a class="headerlink" href="#let" title="Link to this heading">#</a></h3>
-<p><code class="docutils literal notranslate"><span class="pre">T.let</span></code> 是 <strong>immutable</strong> binding，对应一个 <code class="docutils literal notranslate"><span class="pre">LetStmt</span></code>。它表示命名后的
+<p><code class="docutils literal notranslate"><span class="pre">T.let</span></code> 是 <strong>immutable</strong> binding，对应一个 <code class="docutils literal notranslate"><span class="pre">Bind</span></code> node。它表示命名后的
 值，不是 buffer，适合保存派生常量：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">M</span> <span class="o">*</span> <span class="n">K</span>               <span class="c1"># immutable binding（LetStmt）</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">M</span> <span class="o">*</span> <span class="n">K</span>               <span class="c1"># immutable binding（Bind）</span>
 <span class="n">half</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span><span class="p">[</span><span class="n">T</span><span class="o">.</span><span class="n">int32</span><span class="p">]</span> <span class="o">=</span> <span class="n">N</span> <span class="o">//</span> <span class="mi">2</span>  <span class="c1"># 显式指定类型</span>
 </pre></div>
 </div>
@@ -659,7 +662,7 @@ subexpression elimination。因此在使用位置可能直接看到 <code class=
 <div class="admonition note">
 <p class="admonition-title">备注</p>
 <p><strong>为什么需要 immutable binding？</strong> 因为值不会改变，arithmetic analyzer
-在简化 <code class="docutils literal notranslate"><span class="pre">LetStmt</span></code> 时可以调用 <code class="docutils literal notranslate"><span class="pre">analyzer.Bind(var,</span> <span class="pre">value)</span></code>，将关于这个
+在简化 <code class="docutils literal notranslate"><span class="pre">Bind</span></code> 时内部可以调用 <code class="docutils literal notranslate"><span class="pre">arith::Analyzer::Bind</span></code>，将关于这个
 值的结论传播到所有使用位置，包括 constant bounds、表示 divisibility 和
 alignment 的 modular set，以及 ranges。这些信息可用于简化 index、
 消除 bounds check，以及决定 alignment 和 vectorization。Mutable scalar
@@ -728,7 +731,7 @@ pointer，本身不会生成运行时操作。常用 methods 如下：</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">B.data</span></code></p></td>
-<td><p>原始 data pointer（<code class="docutils literal notranslate"><span class="pre">Var</span></code>），输出为 <code class="docutils literal notranslate"><span class="pre">B_ptr</span></code></p></td>
+<td><p>带类型的 base-pointer 表达式，输出为 <code class="docutils literal notranslate"><span class="pre">B_ptr</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">B.ptr_to([i,</span> <span class="pre">j])</span></code></p></td>
 <td><p>指向某个元素的 typed pointer（<code class="docutils literal notranslate"><span class="pre">address_of</span></code>），输出为 <code class="docutils literal notranslate"><span class="pre">&amp;B_ptr[…]</span></code></p></td>
@@ -769,9 +772,9 @@ intrinsic 或 inline function；<code class="docutils literal notranslate"><span
 </div>
 <p><strong>Reshape / reinterpret：``view`` / ``permute``。</strong> 两者都只修改 metadata，
 data pointer 保持不变，变化的是 index arithmetic。<code class="docutils literal notranslate"><span class="pre">A.view(64,</span> <span class="pre">4)</span></code> 将包含
-256 个元素的 buffer 看作 <code class="docutils literal notranslate"><span class="pre">64×4</span></code>；<code class="docutils literal notranslate"><span class="pre">A.permute(1,</span> <span class="pre">0)</span></code> 交换两个 axes：</p>
+256 个元素的 buffer 看作 <code class="docutils literal notranslate"><span class="pre">64×4</span></code>；<code class="docutils literal notranslate"><span class="pre">A2.permute(1,</span> <span class="pre">0)</span></code> 交换这两个 axes：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">A2</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">4</span><span class="p">);</span>     <span class="n">y</span> <span class="o">=</span> <span class="n">A2</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">A2</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>   <span class="c1"># A2[tx, j] -&gt; A_ptr[tx*4 + j]</span>
-<span class="n">At</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>   <span class="n">z</span> <span class="o">=</span> <span class="n">At</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>                <span class="c1"># At[i, j]  -&gt; A_ptr[j*4 + i]</span>
+<span class="n">At</span> <span class="o">=</span> <span class="n">A2</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>  <span class="n">z</span> <span class="o">=</span> <span class="n">At</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>                <span class="c1"># At[i, j]  -&gt; A_ptr[j*4 + i]</span>
 </pre></div>
 </div>
 <div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">A2_ptr</span><span class="p">[</span><span class="n">tx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span><span class="w">  </span><span class="cm">/* +3 */</span><span class="w">                 </span><span class="c1">// view: row-major 64x4 index</span>
@@ -779,12 +782,17 @@ data pointer 保持不变，变化的是 index arithmetic。<code class="docutil
 </pre></div>
 </div>
 <p><strong>Register：``local``。</strong> 对带 thread axis 的 <code class="docutils literal notranslate"><span class="pre">local</span></code> layout 做分解，返回
-属于当前 thread 的 flat register bundle。Tile primitives 会频繁使用它：</p>
+属于当前 thread 的 register bundle。未显式传入 <code class="docutils literal notranslate"><span class="pre">layout=</span></code> 时，
+<code class="docutils literal notranslate"><span class="pre">R.local()</span></code> 会为 raw physical storage span（包括 layout gaps 和 offsets）
+推断 flat view；<code class="docutils literal notranslate"><span class="pre">R.local(d0,</span> <span class="pre">d1,</span> <span class="pre">...)</span></code> 则以 row-major 方式 reshape 同一 span，
+各维乘积必须与 span 相同。只有需要不同 storage-coordinate mapping 时才传入
+<code class="docutils literal notranslate"><span class="pre">layout=</span></code>：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">R</span>  <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_buffer</span><span class="p">((</span><span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;local&quot;</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span> <span class="o">@</span> <span class="n">laneid</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]))</span>
-<span class="n">Rl</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">local</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>          <span class="c1"># this lane&#39;s 8 registers</span>
+<span class="n">R_flat</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">local</span><span class="p">()</span>       <span class="c1"># this lane&#39;s 8 registers, physical order</span>
+<span class="n">R_2d</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">local</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>     <span class="c1"># the same registers, row-major 2x4 reshape</span>
 </pre></div>
 </div>
-<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">Rl_ptr</span><span class="p">[</span><span class="mi">8</span><span class="p">];</span><span class="w">             </span><span class="c1">// the lane&#39;s private registers</span>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">R_flat_ptr</span><span class="p">[</span><span class="mi">8</span><span class="p">];</span><span class="w">         </span><span class="c1">// the lane&#39;s private registers</span>
 </pre></div>
 </div>
 </section>

@@ -110,7 +110,7 @@ threads。可能同时处于 active 状态的独立同步必须使用不同 ID�
    * - ``T.ptx.fence.mbarrier_init()``
      - 初始化 mbarrier 后，后续 arrival 或 wait 才能使用它
    * - ``T.ptx.tcgen05.fence.after_thread_sync()``
-     - ``tcgen05`` writeback edge 上的保守 ordering fence；Step 8 和 9 使用它，TMA-to-MMA 路径不需要
+     - ``tcgen05`` writeback edge 上的保守 ordering fence；Step 7–9 使用它，TMA-to-MMA 路径不需要
 
 内联 CUDA 源码
 ---------------

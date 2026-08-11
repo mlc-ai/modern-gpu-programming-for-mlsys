@@ -398,7 +398,7 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#example-blackwell-tensor-memory">Example: Blackwell Tensor Memory</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor-layouts">Scale-Factor Layouts</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#common-layout-constructors">Common Layout Constructors</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzlelayout-and-composelayout">SwizzleLayout and ComposeLayout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#composelayout">ComposeLayout</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#why-swizzle">Why Swizzle</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-swizzle-transform">The Swizzle Transform</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#choosing-swizzle-parameters">Choosing Swizzle Parameters</a></li>
@@ -421,7 +421,7 @@
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> uses <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>, <code class="docutils literal notranslate"><span class="pre">R[...]</span></code>, and an offset to describe how a logical tile is placed over named axes.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">TileLayout.apply()</span></code> computes the base physical coordinate of a logical element. Replica information remains in <code class="docutils literal notranslate"><span class="pre">layout.replica</span></code> and is handled by the tile operation that uses the layout.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> describes XOR-based address permutations in shared memory. Use <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> when a swizzle needs to be combined with an ordinary tile layout.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> combines an affine tile mapping with the XOR-based address permutation used for shared-memory swizzles.</p></li>
 </ul>
 </div>
 <p><a class="reference internal" href="../chapter_data_layout/index.html#chap-data-layout"><span class="std std-ref">Data Layout and Its Notation</span></a> introduced tile shapes, strides over named axes, replication dimensions, and fixed offsets. This chapter explains how to construct, attach, and inspect those layouts in TIRx programs.</p>
@@ -441,7 +441,6 @@
 <p>The layout objects and named axes used in this chapter live in <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code>:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">TileLayout</span><span class="p">,</span>
-    <span class="n">SwizzleLayout</span><span class="p">,</span>
     <span class="n">ComposeLayout</span><span class="p">,</span>
     <span class="n">S</span><span class="p">,</span>
     <span class="n">R</span><span class="p">,</span>
@@ -715,18 +714,20 @@ TCol  = s
 <p>This returns a warpgroup-local register tile. It maps logical rows to <code class="docutils literal notranslate"><span class="pre">tid_in_wg</span></code> and columns within a row to that thread’s local <code class="docutils literal notranslate"><span class="pre">m</span></code> axis. With the default <code class="docutils literal notranslate"><span class="pre">rows=128</span></code>, each thread owns one row.</p>
 <p>All three constructors return ordinary <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> objects built from the same iters and named axes. They are convenience wrappers for hardware mappings that recur across kernels.</p>
 </section>
-<section id="swizzlelayout-and-composelayout">
-<h2>SwizzleLayout and ComposeLayout<a class="headerlink" href="#swizzlelayout-and-composelayout" title="Link to this heading">#</a></h2>
+<section id="composelayout">
+<h2>ComposeLayout<a class="headerlink" href="#composelayout" title="Link to this heading">#</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> is affine. It can express strides, replication, and offsets over named axes, making it suitable for register fragments, TMEM tiles, and scale-factor layouts.</p>
-<p>A shared-memory swizzle is not affine. It uses XOR to permute a linear shared-memory address and change which banks receive the elements. TIRx therefore represents it with a separate object:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">SwizzleLayout</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<p>A shared-memory swizzle is not affine. It uses XOR to permute a linear shared-memory address and change which banks receive the elements. TIRx folds the transform and the affine mapping into <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ComposeLayout</span><span class="p">(</span>
+    <span class="n">per_element</span><span class="o">=</span><span class="n">M</span><span class="p">,</span>
+    <span class="n">swizzle_len</span><span class="o">=</span><span class="n">B</span><span class="p">,</span>
+    <span class="n">atom_len</span><span class="o">=</span><span class="n">S</span><span class="p">,</span>
+    <span class="n">tile_layout</span><span class="o">=</span><span class="n">tile</span><span class="p">,</span>
+    <span class="n">swizzle_inner</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
 </pre></div>
 </div>
-<p>When a buffer needs only the swizzle, <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> can be attached directly. When the swizzle must be applied on top of an affine tile mapping, use <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">ComposeLayout</span><span class="p">(</span><span class="n">swizzle</span><span class="p">,</span> <span class="n">tile</span><span class="p">)</span>
-</pre></div>
-</div>
-<p>Here, <code class="docutils literal notranslate"><span class="pre">tile</span></code> must produce a linear address on the default <code class="docutils literal notranslate"><span class="pre">m</span></code> axis only. During evaluation, the tile layout produces that address first, and the swizzle then permutes it. This keeps the affine shape-and-stride mapping separate from the non-affine XOR transform.</p>
+<p>Here, <code class="docutils literal notranslate"><span class="pre">tile</span></code> must produce a linear address on the default <code class="docutils literal notranslate"><span class="pre">m</span></code> axis only. During evaluation, the tile layout produces that address first, and the swizzle parameters then permute it. <code class="docutils literal notranslate"><span class="pre">swizzle_inner=True</span></code> selects the usual direction described below; <code class="docutils literal notranslate"><span class="pre">False</span></code> mirrors the XOR direction. A bare swizzle can be represented by composing the parameters with a trivial identity <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> that covers one swizzle period.</p>
 </section>
 <section id="why-swizzle">
 <h2>Why Swizzle<a class="headerlink" href="#why-swizzle" title="Link to this heading">#</a></h2>
@@ -744,7 +745,7 @@ TCol  = s
 </section>
 <section id="the-swizzle-transform">
 <h2>The Swizzle Transform<a class="headerlink" href="#the-swizzle-transform" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> is controlled by three integer parameters:</p>
+<p><code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> carries three integer swizzle parameters:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>per_element = M
 swizzle_len = B
 atom_len    = S
@@ -776,16 +777,25 @@ addr = (x2 &lt;&lt; M) | low
 </pre></div>
 </div>
 <p>A 128-byte swizzle uses:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">SwizzleLayout</span><span class="p">(</span><span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tile</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">64</span><span class="nd">@m</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@m</span><span class="p">)])</span>
+<span class="n">ComposeLayout</span><span class="p">(</span>
+    <span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">tile_layout</span><span class="o">=</span><span class="n">tile</span><span class="p">,</span>
+<span class="p">)</span>
 </pre></div>
 </div>
 <p>Here, 128 bytes is the width of one row in the swizzle atom; the complete atom contains eight rows. These parameters preserve each contiguous 16-byte vector group while permuting higher address bits to spread column accesses across banks.</p>
 <p>Kernel code generally should not derive these parameters by hand. The data type and descriptor mode usually select the configuration. The important requirement is that the TIRx layout, TMA descriptor, and MMA all agree on the shared-memory arrangement.</p>
 <p>A swizzled shared-memory allocation can be written as:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tile</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">64</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">64</span><span class="nd">@m</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@m</span><span class="p">)])</span>
-<span class="n">swizzle</span> <span class="o">=</span> <span class="n">SwizzleLayout</span><span class="p">(</span><span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
-
-<span class="n">layout</span> <span class="o">=</span> <span class="n">ComposeLayout</span><span class="p">(</span><span class="n">swizzle</span><span class="p">,</span> <span class="n">tile</span><span class="p">)</span>
+<span class="n">layout</span> <span class="o">=</span> <span class="n">ComposeLayout</span><span class="p">(</span>
+    <span class="n">per_element</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">swizzle_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">atom_len</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">tile_layout</span><span class="o">=</span><span class="n">tile</span><span class="p">,</span>
+<span class="p">)</span>
 </pre></div>
 </div>
 <p>The composed <code class="docutils literal notranslate"><span class="pre">layout</span></code> is attached to the shared-memory buffer. We can now use it to inspect a concrete address mapping.</p>
@@ -830,7 +840,7 @@ i = 7: bank 28
 </div>
 <p>All eight rows land in bank 0. The swizzle leaves the logical tile unchanged but rearranges its physical addresses so that this access pattern no longer concentrates on one bank.</p>
 <p>This derivation only shows that this float16 column access is spread over eight banks. Whether another access is conflict-free still depends on the data type, access width, and hardware instruction’s access shape. Change the data type and swizzle mode in the demo at the beginning of the chapter to compare their address mappings directly.</p>
-<p>For <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> layouts covered by existing constructors, use helpers such as <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code> and <code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code>. Other affine layouts still use <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>, <code class="docutils literal notranslate"><span class="pre">R[...]</span></code>, and an offset. When inspecting a <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>, remember that <code class="docutils literal notranslate"><span class="pre">apply()</span></code> computes only the base physical coordinate and does not enumerate replicas. Shared-memory swizzles are represented by <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code>; use <code class="docutils literal notranslate"><span class="pre">ComposeLayout(swizzle,</span> <span class="pre">tile)</span></code> when applying one to a tile layout that produces a linear <code class="docutils literal notranslate"><span class="pre">m</span></code> address.</p>
+<p>For <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> layouts covered by existing constructors, use helpers such as <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code> and <code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code>. Other affine layouts still use <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>, <code class="docutils literal notranslate"><span class="pre">R[...]</span></code>, and an offset. When inspecting a <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>, remember that <code class="docutils literal notranslate"><span class="pre">apply()</span></code> computes only the base physical coordinate and does not enumerate replicas. Shared-memory swizzles use <code class="docutils literal notranslate"><span class="pre">ComposeLayout(per_element,</span> <span class="pre">swizzle_len,</span> <span class="pre">atom_len,</span> <span class="pre">tile_layout)</span></code> over a tile layout that produces a linear <code class="docutils literal notranslate"><span class="pre">m</span></code> address.</p>
 </section>
 </section>
 
@@ -894,7 +904,7 @@ i = 7: bank 28
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#example-blackwell-tensor-memory">Example: Blackwell Tensor Memory</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor-layouts">Scale-Factor Layouts</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#common-layout-constructors">Common Layout Constructors</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#swizzlelayout-and-composelayout">SwizzleLayout and ComposeLayout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#composelayout">ComposeLayout</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#why-swizzle">Why Swizzle</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-swizzle-transform">The Swizzle Transform</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#choosing-swizzle-parameters">Choosing Swizzle Parameters</a></li>

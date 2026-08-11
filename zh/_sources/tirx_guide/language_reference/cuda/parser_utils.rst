@@ -27,13 +27,14 @@ Python 计算得到的值直接写入 IR、提取可复用的代码片段，以�
 
 ``T.meta_var(x)`` 告诉 parser，``x`` 是由 **Python** 计算得到的编译期 meta
 value，应直接内联到 IR，而不是作为 script variable 解析。它既可以省去没有
-实际用途的临时变量，也可以用于 metaprogramming：使用 meta value 作为范围的
-普通 Python ``for`` 会在 parse time 展开。
+实际用途的临时变量，也让 Python values 能够参数化生成的 IR。普通
+``range(n)`` 仍会生成 serial TIRx loop；需要 lowering pipeline 展开时应使用
+``T.unroll(n)``。
 
 .. code-block:: python
 
-    n = T.meta_var(4)              # n is a Python int, inlined
-    for j in range(n):            # unrolled at parse time
+    n = T.meta_var(4)              # constant 4 is inlined as the extent
+    for j in T.unroll(n):          # marked for the UnrollLoop lowering pass
         acc[0] = acc[0] + A[tx, j]
 
 ``@T.inline``：内联函数

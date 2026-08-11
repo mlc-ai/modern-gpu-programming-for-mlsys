@@ -409,10 +409,11 @@ parser-side state.</p>
 <h2><code class="docutils literal notranslate"><span class="pre">T.meta_var</span></code> — inline a Python value<a class="headerlink" href="#t-meta-var-inline-a-python-value" title="Link to this heading">#</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">T.meta_var(x)</span></code> tells the parser to treat <code class="docutils literal notranslate"><span class="pre">x</span></code> — a value computed in <strong>Python</strong> —
 as a compile-time <em>meta</em> value and inline it directly into the IR, rather than
-parse it as a script variable. It avoids a throwaway local, and it drives
-metaprogramming: a plain Python <code class="docutils literal notranslate"><span class="pre">for</span></code> over a meta value unrolls in the parser.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>              <span class="c1"># n is a Python int, inlined</span>
-<span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>            <span class="c1"># unrolled at parse time</span>
+parse it as a script variable. It avoids a throwaway local and lets Python
+values parameterize the generated IR. A plain <code class="docutils literal notranslate"><span class="pre">range(n)</span></code> is still a serial
+TIRx loop; use <code class="docutils literal notranslate"><span class="pre">T.unroll(n)</span></code> when the lowering pipeline should unroll it.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>              <span class="c1"># the constant 4 is inlined as the extent</span>
+<span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>          <span class="c1"># marked for the UnrollLoop lowering pass</span>
     <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
 </pre></div>
 </div>

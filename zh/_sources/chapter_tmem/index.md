@@ -71,11 +71,11 @@ tmem = T.decl_buffer(
 
 ```python
 if warp_id == 0:
-    T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=256, cta_group=1)
     T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
+    T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=256, cta_group=1)
 ```
 
-`tcgen05.dealloc` 释放之前申请的 columns；kernel 退出前，所有已分配的 TMEM 都必须显式释放。`tcgen05.relinquish_alloc_permit` 表示当前 CTA 放弃后续分配 TMEM 的权利，执行之后不能再调用 `tcgen05.alloc`。清理阶段开始前，还要确认 MMA、load 和 store 等访问 TMEM 的异步操作已经完成。
+`tcgen05.relinquish_alloc_permit` 先表示当前 CTA 放弃后续分配 TMEM 的权利，执行之后不能再调用 `tcgen05.alloc`；`tcgen05.dealloc` 随后释放之前申请的 columns。Kernel 退出前，所有已分配的 TMEM 都必须显式释放。清理阶段开始前，还要确认 MMA、load 和 store 等访问 TMEM 的异步操作已经完成。
 
 ### `cta_group::2` 的分配
 

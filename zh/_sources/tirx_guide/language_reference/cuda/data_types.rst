@@ -18,17 +18,19 @@
 数据类型与表达式
 ================
 
-每个 TIRx 表达式都有底层的 **dtype** 和高层的 **type**。
+每个 TIRx 表达式都有高层的 **type**；scalar 和 vector type 还包含底层的
+**dtype**。
 
 表达式的 dtype
 --------------
 
-``PrimExpr`` 的 ``.dtype`` 表示 scalar 或 vector 的元素类型，例如
-``float32``、``float16``、``bfloat16``、``int32``、``uint8``、``bool``、
-低精度 ``float8_e4m3fn`` / ``float4_e2m1fn``、表示 pointer 的 ``handle``，
-以及 ``float32x4`` 这样的 vector 类型。生成 CUDA 时，每种 dtype 都会变成
-对应的 CUDA 类型。下面同时分配几种 dtype 的 local 和 shared buffers，并
-执行一次 ``float32x4`` vector load/store：
+Scalar 或 vector ``Expr`` 通过 ``.ty`` 暴露其 ``PrimType``，通过
+``.ty.dtype`` 暴露元素 dtype，例如 ``float32``、``float16``、
+``bfloat16``、``int32``、``uint8``、``bool``、低精度
+``float8_e4m3fn`` / ``float4_e2m1fn``，以及 ``float32x4`` 这样的 vector
+类型。（Pointer 表达式的 type 则是 ``PointerType``。）生成 CUDA 时，每种
+dtype 都会变成对应的 CUDA 类型。下面同时分配几种 dtype 的 local 和
+shared buffers，并执行一次 ``float32x4`` vector load/store：
 
 .. code-block:: python
 
@@ -56,7 +58,7 @@
     nv_bfloat16   bf16_ptr[1];              // bfloat16
     int           i32_ptr[1];               // int32
     uchar         u8_ptr[1];                // uint8
-    signed char   b1_ptr[1];                // bool
+    bool          b1_ptr[1];                // bool
     __shared__ alignas(64) half sm_ptr[64]; // shared float16
     float4        v_ptr[1];                 // float32x4  (vector)
     v_ptr[0]                  = *(float4*)(A_ptr + tx * 4);   // vectorized load
@@ -82,36 +84,44 @@ Buffer 本身也可以使用 **vector dtype**。
      - ``bfloat16`` → ``nv_bfloat16``
    * - ``int32`` → ``int``
      - ``uint8`` → ``uchar``
-     - ``bool`` → ``signed char``
+     - ``bool`` → ``bool``
    * - ``float32x4`` → ``float4``
-     - ``handle`` → ``T*`` （pointer）
+     - ``PointerType`` → ``T*``
      - vector dtypes → CUDA vector types
 
 dtype 与 type
 -------------
 
-``dtype`` 是底层表示，描述一个值由哪些 bits 组成。一个值另外还有高层
-**type**：scalar 使用 ``PrimType(dtype)``，pointer 使用
-``PointerType(PrimType(dtype), scope)``。大多数表达式都是 scalar
-（``PrimType``）；type system 主要在处理 **pointer** 时发挥作用。
+``dtype`` 是底层表示，描述一个值由哪些 bits 组成。表达式的 ``.ty`` 是
+其高层 **type**：scalar 或 vector 使用 ``PrimType(dtype)``，pointer 使用
+``PointerType(PrimType(dtype), scope)``。大多数表达式的 type 是
+``PrimType``；这一差别主要在处理 **pointer** 时发挥作用。
 
 Pointer（``handle``）
 ---------------------
 
-Buffer 的 ``data`` 是一个 pointer，也是 pointer type 的 ``Var``。它是
-**immutable** 的，不能被重新赋值。获得 pointer 的方式因此分为三种：
+Buffer value 是一个 type 为 ``BufferType`` 的 ``Var``。其 ``data`` property
+投影出一个 **immutable**、pointer-typed ``Expr``；这个投影本身不一定是
+``Var``。获得和复用 pointer 的方式因此分为三种：
 
 - ``T.alloc_buffer(...)`` 分配 storage，同时定义其 ``data`` pointer。
-- ``T.decl_buffer(..., data=ptr)`` 在已有 pointer ``Var`` ``ptr`` 上声明 buffer。
+- ``T.decl_buffer(..., data=ptr)`` 在已有、类型兼容的 pointer 表达式
+  ``ptr`` 上声明 buffer。
 - 如果要用 pointer **表达式** 支撑 buffer，例如用
   ``T.ptx.map_shared_rank``（PTX ``mapa``）取得另一个 cluster CTA 的
-  shared address，必须先通过 ``PointerType`` 的 ``T.let`` 将表达式绑定为
-  pointer ``Var``。``data`` 必须是 ``Var``，不能直接使用表达式：
+  shared address，需要将 ``map_shared_rank`` 返回的原始 ``uint64`` 地址
+  转换为具有正确元素类型和 storage scope 的 pointer。Typed pointer
+  表达式可以直接作为 ``data`` 传入；先把它赋值给未标注类型的名字会创建
+  immutable ``Bind``：
 
   .. code-block:: python
 
-      from tvm.ir.type import PointerType, PrimType
+      from tvm.ir import PointerType, PrimType
 
-      ptr: T.let[T.Var(name="ptr", dtype=PointerType(PrimType("uint64")))] = \
-          T.reinterpret("handle", T.ptx.map_shared_rank(mbar.ptr_to([0]), 0))
+      ptr = T.reinterpret(
+          PointerType(PrimType("uint64"), "shared"),
+          T.ptx.map_shared_rank(mbar.ptr_to([0]), 0),
+      )
       remote_mbar = T.decl_buffer([1], "uint64", data=ptr, scope="shared")
+
+  Pointer binding 不能重新赋值；如需不同的 pointer value，请使用新的名字。

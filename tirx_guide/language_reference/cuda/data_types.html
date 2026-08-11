@@ -401,14 +401,17 @@
                   
   <section id="data-types-and-expressions">
 <h1>Data types and expressions<a class="headerlink" href="#data-types-and-expressions" title="Link to this heading">#</a></h1>
-<p>Every TIRx expression carries a low-level <strong>dtype</strong> and a high-level <strong>type</strong>.</p>
+<p>Every TIRx expression carries a high-level <strong>type</strong>. Scalar and vector types
+also contain a low-level <strong>dtype</strong>.</p>
 <section id="expression-dtypes">
 <h2>Expression dtypes<a class="headerlink" href="#expression-dtypes" title="Link to this heading">#</a></h2>
-<p>A <code class="docutils literal notranslate"><span class="pre">PrimExpr</span></code>’s <code class="docutils literal notranslate"><span class="pre">.dtype</span></code> is its scalar (or vector) element type — <code class="docutils literal notranslate"><span class="pre">float32</span></code>,
-<code class="docutils literal notranslate"><span class="pre">float16</span></code>, <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code>, <code class="docutils literal notranslate"><span class="pre">int32</span></code>, <code class="docutils literal notranslate"><span class="pre">uint8</span></code>, <code class="docutils literal notranslate"><span class="pre">bool</span></code>, the low-precision
-<code class="docutils literal notranslate"><span class="pre">float8_e4m3fn</span></code> / <code class="docutils literal notranslate"><span class="pre">float4_e2m1fn</span></code> …, <code class="docutils literal notranslate"><span class="pre">handle</span></code> (a pointer), and vector forms
-such as <code class="docutils literal notranslate"><span class="pre">float32x4</span></code>. Each prints to the matching CUDA type. Allocating local and
-shared buffers across several dtypes, plus a vectorized <code class="docutils literal notranslate"><span class="pre">float32x4</span></code> load/store:</p>
+<p>A scalar or vector <code class="docutils literal notranslate"><span class="pre">Expr</span></code> exposes its <code class="docutils literal notranslate"><span class="pre">PrimType</span></code> through <code class="docutils literal notranslate"><span class="pre">.ty</span></code> and its
+element dtype through <code class="docutils literal notranslate"><span class="pre">.ty.dtype</span></code> — <code class="docutils literal notranslate"><span class="pre">float32</span></code>, <code class="docutils literal notranslate"><span class="pre">float16</span></code>, <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code>,
+<code class="docutils literal notranslate"><span class="pre">int32</span></code>, <code class="docutils literal notranslate"><span class="pre">uint8</span></code>, <code class="docutils literal notranslate"><span class="pre">bool</span></code>, the low-precision <code class="docutils literal notranslate"><span class="pre">float8_e4m3fn</span></code> /
+<code class="docutils literal notranslate"><span class="pre">float4_e2m1fn</span></code> …, and vector forms such as <code class="docutils literal notranslate"><span class="pre">float32x4</span></code>. (Pointer
+expressions instead have a <code class="docutils literal notranslate"><span class="pre">PointerType</span></code>.) Each dtype prints to the matching
+CUDA type. Allocating local and shared buffers across several dtypes, plus a
+vectorized <code class="docutils literal notranslate"><span class="pre">float32x4</span></code> load/store:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">dtypes</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">,</span> <span class="n">O_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
     <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
@@ -431,7 +434,7 @@ shared buffers across several dtypes, plus a vectorized <code class="docutils li
 <span class="n">nv_bfloat16</span><span class="w">   </span><span class="n">bf16_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">              </span><span class="c1">// bfloat16</span>
 <span class="kt">int</span><span class="w">           </span><span class="n">i32_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">               </span><span class="c1">// int32</span>
 <span class="n">uchar</span><span class="w">         </span><span class="n">u8_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">                </span><span class="c1">// uint8</span>
-<span class="kt">signed</span><span class="w"> </span><span class="kt">char</span><span class="w">   </span><span class="n">b1_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">                </span><span class="c1">// bool</span>
+<span class="kt">bool</span><span class="w">          </span><span class="n">b1_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">                </span><span class="c1">// bool</span>
 <span class="n">__shared__</span><span class="w"> </span><span class="nf">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="n">half</span><span class="w"> </span><span class="n">sm_ptr</span><span class="p">[</span><span class="mi">64</span><span class="p">];</span><span class="w"> </span><span class="c1">// shared float16</span>
 <span class="n">float4</span><span class="w">        </span><span class="n">v_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">                 </span><span class="c1">// float32x4  (vector)</span>
 <span class="n">v_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w">                  </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="p">(</span><span class="n">float4</span><span class="o">*</span><span class="p">)(</span><span class="n">A_ptr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">tx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="p">);</span><span class="w">   </span><span class="c1">// vectorized load</span>
@@ -462,10 +465,10 @@ dtype is not tied to <code class="docutils literal notranslate"><span class="pre
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code> → <code class="docutils literal notranslate"><span class="pre">int</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">uint8</span></code> → <code class="docutils literal notranslate"><span class="pre">uchar</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">bool</span></code> → <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">bool</span></code> → <code class="docutils literal notranslate"><span class="pre">bool</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">float32x4</span></code> → <code class="docutils literal notranslate"><span class="pre">float4</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">handle</span></code> → <code class="docutils literal notranslate"><span class="pre">T*</span></code> (pointer)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PointerType</span></code> → <code class="docutils literal notranslate"><span class="pre">T*</span></code></p></td>
 <td><p>(vector dtypes → CUDA vector types)</p></td>
 </tr>
 </tbody>
@@ -474,30 +477,37 @@ dtype is not tied to <code class="docutils literal notranslate"><span class="pre
 </section>
 <section id="dtype-vs-type">
 <h2>dtype vs type<a class="headerlink" href="#dtype-vs-type" title="Link to this heading">#</a></h2>
-<p>The <code class="docutils literal notranslate"><span class="pre">dtype</span></code> is <em>low-level</em> — it says “what bits”. Separately, a value has a
-high-level <strong>type</strong>: <code class="docutils literal notranslate"><span class="pre">PrimType(dtype)</span></code> for a scalar, or
-<code class="docutils literal notranslate"><span class="pre">PointerType(PrimType(dtype),</span> <span class="pre">scope)</span></code> for a pointer. Most expressions are scalars
-(<code class="docutils literal notranslate"><span class="pre">PrimType</span></code>); the type system matters mainly for <strong>pointers</strong>.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">dtype</span></code> is <em>low-level</em> — it says “what bits”. An expression’s <code class="docutils literal notranslate"><span class="pre">.ty</span></code> is
+its high-level <strong>type</strong>: <code class="docutils literal notranslate"><span class="pre">PrimType(dtype)</span></code> for a scalar or vector, or
+<code class="docutils literal notranslate"><span class="pre">PointerType(PrimType(dtype),</span> <span class="pre">scope)</span></code> for a pointer. Most expressions have a
+<code class="docutils literal notranslate"><span class="pre">PrimType</span></code>; the distinction matters mainly for <strong>pointers</strong>.</p>
 </section>
 <section id="pointers-handle">
 <h2>Pointers (<code class="docutils literal notranslate"><span class="pre">handle</span></code>)<a class="headerlink" href="#pointers-handle" title="Link to this heading">#</a></h2>
-<p>A buffer’s <code class="docutils literal notranslate"><span class="pre">data</span></code> — its pointer — is a <code class="docutils literal notranslate"><span class="pre">Var</span></code> of pointer type, and it is
-<strong>immutable</strong> (a pointer is never reassigned). That shapes how you obtain one:</p>
+<p>A buffer value is a <code class="docutils literal notranslate"><span class="pre">Var</span></code> whose type is <code class="docutils literal notranslate"><span class="pre">BufferType</span></code>. Its <code class="docutils literal notranslate"><span class="pre">data</span></code> property
+projects an <strong>immutable</strong>, pointer-typed <code class="docutils literal notranslate"><span class="pre">Expr</span></code>; the projection itself need not
+be a <code class="docutils literal notranslate"><span class="pre">Var</span></code>. That shapes how you obtain and reuse one:</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">T.alloc_buffer(...)</span></code> allocates storage <strong>and</strong> defines its <code class="docutils literal notranslate"><span class="pre">data</span></code> pointer.</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">T.decl_buffer(...,</span> <span class="pre">data=ptr)</span></code> declares a buffer over an existing pointer
-<code class="docutils literal notranslate"><span class="pre">Var</span></code> <code class="docutils literal notranslate"><span class="pre">ptr</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">T.decl_buffer(...,</span> <span class="pre">data=ptr)</span></code> declares a buffer over an existing compatible
+pointer expression <code class="docutils literal notranslate"><span class="pre">ptr</span></code>.</p></li>
 <li><p>To back a buffer with a pointer <strong>expression</strong> — e.g. <code class="docutils literal notranslate"><span class="pre">T.ptx.map_shared_rank</span></code>
-(PTX <code class="docutils literal notranslate"><span class="pre">mapa</span></code>) giving another cluster CTA’s shared address — you must first bind
-that expression to a pointer <code class="docutils literal notranslate"><span class="pre">Var</span></code> (<code class="docutils literal notranslate"><span class="pre">data</span></code> must be a <code class="docutils literal notranslate"><span class="pre">Var</span></code>, not an
-expression), using a <code class="docutils literal notranslate"><span class="pre">T.let</span></code> of <code class="docutils literal notranslate"><span class="pre">PointerType</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.ir.type</span><span class="w"> </span><span class="kn">import</span> <span class="n">PointerType</span><span class="p">,</span> <span class="n">PrimType</span>
+(PTX <code class="docutils literal notranslate"><span class="pre">mapa</span></code>) giving another cluster CTA’s shared address — convert the raw
+<code class="docutils literal notranslate"><span class="pre">uint64</span></code> address returned by <code class="docutils literal notranslate"><span class="pre">map_shared_rank</span></code> to a pointer with the
+intended element type and storage scope. The typed pointer expression can be
+passed directly as <code class="docutils literal notranslate"><span class="pre">data</span></code>; assigning it to an unannotated name first creates
+an immutable <code class="docutils literal notranslate"><span class="pre">Bind</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.ir</span><span class="w"> </span><span class="kn">import</span> <span class="n">PointerType</span><span class="p">,</span> <span class="n">PrimType</span>
 
-<span class="n">ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span><span class="p">[</span><span class="n">T</span><span class="o">.</span><span class="n">Var</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;ptr&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">PointerType</span><span class="p">(</span><span class="n">PrimType</span><span class="p">(</span><span class="s2">&quot;uint64&quot;</span><span class="p">)))]</span> <span class="o">=</span> \
-    <span class="n">T</span><span class="o">.</span><span class="n">reinterpret</span><span class="p">(</span><span class="s2">&quot;handle&quot;</span><span class="p">,</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">map_shared_rank</span><span class="p">(</span><span class="n">mbar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="mi">0</span><span class="p">))</span>
+<span class="n">ptr</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">reinterpret</span><span class="p">(</span>
+    <span class="n">PointerType</span><span class="p">(</span><span class="n">PrimType</span><span class="p">(</span><span class="s2">&quot;uint64&quot;</span><span class="p">),</span> <span class="s2">&quot;shared&quot;</span><span class="p">),</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">map_shared_rank</span><span class="p">(</span><span class="n">mbar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="mi">0</span><span class="p">),</span>
+<span class="p">)</span>
 <span class="n">remote_mbar</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">&quot;uint64&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">ptr</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;shared&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
+<p>Pointer bindings cannot be reassigned; use a new name for a different
+pointer value.</p>
 </li>
 </ul>
 </section>

@@ -18,16 +18,19 @@
 Data types and expressions
 ==========================
 
-Every TIRx expression carries a low-level **dtype** and a high-level **type**.
+Every TIRx expression carries a high-level **type**. Scalar and vector types
+also contain a low-level **dtype**.
 
 Expression dtypes
 -----------------
 
-A ``PrimExpr``'s ``.dtype`` is its scalar (or vector) element type — ``float32``,
-``float16``, ``bfloat16``, ``int32``, ``uint8``, ``bool``, the low-precision
-``float8_e4m3fn`` / ``float4_e2m1fn`` …, ``handle`` (a pointer), and vector forms
-such as ``float32x4``. Each prints to the matching CUDA type. Allocating local and
-shared buffers across several dtypes, plus a vectorized ``float32x4`` load/store:
+A scalar or vector ``Expr`` exposes its ``PrimType`` through ``.ty`` and its
+element dtype through ``.ty.dtype`` — ``float32``, ``float16``, ``bfloat16``,
+``int32``, ``uint8``, ``bool``, the low-precision ``float8_e4m3fn`` /
+``float4_e2m1fn`` …, and vector forms such as ``float32x4``. (Pointer
+expressions instead have a ``PointerType``.) Each dtype prints to the matching
+CUDA type. Allocating local and shared buffers across several dtypes, plus a
+vectorized ``float32x4`` load/store:
 
 .. code-block:: python
 
@@ -55,7 +58,7 @@ lowers to (generated CUDA, elided):
     nv_bfloat16   bf16_ptr[1];              // bfloat16
     int           i32_ptr[1];               // int32
     uchar         u8_ptr[1];                // uint8
-    signed char   b1_ptr[1];                // bool
+    bool          b1_ptr[1];                // bool
     __shared__ alignas(64) half sm_ptr[64]; // shared float16
     float4        v_ptr[1];                 // float32x4  (vector)
     v_ptr[0]                  = *(float4*)(A_ptr + tx * 4);   // vectorized load
@@ -80,37 +83,45 @@ The resulting dtype → CUDA mapping is:
      - ``bfloat16`` → ``nv_bfloat16``
    * - ``int32`` → ``int``
      - ``uint8`` → ``uchar``
-     - ``bool`` → ``signed char``
+     - ``bool`` → ``bool``
    * - ``float32x4`` → ``float4``
-     - ``handle`` → ``T*`` (pointer)
+     - ``PointerType`` → ``T*``
      - (vector dtypes → CUDA vector types)
 
 dtype vs type
 -------------
 
-The ``dtype`` is *low-level* — it says "what bits". Separately, a value has a
-high-level **type**: ``PrimType(dtype)`` for a scalar, or
-``PointerType(PrimType(dtype), scope)`` for a pointer. Most expressions are scalars
-(``PrimType``); the type system matters mainly for **pointers**.
+The ``dtype`` is *low-level* — it says "what bits". An expression's ``.ty`` is
+its high-level **type**: ``PrimType(dtype)`` for a scalar or vector, or
+``PointerType(PrimType(dtype), scope)`` for a pointer. Most expressions have a
+``PrimType``; the distinction matters mainly for **pointers**.
 
 Pointers (``handle``)
 ---------------------
 
-A buffer's ``data`` — its pointer — is a ``Var`` of pointer type, and it is
-**immutable** (a pointer is never reassigned). That shapes how you obtain one:
+A buffer value is a ``Var`` whose type is ``BufferType``. Its ``data`` property
+projects an **immutable**, pointer-typed ``Expr``; the projection itself need not
+be a ``Var``. That shapes how you obtain and reuse one:
 
 - ``T.alloc_buffer(...)`` allocates storage **and** defines its ``data`` pointer.
-- ``T.decl_buffer(..., data=ptr)`` declares a buffer over an existing pointer
-  ``Var`` ``ptr``.
+- ``T.decl_buffer(..., data=ptr)`` declares a buffer over an existing compatible
+  pointer expression ``ptr``.
 - To back a buffer with a pointer **expression** — e.g. ``T.ptx.map_shared_rank``
-  (PTX ``mapa``) giving another cluster CTA's shared address — you must first bind
-  that expression to a pointer ``Var`` (``data`` must be a ``Var``, not an
-  expression), using a ``T.let`` of ``PointerType``:
+  (PTX ``mapa``) giving another cluster CTA's shared address — convert the raw
+  ``uint64`` address returned by ``map_shared_rank`` to a pointer with the
+  intended element type and storage scope. The typed pointer expression can be
+  passed directly as ``data``; assigning it to an unannotated name first creates
+  an immutable ``Bind``:
 
   .. code-block:: python
 
-      from tvm.ir.type import PointerType, PrimType
+      from tvm.ir import PointerType, PrimType
 
-      ptr: T.let[T.Var(name="ptr", dtype=PointerType(PrimType("uint64")))] = \
-          T.reinterpret("handle", T.ptx.map_shared_rank(mbar.ptr_to([0]), 0))
+      ptr = T.reinterpret(
+          PointerType(PrimType("uint64"), "shared"),
+          T.ptx.map_shared_rank(mbar.ptr_to([0]), 0),
+      )
       remote_mbar = T.decl_buffer([1], "uint64", data=ptr, scope="shared")
+
+  Pointer bindings cannot be reassigned; use a new name for a different
+  pointer value.

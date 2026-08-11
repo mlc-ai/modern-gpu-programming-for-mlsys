@@ -38,8 +38,8 @@ T.cuda.cta_sync()
 ```python
 tid = warp_id * 32 + lane_id                 # 0..127 within the warpgroup
 if tid == 0:  # exactly one thread starts TMA
-    Tx.copy_async(Asmem, A[...], dispatch="tma")
-    Tx.copy_async(Bsmem, B[...], dispatch="tma")
+    Tx.copy_async(Asmem, A[...], dispatch="tma_auto")
+    Tx.copy_async(Bsmem, B[...], dispatch="tma_auto")
     T.ptx.mbarrier.arrive.expect_tx(tma_bar, byte_count)  # bytes expected from TMA
 T.ptx.mbarrier.try_wait(tma_bar, phase)                  # wait before MMA reads SMEM
 ```
@@ -75,7 +75,7 @@ import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
-from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
 ```
 
 It is wrapped in `hgemm_v4(M, N, K)`, a pattern we follow throughout: the wrapper keeps the shape-dependent constants and layouts right next to the kernel that uses them.
@@ -91,9 +91,9 @@ def hgemm_v4(M, N, K):
     K_TILES = K // BLK_K
     F16_SIZE = 2
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
-    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
+    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
 
     @T.prim_func
     def kernel(
@@ -143,7 +143,7 @@ def hgemm_v4(M, N, K):
         @T.inline
         def tma_load(k_st):
             tma_config = T.meta_var({
-                "dispatch": "tma", "cta_group": 1,
+                "dispatch": "tma_auto", "cta_group": 1,
                 "mbar": tma_bar.ptr_to([0])
             })
             Tx.copy_async(Asmem[:, :],
@@ -207,7 +207,7 @@ def hgemm_v4(M, N, K):
         # store group before Dsmem is reused.
         if tid == 0:
             Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
-                          Dsmem[:, :], dispatch="tma")
+                          Dsmem[:, :], dispatch="tma_auto")
             T.ptx.cp_async.bulk.commit_group()
             T.ptx.cp_async.bulk.wait_group(0)
         T.cuda.warpgroup_sync(10)
@@ -225,7 +225,7 @@ def hgemm_v4(M, N, K):
 
 Most of this kernel comes directly from Step 3. The following five settings define the TMA behavior:
 
-- **TMA config**: `{"dispatch": "tma", "cta_group": 1, "mbar": tma_bar.ptr_to([0])}` tells `Tx.copy_async` to use TMA and to report load completion through `tma_bar`.
+- **TMA config**: `{"dispatch": "tma_auto", "cta_group": 1, "mbar": tma_bar.ptr_to([0])}` tells `Tx.copy_async` to use automatic TMA dispatch and to report load completion through `tma_bar`.
 
 - **Byte count**: `(BLK_M * BLK_K + BLK_N * BLK_K) * 2` is the number of bytes loaded by the two fp16 operand tiles. `arrive.expect_tx(...)` gives this count to the mbarrier.
 
@@ -299,7 +299,7 @@ import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
-from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
 ```
 
 It is wrapped in `hgemm_v5(M, N, K)`. The `PIPE_DEPTH=2` constant sets the number of pipeline stages (two of them here, which is exactly double buffering):
@@ -317,11 +317,11 @@ def hgemm_v5(M, N, K):
     K_TILES = K // BLK_K
 
     # Double-buffered layouts: first dimension is pipeline stage
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (PIPE_DEPTH, BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (PIPE_DEPTH, BLK_N, BLK_K))
-    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (BLK_M, BLK_N))
 
     @T.prim_func
@@ -374,7 +374,7 @@ def hgemm_v5(M, N, K):
         @T.inline
         def tma_load(stage, k_offset):
             tma_config = T.meta_var({
-                "dispatch": "tma", "cta_group": 1,
+                "dispatch": "tma_auto", "cta_group": 1,
                 "mbar": tma_bar.ptr_to([stage])
             })
             Tx.copy_async(Asmem[stage, :, :],
@@ -420,7 +420,7 @@ def hgemm_v5(M, N, K):
                 if tid == 0:
                     tma_load(stage, next_k * BLK_K)
 
-            # TMA phase flips when stage wraps around
+            # Flip TMA phase after the last stage, for the next ring traversal
             if stage == PIPE_DEPTH - 1:
                 phase_tma ^= 1
 
@@ -438,7 +438,7 @@ def hgemm_v5(M, N, K):
         T.cuda.warpgroup_sync(10)
         if tid == 0:
             Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
-                          Dsmem[:, :], dispatch="tma")
+                          Dsmem[:, :], dispatch="tma_auto")
             T.ptx.cp_async.bulk.commit_group()
             T.ptx.cp_async.bulk.wait_group(0)
         T.cuda.warpgroup_sync(10)
@@ -509,8 +509,8 @@ import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
-from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode
-from tvm.tirx.lang.tile_scheduler import ClusterPersistentScheduler2D
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
+from tvm.backend.cuda.lang.tile_scheduler import ClusterPersistentScheduler2D
 ```
 
 The launch grid now has `SM_COUNT` CTAs rather than one CTA for every `(M, N)` output tile. A `ClusterPersistentScheduler2D` assigns tiles to those persistent CTAs:
@@ -532,11 +532,11 @@ def hgemm_v6(M, N, K):
         "K_TILES must be divisible by 2 * PIPE_DEPTH"
     )
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (PIPE_DEPTH, BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (PIPE_DEPTH, BLK_N, BLK_K))
-    D_layout = tma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
+    D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (BLK_M, BLK_N))
 
     @T.prim_func
@@ -594,7 +594,7 @@ def hgemm_v6(M, N, K):
         @T.inline
         def tma_load(stage, k_offset, m_st, n_st):
             tma_config = T.meta_var({
-                "dispatch": "tma", "cta_group": 1,
+                "dispatch": "tma_auto", "cta_group": 1,
                 "mbar": tma_bar.ptr_to([stage])
             })
             Tx.copy_async(Asmem[stage, :, :],
@@ -657,7 +657,7 @@ def hgemm_v6(M, N, K):
             T.cuda.warpgroup_sync(10)
             if tid == 0:
                 Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
-                              Dsmem[:, :], dispatch="tma")
+                              Dsmem[:, :], dispatch="tma_auto")
                 T.ptx.cp_async.bulk.commit_group()
                 T.ptx.cp_async.bulk.wait_group(0)
             T.cuda.warpgroup_sync(10)

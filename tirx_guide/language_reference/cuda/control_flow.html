@@ -415,7 +415,7 @@ thread/lane comparison, or elect a single issuing thread with
     <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">+</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
 
 <span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
-    <span class="o">...</span>                              <span class="c1"># one elected lane (e.g. to issue TMA/MMA)</span>
+    <span class="k">pass</span>                             <span class="c1"># one elected lane (e.g. to issue TMA/MMA)</span>
 </pre></div>
 </div>
 <div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">if</span><span class="w"> </span><span class="p">(((</span><span class="kt">int</span><span class="p">)</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">128</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>

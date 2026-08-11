@@ -489,7 +489,7 @@ asynchronous engine) reads them:</p>
 <td><p>mbarrier initialization before later arrivals or waits use the barrier</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code></p></td>
-<td><p>a conservative ordering fence on the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> writeback edge (Steps 8 and 9 add it; it is not needed on the TMA-to-MMA path)</p></td>
+<td><p>a conservative ordering fence on the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> writeback edge (Steps 7–9 add it; it is not needed on the TMA-to-MMA path)</p></td>
 </tr>
 </tbody>
 </table>

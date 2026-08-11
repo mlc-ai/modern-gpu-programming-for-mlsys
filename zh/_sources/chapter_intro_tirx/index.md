@@ -73,7 +73,7 @@ D:   tcgen05.mma -> TMEM -> registers -> GMEM
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
-from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
 ```
 
@@ -89,8 +89,8 @@ def hgemm_v1(M, N, K):
     acc_type = tvm.DataType("float32")
 
     BLK_M, BLK_N, BLK_K = 128, 128, 64
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
 
     @T.prim_func
     def kernel(
@@ -214,7 +214,7 @@ print("PASS")
 
 ```{raw} html
 <div style="overflow-x:auto;">
-<iframe src="../demo_zh/tirx_dispatch.html?v=intro-tirx-wheel-20260723" title="TIRx 中的 Scope、Layout 与 Dispatch" loading="lazy"
+<iframe src="../demo_zh/tirx_dispatch.html?v=intro-tirx-wheel-20260811" title="TIRx 中的 Scope、Layout 与 Dispatch" loading="lazy"
         style="width:100%; min-width:960px; height:900px; border:1px solid var(--pst-color-border, #d0d0d0); border-radius:6px;"></iframe>
 </div>
 ```

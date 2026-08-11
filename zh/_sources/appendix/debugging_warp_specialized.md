@@ -29,7 +29,7 @@ checkout，或者当前 GPU 不是 Blackwell 架构，应先修正环境，再�
 
 1. 将输入缩小到仍能稳定复现问题的最小 shape。如果发生 illegal memory access，下一次运行前先重启 Python。
 2. 如果编译失败，先检查已安装的 API、target、`dispatch=` 和 buffer scope，再检查运行时同步代码。
-3. 保存 `inspect_source("cuda")` 的输出。先搜索 role guard、`mbarrier_init`、`tcgen05`、`cp.async.bulk.tensor` 和 `cta_sync()`，再回头阅读 Python。
+3. 保存 `inspect_source("cuda")` 的输出。先搜索 role guard、`mbarrier_init`、`tcgen05`、`cp.async.bulk.tensor` 和 `__syncthreads()`，再回头阅读 Python。
 4. 针对出错的 kernel 路径，写出 roles、storage、handoff 和 lifetime 表。
 5. 根据这张表检查生成的 CUDA：barrier 初始化是否位于角色分支之前，TMA producer、MMA issuer 和 writeback group 是否符合预期，以及要求整个 CTA 参与的 collective 是否误放进了只由一个 warpgroup 执行的分支。
 6. 将问题归类为 deadlock、crash、wrong result 或 correct-but-slow，再查看下方对应的小节。
@@ -102,14 +102,14 @@ print(cuda_source)
 | `mbarrier_init` | 是否生成了 barrier 初始化，并且位于角色分支之前 |
 | `tcgen05` | 是否生成了 Tensor Core 路径 |
 | `cp.async.bulk.tensor` | Copy 是否生成了 TMA 路径 |
-| `cta_sync();` | CTA-wide barrier；不能位于 `wg_id` 分支内部 |
+| `__syncthreads();` | `T.cuda.cta_sync()` 生成的 CTA-wide barrier；不能位于 `wg_id` 分支内部 |
 
 ## 第 7 步的参考结构
 
 正确编译的第 7 步 kernel 顶层结构如下。为了便于阅读，这里用角色名称写
 guard；在生成的 CUDA 中，应搜索上表对应的表达式。
 
-```c
+```text
 // (1) Barrier 初始化：位于顶层，只由 CTA thread 0 执行
 if (threadIdx.x < 1) {
   mbarrier_init(tma2mma[0..1], 1);
@@ -121,7 +121,7 @@ if (threadIdx.x < 1) {
 // (2) TMEM 分配：WG0 warp 0，发出指令的 warp 中所有 lanes 都参与
 if (wg_id == 0 && warp_id == 0) tcgen05_alloc(..., 512);
 
-// (3) 执行 fences 和 cta_sync，再初始化 phase：producer=1，consumer=0
+// (3) 执行 fences 和 __syncthreads，再初始化 phase：producer=1，consumer=0
 
 // (4) Warp-specialized loop
 if (wg_id == 1 && warp_id == 3 && elect_sync) { /* TMA  */ while(valid){ ... next_tile(); } }
@@ -129,7 +129,7 @@ if (wg_id == 1 && warp_id == 0 && elect_sync) { /* MMA  */ while(valid){ ... nex
 if (wg_id == 0)                                { /* WB   */ while(valid){ ... next_tile(); } }
 
 // (5) 清理：由发出指令的 warp 执行，不使用 lane guard
-cta_sync();
+__syncthreads();
 if (warp_id == 0) { tcgen05_relinquish_alloc_permit(); tcgen05_dealloc(..., 512); }
 ```
 
@@ -210,7 +210,7 @@ descriptor、operand 设置或未初始化的 accumulation。数值有限但错�
 
 | 线索 | 可能原因 | 首先检查 |
 |---|---|---|
-| 生成的 CUDA 中没有 `cp.async.bulk.tensor` | Copy 没有生成 TMA 路径 | 检查 `dispatch="tma"`、target capability 和 operand layout |
+| 生成的 CUDA 中没有 `cp.async.bulk.tensor` | Copy 没有生成 TMA 路径 | 检查 `dispatch="tma_auto"`、target capability 和 operand layout |
 | 生成的 CUDA 中没有 `tcgen05` | MMA 没有生成 Blackwell Tensor Core 指令 | 检查 `dispatch="tcgen05"`、target capability 和 operand layout |
 | TMA 与 MMA 没有重叠 | Pipeline 太浅，或者 phase 使 producer/consumer 串行执行 | 检查生成 CUDA 中 wait、arrive 和 advance 的顺序 |
 | 小 shape 正确，但大 shape 性能差 | Register spill、occupancy 或 staging buffer 压力 | 检查 compiler resource report；减小 tile、分块 writeback，或降低 pipeline depth |

@@ -465,7 +465,7 @@ axis is declared once</p></td>
 </tr>
 <tr class="row-even"><td><p>7</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">NarrowDataType(32)</span></code></p></td>
-<td><p>narrows index/loop <code class="docutils literal notranslate"><span class="pre">PrimExpr</span></code> dtypes to 32-bit where provably safe</p></td>
+<td><p>narrows index/loop scalar <code class="docutils literal notranslate"><span class="pre">Expr</span></code> types to 32-bit where provably safe</p></td>
 </tr>
 <tr class="row-odd"><td><p>8</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">VectorizeLoop</span></code></p></td>
@@ -503,14 +503,19 @@ axis is declared once</p></td>
 <code class="docutils literal notranslate"><span class="pre">launch_thread</span></code> boundary</p></td>
 </tr>
 <tr class="row-odd"><td><p>16</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LowerIket</span></code></p></td>
+<td><p>removes frontend-only NVIDIA IKET annotations for normal builds, or emits
+IKET metadata and placeholders when the IRModule is explicitly IKET-enabled</p></td>
+</tr>
+<tr class="row-even"><td><p>17</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">MakePackedAPI</span></code></p></td>
 <td><p>rewrites the host function to the packed-func ABI (the launcher TVM calls)</p></td>
 </tr>
-<tr class="row-even"><td><p>17</p></td>
+<tr class="row-odd"><td><p>18</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FP8StorageLegalize</span></code></p></td>
 <td><p>legalizes <code class="docutils literal notranslate"><span class="pre">float8</span></code> storage (packing into supported container types)</p></td>
 </tr>
-<tr class="row-odd"><td><p>18</p></td>
+<tr class="row-even"><td><p>19</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">BF16StorageLegalize</span></code></p></td>
 <td><p>legalizes <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> storage</p></td>
 </tr>
@@ -537,7 +542,7 @@ axis is declared once</p></td>
 call with the implementation emitted by that variant.</p></li>
 <li><p><strong>``LowerTIRxCleanup``</strong> runs the <code class="docutils literal notranslate"><span class="pre">LayoutApplier</span></code>: it resolves every
 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>-typed buffer access into concrete physical address arithmetic
-(<code class="docutils literal notranslate"><span class="pre">addr</span> <span class="pre">=</span> <span class="pre">data</span> <span class="pre">+</span> <span class="pre">elem_offset</span> <span class="pre">+</span> <span class="pre">layout.apply(coord)</span></code>), flattens the buffers, and
+(<code class="docutils literal notranslate"><span class="pre">addr</span> <span class="pre">=</span> <span class="pre">data</span> <span class="pre">+</span> <span class="pre">elem_offset</span> <span class="pre">+</span> <span class="pre">layout.apply(*coord,</span> <span class="pre">shape=shape)</span></code>), flattens the buffers, and
 lowers the execution-scope ids (<code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> / <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> / … →
 <code class="docutils literal notranslate"><span class="pre">blockIdx</span></code> / <code class="docutils literal notranslate"><span class="pre">threadIdx</span></code> via <code class="docutils literal notranslate"><span class="pre">launch_thread</span></code>).</p></li>
 </ul>
@@ -564,13 +569,13 @@ lowers the execution-scope ids (<code class="docutils literal notranslate"><span
     <span class="n">B_1</span><span class="p">[</span><span class="n">threadIdx_x</span><span class="p">]</span> <span class="o">=</span> <span class="n">A_1</span><span class="p">[</span><span class="n">threadIdx_x</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 </pre></div>
 </div>
-<p><strong>After ``SplitHostDevice`` + ``MakePackedAPI``</strong> the one function has become two —
+<p><strong>After ``SplitHostDevice`` + ``LowerIket`` + ``MakePackedAPI``</strong> the one function has become two —
 a host launcher and a device kernel:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@I</span><span class="o">.</span><span class="n">ir_module</span>
-<span class="k">class</span><span class="w"> </span><span class="nc">Module</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span><span class="o">...</span><span class="p">):</span>          <span class="c1"># host: packed-API launcher (computes the grid/block, launches)</span>
-        <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">scale_kernel</span><span class="p">(</span><span class="o">...</span><span class="p">):</span>  <span class="c1"># device: the __global__ body, run on the GPU</span>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>@I.ir_module
+class Module:
+    def main(...):          # host: packed-API launcher (computes the grid/block, launches)
+        ...
+    def scale_kernel(...):  # device: the __global__ body, run on the GPU
 </pre></div>
 </div>
 <p>The CUDA backend then renders <code class="docutils literal notranslate"><span class="pre">scale_kernel</span></code> to the <code class="docutils literal notranslate"><span class="pre">__global__</span></code> function

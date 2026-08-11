@@ -93,7 +93,7 @@ pool.commit()
 
 `pool.move_base_to(1024)` 将 SMEM pool 的当前分配位置移动到 byte offset 1024。之后，`Asmem` 从这里开始分配，`Bsmem` 紧随其后；前面的区域留给 `tmem_addr`、`mma_bar` 等少量管理数据。
 
-`A_layout` 和 `B_layout` 由 `tma_shared_layout(dtype, swizzle_mode, shape)` 生成。这个函数根据数据类型、swizzle mode 和 tile shape 构造 shared-memory layout；这里选择 128-byte swizzle，得到与当前 `tcgen05.mma` dispatch 匹配的 SMEM 排列。`layout=A_layout` 和 `layout=B_layout` 再将这两个 layout 分别绑定到 `Asmem` 和 `Bsmem`。
+`A_layout` 和 `B_layout` 由 `mma_shared_layout(dtype, swizzle_mode, shape)` 生成。这个函数根据数据类型、swizzle mode 和 tile shape 构造 shared-memory layout；这里选择 128-byte swizzle，得到与当前 `tcgen05.mma` dispatch 匹配的 SMEM 排列。`layout=A_layout` 和 `layout=B_layout` 再将这两个 layout 分别绑定到 `Asmem` 和 `Bsmem`。
 
 第 1 步由 `Tx.cta.copy` 按照这些 layout 写入数据，随后 `tcgen05.mma` 按照匹配的排列读取。
 
@@ -170,7 +170,7 @@ m_thr = T.meta_var(m_st + warp_id * 32 + lane_id)
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
-from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
 ```
 
@@ -188,8 +188,8 @@ def hgemm_v1(M, N, K):
     # operands 和 accumulator tiles 推导该 shape，因此后续步骤不再保留这些常量。
     MMA_M, MMA_N, MMA_K = 128, 128, 16
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
 
     @T.prim_func
     def kernel(
@@ -376,7 +376,7 @@ phase_mma ^= 1
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
-from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
 ```
 
@@ -392,8 +392,8 @@ def hgemm_v2(M, N, K):
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     K_TILES = K // BLK_K
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
 
     @T.prim_func
     def kernel(
@@ -528,7 +528,7 @@ B[n_st : n_st + BLK_N, k : k + BLK_K]
 import tvm
 from tvm.script import tirx as T
 from tvm.script.tirx import tile as Tx
-from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
 from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
 ```
 
@@ -544,8 +544,8 @@ def hgemm_v3(M, N, K):
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     K_TILES = K // BLK_K
 
-    A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
-    B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
+    A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
+    B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
 
     @T.prim_func
     def kernel(

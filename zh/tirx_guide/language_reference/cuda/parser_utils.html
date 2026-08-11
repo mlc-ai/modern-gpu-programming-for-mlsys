@@ -345,10 +345,11 @@ Python 计算得到的值直接写入 IR、提取可复用的代码片段，以�
 <h2><code class="docutils literal notranslate"><span class="pre">T.meta_var</span></code>：内联 Python 值<a class="headerlink" href="#t-meta-var-python" title="Link to this heading">#</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">T.meta_var(x)</span></code> 告诉 parser，<code class="docutils literal notranslate"><span class="pre">x</span></code> 是由 <strong>Python</strong> 计算得到的编译期 meta
 value，应直接内联到 IR，而不是作为 script variable 解析。它既可以省去没有
-实际用途的临时变量，也可以用于 metaprogramming：使用 meta value 作为范围的
-普通 Python <code class="docutils literal notranslate"><span class="pre">for</span></code> 会在 parse time 展开。</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>              <span class="c1"># n is a Python int, inlined</span>
-<span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>            <span class="c1"># unrolled at parse time</span>
+实际用途的临时变量，也让 Python values 能够参数化生成的 IR。普通
+<code class="docutils literal notranslate"><span class="pre">range(n)</span></code> 仍会生成 serial TIRx loop；需要 lowering pipeline 展开时应使用
+<code class="docutils literal notranslate"><span class="pre">T.unroll(n)</span></code>。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>              <span class="c1"># constant 4 is inlined as the extent</span>
+<span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>          <span class="c1"># marked for the UnrollLoop lowering pass</span>
     <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
 </pre></div>
 </div>

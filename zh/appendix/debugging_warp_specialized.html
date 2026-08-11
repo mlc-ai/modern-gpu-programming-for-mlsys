@@ -372,7 +372,7 @@ checkout，或者当前 GPU 不是 Blackwell 架构，应先修正环境，再�
 <ol class="arabic simple">
 <li><p>将输入缩小到仍能稳定复现问题的最小 shape。如果发生 illegal memory access，下一次运行前先重启 Python。</p></li>
 <li><p>如果编译失败，先检查已安装的 API、target、<code class="docutils literal notranslate"><span class="pre">dispatch=</span></code> 和 buffer scope，再检查运行时同步代码。</p></li>
-<li><p>保存 <code class="docutils literal notranslate"><span class="pre">inspect_source(&quot;cuda&quot;)</span></code> 的输出。先搜索 role guard、<code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>、<code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code>，再回头阅读 Python。</p></li>
+<li><p>保存 <code class="docutils literal notranslate"><span class="pre">inspect_source(&quot;cuda&quot;)</span></code> 的输出。先搜索 role guard、<code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>、<code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code> 和 <code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code>，再回头阅读 Python。</p></li>
 <li><p>针对出错的 kernel 路径，写出 roles、storage、handoff 和 lifetime 表。</p></li>
 <li><p>根据这张表检查生成的 CUDA：barrier 初始化是否位于角色分支之前，TMA producer、MMA issuer 和 writeback group 是否符合预期，以及要求整个 CTA 参与的 collective 是否误放进了只由一个 warpgroup 执行的分支。</p></li>
 <li><p>将问题归类为 deadlock、crash、wrong result 或 correct-but-slow，再查看下方对应的小节。</p></li>
@@ -510,8 +510,8 @@ Flash Attention 中 QKᵀ MMA、softmax、PV MMA 和 correction 之间的交接�
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code></p></td>
 <td><p>Copy 是否生成了 TMA 路径</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">cta_sync();</span></code></p></td>
-<td><p>CTA-wide barrier；不能位于 <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> 分支内部</p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">__syncthreads();</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code> 生成的 CTA-wide barrier；不能位于 <code class="docutils literal notranslate"><span class="pre">wg_id</span></code> 分支内部</p></td>
 </tr>
 </tbody>
 </table>
@@ -521,27 +521,27 @@ Flash Attention 中 QKᵀ MMA、softmax、PV MMA 和 correction 之间的交接�
 <h2>第 7 步的参考结构<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
 <p>正确编译的第 7 步 kernel 顶层结构如下。为了便于阅读，这里用角色名称写
 guard；在生成的 CUDA 中，应搜索上表对应的表达式。</p>
-<div class="highlight-c notranslate"><div class="highlight"><pre><span></span><span class="c1">// (1) Barrier 初始化：位于顶层，只由 CTA thread 0 执行</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">tma2mma</span><span class="p">[</span><span class="mf">0..1</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
-<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">mma2tma</span><span class="p">[</span><span class="mf">0..1</span><span class="p">],</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
-<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">mma2ld</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">);</span>
-<span class="w">  </span><span class="n">mbarrier_init</span><span class="p">(</span><span class="n">ld2mma</span><span class="p">,</span><span class="w"> </span><span class="mi">128</span><span class="p">);</span><span class="w">   </span><span class="c1">// WG0 的 128 个 threads 全部执行 arrival</span>
-<span class="p">}</span>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>// (1) Barrier 初始化：位于顶层，只由 CTA thread 0 执行
+if (threadIdx.x &lt; 1) {
+  mbarrier_init(tma2mma[0..1], 1);
+  mbarrier_init(mma2tma[0..1], 1);
+  mbarrier_init(mma2ld, 1);
+  mbarrier_init(ld2mma, 128);   // WG0 的 128 个 threads 全部执行 arrival
+}
 
-<span class="c1">// (2) TMEM 分配：WG0 warp 0，发出指令的 warp 中所有 lanes 都参与</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="n">tcgen05_alloc</span><span class="p">(...,</span><span class="w"> </span><span class="mi">512</span><span class="p">);</span>
+// (2) TMEM 分配：WG0 warp 0，发出指令的 warp 中所有 lanes 都参与
+if (wg_id == 0 &amp;&amp; warp_id == 0) tcgen05_alloc(..., 512);
 
-<span class="c1">// (3) 执行 fences 和 cta_sync，再初始化 phase：producer=1，consumer=0</span>
+// (3) 执行 fences 和 __syncthreads，再初始化 phase：producer=1，consumer=0
 
-<span class="c1">// (4) Warp-specialized loop</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">elect_sync</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* TMA  */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">elect_sync</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* MMA  */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">wg_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w">                                </span><span class="p">{</span><span class="w"> </span><span class="cm">/* WB   */</span><span class="w"> </span><span class="k">while</span><span class="p">(</span><span class="n">valid</span><span class="p">){</span><span class="w"> </span><span class="p">...</span><span class="w"> </span><span class="n">next_tile</span><span class="p">();</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+// (4) Warp-specialized loop
+if (wg_id == 1 &amp;&amp; warp_id == 3 &amp;&amp; elect_sync) { /* TMA  */ while(valid){ ... next_tile(); } }
+if (wg_id == 1 &amp;&amp; warp_id == 0 &amp;&amp; elect_sync) { /* MMA  */ while(valid){ ... next_tile(); } }
+if (wg_id == 0)                                { /* WB   */ while(valid){ ... next_tile(); } }
 
-<span class="c1">// (5) 清理：由发出指令的 warp 执行，不使用 lane guard</span>
-<span class="n">cta_sync</span><span class="p">();</span>
-<span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">warp_id</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">tcgen05_relinquish_alloc_permit</span><span class="p">();</span><span class="w"> </span><span class="n">tcgen05_dealloc</span><span class="p">(...,</span><span class="w"> </span><span class="mi">512</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
+// (5) 清理：由发出指令的 warp 执行，不使用 lane guard
+__syncthreads();
+if (warp_id == 0) { tcgen05_relinquish_alloc_permit(); tcgen05_dealloc(..., 512); }
 </pre></div>
 </div>
 <p>修改算法前，先检查：</p>
@@ -675,7 +675,7 @@ descriptor、operand 设置或未初始化的 accumulation。数值有限但错�
 <tbody>
 <tr class="row-even"><td><p>生成的 CUDA 中没有 <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code></p></td>
 <td><p>Copy 没有生成 TMA 路径</p></td>
-<td><p>检查 <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tma&quot;</span></code>、target capability 和 operand layout</p></td>
+<td><p>检查 <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tma_auto&quot;</span></code>、target capability 和 operand layout</p></td>
 </tr>
 <tr class="row-odd"><td><p>生成的 CUDA 中没有 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code></p></td>
 <td><p>MMA 没有生成 Blackwell Tensor Core 指令</p></td>

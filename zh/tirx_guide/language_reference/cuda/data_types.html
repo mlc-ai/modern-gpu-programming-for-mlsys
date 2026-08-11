@@ -337,15 +337,17 @@
                   
   <section id="id1">
 <h1>数据类型与表达式<a class="headerlink" href="#id1" title="Link to this heading">#</a></h1>
-<p>每个 TIRx 表达式都有底层的 <strong>dtype</strong> 和高层的 <strong>type</strong>。</p>
+<p>每个 TIRx 表达式都有高层的 <strong>type</strong>；scalar 和 vector type 还包含底层的
+<strong>dtype</strong>。</p>
 <section id="dtype">
 <h2>表达式的 dtype<a class="headerlink" href="#dtype" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">PrimExpr</span></code> 的 <code class="docutils literal notranslate"><span class="pre">.dtype</span></code> 表示 scalar 或 vector 的元素类型，例如
-<code class="docutils literal notranslate"><span class="pre">float32</span></code>、<code class="docutils literal notranslate"><span class="pre">float16</span></code>、<code class="docutils literal notranslate"><span class="pre">bfloat16</span></code>、<code class="docutils literal notranslate"><span class="pre">int32</span></code>、<code class="docutils literal notranslate"><span class="pre">uint8</span></code>、<code class="docutils literal notranslate"><span class="pre">bool</span></code>、
-低精度 <code class="docutils literal notranslate"><span class="pre">float8_e4m3fn</span></code> / <code class="docutils literal notranslate"><span class="pre">float4_e2m1fn</span></code>、表示 pointer 的 <code class="docutils literal notranslate"><span class="pre">handle</span></code>，
-以及 <code class="docutils literal notranslate"><span class="pre">float32x4</span></code> 这样的 vector 类型。生成 CUDA 时，每种 dtype 都会变成
-对应的 CUDA 类型。下面同时分配几种 dtype 的 local 和 shared buffers，并
-执行一次 <code class="docutils literal notranslate"><span class="pre">float32x4</span></code> vector load/store：</p>
+<p>Scalar 或 vector <code class="docutils literal notranslate"><span class="pre">Expr</span></code> 通过 <code class="docutils literal notranslate"><span class="pre">.ty</span></code> 暴露其 <code class="docutils literal notranslate"><span class="pre">PrimType</span></code>，通过
+<code class="docutils literal notranslate"><span class="pre">.ty.dtype</span></code> 暴露元素 dtype，例如 <code class="docutils literal notranslate"><span class="pre">float32</span></code>、<code class="docutils literal notranslate"><span class="pre">float16</span></code>、
+<code class="docutils literal notranslate"><span class="pre">bfloat16</span></code>、<code class="docutils literal notranslate"><span class="pre">int32</span></code>、<code class="docutils literal notranslate"><span class="pre">uint8</span></code>、<code class="docutils literal notranslate"><span class="pre">bool</span></code>、低精度
+<code class="docutils literal notranslate"><span class="pre">float8_e4m3fn</span></code> / <code class="docutils literal notranslate"><span class="pre">float4_e2m1fn</span></code>，以及 <code class="docutils literal notranslate"><span class="pre">float32x4</span></code> 这样的 vector
+类型。（Pointer 表达式的 type 则是 <code class="docutils literal notranslate"><span class="pre">PointerType</span></code>。）生成 CUDA 时，每种
+dtype 都会变成对应的 CUDA 类型。下面同时分配几种 dtype 的 local 和
+shared buffers，并执行一次 <code class="docutils literal notranslate"><span class="pre">float32x4</span></code> vector load/store：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">dtypes</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">,</span> <span class="n">O_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
     <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
@@ -368,7 +370,7 @@
 <span class="n">nv_bfloat16</span><span class="w">   </span><span class="n">bf16_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">              </span><span class="c1">// bfloat16</span>
 <span class="kt">int</span><span class="w">           </span><span class="n">i32_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">               </span><span class="c1">// int32</span>
 <span class="n">uchar</span><span class="w">         </span><span class="n">u8_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">                </span><span class="c1">// uint8</span>
-<span class="kt">signed</span><span class="w"> </span><span class="kt">char</span><span class="w">   </span><span class="n">b1_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">                </span><span class="c1">// bool</span>
+<span class="kt">bool</span><span class="w">          </span><span class="n">b1_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">                </span><span class="c1">// bool</span>
 <span class="n">__shared__</span><span class="w"> </span><span class="nf">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="n">half</span><span class="w"> </span><span class="n">sm_ptr</span><span class="p">[</span><span class="mi">64</span><span class="p">];</span><span class="w"> </span><span class="c1">// shared float16</span>
 <span class="n">float4</span><span class="w">        </span><span class="n">v_ptr</span><span class="p">[</span><span class="mi">1</span><span class="p">];</span><span class="w">                 </span><span class="c1">// float32x4  (vector)</span>
 <span class="n">v_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w">                  </span><span class="o">=</span><span class="w"> </span><span class="o">*</span><span class="p">(</span><span class="n">float4</span><span class="o">*</span><span class="p">)(</span><span class="n">A_ptr</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">tx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="p">);</span><span class="w">   </span><span class="c1">// vectorized load</span>
@@ -400,10 +402,10 @@
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">int32</span></code> → <code class="docutils literal notranslate"><span class="pre">int</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">uint8</span></code> → <code class="docutils literal notranslate"><span class="pre">uchar</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">bool</span></code> → <code class="docutils literal notranslate"><span class="pre">signed</span> <span class="pre">char</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">bool</span></code> → <code class="docutils literal notranslate"><span class="pre">bool</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">float32x4</span></code> → <code class="docutils literal notranslate"><span class="pre">float4</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">handle</span></code> → <code class="docutils literal notranslate"><span class="pre">T*</span></code> （pointer）</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PointerType</span></code> → <code class="docutils literal notranslate"><span class="pre">T*</span></code></p></td>
 <td><p>vector dtypes → CUDA vector types</p></td>
 </tr>
 </tbody>
@@ -412,29 +414,36 @@
 </section>
 <section id="dtype-type">
 <h2>dtype 与 type<a class="headerlink" href="#dtype-type" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">dtype</span></code> 是底层表示，描述一个值由哪些 bits 组成。一个值另外还有高层
-<strong>type</strong>：scalar 使用 <code class="docutils literal notranslate"><span class="pre">PrimType(dtype)</span></code>，pointer 使用
-<code class="docutils literal notranslate"><span class="pre">PointerType(PrimType(dtype),</span> <span class="pre">scope)</span></code>。大多数表达式都是 scalar
-（<code class="docutils literal notranslate"><span class="pre">PrimType</span></code>）；type system 主要在处理 <strong>pointer</strong> 时发挥作用。</p>
+<p><code class="docutils literal notranslate"><span class="pre">dtype</span></code> 是底层表示，描述一个值由哪些 bits 组成。表达式的 <code class="docutils literal notranslate"><span class="pre">.ty</span></code> 是
+其高层 <strong>type</strong>：scalar 或 vector 使用 <code class="docutils literal notranslate"><span class="pre">PrimType(dtype)</span></code>，pointer 使用
+<code class="docutils literal notranslate"><span class="pre">PointerType(PrimType(dtype),</span> <span class="pre">scope)</span></code>。大多数表达式的 type 是
+<code class="docutils literal notranslate"><span class="pre">PrimType</span></code>；这一差别主要在处理 <strong>pointer</strong> 时发挥作用。</p>
 </section>
 <section id="pointer-handle">
 <h2>Pointer（<code class="docutils literal notranslate"><span class="pre">handle</span></code>）<a class="headerlink" href="#pointer-handle" title="Link to this heading">#</a></h2>
-<p>Buffer 的 <code class="docutils literal notranslate"><span class="pre">data</span></code> 是一个 pointer，也是 pointer type 的 <code class="docutils literal notranslate"><span class="pre">Var</span></code>。它是
-<strong>immutable</strong> 的，不能被重新赋值。获得 pointer 的方式因此分为三种：</p>
+<p>Buffer value 是一个 type 为 <code class="docutils literal notranslate"><span class="pre">BufferType</span></code> 的 <code class="docutils literal notranslate"><span class="pre">Var</span></code>。其 <code class="docutils literal notranslate"><span class="pre">data</span></code> property
+投影出一个 <strong>immutable</strong>、pointer-typed <code class="docutils literal notranslate"><span class="pre">Expr</span></code>；这个投影本身不一定是
+<code class="docutils literal notranslate"><span class="pre">Var</span></code>。获得和复用 pointer 的方式因此分为三种：</p>
 <ul>
 <li><p><code class="docutils literal notranslate"><span class="pre">T.alloc_buffer(...)</span></code> 分配 storage，同时定义其 <code class="docutils literal notranslate"><span class="pre">data</span></code> pointer。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">T.decl_buffer(...,</span> <span class="pre">data=ptr)</span></code> 在已有 pointer <code class="docutils literal notranslate"><span class="pre">Var</span></code> <code class="docutils literal notranslate"><span class="pre">ptr</span></code> 上声明 buffer。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">T.decl_buffer(...,</span> <span class="pre">data=ptr)</span></code> 在已有、类型兼容的 pointer 表达式
+<code class="docutils literal notranslate"><span class="pre">ptr</span></code> 上声明 buffer。</p></li>
 <li><p>如果要用 pointer <strong>表达式</strong> 支撑 buffer，例如用
 <code class="docutils literal notranslate"><span class="pre">T.ptx.map_shared_rank``（PTX</span> <span class="pre">``mapa</span></code>）取得另一个 cluster CTA 的
-shared address，必须先通过 <code class="docutils literal notranslate"><span class="pre">PointerType</span></code> 的 <code class="docutils literal notranslate"><span class="pre">T.let</span></code> 将表达式绑定为
-pointer <code class="docutils literal notranslate"><span class="pre">Var</span></code>。<code class="docutils literal notranslate"><span class="pre">data</span></code> 必须是 <code class="docutils literal notranslate"><span class="pre">Var</span></code>，不能直接使用表达式：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.ir.type</span><span class="w"> </span><span class="kn">import</span> <span class="n">PointerType</span><span class="p">,</span> <span class="n">PrimType</span>
+shared address，需要将 <code class="docutils literal notranslate"><span class="pre">map_shared_rank</span></code> 返回的原始 <code class="docutils literal notranslate"><span class="pre">uint64</span></code> 地址
+转换为具有正确元素类型和 storage scope 的 pointer。Typed pointer
+表达式可以直接作为 <code class="docutils literal notranslate"><span class="pre">data</span></code> 传入；先把它赋值给未标注类型的名字会创建
+immutable <code class="docutils literal notranslate"><span class="pre">Bind</span></code>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.ir</span><span class="w"> </span><span class="kn">import</span> <span class="n">PointerType</span><span class="p">,</span> <span class="n">PrimType</span>
 
-<span class="n">ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span><span class="p">[</span><span class="n">T</span><span class="o">.</span><span class="n">Var</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;ptr&quot;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">PointerType</span><span class="p">(</span><span class="n">PrimType</span><span class="p">(</span><span class="s2">&quot;uint64&quot;</span><span class="p">)))]</span> <span class="o">=</span> \
-    <span class="n">T</span><span class="o">.</span><span class="n">reinterpret</span><span class="p">(</span><span class="s2">&quot;handle&quot;</span><span class="p">,</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">map_shared_rank</span><span class="p">(</span><span class="n">mbar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="mi">0</span><span class="p">))</span>
+<span class="n">ptr</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">reinterpret</span><span class="p">(</span>
+    <span class="n">PointerType</span><span class="p">(</span><span class="n">PrimType</span><span class="p">(</span><span class="s2">&quot;uint64&quot;</span><span class="p">),</span> <span class="s2">&quot;shared&quot;</span><span class="p">),</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">map_shared_rank</span><span class="p">(</span><span class="n">mbar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="mi">0</span><span class="p">),</span>
+<span class="p">)</span>
 <span class="n">remote_mbar</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">&quot;uint64&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">ptr</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;shared&quot;</span><span class="p">)</span>
 </pre></div>
 </div>
+<p>Pointer binding 不能重新赋值；如需不同的 pointer value，请使用新的名字。</p>
 </li>
 </ul>
 </section>

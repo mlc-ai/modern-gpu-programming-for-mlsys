@@ -422,7 +422,7 @@ threads。可能同时处于 active 状态的独立同步必须使用不同 ID�
 <td><p>初始化 mbarrier 后，后续 arrival 或 wait 才能使用它</p></td>
 </tr>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code></p></td>
-<td><p><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> writeback edge 上的保守 ordering fence；Step 8 和 9 使用它，TMA-to-MMA 路径不需要</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> writeback edge 上的保守 ordering fence；Step 7–9 使用它，TMA-to-MMA 路径不需要</p></td>
 </tr>
 </tbody>
 </table>

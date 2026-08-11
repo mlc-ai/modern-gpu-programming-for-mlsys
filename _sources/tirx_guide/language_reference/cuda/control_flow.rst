@@ -36,7 +36,7 @@ thread/lane comparison, or elect a single issuing thread with
         A[tx] = A[tx] + T.float32(1.0)
 
     if T.ptx.elect_sync():
-        ...                              # one elected lane (e.g. to issue TMA/MMA)
+        pass                             # one elected lane (e.g. to issue TMA/MMA)
 
 .. code-block:: c++
 

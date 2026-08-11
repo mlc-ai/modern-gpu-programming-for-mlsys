@@ -424,17 +424,18 @@ pointer with <code class="docutils literal notranslate"><span class="pre">A.ptr_
 <p>Two fundamental APIs create a buffer:</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">T.alloc_buffer(shape,</span> <span class="pre">dtype,</span> <span class="pre">scope=...,</span> <span class="pre">...)</span></code> — <strong>allocates new storage</strong>
-(emits an <code class="docutils literal notranslate"><span class="pre">AllocBuffer</span></code> node) and returns the <code class="docutils literal notranslate"><span class="pre">Buffer</span></code>. <code class="docutils literal notranslate"><span class="pre">T.alloc_shared</span></code> /
-<code class="docutils literal notranslate"><span class="pre">T.alloc_local</span></code> are just <code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code> with <code class="docutils literal notranslate"><span class="pre">scope=&quot;shared&quot;</span></code> /
-<code class="docutils literal notranslate"><span class="pre">scope=&quot;local&quot;</span></code>.</p></li>
+(emits an <code class="docutils literal notranslate"><span class="pre">AllocBuffer</span></code> node) and returns a buffer value: a <code class="docutils literal notranslate"><span class="pre">Var</span></code> whose
+type is <code class="docutils literal notranslate"><span class="pre">BufferType</span></code>. <code class="docutils literal notranslate"><span class="pre">T.alloc_shared</span></code> / <code class="docutils literal notranslate"><span class="pre">T.alloc_local</span></code> are just
+<code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code> with <code class="docutils literal notranslate"><span class="pre">scope=&quot;shared&quot;</span></code> / <code class="docutils literal notranslate"><span class="pre">scope=&quot;local&quot;</span></code>.</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">T.decl_buffer(shape,</span> <span class="pre">dtype,</span> <span class="pre">data=...,</span> <span class="pre">...)</span></code> — <strong>declares a view</strong> over an
 existing pointer <code class="docutils literal notranslate"><span class="pre">data</span></code> (no allocation); use it to alias or reinterpret
-storage — a sub-region of a pool, or a tensor-memory address. With <code class="docutils literal notranslate"><span class="pre">data=None</span></code>
-it allocates, like <code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code>.</p></li>
+storage — a sub-region of a pool, or a tensor-memory address. For ordinary
+scopes, <code class="docutils literal notranslate"><span class="pre">data=None</span></code> allocates like <code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code>. Tensor memory is the
+exception: it uses <code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code> as described below.</p></li>
 </ul>
-<p>A buffer’s <code class="docutils literal notranslate"><span class="pre">data</span></code> pointer is an immutable <code class="docutils literal notranslate"><span class="pre">Var</span></code> (<code class="docutils literal notranslate"><span class="pre">alloc_buffer</span></code> defines it;
-<code class="docutils literal notranslate"><span class="pre">decl_buffer</span></code> takes one). To back a buffer with a pointer <em>expression</em>, bind it
-first — see <a class="reference internal" href="data_types.html"><span class="doc">Data types and expressions</span></a>.</p>
+<p>A buffer’s <code class="docutils literal notranslate"><span class="pre">data</span></code> property is an immutable, typed pointer <code class="docutils literal notranslate"><span class="pre">Expr</span></code>; it need not
+be a <code class="docutils literal notranslate"><span class="pre">Var</span></code>. <code class="docutils literal notranslate"><span class="pre">decl_buffer</span></code> accepts a compatible pointer expression directly —
+see <a class="reference internal" href="data_types.html"><span class="doc">Data types and expressions</span></a>.</p>
 <p>Both share one descriptor; the parameters that matter most:</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
@@ -512,14 +513,14 @@ row-major</p></td>
 </div>
 <p><strong>A ptr-based buffer is just metadata over a pointer.</strong> For any non-tmem buffer,
 the declaration is a pointer plus a layout, and indexing resolves to an address:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">addr</span><span class="p">(</span><span class="n">buffer</span><span class="p">[</span><span class="n">coord</span><span class="p">])</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">data</span> <span class="o">+</span> <span class="n">elem_offset</span> <span class="o">+</span> <span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="n">coord</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">shape</span><span class="p">)[</span><span class="s2">&quot;m&quot;</span><span class="p">]</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">addr</span><span class="p">(</span><span class="n">buffer</span><span class="p">[</span><span class="n">coord</span><span class="p">])</span> <span class="o">=</span> <span class="n">buffer</span><span class="o">.</span><span class="n">data</span> <span class="o">+</span> <span class="n">elem_offset</span> <span class="o">+</span> <span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="o">*</span><span class="n">coord</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="n">shape</span><span class="p">)[</span><span class="s2">&quot;m&quot;</span><span class="p">]</span>
 </pre></div>
 </div>
 <p>(<code class="docutils literal notranslate"><span class="pre">layout.apply</span></code> returns the per-axis mapping; its <code class="docutils literal notranslate"><span class="pre">&quot;m&quot;</span></code> component is the
 element offset.) So the <em>same</em> logical access compiles to different address
 arithmetic depending purely on the buffer’s metadata. Writing
 <code class="docutils literal notranslate"><span class="pre">B[i,</span> <span class="pre">j]</span> <span class="pre">=</span> <span class="pre">A[i,</span> <span class="pre">j]</span> <span class="pre">+</span> <span class="pre">1</span></code> over a 4×8 region, with <code class="docutils literal notranslate"><span class="pre">B</span></code> declared four ways:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">TileLayout</span><span class="p">,</span> <span class="n">S</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">TileLayout</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">laneid</span>
 
 <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>                                       <span class="c1"># row-major</span>
 <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">):(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">)]))</span>  <span class="c1"># column-major</span>
@@ -606,11 +607,11 @@ compile time (here <code class="docutils literal notranslate"><span class="pre">
 a <code class="docutils literal notranslate"><span class="pre">&quot;tirx.use_dyn_shared_memory&quot;</span></code> tag to the device kernel’s
 <code class="docutils literal notranslate"><span class="pre">tirx.kernel_launch_params</span></code>, and the host launcher computes the total bytes and
 passes them as the last launch argument:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># device kernel attribute:</span>
-<span class="s2">&quot;tirx.kernel_launch_params&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="s2">&quot;tirx.use_dyn_shared_memory&quot;</span><span class="p">]</span>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span># device kernel attribute:
+&quot;tirx.kernel_launch_params&quot;: [&quot;blockIdx.x&quot;, &quot;threadIdx.x&quot;, &quot;tirx.use_dyn_shared_memory&quot;]
 
-<span class="c1"># host-side launch call  (..., gridDim.x, blockDim.x, dyn_shared_bytes):</span>
-<span class="n">T</span><span class="o">.</span><span class="n">call_packed</span><span class="p">(</span><span class="s2">&quot;dyn_kernel&quot;</span><span class="p">,</span> <span class="n">A</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">B</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">C</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">64</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span>
+# host-side launch call  (..., gridDim.x, blockDim.x, dyn_shared_bytes):
+T.call_packed(&quot;dyn_kernel&quot;, A.data, B.data, C.data, 1, 64, 512)
 </pre></div>
 </div>
 <p>At run time that <code class="docutils literal notranslate"><span class="pre">512</span></code> becomes <code class="docutils literal notranslate"><span class="pre">config.sharedMemBytes</span></code> in the
@@ -622,12 +623,12 @@ passes them as the last launch argument:</p>
 <h3>Pool sugar<a class="headerlink" href="#pool-sugar" title="Link to this heading">#</a></h3>
 <p><code class="docutils literal notranslate"><span class="pre">T.SMEMPool</span></code> automates that arena bookkeeping — it bump-allocates the offsets so
 you don’t <code class="docutils literal notranslate"><span class="pre">decl</span></code> views by hand. Beyond <code class="docutils literal notranslate"><span class="pre">alloc</span></code> / <code class="docutils literal notranslate"><span class="pre">commit</span></code>, it offers
-per-buffer <code class="docutils literal notranslate"><span class="pre">align=</span></code>, an <code class="docutils literal notranslate"><span class="pre">alloc_mma</span></code> helper that builds an MMA-compatible
+per-buffer <code class="docutils literal notranslate"><span class="pre">align=</span></code>, an <code class="docutils literal notranslate"><span class="pre">alloc_tcgen05_mma_AB</span></code> helper that builds an MMA-compatible
 swizzle layout for you, and <code class="docutils literal notranslate"><span class="pre">move_base_to</span></code> to rewind the cursor and reuse space:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>                          <span class="c1"># bump allocator over shared.dyn</span>
 <span class="n">As</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BK</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>   <span class="c1"># carve a tile</span>
 <span class="n">Bs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BK</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>
-<span class="n">Cs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc_mma</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">)</span>     <span class="c1"># MMA-compatible, swizzle inferred</span>
+<span class="n">Cs</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc_tcgen05_mma_AB</span><span class="p">((</span><span class="n">BM</span><span class="p">,</span> <span class="n">BN</span><span class="p">),</span> <span class="s2">&quot;float16&quot;</span><span class="p">)</span>  <span class="c1"># MMA-compatible, swizzle inferred</span>
 <span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>                                 <span class="c1"># finalize the pool&#39;s size</span>
 <span class="c1"># pool.move_base_to(offset) rewinds the cursor to reuse space</span>
 </pre></div>
@@ -700,17 +701,19 @@ the <code class="docutils literal notranslate"><span class="pre">[0]</span></cod
 the scope explicitly.)</p>
 <div class="admonition note">
 <p class="admonition-title">Note</p>
-<p><strong>Why not a</strong> <code class="docutils literal notranslate"><span class="pre">Var</span></code><strong>?</strong> A TIRx <code class="docutils literal notranslate"><span class="pre">Var</span></code> is <em>immutable</em> — a single static
-binding (it is exactly what <code class="docutils literal notranslate"><span class="pre">T.let</span></code> produces, below). A scalar needs to be
-<em>mutable</em> — you reassign it in loops and accumulators — so it must be backed by a
-one-element buffer you can store into repeatedly, not a <code class="docutils literal notranslate"><span class="pre">Var</span></code>.</p>
+<p><strong>Why not a scalar-typed</strong> <code class="docutils literal notranslate"><span class="pre">Var</span></code><strong>?</strong> Both forms have a <code class="docutils literal notranslate"><span class="pre">Var</span></code> identity in
+typed TIRx. A buffer value is a <code class="docutils literal notranslate"><span class="pre">Var</span></code> with <code class="docutils literal notranslate"><span class="pre">BufferType</span></code>; stores mutate the
+buffer’s contents without rebinding that <code class="docutils literal notranslate"><span class="pre">Var</span></code>. By contrast, <code class="docutils literal notranslate"><span class="pre">T.let</span></code> below
+creates a scalar-typed <code class="docutils literal notranslate"><span class="pre">Var</span></code> with one immutable binding. A mutable scalar must
+therefore be backed by a one-element buffer whose contents can be stored
+repeatedly.</p>
 </div>
 </section>
 <section id="let">
 <h3><code class="docutils literal notranslate"><span class="pre">let</span></code><a class="headerlink" href="#let" title="Link to this heading">#</a></h3>
-<p>A <code class="docutils literal notranslate"><span class="pre">T.let</span></code> binding is <strong>immutable</strong> — a single <code class="docutils literal notranslate"><span class="pre">LetStmt</span></code> (a named value, not a
+<p>A <code class="docutils literal notranslate"><span class="pre">T.let</span></code> binding is <strong>immutable</strong> — a single <code class="docutils literal notranslate"><span class="pre">Bind</span></code> node (a named value, not a
 buffer). Use it for derived constants:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">M</span> <span class="o">*</span> <span class="n">K</span>               <span class="c1"># immutable binding (LetStmt)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">M</span> <span class="o">*</span> <span class="n">K</span>               <span class="c1"># immutable binding (Bind)</span>
 <span class="n">half</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span><span class="p">[</span><span class="n">T</span><span class="o">.</span><span class="n">int32</span><span class="p">]</span> <span class="o">=</span> <span class="n">N</span> <span class="o">//</span> <span class="mi">2</span>  <span class="c1"># ... with an explicit type</span>
 </pre></div>
 </div>
@@ -725,8 +728,8 @@ common-subexpression temporary) rather than a reference to <code class="docutils
 <div class="admonition note">
 <p class="admonition-title">Note</p>
 <p><strong>Why have an immutable binding at all?</strong> Because the value cannot change, the
-arithmetic analyzer binds the var to it (<code class="docutils literal notranslate"><span class="pre">analyzer.Bind(var,</span> <span class="pre">value)</span></code> when it
-simplifies a <code class="docutils literal notranslate"><span class="pre">LetStmt</span></code>), so facts proven about the value — constant bounds, the
+arithmetic analyzer binds the var to it (<code class="docutils literal notranslate"><span class="pre">arith::Analyzer::Bind</span></code> internally when it
+simplifies a <code class="docutils literal notranslate"><span class="pre">Bind</span></code>), so facts proven about the value — constant bounds, the
 modular set (divisibility / alignment), ranges — <strong>propagate through every use</strong>.
 That feeds index simplification, bounds-check elimination, and
 alignment/vectorization decisions. A <em>mutable</em> scalar is a memory load
@@ -795,7 +798,7 @@ or hand you a pointer — they emit no runtime op of their own. The common ones:
 </thead>
 <tbody>
 <tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">B.data</span></code></p></td>
-<td><p>the raw data pointer (a <code class="docutils literal notranslate"><span class="pre">Var</span></code>); prints as <code class="docutils literal notranslate"><span class="pre">B_ptr</span></code></p></td>
+<td><p>the typed base-pointer expression; prints as <code class="docutils literal notranslate"><span class="pre">B_ptr</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">B.ptr_to([i,</span> <span class="pre">j])</span></code></p></td>
 <td><p>a typed pointer to an element (<code class="docutils literal notranslate"><span class="pre">address_of</span></code>); prints as <code class="docutils literal notranslate"><span class="pre">&amp;B_ptr[…]</span></code></p></td>
@@ -837,9 +840,9 @@ transfer (see also <a class="reference internal" href="data_types.html"><span cl
 </div>
 <p><strong>Reshape / reinterpret — ``view`` / ``permute``.</strong> Both are pure metadata; the
 data pointer is unchanged, only the index arithmetic differs. <code class="docutils literal notranslate"><span class="pre">A.view(64,</span> <span class="pre">4)</span></code>
-sees the 256-element buffer as <code class="docutils literal notranslate"><span class="pre">64×4</span></code>; <code class="docutils literal notranslate"><span class="pre">A.permute(1,</span> <span class="pre">0)</span></code> transposes the axes:</p>
+sees the 256-element buffer as <code class="docutils literal notranslate"><span class="pre">64×4</span></code>; <code class="docutils literal notranslate"><span class="pre">A2.permute(1,</span> <span class="pre">0)</span></code> transposes those axes:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">A2</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">view</span><span class="p">(</span><span class="mi">64</span><span class="p">,</span> <span class="mi">4</span><span class="p">);</span>     <span class="n">y</span> <span class="o">=</span> <span class="n">A2</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">A2</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>   <span class="c1"># A2[tx, j] -&gt; A_ptr[tx*4 + j]</span>
-<span class="n">At</span> <span class="o">=</span> <span class="n">A</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>   <span class="n">z</span> <span class="o">=</span> <span class="n">At</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>                <span class="c1"># At[i, j]  -&gt; A_ptr[j*4 + i]</span>
+<span class="n">At</span> <span class="o">=</span> <span class="n">A2</span><span class="o">.</span><span class="n">permute</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">);</span>  <span class="n">z</span> <span class="o">=</span> <span class="n">At</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>                <span class="c1"># At[i, j]  -&gt; A_ptr[j*4 + i]</span>
 </pre></div>
 </div>
 <div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">A2_ptr</span><span class="p">[</span><span class="n">tx</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">4</span><span class="p">]</span><span class="w">  </span><span class="cm">/* +3 */</span><span class="w">                 </span><span class="c1">// view: row-major 64x4 index</span>
@@ -847,12 +850,18 @@ sees the 256-element buffer as <code class="docutils literal notranslate"><span 
 </pre></div>
 </div>
 <p><strong>Registers — ``local``.</strong> Decomposes a thread-axis <code class="docutils literal notranslate"><span class="pre">local</span></code> layout into the
-calling thread’s flat register bundle (used pervasively by the tile primitives):</p>
+calling thread’s register bundle (used pervasively by the tile primitives).
+Without an explicit <code class="docutils literal notranslate"><span class="pre">layout=</span></code>, <code class="docutils literal notranslate"><span class="pre">R.local()</span></code> infers a flat view over the raw
+physical storage span (including layout gaps and offsets), while
+<code class="docutils literal notranslate"><span class="pre">R.local(d0,</span> <span class="pre">d1,</span> <span class="pre">...)</span></code> reshapes the same span in row-major order. The requested
+dimensions must have the same product as that span. Pass <code class="docutils literal notranslate"><span class="pre">layout=</span></code> only when a
+different storage-coordinate mapping is required:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">R</span>  <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_buffer</span><span class="p">((</span><span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;local&quot;</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span> <span class="o">@</span> <span class="n">laneid</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]))</span>
-<span class="n">Rl</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">local</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>          <span class="c1"># this lane&#39;s 8 registers</span>
+<span class="n">R_flat</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">local</span><span class="p">()</span>       <span class="c1"># this lane&#39;s 8 registers, physical order</span>
+<span class="n">R_2d</span> <span class="o">=</span> <span class="n">R</span><span class="o">.</span><span class="n">local</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span>     <span class="c1"># the same registers, row-major 2x4 reshape</span>
 </pre></div>
 </div>
-<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">Rl_ptr</span><span class="p">[</span><span class="mi">8</span><span class="p">];</span><span class="w">             </span><span class="c1">// the lane&#39;s private registers</span>
+<div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="k">alignas</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">R_flat_ptr</span><span class="p">[</span><span class="mi">8</span><span class="p">];</span><span class="w">         </span><span class="c1">// the lane&#39;s private registers</span>
 </pre></div>
 </div>
 </section>
