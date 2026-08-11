@@ -414,7 +414,7 @@
 <div class="note admonition">
 <p class="admonition-title">Running the examples</p>
 <p>The examples in this chapter require a Blackwell GPU (<code class="docutils literal notranslate"><span class="pre">sm_100a</span></code>, such as a B200), the TIRx compiler, and a CUDA-enabled build of PyTorch. TIRx is available as the <code class="docutils literal notranslate"><span class="pre">tvm.tirx</span></code> module in the Apache TVM wheel. Compiling CUDA through NVRTC also requires <code class="docutils literal notranslate"><span class="pre">cuda-bindings</span></code>, so install both packages:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>apache-tvm<span class="w"> </span>cuda-bindings
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>apache-tvm<span class="o">==</span><span class="m">0</span>.26.0<span class="w"> </span>cuda-bindings
 </pre></div>
 </div>
 <p>After installation, verify that TVM and TIRx import correctly:</p>

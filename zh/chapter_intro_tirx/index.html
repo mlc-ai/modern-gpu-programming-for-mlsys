@@ -350,7 +350,7 @@
 <div class="note admonition">
 <p class="admonition-title">运行环境</p>
 <p>本章示例需要 Blackwell GPU（<code class="docutils literal notranslate"><span class="pre">sm_100a</span></code>，例如 B200）、TIRx 编译器和支持 CUDA 的 PyTorch。TIRx 位于 Apache TVM wheel 的 <code class="docutils literal notranslate"><span class="pre">tvm.tirx</span></code> 模块中；通过 NVRTC 编译 CUDA 代码时还需要 <code class="docutils literal notranslate"><span class="pre">cuda-bindings</span></code>，可以一起安装：</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>apache-tvm<span class="w"> </span>cuda-bindings
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>apache-tvm<span class="o">==</span><span class="m">0</span>.26.0<span class="w"> </span>cuda-bindings
 </pre></div>
 </div>
 <p>安装后可以运行下面的命令，确认 TVM 和 TIRx 能够正常导入：</p>
