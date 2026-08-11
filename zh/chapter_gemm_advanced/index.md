@@ -108,7 +108,7 @@ PTX 将这种通过数字 ID 选择的 CTA barrier 称为 named barrier。这里
 
 第 7 步中 `BLK_N=128`，writeback warpgroup 可以一次将整个 TMEM tile 读入 registers，再发起一次 TMA store。执行顺序如下：
 
-1. 使用 `mma2ld.wait(phase)` 等待 MMA 完成，再执行 `T.ptx.tcgen05.fence.after_thread_sync()`，将后续的 `tcgen05.ld` 排在这次跨 thread 的完成通知之后。
+1. 使用 `mma2ld.wait(wb_ps.stage, wb_ps.phase)` 等待 MMA 完成，再执行 `T.ptx.tcgen05.fence.after_thread_sync()`，将后续的 `tcgen05.ld` 排在这次跨 thread 的完成通知之后。
 2. 将 TMEM 读入 registers。每个 thread 接收 128 个 fp32 values；warpgroup 先执行 `Tx.copy_async(reg_wg, tmem[:, :BLK_N])`，再使用 `T.ptx.tcgen05.wait.ld()` 等待 load 完成。
 3. 所有 128 个 writeback threads 执行 `ld2mma.arrive(0)`，通知 MMA 当前 TMEM 已经可以供下一个 tile 使用。没有指定 remote rank 时，`arrive()` 会更新当前 CTA 的 local barrier，每个 writeback thread 都报告一次 arrival。第 8、9 步则使用 `remote_view(0)`，让两个 CTA 都更新 CTA 0 的 barrier。
 4. 在 registers 中将 fp32 转换为 fp16。

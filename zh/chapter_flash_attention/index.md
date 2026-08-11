@@ -389,13 +389,12 @@ for chunk_idx in T.unroll(BLK_N // SOFTMAX_LD_CHUNK):
 下面的代码省略了 profiler 和可选的 WG0/WG1 顺序 barrier，保留了这三步的主要计算。先求新的参考值，并根据阈值决定是否需要重缩放旧的 `O`：
 
 ```python
-with Tx.thread():
-    if is_first:
-        Tx.max(tile_max, s_chunk_buf)
-    else:
-        row_max_old = row_max[0]
-        tile_max[0] = row_max_old
-        Tx.max(tile_max, s_chunk_buf, accum=True)
+if is_first:
+    Tx.max(tile_max, s_chunk_buf)
+else:
+    row_max_old = row_max[0]
+    tile_max[0] = row_max_old
+    Tx.max(tile_max, s_chunk_buf, accum=True)
 
 row_max_new = tile_max[0]
 row_max_safe = T.if_then_else(tile_max[0] == -float("inf"), 0.0, tile_max[0])
@@ -464,12 +463,11 @@ p_ready_2.arrive(wg_id)
 ```python
 softmax_corr.empty.wait(wg_id, phase_q)
 phase_q ^= 1
-with Tx.thread():
-    if is_first:
-        Tx.sum(row_sum, s_chunk_buf)
-    else:
-        row_sum[0] = row_sum[0] * acc_scale
-        Tx.sum(row_sum, s_chunk_buf, accum=True)
+if is_first:
+    Tx.sum(row_sum, s_chunk_buf)
+else:
+    row_sum[0] = row_sum[0] * acc_scale
+    Tx.sum(row_sum, s_chunk_buf, accum=True)
 ```
 
 第一段 PV MMA 需要同时读取 `P[:, 0:K_SPLIT]` 和更新 `O`，所以必须等待两件事：softmax 已写完这部分 `P`，WG2 也已确认 `O` 可以初始化或继续累加。`p_o_rescale` 汇合这两个完成信号。其余 columns 使用单独的 `p_ready_2`，这样第一段 MMA 不必等待剩余的 TMEM stores。

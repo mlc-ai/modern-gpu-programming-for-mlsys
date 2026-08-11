@@ -390,13 +390,12 @@ Here `SOFTMAX_LD_CHUNK=32`. The TMEM load is chunked, not the softmax computatio
 The following excerpt omits profiling and the optional WG0/WG1 ordering barrier while retaining the main computation. It first selects the new reference and uses the threshold to decide whether the old `O` needs rescaling:
 
 ```python
-with Tx.thread():
-    if is_first:
-        Tx.max(tile_max, s_chunk_buf)
-    else:
-        row_max_old = row_max[0]
-        tile_max[0] = row_max_old
-        Tx.max(tile_max, s_chunk_buf, accum=True)
+if is_first:
+    Tx.max(tile_max, s_chunk_buf)
+else:
+    row_max_old = row_max[0]
+    tile_max[0] = row_max_old
+    Tx.max(tile_max, s_chunk_buf, accum=True)
 
 row_max_new = tile_max[0]
 row_max_safe = T.if_then_else(tile_max[0] == -float("inf"), 0.0, tile_max[0])
@@ -465,12 +464,11 @@ The fp32 `P` values remain in `s_chunk_buf`. After WG2 consumes `acc_scale` and 
 ```python
 softmax_corr.empty.wait(wg_id, phase_q)
 phase_q ^= 1
-with Tx.thread():
-    if is_first:
-        Tx.sum(row_sum, s_chunk_buf)
-    else:
-        row_sum[0] = row_sum[0] * acc_scale
-        Tx.sum(row_sum, s_chunk_buf, accum=True)
+if is_first:
+    Tx.sum(row_sum, s_chunk_buf)
+else:
+    row_sum[0] = row_sum[0] * acc_scale
+    Tx.sum(row_sum, s_chunk_buf, accum=True)
 ```
 
 The first PV MMA reads `P[:, 0:K_SPLIT]` and updates `O`, so it must wait for two independent conditions: softmax has stored that portion of `P`, and WG2 has made `O` ready for initialization or accumulation. `p_o_rescale` joins those two completion signals. The remaining columns use a separate `p_ready_2` handoff, so the first MMA does not need to wait for the final TMEM stores.
