@@ -20,7 +20,7 @@ These kernels target Blackwell (`sm_100a`). If Python imports a stale TVM checko
 
 1. Reproduce the failure at the smallest shape that still fails. If the failure is an illegal memory access, restart Python before the next run.
 2. If compilation fails, check the installed API, target, `dispatch=`, and buffer scopes before reading the runtime synchronization code.
-3. Save `inspect_source("cuda")` output. Search it for role guards, `mbarrier_init`, `tcgen05`, `cp.async.bulk.tensor`, and `cta_sync()` before reading the Python again.
+3. Save `inspect_source("cuda")` output. Search it for role guards, `mbarrier_init`, `tcgen05`, `cp.async.bulk.tensor`, and `__syncthreads()` before reading the Python again.
 4. Write the roles / storage / handoff / lifetime table for the kernel path that failed.
 5. Check the generated CUDA against that table: barrier inits before role branches, expected TMA producer, MMA issuer(s), writeback group(s), and no CTA-wide collective inside a warpgroup-only branch.
 6. Classify the run as a deadlock, crash, wrong result, or correct-but-slow run, then use the matching section below.
@@ -92,7 +92,7 @@ Scan for these strings before reading the full kernel:
 | `mbarrier_init` | Barrier initialization exists and appears before role branches |
 | `tcgen05` | The Tensor Core path was generated |
 | `cp.async.bulk.tensor` | The copy lowered to TMA |
-| `cta_sync();` | CTA-wide barrier; it must not sit inside a `wg_id` branch |
+| `__syncthreads();` | CTA-wide barrier generated from `T.cuda.cta_sync()`; it must not sit inside a `wg_id` branch |
 
 ## Step 7 Reference Skeleton
 
@@ -110,7 +110,7 @@ if (threadIdx.x < 1) {
 // (2) TMEM alloc: WG0 warp 0, all lanes of the issuing warp
 if (wg_id == 0 && warp_id == 0) tcgen05_alloc(..., 512);
 
-// (3) Fences + cta_sync, then phase init: producer=1, consumer=0
+// (3) Fences + __syncthreads, then phase init: producer=1, consumer=0
 
 // (4) Warp-specialized loop
 if (wg_id == 1 && warp_id == 3 && elect_sync) { /* TMA  */ while(valid){ ... next_tile(); } }
@@ -118,7 +118,7 @@ if (wg_id == 1 && warp_id == 0 && elect_sync) { /* MMA  */ while(valid){ ... nex
 if (wg_id == 0)                                { /* WB   */ while(valid){ ... next_tile(); } }
 
 // (5) Cleanup: issuing warp, no lane guard
-cta_sync();
+__syncthreads();
 if (warp_id == 0) { tcgen05_relinquish_alloc_permit(); tcgen05_dealloc(..., 512); }
 ```
 
@@ -193,7 +193,7 @@ If the output is correct but performance is far below expectation, use the same 
 
 | Clue | Likely cause | First check |
 |---|---|---|
-| Generated CUDA has no `cp.async.bulk.tensor` | Copy did not lower to TMA | Check `dispatch="tma"`, target capability, and operand layout |
+| Generated CUDA has no `cp.async.bulk.tensor` | Copy did not lower to TMA | Check `dispatch="tma_auto"`, target capability, and operand layout |
 | Generated CUDA has no `tcgen05` path | MMA did not lower to Blackwell Tensor Core instructions | Check `dispatch="tcgen05"`, target capability, and operand layouts |
 | TMA and MMA do not overlap | Pipeline too shallow or phases serialize producer/consumer | Inspect the order of wait/arrive/advance in the generated CUDA |
 | Good small-shape correctness but poor large-shape speed | Register spill, occupancy, or staging-buffer pressure | Check the compiler resource report; reduce tile size, chunk writeback, or lower pipeline depth |

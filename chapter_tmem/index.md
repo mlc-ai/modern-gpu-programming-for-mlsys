@@ -71,11 +71,11 @@ When the storage is no longer needed, the kernel performs two operations:
 
 ```python
 if warp_id == 0:
-    T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=256, cta_group=1)
     T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
+    T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=256, cta_group=1)
 ```
 
-`tcgen05.dealloc` releases the allocated columns. Every TMEM allocation must be explicitly released before the kernel exits. `tcgen05.relinquish_alloc_permit` declares that the CTA will make no further TMEM allocations; after it executes, the CTA cannot call `tcgen05.alloc` again. Before cleanup begins, the kernel must ensure that asynchronous MMA, load, store, and other operations touching TMEM have completed.
+`tcgen05.relinquish_alloc_permit` first declares that the CTA will make no further TMEM allocations; after it executes, the CTA cannot call `tcgen05.alloc` again. `tcgen05.dealloc` then releases the allocated columns. Every TMEM allocation must be explicitly released before the kernel exits. Before cleanup begins, the kernel must ensure that asynchronous MMA, load, store, and other operations touching TMEM have completed.
 
 ### Allocation with `cta_group::2`
 

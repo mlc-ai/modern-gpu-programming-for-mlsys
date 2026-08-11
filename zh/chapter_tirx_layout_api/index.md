@@ -6,7 +6,7 @@
 
 - `TileLayout` 使用 `S[...]`、`R[...]` 和 offset 描述逻辑 tile 在命名轴上的放置方式。
 - `TileLayout.apply()` 计算逻辑元素的基础物理坐标；replica 信息保存在 `layout.replica` 中，由使用该 layout 的 tile 操作处理。
-- `SwizzleLayout` 描述 shared memory 中基于 XOR 的地址重排；需要同时表达普通 tile layout 时，可以使用 `ComposeLayout` 组合两者。
+- `ComposeLayout` 将仿射 tile mapping 与 shared-memory swizzle 使用的 XOR 地址重排组合起来。
 :::
 
 {ref}`chap_data_layout` 介绍了 tile shape、带命名轴的 strides、replication dimension 和固定 offset。本章接着说明如何在 TIRx 程序中构造、使用和查询这些 layout。
@@ -34,7 +34,6 @@ Buffer 由此记录自己的物理布局。后续 tile 操作可以直接读取�
 ```python
 from tvm.tirx.layout import (
     TileLayout,
-    SwizzleLayout,
     ComposeLayout,
     S,
     R,
@@ -372,23 +371,23 @@ wg_local_layout(cols, rows=128)
 
 这些构造函数返回的仍是 `TileLayout`，使用的也是相同的 iter 和命名轴模型；构造函数只是替 kernel 生成了常见的硬件映射。
 
-## SwizzleLayout 与 ComposeLayout
+## ComposeLayout
 
 `TileLayout` 是仿射布局，可以描述命名轴上的 strides、replication 和 offsets，适合表示 register fragments、TMEM tiles 和 scale-factor layouts。
 
-Shared memory swizzle 不属于仿射变换。它通过 XOR 重排线性 shared-memory address，以改变元素落到各个 banks 的方式。因此，TIRx 使用单独的对象表示它：
+Shared memory swizzle 不属于仿射变换。它通过 XOR 重排线性 shared-memory address，以改变元素落到各个 banks 的方式。TIRx 将这个变换与仿射 mapping 一起放进 `ComposeLayout`：
 
 ```python
-SwizzleLayout(...)
+ComposeLayout(
+    per_element=M,
+    swizzle_len=B,
+    atom_len=S,
+    tile_layout=tile,
+    swizzle_inner=True,
+)
 ```
 
-如果只需要描述 swizzle，可以直接把 `SwizzleLayout` 绑定到 buffer。需要在仿射 tile mapping 之上叠加 swizzle 时，再使用 `ComposeLayout`：
-
-```python
-ComposeLayout(swizzle, tile)
-```
-
-这里的 `tile` 必须只产生默认 `m` 轴上的线性地址。计算时，tile layout 先得到这个地址，swizzle 再对它进行重排。这样可以让仿射 Shape-Stride 映射与非仿射 XOR 变换各自保持清晰。
+这里的 `tile` 必须只产生默认 `m` 轴上的线性地址。计算时，tile layout 先得到这个地址，随后 swizzle 参数再进行重排。`swizzle_inner=True` 使用下文介绍的常规方向；设为 `False` 时会镜像 XOR 方向。如果只需要 bare swizzle，可以将这些参数与覆盖一个 swizzle period 的 trivial identity `TileLayout` 组合。
 
 ## 为什么需要 Swizzle
 
@@ -412,7 +411,7 @@ Swizzle 让 address 的低位同时依赖较高的 row bits，使原本落到同
 
 ## Swizzle 变换
 
-`SwizzleLayout` 由三个整数参数控制：
+`ComposeLayout` 携带三个整数 swizzle 参数：
 
 ```text
 per_element = M
@@ -457,7 +456,13 @@ M = log2(8) = 3
 128-byte swizzle 使用：
 
 ```python
-SwizzleLayout(per_element=3, swizzle_len=3, atom_len=3)
+tile = TileLayout(S[(8, 64) : (64@m, 1@m)])
+ComposeLayout(
+    per_element=3,
+    swizzle_len=3,
+    atom_len=3,
+    tile_layout=tile,
+)
 ```
 
 这里的 128 bytes 指 swizzle atom 中每一行的宽度；完整 atom 包含 8 行。上述参数既能保持每个 16-byte vector group 连续，又能重排更高的 address bits，打散 column access 的 bank pattern。
@@ -468,9 +473,12 @@ SwizzleLayout(per_element=3, swizzle_len=3, atom_len=3)
 
 ```python
 tile = TileLayout(S[(8, 64) : (64@m, 1@m)])
-swizzle = SwizzleLayout(per_element=3, swizzle_len=3, atom_len=3)
-
-layout = ComposeLayout(swizzle, tile)
+layout = ComposeLayout(
+    per_element=3,
+    swizzle_len=3,
+    atom_len=3,
+    tile_layout=tile,
+)
 ```
 
 最终绑定到 shared-memory buffer 上的是组合后的 `layout`。下面用这个 layout 检查一次实际地址映射。
@@ -531,4 +539,4 @@ bank = floor(64 * i / 2) mod 32 = 0
 
 上面的推导只说明这种 float16 按列访问会被分散到 8 个 banks。其他访问是否无冲突，还取决于 data type、每次访问的宽度以及硬件指令采用的 access shape。在本章开头的交互图中切换 data type 和 swizzle mode，可以直接比较不同组合的地址映射。
 
-对于构造函数已经覆盖的 `tcgen05` 布局，可以直接使用 `tmem_datapath_layout`、`tcgen05_atom_layout` 等 helper。其他仿射布局仍然使用 `S[...]`、`R[...]` 和 offset 表示。查询 `TileLayout` 时，`apply()` 只计算逻辑元素的基础物理坐标，不会枚举 replica。Shared-memory swizzle 由 `SwizzleLayout` 表示；需要将它叠加到只产生线性 `m` 地址的 tile layout 上时，再使用 `ComposeLayout(swizzle, tile)`。
+对于构造函数已经覆盖的 `tcgen05` 布局，可以直接使用 `tmem_datapath_layout`、`tcgen05_atom_layout` 等 helper。其他仿射布局仍然使用 `S[...]`、`R[...]` 和 offset 表示。查询 `TileLayout` 时，`apply()` 只计算逻辑元素的基础物理坐标，不会枚举 replica。Shared-memory swizzle 使用 `ComposeLayout(per_element, swizzle_len, atom_len, tile_layout)`，其中 tile layout 只产生线性 `m` 地址。

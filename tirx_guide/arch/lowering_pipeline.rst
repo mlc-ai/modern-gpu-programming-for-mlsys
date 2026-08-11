@@ -74,7 +74,7 @@ The ``tirx_pipeline`` module pass applies this exact sequence (a few are gated b
      - rewrites ``bfloat16`` compute to a legal (f32-up-cast) form
    * - 7
      - ``NarrowDataType(32)``
-     - narrows index/loop ``PrimExpr`` dtypes to 32-bit where provably safe
+     - narrows index/loop scalar ``Expr`` types to 32-bit where provably safe
    * - 8
      - ``VectorizeLoop``
      - turns ``T.vectorized`` loops into vector ops (skipped if
@@ -103,12 +103,16 @@ The ``tirx_pipeline`` module pass applies this exact sequence (a few are gated b
      - splits each kernel into a **host** function and a **device** function at the
        ``launch_thread`` boundary
    * - 16
+     - ``LowerIket``
+     - removes frontend-only NVIDIA IKET annotations for normal builds, or emits
+       IKET metadata and placeholders when the IRModule is explicitly IKET-enabled
+   * - 17
      - ``MakePackedAPI``
      - rewrites the host function to the packed-func ABI (the launcher TVM calls)
-   * - 17
+   * - 18
      - ``FP8StorageLegalize``
      - legalizes ``float8`` storage (packing into supported container types)
-   * - 18
+   * - 19
      - ``BF16StorageLegalize``
      - legalizes ``bfloat16`` storage
 
@@ -133,7 +137,7 @@ Inside LowerTIRx
   call with the implementation emitted by that variant.
 - **``LowerTIRxCleanup``** runs the ``LayoutApplier``: it resolves every
   ``TileLayout``-typed buffer access into concrete physical address arithmetic
-  (``addr = data + elem_offset + layout.apply(coord)``), flattens the buffers, and
+  (``addr = data + elem_offset + layout.apply(*coord, shape=shape)``), flattens the buffers, and
   lowers the execution-scope ids (``T.cta_id`` / ``T.thread_id`` / … →
   ``blockIdx`` / ``threadIdx`` via ``launch_thread``).
 
@@ -165,7 +169,7 @@ Take a one-line scale kernel:
         tx: T.let = threadIdx_x
         B_1[threadIdx_x] = A_1[threadIdx_x] * T.float32(2.0)
 
-**After ``SplitHostDevice`` + ``MakePackedAPI``** the one function has become two —
+**After ``SplitHostDevice`` + ``LowerIket`` + ``MakePackedAPI``** the one function has become two —
 a host launcher and a device kernel:
 
 .. code-block:: python

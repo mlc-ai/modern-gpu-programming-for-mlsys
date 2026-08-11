@@ -6,7 +6,7 @@
 
 - `TileLayout` uses `S[...]`, `R[...]`, and an offset to describe how a logical tile is placed over named axes.
 - `TileLayout.apply()` computes the base physical coordinate of a logical element. Replica information remains in `layout.replica` and is handled by the tile operation that uses the layout.
-- `SwizzleLayout` describes XOR-based address permutations in shared memory. Use `ComposeLayout` when a swizzle needs to be combined with an ordinary tile layout.
+- `ComposeLayout` combines an affine tile mapping with the XOR-based address permutation used for shared-memory swizzles.
 :::
 
 {ref}`chap_data_layout` introduced tile shapes, strides over named axes, replication dimensions, and fixed offsets. This chapter explains how to construct, attach, and inspect those layouts in TIRx programs.
@@ -34,7 +34,6 @@ The layout objects and named axes used in this chapter live in `tvm.tirx.layout`
 ```python
 from tvm.tirx.layout import (
     TileLayout,
-    SwizzleLayout,
     ComposeLayout,
     S,
     R,
@@ -372,23 +371,23 @@ This returns a warpgroup-local register tile. It maps logical rows to `tid_in_wg
 
 All three constructors return ordinary `TileLayout` objects built from the same iters and named axes. They are convenience wrappers for hardware mappings that recur across kernels.
 
-## SwizzleLayout and ComposeLayout
+## ComposeLayout
 
 `TileLayout` is affine. It can express strides, replication, and offsets over named axes, making it suitable for register fragments, TMEM tiles, and scale-factor layouts.
 
-A shared-memory swizzle is not affine. It uses XOR to permute a linear shared-memory address and change which banks receive the elements. TIRx therefore represents it with a separate object:
+A shared-memory swizzle is not affine. It uses XOR to permute a linear shared-memory address and change which banks receive the elements. TIRx folds the transform and the affine mapping into `ComposeLayout`:
 
 ```python
-SwizzleLayout(...)
+ComposeLayout(
+    per_element=M,
+    swizzle_len=B,
+    atom_len=S,
+    tile_layout=tile,
+    swizzle_inner=True,
+)
 ```
 
-When a buffer needs only the swizzle, `SwizzleLayout` can be attached directly. When the swizzle must be applied on top of an affine tile mapping, use `ComposeLayout`:
-
-```python
-ComposeLayout(swizzle, tile)
-```
-
-Here, `tile` must produce a linear address on the default `m` axis only. During evaluation, the tile layout produces that address first, and the swizzle then permutes it. This keeps the affine shape-and-stride mapping separate from the non-affine XOR transform.
+Here, `tile` must produce a linear address on the default `m` axis only. During evaluation, the tile layout produces that address first, and the swizzle parameters then permute it. `swizzle_inner=True` selects the usual direction described below; `False` mirrors the XOR direction. A bare swizzle can be represented by composing the parameters with a trivial identity `TileLayout` that covers one swizzle period.
 
 ## Why Swizzle
 
@@ -412,7 +411,7 @@ A swizzle makes low address bits depend on higher row bits, scattering a column 
 
 ## The Swizzle Transform
 
-`SwizzleLayout` is controlled by three integer parameters:
+`ComposeLayout` carries three integer swizzle parameters:
 
 ```text
 per_element = M
@@ -457,7 +456,13 @@ M = log2(8) = 3
 A 128-byte swizzle uses:
 
 ```python
-SwizzleLayout(per_element=3, swizzle_len=3, atom_len=3)
+tile = TileLayout(S[(8, 64) : (64@m, 1@m)])
+ComposeLayout(
+    per_element=3,
+    swizzle_len=3,
+    atom_len=3,
+    tile_layout=tile,
+)
 ```
 
 Here, 128 bytes is the width of one row in the swizzle atom; the complete atom contains eight rows. These parameters preserve each contiguous 16-byte vector group while permuting higher address bits to spread column accesses across banks.
@@ -468,9 +473,12 @@ A swizzled shared-memory allocation can be written as:
 
 ```python
 tile = TileLayout(S[(8, 64) : (64@m, 1@m)])
-swizzle = SwizzleLayout(per_element=3, swizzle_len=3, atom_len=3)
-
-layout = ComposeLayout(swizzle, tile)
+layout = ComposeLayout(
+    per_element=3,
+    swizzle_len=3,
+    atom_len=3,
+    tile_layout=tile,
+)
 ```
 
 The composed `layout` is attached to the shared-memory buffer. We can now use it to inspect a concrete address mapping.
@@ -531,4 +539,4 @@ All eight rows land in bank 0. The swizzle leaves the logical tile unchanged but
 
 This derivation only shows that this float16 column access is spread over eight banks. Whether another access is conflict-free still depends on the data type, access width, and hardware instruction's access shape. Change the data type and swizzle mode in the demo at the beginning of the chapter to compare their address mappings directly.
 
-For `tcgen05` layouts covered by existing constructors, use helpers such as `tmem_datapath_layout` and `tcgen05_atom_layout`. Other affine layouts still use `S[...]`, `R[...]`, and an offset. When inspecting a `TileLayout`, remember that `apply()` computes only the base physical coordinate and does not enumerate replicas. Shared-memory swizzles are represented by `SwizzleLayout`; use `ComposeLayout(swizzle, tile)` when applying one to a tile layout that produces a linear `m` address.
+For `tcgen05` layouts covered by existing constructors, use helpers such as `tmem_datapath_layout` and `tcgen05_atom_layout`. Other affine layouts still use `S[...]`, `R[...]`, and an offset. When inspecting a `TileLayout`, remember that `apply()` computes only the base physical coordinate and does not enumerate replicas. Shared-memory swizzles use `ComposeLayout(per_element, swizzle_len, atom_len, tile_layout)` over a tile layout that produces a linear `m` address.

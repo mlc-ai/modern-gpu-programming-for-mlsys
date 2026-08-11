@@ -54,7 +54,7 @@ The kernels in this book target Blackwell (`sm_100a`), so running them needs a B
 **1. Install the TIRx compiler.** It ships as the `tvm.tirx` module of the Apache TVM wheel:
 
 ```bash
-pip install apache-tvm==0.26.0
+pip install apache-tvm==0.26.0 cuda-bindings
 ```
 
 Verify:
@@ -66,9 +66,17 @@ python -c "import tvm, tvm.tirx; print(tvm.__version__)"
 **2. Install PyTorch** with a CUDA build matching your GPU (used for the example inputs and the
 reference checks) — see <https://pytorch.org>.
 
-**3. (Optional) the reference kernels.** The full GEMM and Flash Attention 4 kernels live in the
-companion `tirx-kernels` package (`pip install -e .` from a checkout); run them with, e.g.,
-`python -m tirx_kernels.test --kernel fp16_bf16_gemm`.
+**3. (Optional) install the reference kernels.** Use the companion revision tested with
+Apache TVM 0.26.0 (the companion's `main` branch may track newer TVM APIs):
+
+```bash
+git clone https://github.com/mlc-ai/tirx-kernels.git
+cd tirx-kernels
+git checkout 5be39749e7dfd2c4bdae9b4d396f8ec35af07126
+pip install -e .
+```
+
+Run it with, e.g., `python -m tirx_kernels.test --kernel fp16_bf16_gemm`.
 
 TIRx parses kernel source via Python source inspection, so examples should live in a file
 or notebook cell rather than inside `python -c`.

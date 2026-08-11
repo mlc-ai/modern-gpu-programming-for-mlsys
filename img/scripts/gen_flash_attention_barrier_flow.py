@@ -113,19 +113,19 @@ def gen_main_handoff(lang="en"):
     # ---- PV MMA gate (bottom): two separately issued inner-K slices. ----
     ax.text(0.5, 4.63, tr("PV MMA gates", "PV MMA 的两段计算"), fontsize=11.5, weight="bold", color="#1f2937")
 
-    # First sub-MMA consumes the first 96 positions and may initialize or accumulate O.
-    box(ax, 0.6, 3.72, 2.35, 0.62, tr("V rows 0:96\nin SMEM", "SMEM 中 V 的行 0:96"), COLORS["smem"], fs=8.6)
-    box(ax, 0.6, 2.76, 3.25, 0.72, tr("P cols 0:96 in TMEM\n+ O slot ready (WG2)", "TMEM 中 P 的列 0:96\n+ O slot 已准备好（WG2）"), COLORS["tmem"], fs=8.2)
-    box(ax, 6.10, 3.03, 3.20, 0.98, tr("first PV MMA\ninner-K 0:96\ninitialize or accumulate O", "第一段 PV MMA\ninner-K 0:96\n初始化或累加 O"), COLORS["mma"], fs=8.8)
+    # First sub-MMA consumes the regime-tuned prefix and may initialize or accumulate O.
+    box(ax, 0.6, 3.72, 2.35, 0.62, tr("V rows 0:K_SPLIT\nin SMEM", "SMEM 中 V 的行 0:K_SPLIT"), COLORS["smem"], fs=8.6)
+    box(ax, 0.6, 2.76, 3.25, 0.72, tr("P cols 0:K_SPLIT in TMEM\n+ O slot ready (WG2)", "TMEM 中 P 的列 0:K_SPLIT\n+ O slot 已准备好（WG2）"), COLORS["tmem"], fs=8.2)
+    box(ax, 6.10, 3.03, 3.20, 0.98, tr("first PV MMA\ninner-K 0:K_SPLIT\ninitialize or accumulate O", "第一段 PV MMA\ninner-K 0:K_SPLIT\n初始化或累加 O"), COLORS["mma"], fs=8.8)
     arrow(ax, 2.95, 4.03, 6.10, 3.73, rad=-0.04)
     arrow(ax, 3.85, 3.12, 6.10, 3.36, rad=0.02)
     label(ax, 4.55, 4.04, "kv_load.full", fs=8.3)
     label(ax, 5.00, 3.08, "p_o_rescale", fs=8.3)
 
-    # Second sub-MMA waits only for the final P chunk; V was already proved ready.
-    box(ax, 0.6, 1.55, 2.35, 0.62, tr("V rows 96:128\nin SMEM", "SMEM 中 V 的行 96:128"), COLORS["smem"], fs=8.6)
-    box(ax, 0.6, 0.58, 3.25, 0.72, tr("P cols 96:128\nin TMEM", "TMEM 中 P 的列 96:128"), COLORS["tmem"], fs=8.4)
-    box(ax, 6.10, 0.86, 3.20, 0.98, tr("second PV MMA\ninner-K 96:128\naccumulate into the same O", "第二段 PV MMA\ninner-K 96:128\n累加到同一块 O"), COLORS["mma"], fs=8.8)
+    # Second sub-MMA waits only for the remaining P chunks; V was already proved ready.
+    box(ax, 0.6, 1.55, 2.35, 0.62, tr("V rows K_SPLIT:128\nin SMEM", "SMEM 中 V 的行 K_SPLIT:128"), COLORS["smem"], fs=8.6)
+    box(ax, 0.6, 0.58, 3.25, 0.72, tr("P cols K_SPLIT:128\nin TMEM", "TMEM 中 P 的列 K_SPLIT:128"), COLORS["tmem"], fs=8.4)
+    box(ax, 6.10, 0.86, 3.20, 0.98, tr("second PV MMA\ninner-K K_SPLIT:128\naccumulate into the same O", "第二段 PV MMA\ninner-K K_SPLIT:128\n累加到同一块 O"), COLORS["mma"], fs=8.8)
     arrow(ax, 2.95, 1.86, 6.10, 1.56, rad=-0.04)
     arrow(ax, 3.85, 0.94, 6.10, 1.20, rad=0.02)
     arrow(ax, 7.70, 3.03, 7.70, 1.84, color="#374151")
@@ -151,6 +151,8 @@ def gen_main_handoff(lang="en"):
             ha="left", va="center", fontsize=8.7, color="#374151")
     ax.text(lx, 3.60, tr("The same kv_load.full pipeline tracks a K\nstage or a V stage, depending on the iteration.", "同一个 kv_load.full pipeline 会随迭代\n分别追踪 K stage 或 V stage。"),
             ha="left", va="center", fontsize=8.5, color="#6b7280", style="italic")
+    ax.text(lx, 2.70, tr("K_SPLIT = 64 (causal)\nor 96 (non-causal)", "K_SPLIT = 64（causal）\n或 96（non-causal）"),
+            ha="left", va="center", fontsize=8.5, color="#6b7280", style="italic")
 
     output = "../flash_attention_main_handoff_zh.svg" if zh else "../flash_attention_main_handoff.png"
     fig.savefig(output, dpi=170, bbox_inches="tight", facecolor="white")
@@ -164,21 +166,21 @@ def gen_softmax_correction(lang="en"):
     ax.set_ylim(0, 5.35)
     ax.axis("off")
 
-    ax.text(6.0, 5.0, tr("Softmax / WG2 Scale Slot Handshake", "Softmax 与 WG2 的 Scale Slot 交接"), ha="center", fontsize=17, weight="bold")
+    ax.text(6.0, 5.0, tr("Softmax / WG2 Scale Slot Handoff", "Softmax 与 WG2 的 Scale Slot 交接"), ha="center", fontsize=17, weight="bold")
     ax.text(
         6.0,
         4.66,
-        tr("softmax_corr.full and softmax_corr.empty protect one SMEM slot, not the P/O compute path", "softmax_corr.full / empty 保护一个 SMEM slot，不表示 P/O 计算已经完成"),
+        tr("a named barrier signals ready; softmax_corr.empty returns the reusable SMEM slot", "named barrier 通知就绪；softmax_corr.empty 归还可复用 SMEM slot"),
         ha="center",
         fontsize=10,
         color="#4b5563",
     )
 
-    # Main full/empty lifecycle.
+    # Main named-ready / empty-return lifecycle.
     box(ax, 0.55, 3.35, 1.75, 0.72, tr("slot empty\nsoftmax may write", "slot 为空\nsoftmax 可以写入"), COLORS["bar"], fs=8.8)
     box(ax, 2.8, 3.35, 1.95, 0.72, tr("softmax writes\nacc_scale / row_sum", "softmax 写入\nacc_scale / row_sum"), COLORS["softmax"], fs=8.8)
-    box(ax, 5.25, 3.35, 1.7, 0.72, "softmax_corr\n.full", COLORS["bar"], fs=8.4)
-    box(ax, 7.45, 3.35, 1.9, 0.72, tr("WG2 reads\nthat SMEM slot", "WG2 读取\n该 SMEM slot"), COLORS["wg2"], fs=8.8)
+    box(ax, 5.25, 3.35, 1.7, 0.72, tr("named barrier\narrive", "named barrier\narrive"), COLORS["bar"], fs=8.4)
+    box(ax, 7.45, 3.35, 1.9, 0.72, tr("bar.sync; WG2 reads\nthat SMEM slot", "bar.sync；WG2 读取\n该 SMEM slot"), COLORS["wg2"], fs=8.5)
     box(ax, 9.85, 3.35, 1.7, 0.72, "softmax_corr\n.empty", COLORS["bar"], fs=8.4)
 
     arrow(ax, 2.3, 3.71, 2.8, 3.71)
@@ -190,17 +192,17 @@ def gen_softmax_correction(lang="en"):
 
     ax.text(0.7, 4.25, "producer", fontsize=9, weight="bold", color="#92400e")
     ax.text(7.95, 4.25, "consumer", fontsize=9, weight="bold", color="#166534")
-    ax.text(0.6, 1.95, tr("What the full/empty pair proves", "这对 full/empty barriers 能证明什么"), fontsize=11, weight="bold")
+    ax.text(0.6, 1.95, tr("What the two directions prove", "两个交接方向能证明什么"), fontsize=11, weight="bold")
     ax.text(
         0.6,
         1.58,
         tr(
-            "full: WG2 may read the scale or final row_sum from SMEM\n"
+            "named ready: WG2 may read scale / non-causal row_sum\n"
             "empty: softmax may reuse that same SMEM slot\n"
-            "scope: one slot per Q stage, arrived by 128 warpgroup threads",
-            "full：WG2 可以从 SMEM 读取 scale 或最终 row_sum\n"
+            "scope: 256-thread group, or paired 64-thread warps",
+            "named ready：WG2 可读取 scale / non-causal row_sum\n"
             "empty：softmax 可以复用同一个 SMEM slot\n"
-            "scope：每个 Q stage 一个 slot，由 warpgroup 的 128 个 threads 报告 arrival",
+            "scope：256-thread group，或配对的 64-thread warps",
         ),
         fontsize=9.2,
         color="#374151",

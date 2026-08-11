@@ -63,10 +63,10 @@
     ["from tvm.script import tirx as T", null],
     ["from tvm.script.tirx import tile as Tx", null],
     ["from tvm.tirx.layout import TileLayout, S, TLane, TCol", null],
-    ["from tvm.tirx.cuda.operator.tile_primitive.tma_utils import tma_shared_layout, SwizzleMode", null],
+    ["from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode", null],
     ["", null],
-    ["A_layout = tma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))  ## swizzled SMEM layout", "layout"],
-    ["B_layout = tma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))", "layout"],
+    ["A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))  ## swizzled SMEM layout", "layout"],
+    ["B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))", "layout"],
     ["", null],
     ["@T.prim_func", null],
     ["def kernel(A, B, D):", null],
@@ -77,6 +77,7 @@
     ["    Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout)   ## A in SMEM", "layout"],
     ["    Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout)   ## B in SMEM", "layout"],
     ["    tmem = T.decl_buffer((128, 512), \"float32\", scope=\"tmem\",     ## accumulator 放在 TMEM", "layout"],
+    ["                         allocated_addr=tmem_addr[0],", "layout"],
     ["                         layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))", "layout"],
     ["", null],
     ["    Tx.cta.copy(Asmem[:, :], A[m_st:m_st+BLK_M, :])   ## 128 个 threads 协作执行", "scope"],
@@ -98,7 +99,7 @@
   ];
   var EXPL = {
     scope:    "<b>Scope 决定哪些 threads 执行操作。</b><code>Tx.cta.copy</code> 由 CTA 的 128 个 threads 协作完成；<code>Tx.gemm_async</code> 只由 <code>elect_sync</code> 选出的一个 thread 发出；<code>Tx.wg.copy_async</code> 则由整个 warpgroup 协作读取 accumulator。",
-    layout:   "<b>Layout 决定 tile 如何映射到物理位置。</b>A 和 B 在 SMEM 中使用 <code>tma_shared_layout</code> 生成的 swizzled layout；accumulator 位于 TMEM，并通过 <code>TLane</code> 和 <code>TCol</code> 描述二维坐标。",
+    layout:   "<b>Layout 决定 tile 如何映射到物理位置。</b>A 和 B 在 SMEM 中使用 <code>mma_shared_layout</code> 生成的 swizzled layout；accumulator 位于 TMEM，并通过 <code>TLane</code> 和 <code>TCol</code> 描述二维坐标。",
     dispatch: "<b>Dispatch 决定操作使用哪种硬件实现。</b><code>dispatch=\"tcgen05\"</code> 选择 Blackwell Tensor Core 路径，编译器会将这项 tile GEMM 展开成写入 TMEM 的 <code>tcgen05.mma</code> 指令。",
     none:     "点击 <b>Scope</b>、<b>Layout</b> 或 <b>Dispatch</b>，可以高亮它控制的代码行。"
   };

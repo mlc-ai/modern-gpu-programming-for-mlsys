@@ -142,26 +142,70 @@ function bracketBody(piece, prefix) {
   return piece.slice(open + 1, close);
 }
 
-function parseSwizzlePrefix(src) {
-  // Optional "Swizzle(per_element, swizzle_len, atom_len[, inner]) [∘|o|*] <layout>".
-  const m = src.match(/^Swizzle\s*\(([^)]*)\)\s*(?:∘|o|\.|\*)?\s*([\s\S]*)$/i);
-  if (!m) return { swizzle: null, rest: src };
-  const a = m[1].split(',').map((s) => s.trim()).filter((s) => s.length);
-  if (a.length < 3) throw new Error('Swizzle needs (per_element, swizzle_len, atom_len)');
-  const per_element = parseIntStrict(a[0]);
-  const swizzle_len = parseIntStrict(a[1]);
-  const atom_len = parseIntStrict(a[2]);
+function callBody(src, name) {
+  const s = src.trim();
+  const open = s.indexOf('(');
+  if (open < 0 || s.slice(0, open).trim().toLowerCase() !== name.toLowerCase()) return null;
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')') {
+      depth--;
+      if (depth < 0) throw new Error(`unmatched closing parenthesis in ${name}`);
+      if (depth === 0) { close = i; break; }
+    }
+  }
+  if (close < 0) throw new Error(`unmatched opening parenthesis in ${name}`);
+  if (s.slice(close + 1).trim() !== '') throw new Error(`unexpected text after ${name}(...)`);
+  return s.slice(open + 1, close);
+}
+
+function parseComposeLayout(src) {
+  // Exact 0.26 API form:
+  // ComposeLayout(per_element, swizzle_len, atom_len,
+  //               tile_layout=TileLayout(...), swizzle_inner=True)
+  const body = callBody(src, 'ComposeLayout');
+  if (body === null) return { swizzle: null, rest: src };
+  const args = splitTopLevel(body, ',').map((s) => s.trim()).filter((s) => s.length);
+  const positional = [];
+  const named = {};
+  for (const arg of args) {
+    const eq = arg.indexOf('=');
+    if (eq < 0) positional.push(arg);
+    else named[arg.slice(0, eq).trim()] = arg.slice(eq + 1).trim();
+  }
+  const pick = (name, index) => named[name] === undefined ? positional[index] : named[name];
+  const perRaw = pick('per_element', 0);
+  const lenRaw = pick('swizzle_len', 1);
+  const atomRaw = pick('atom_len', 2);
+  if (perRaw === undefined || lenRaw === undefined || atomRaw === undefined) {
+    throw new Error('ComposeLayout needs per_element, swizzle_len, and atom_len');
+  }
+  const tileRaw = pick('tile_layout', 3);
+  if (tileRaw === undefined) throw new Error('ComposeLayout needs tile_layout=TileLayout(...)');
+  const tileBody = callBody(tileRaw, 'TileLayout');
+  if (tileBody === null) throw new Error('tile_layout must be TileLayout(...)');
+  const per_element = parseIntStrict(perRaw);
+  const swizzle_len = parseIntStrict(lenRaw);
+  const atom_len = parseIntStrict(atomRaw);
   if (per_element < 0 || swizzle_len < 0 || atom_len < swizzle_len
       || per_element >= 31 || atom_len >= 31) {
     // atom_len/per_element feed 32-bit bitwise shifts in swizzleAddr; cap < 31.
     throw new Error('swizzle requires 0≤per_element<31, swizzle_len≥0, swizzle_len≤atom_len<31');
   }
-  const inner = a[3] === undefined ? true : (a[3] === 'true' || a[3] === '1');
-  return { swizzle: { per_element, swizzle_len, atom_len, inner }, rest: m[2].trim() };
+  const innerRaw = pick('swizzle_inner', 4);
+  let inner = true;
+  if (innerRaw !== undefined) {
+    if (/^(true|1)$/i.test(innerRaw)) inner = true;
+    else if (/^(false|0)$/i.test(innerRaw)) inner = false;
+    else throw new Error('swizzle_inner must be True or False');
+  }
+  return { swizzle: { per_element, swizzle_len, atom_len, inner }, rest: tileBody.trim() };
 }
 
 function parseLayout(srcRaw) {
-  const { swizzle, rest } = parseSwizzlePrefix(srcRaw.trim());
+  const { swizzle, rest } = parseComposeLayout(srcRaw.trim());
   const src = rest;
   const layout = { shard: [], replica: [], offset: {}, swizzle };
   let sawShard = false;
@@ -247,8 +291,8 @@ function coordStr(phys, axes) {
   return axes.map((a) => `${a}=${phys[a] || 0}`).join(' ');
 }
 
-// Swizzle a linear memory address (mirrors src/tirx/ir/layout/swizzle_layout.cc
-// SwizzleLayoutNode::Apply): low `per_element` bits are kept; above them, the
+// Swizzle a linear memory address (mirrors src/tirx/ir/layout/compose_layout.cc
+// ComposeLayoutNode::Apply): low `per_element` bits are kept; above them, the
 // swizzle bits are XOR'd to scatter bank conflicts.
 function swizzleAddr(m, sw) {
   const base = 1 << sw.per_element;
@@ -261,8 +305,9 @@ function swizzleAddr(m, sw) {
 }
 
 // Resolve the swizzle from the dtype + mode dropdowns (mirrors
-// tma_utils.mma_atom_layout): per_element = bit_length(128//bits) - 1,
-// swizzle_len = mode, atom_len = 3. Falls back to a typed Swizzle(...) prefix.
+// tma_utils.mma_shared_layout): per_element = bit_length(128//bits) - 1,
+// swizzle_len = mode, atom_len = 3. Falls back to an exact ComposeLayout(...,
+// tile_layout=TileLayout(...)) expression entered in the layout field.
 const SWIZZLE_LEN = { none: 0, '32': 1, '64': 2, '128': 3 };
 
 // Swizzle XOR-permutes a linear shared-memory address, so it only applies when
@@ -476,14 +521,16 @@ function draw() {
   }
   if (ST.layout.swizzle && !ST.swizzleOk) {
     status.innerHTML += ` &nbsp;<span style="color:var(--dim)">` +
-      tr('Swizzle(...) prefix ignored — swizzle applies only when the sole physical axis is @m',
-         '已忽略 Swizzle(...) 前缀：swizzle 只适用于唯一物理轴为 @m 的 layout') + '</span>';
+      tr('ComposeLayout(...) prefix ignored — swizzle applies only when the sole physical axis is @m',
+         '已忽略 ComposeLayout(...) 前缀：swizzle 只适用于唯一物理轴为 @m 的 layout') + '</span>';
   }
   if (ST.swizzle) {
     const s = ST.swizzle;
     const label = s.mode ? (s.mode === 'none' ? tr('no swizzle', '无 swizzle') : s.mode + 'B swizzle') : 'swizzle';
     status.innerHTML += ` &nbsp;<span style="color:var(--dim)">` +
-      `${label}${s.bits ? ', ' + s.bits + '-bit' : ''} → Swizzle(${s.per_element},${s.swizzle_len},${s.atom_len})</span>`;
+      `${label}${s.bits ? ', ' + s.bits + '-bit' : ''} → ComposeLayout(` +
+      `per_element=${s.per_element}, swizzle_len=${s.swizzle_len}, ` +
+      `atom_len=${s.atom_len}, tile_layout=TileLayout(...))</span>`;
   }
   document.getElementById('n0').textContent = `${tr('logical shape', '逻辑 shape')} (${ST.shape.join(', ')})`;
   document.getElementById('nphys').textContent =

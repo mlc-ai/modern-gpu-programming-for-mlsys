@@ -29,17 +29,18 @@ Declaring buffers
 Two fundamental APIs create a buffer:
 
 - ``T.alloc_buffer(shape, dtype, scope=..., ...)`` — **allocates new storage**
-  (emits an ``AllocBuffer`` node) and returns the ``Buffer``. ``T.alloc_shared`` /
-  ``T.alloc_local`` are just ``alloc_buffer`` with ``scope="shared"`` /
-  ``scope="local"``.
+  (emits an ``AllocBuffer`` node) and returns a buffer value: a ``Var`` whose
+  type is ``BufferType``. ``T.alloc_shared`` / ``T.alloc_local`` are just
+  ``alloc_buffer`` with ``scope="shared"`` / ``scope="local"``.
 - ``T.decl_buffer(shape, dtype, data=..., ...)`` — **declares a view** over an
   existing pointer ``data`` (no allocation); use it to alias or reinterpret
-  storage — a sub-region of a pool, or a tensor-memory address. With ``data=None``
-  it allocates, like ``alloc_buffer``.
+  storage — a sub-region of a pool, or a tensor-memory address. For ordinary
+  scopes, ``data=None`` allocates like ``alloc_buffer``. Tensor memory is the
+  exception: it uses ``allocated_addr`` as described below.
 
-A buffer's ``data`` pointer is an immutable ``Var`` (``alloc_buffer`` defines it;
-``decl_buffer`` takes one). To back a buffer with a pointer *expression*, bind it
-first — see :doc:`data_types`.
+A buffer's ``data`` property is an immutable, typed pointer ``Expr``; it need not
+be a ``Var``. ``decl_buffer`` accepts a compatible pointer expression directly —
+see :doc:`data_types`.
 
 Both share one descriptor; the parameters that matter most:
 
@@ -97,7 +98,7 @@ The ``scope`` argument selects the memory space:
 **A ptr-based buffer is just metadata over a pointer.** For any non-tmem buffer,
 the declaration is a pointer plus a layout, and indexing resolves to an address::
 
-    addr(buffer[coord]) = buffer.data + elem_offset + layout.apply(coord, shape=shape)["m"]
+    addr(buffer[coord]) = buffer.data + elem_offset + layout.apply(*coord, shape=shape)["m"]
 
 (``layout.apply`` returns the per-axis mapping; its ``"m"`` component is the
 element offset.) So the *same* logical access compiles to different address
@@ -106,7 +107,7 @@ arithmetic depending purely on the buffer's metadata. Writing
 
 .. code-block:: python
 
-    from tvm.tirx.layout import TileLayout, S
+    from tvm.tirx.layout import TileLayout, S, laneid
 
     B = T.match_buffer(p, (4, 8), "float32")                                       # row-major
     B = T.match_buffer(p, (4, 8), "float32", layout=TileLayout(S[(4, 8):(1, 4)]))  # column-major
@@ -223,7 +224,7 @@ Pool sugar
 
 ``T.SMEMPool`` automates that arena bookkeeping — it bump-allocates the offsets so
 you don't ``decl`` views by hand. Beyond ``alloc`` / ``commit``, it offers
-per-buffer ``align=``, an ``alloc_mma`` helper that builds an MMA-compatible
+per-buffer ``align=``, an ``alloc_tcgen05_mma_AB`` helper that builds an MMA-compatible
 swizzle layout for you, and ``move_base_to`` to rewind the cursor and reuse space:
 
 .. code-block:: python
@@ -231,7 +232,7 @@ swizzle layout for you, and ``move_base_to`` to rewind the cursor and reuse spac
     pool = T.SMEMPool()                          # bump allocator over shared.dyn
     As = pool.alloc((BM, BK), "float16", align=128)   # carve a tile
     Bs = pool.alloc((BK, BN), "float16", align=128)
-    Cs = pool.alloc_mma((BM, BN), "float16")     # MMA-compatible, swizzle inferred
+    Cs = pool.alloc_tcgen05_mma_AB((BM, BN), "float16")  # MMA-compatible, swizzle inferred
     pool.commit()                                 # finalize the pool's size
     # pool.move_base_to(offset) rewinds the cursor to reuse space
 
@@ -312,20 +313,22 @@ the scope explicitly.)
 
 .. note::
 
-   **Why not a** ``Var``\ **?** A TIRx ``Var`` is *immutable* — a single static
-   binding (it is exactly what ``T.let`` produces, below). A scalar needs to be
-   *mutable* — you reassign it in loops and accumulators — so it must be backed by a
-   one-element buffer you can store into repeatedly, not a ``Var``.
+   **Why not a scalar-typed** ``Var``\ **?** Both forms have a ``Var`` identity in
+   typed TIRx. A buffer value is a ``Var`` with ``BufferType``; stores mutate the
+   buffer's contents without rebinding that ``Var``. By contrast, ``T.let`` below
+   creates a scalar-typed ``Var`` with one immutable binding. A mutable scalar must
+   therefore be backed by a one-element buffer whose contents can be stored
+   repeatedly.
 
 ``let``
 ~~~~~~~
 
-A ``T.let`` binding is **immutable** — a single ``LetStmt`` (a named value, not a
+A ``T.let`` binding is **immutable** — a single ``Bind`` node (a named value, not a
 buffer). Use it for derived constants:
 
 .. code-block:: python
 
-    n: T.let = M * K               # immutable binding (LetStmt)
+    n: T.let = M * K               # immutable binding (Bind)
     half: T.let[T.int32] = N // 2  # ... with an explicit type
 
 It lowers to a **plain scalar C variable** — not a buffer (no array, no ``[0]``).
@@ -342,8 +345,8 @@ common-subexpression temporary) rather than a reference to ``half``.
 .. note::
 
    **Why have an immutable binding at all?** Because the value cannot change, the
-   arithmetic analyzer binds the var to it (``analyzer.Bind(var, value)`` when it
-   simplifies a ``LetStmt``), so facts proven about the value — constant bounds, the
+   arithmetic analyzer binds the var to it (``arith::Analyzer::Bind`` internally when it
+   simplifies a ``Bind``), so facts proven about the value — constant bounds, the
    modular set (divisibility / alignment), ranges — **propagate through every use**.
    That feeds index simplification, bounds-check elimination, and
    alignment/vectorization decisions. A *mutable* scalar is a memory load
@@ -414,7 +417,7 @@ or hand you a pointer — they emit no runtime op of their own. The common ones:
    * - Method
      - What it is
    * - ``B.data``
-     - the raw data pointer (a ``Var``); prints as ``B_ptr``
+     - the typed base-pointer expression; prints as ``B_ptr``
    * - ``B.ptr_to([i, j])``
      - a typed pointer to an element (``address_of``); prints as ``&B_ptr[…]``
    * - ``B.vload([i], dtype="float32x4")`` / ``B.vstore([i], v)``
@@ -453,12 +456,12 @@ transfer (see also :doc:`data_types`):
 
 **Reshape / reinterpret — ``view`` / ``permute``.** Both are pure metadata; the
 data pointer is unchanged, only the index arithmetic differs. ``A.view(64, 4)``
-sees the 256-element buffer as ``64×4``; ``A.permute(1, 0)`` transposes the axes:
+sees the 256-element buffer as ``64×4``; ``A2.permute(1, 0)`` transposes those axes:
 
 .. code-block:: python
 
     A2 = A.view(64, 4);     y = A2[tx, 0] + A2[tx, 3]   # A2[tx, j] -> A_ptr[tx*4 + j]
-    At = A.permute(1, 0);   z = At[i, j]                # At[i, j]  -> A_ptr[j*4 + i]
+    At = A2.permute(1, 0);  z = At[i, j]                # At[i, j]  -> A_ptr[j*4 + i]
 
 .. code-block:: c++
 
@@ -466,13 +469,19 @@ sees the 256-element buffer as ``64×4``; ``A.permute(1, 0)`` transposes the axe
     At_ptr[(j * 4) + i]                       // permute: swapped strides
 
 **Registers — ``local``.** Decomposes a thread-axis ``local`` layout into the
-calling thread's flat register bundle (used pervasively by the tile primitives):
+calling thread's register bundle (used pervasively by the tile primitives).
+Without an explicit ``layout=``, ``R.local()`` infers a flat view over the raw
+physical storage span (including layout gaps and offsets), while
+``R.local(d0, d1, ...)`` reshapes the same span in row-major order. The requested
+dimensions must have the same product as that span. Pass ``layout=`` only when a
+different storage-coordinate mapping is required:
 
 .. code-block:: python
 
     R  = T.alloc_buffer((32, 8), "float32", scope="local", layout=TileLayout(S[(32, 8) : (1 @ laneid, 1)]))
-    Rl = R.local(8)          # this lane's 8 registers
+    R_flat = R.local()       # this lane's 8 registers, physical order
+    R_2d = R.local(2, 4)     # the same registers, row-major 2x4 reshape
 
 .. code-block:: c++
 
-    alignas(64) float Rl_ptr[8];             // the lane's private registers
+    alignas(64) float R_flat_ptr[8];         // the lane's private registers

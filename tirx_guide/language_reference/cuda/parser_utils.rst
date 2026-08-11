@@ -27,13 +27,14 @@ parser-side state.
 
 ``T.meta_var(x)`` tells the parser to treat ``x`` — a value computed in **Python** —
 as a compile-time *meta* value and inline it directly into the IR, rather than
-parse it as a script variable. It avoids a throwaway local, and it drives
-metaprogramming: a plain Python ``for`` over a meta value unrolls in the parser.
+parse it as a script variable. It avoids a throwaway local and lets Python
+values parameterize the generated IR. A plain ``range(n)`` is still a serial
+TIRx loop; use ``T.unroll(n)`` when the lowering pipeline should unroll it.
 
 .. code-block:: python
 
-    n = T.meta_var(4)              # n is a Python int, inlined
-    for j in range(n):            # unrolled at parse time
+    n = T.meta_var(4)              # the constant 4 is inlined as the extent
+    for j in T.unroll(n):          # marked for the UnrollLoop lowering pass
         acc[0] = acc[0] + A[tx, j]
 
 ``@T.inline`` — inline functions
