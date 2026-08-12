@@ -285,12 +285,30 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
     )
     arrow(ax, (6.15, 3.1), (6.70, 3.1), label="L")
     arrow(ax, (9.30, 3.1), (9.85, 3.1), label="W")
-    # Ownership-to-logical-tile guide arrows.
-    arrow(ax, (2.72, 5.76), (2.72, 4.68), color=COLORS["cta0_dark"], linewidth=1.0)
-    arrow(
-        ax, (7.77, 5.76), (5.4, 4.7), color=COLORS["cta1_dark"], linewidth=1.0, rad=0.08
+    # Route ownership guides around the logical-matrix titles, then terminate
+    # on the tile boundaries.  A direct downward arrow would cross the long
+    # QK/PV headings and make the target ambiguous at the inline HTML width.
+    guide_specs = (
+        ((2.72, 5.76), 0.42, (0.85, 4.34), COLORS["cta0_dark"]),
+        ((7.77, 5.76), 6.55, (6.15, 4.34), COLORS["cta1_dark"]),
+        ((12.82, 5.76), 15.58, (15.15, 4.34), COLORS["cta1_dark"]),
     )
-    arrow(ax, (12.82, 5.76), (12.82, 4.68), color=COLORS["cta1_dark"], linewidth=1.0)
+    for start, corridor_x, target, color in guide_specs:
+        ax.plot(
+            [start[0], corridor_x, corridor_x],
+            [start[1], start[1], 4.53],
+            color=color,
+            linewidth=1.0,
+            zorder=1,
+        )
+        arrow(
+            ax,
+            (corridor_x, 4.53),
+            target,
+            color=color,
+            linewidth=1.0,
+            zorder=2,
+        )
 
     rounded_box(
         ax,

@@ -10,25 +10,112 @@ from matplotlib.patches import FancyBboxPatch
 
 from flashmla_diagram_common import (
     COLORS,
-    arrow,
+    arrow as _arrow,
     configure_style,
     plain_rect,
-    rounded_box,
+    rounded_box as _rounded_box,
     save_figure,
     tr,
 )
 
 
+def box(ax, x, y, w, h, text, color, *, fontsize=11.0, **kwargs):
+    """Draw a node sized for the book's roughly 790 px content column."""
+
+    return _rounded_box(
+        ax,
+        x,
+        y,
+        w,
+        h,
+        text,
+        color,
+        fontsize=fontsize,
+        **kwargs,
+    )
+
+
+def edge(
+    ax,
+    start,
+    end,
+    *,
+    label=None,
+    label_offset=(0.0, 0.14),
+    fontsize=10.0,
+    **kwargs,
+):
+    """Draw an edge and place its label in surrounding whitespace."""
+
+    line_color = kwargs.get("color") or COLORS["line"]
+    zorder = kwargs.get("zorder", 2)
+    patch = _arrow(ax, start, end, label=None, **kwargs)
+    if label:
+        ax.text(
+            (start[0] + end[0]) / 2 + label_offset[0],
+            (start[1] + end[1]) / 2 + label_offset[1],
+            label,
+            ha="center",
+            va="center",
+            fontsize=fontsize,
+            color=line_color,
+            bbox=dict(
+                boxstyle="round,pad=0.10",
+                facecolor="white",
+                edgecolor="none",
+                alpha=0.94,
+            ),
+            zorder=zorder + 1,
+        )
+    return patch
+
+
+def panel(ax, x, y, w, h, title, subtitle):
+    """Draw one readable layer of the single data-flow figure."""
+
+    patch = FancyBboxPatch(
+        (x, y),
+        w,
+        h,
+        boxstyle="round,pad=0.05,rounding_size=0.06",
+        linewidth=1.15,
+        linestyle="--",
+        edgecolor="#c4b5fd",
+        facecolor="#ffffff",
+        zorder=0,
+    )
+    ax.add_patch(patch)
+    ax.text(
+        x + 0.20,
+        y + h - 0.24,
+        title,
+        ha="left",
+        va="center",
+        fontsize=13.0,
+        weight="bold",
+        color="#6d28d9",
+    )
+    ax.text(
+        x + w - 0.20,
+        y + h - 0.24,
+        subtitle,
+        ha="right",
+        va="center",
+        fontsize=10.0,
+        color=COLORS["muted"],
+    )
+
+
 def draw(lang: str, output: str, font_path: str | None = None) -> None:
     configure_style(lang, font_path)
-    fig, ax = plt.subplots(figsize=(19.0, 9.4))
-    ax.set_xlim(0, 19)
-    ax.set_ylim(0, 9.4)
+    fig, ax = plt.subplots(figsize=(12.0, 13.0))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 13)
     ax.axis("off")
 
     ax.text(
-        9.5,
-        9.08,
+        7,
+        12.62,
         tr(
             lang,
             "Sparse FlashMLA Head128 Regular: Data Residency",
@@ -36,439 +123,378 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         ),
         ha="center",
         va="center",
-        fontsize=18,
+        fontsize=19,
         weight="bold",
     )
     ax.text(
-        9.5,
-        8.68,
+        7,
+        12.25,
         tr(
             lang,
-            "one CTA's view; cta_group::2 combines the pair's operand halves",
-            "单个 CTA 的视图；cta_group::2 会组合 CTA pair 的 operand halves",
+            "one CTA's logical view; cta_group::2 combines the pair's operand halves",
+            "单个 CTA 的 logical view；cta_group::2 组合 CTA pair 的 operand halves",
         ),
         ha="center",
         va="center",
-        fontsize=9.5,
+        fontsize=11.0,
         color=COLORS["muted"],
     )
 
-    # Q path: one prefix remains in SMEM while the fixed 384-column suffix moves to TMEM.
-    rounded_box(ax, 0.35, 6.63, 1.65, 0.86, "Q\nGMEM", COLORS["gmem"], fontsize=9.5)
-    rounded_box(
+    panel(
         ax,
-        2.55,
-        6.43,
-        2.35,
-        1.25,
+        0.25,
+        8.20,
+        13.50,
+        3.55,
+        tr(lang, "1 · QK and online softmax", "1 · QK 与 online softmax"),
+        tr(lang, "BF16 operands → FP32 L → BF16 W", "BF16 operands → FP32 L → BF16 W"),
+    )
+
+    box(ax, 0.48, 9.20, 0.78, 0.92, "Q\nGMEM", COLORS["gmem"], fontsize=12.0)
+    box(
+        ax,
+        1.52,
+        9.08,
+        1.55,
+        1.16,
         tr(
             lang,
-            "q_full · SMEM\n64 × d_qk per CTA",
-            "q_full · SMEM\n每个 CTA 为 64 × d_qk",
+            "q_full\nSMEM · TMA\n64×d_qk / CTA",
+            "q_full\nSMEM · TMA\n64×d_qk / CTA",
         ),
         COLORS["smem"],
-        fontsize=9,
+        fontsize=10.5,
     )
-    rounded_box(
+    box(
         ax,
-        5.63,
-        7.02,
-        2.18,
-        0.78,
-        tr(
-            lang,
-            "Q prefix · SMEM\nd_sq = d_qk − 384",
-            "Q prefix · SMEM\nd_sq = d_qk − 384",
-        ),
+        3.35,
+        9.86,
+        1.90,
+        0.80,
+        "Q prefix\nSMEM\nd_sq columns",
         COLORS["smem"],
-        fontsize=8.5,
+        fontsize=10.2,
     )
-    rounded_box(
+    box(
         ax,
-        5.63,
-        5.94,
-        2.18,
-        0.78,
-        tr(lang, "q_tmem · TMEM\nfixed suffix 384", "q_tmem · TMEM\n固定 suffix 384"),
+        3.35,
+        8.66,
+        1.90,
+        0.80,
+        tr(lang, "Q suffix · TMEM\n384 columns", "Q suffix · TMEM\n384 列"),
         COLORS["tmem"],
-        fontsize=8.5,
+        fontsize=10.2,
     )
-    rounded_box(
+    box(
         ax,
-        8.48,
-        6.34,
-        1.92,
-        1.18,
-        tr(lang, "QK MMA\nSS prefix + TS suffix", "QK MMA\nSS prefix + TS suffix"),
+        5.57,
+        9.01,
+        1.42,
+        1.30,
+        "QK MMA\nSS prefix\n+ TS suffix",
         COLORS["mma"],
-        fontsize=9,
+        fontsize=10.5,
     )
-    arrow(ax, (2.0, 7.06), (2.55, 7.06), label="TMA")
-    arrow(ax, (4.9, 7.2), (5.63, 7.4), label=tr(lang, "stays", "保留"), rad=-0.05)
-    arrow(ax, (4.9, 6.86), (5.63, 6.33), label="SMEM→TMEM", rad=0.08)
-    arrow(ax, (7.81, 7.4), (8.48, 7.18))
-    arrow(ax, (7.81, 6.33), (8.48, 6.68))
-
-    # Sparse gather path and validity mask.
-    rounded_box(ax, 0.35, 4.66, 1.65, 0.82, "indices\nGMEM", COLORS["gmem"], fontsize=9)
-    rounded_box(
+    box(
         ax,
-        0.35,
-        3.34,
-        1.65,
-        0.92,
-        "KV cache\nGMEM\n[s_kv, 1, d_qk]",
-        COLORS["gmem"],
-        fontsize=8.5,
-    )
-    rounded_box(
-        ax,
-        2.65,
-        4.56,
-        2.5,
-        0.92,
-        tr(
-            lang,
-            "WG1 gathered K · SMEM\n64 slots × d_qk per CTA",
-            "WG1 gather K · SMEM\n每个 CTA：64 slots × d_qk",
-        ),
-        COLORS["smem"],
-        fontsize=8.3,
-    )
-    rounded_box(
-        ax,
-        2.65,
-        3.10,
-        2.5,
-        0.98,
-        tr(
-            lang,
-            "WG2 gathered V · SMEM\n128 slots × 256 features per CTA",
-            "WG2 gather V · SMEM\n每个 CTA：128 slots × 256 features",
-        ),
-        COLORS["smem"],
-        fontsize=8.1,
-    )
-    rounded_box(
-        ax,
-        5.72,
-        4.45,
-        1.82,
-        0.93,
-        tr(
-            lang,
-            "is_k_valid · SMEM\n2 slots × 16 bytes",
-            "is_k_valid · SMEM\n2 个 slot × 16 bytes",
-        ),
-        COLORS["barrier"],
-        fontsize=8.1,
-    )
-    arrow(ax, (2.0, 5.08), (2.65, 5.08), label=tr(lang, "selected slots", "选中 slots"))
-    arrow(
-        ax,
-        (2.0, 4.76),
-        (2.65, 3.83),
-        color=COLORS["line"],
-        rad=-0.05,
-    )
-    # Route mask metadata above the K box so the dependency does not cut through its label.
-    ax.plot(
-        [2.0, 2.25, 5.28], [5.32, 5.76, 5.76], color=COLORS["line"], lw=1.25, zorder=2
-    )
-    arrow(ax, (5.28, 5.76), (6.22, 5.38), color=COLORS["line"], rad=0.05)
-    ax.text(
-        3.82,
-        5.86,
-        tr(lang, "bounds + topk_length", "边界 + topk_length"),
-        ha="center",
-        va="center",
-        fontsize=7.3,
-        color=COLORS["line"],
-    )
-    arrow(ax, (2.0, 3.72), (2.65, 4.83), label="gather4", rad=-0.12)
-    arrow(ax, (2.0, 3.72), (2.65, 3.59), label="gather4", rad=0.05)
-    # K takes a low elbow under q_tmem, then enters QK from below.
-    ax.plot(
-        [5.15, 5.5, 7.82], [5.32, 5.61, 5.61], color=COLORS["line"], lw=1.25, zorder=2
-    )
-    arrow(ax, (7.82, 5.61), (8.82, 6.34), label="K", color=COLORS["line"], rad=-0.05)
-
-    # Logits, online softmax, weights, and public statistics.
-    rounded_box(
-        ax,
-        10.92,
-        6.36,
-        1.86,
-        1.15,
-        "tmem_p · TMEM\nL logits\n64 × 128 view",
+        7.37,
+        9.01,
+        1.42,
+        1.30,
+        "L (tmem_p)\nFP32 · TMEM\n64×128",
         COLORS["tmem"],
-        fontsize=8.5,
+        fontsize=9.5,
     )
-    rounded_box(
+    box(
         ax,
-        13.25,
-        6.10,
-        1.94,
-        1.48,
+        9.17,
+        8.93,
+        1.90,
+        1.46,
         tr(
             lang,
-            "WG0 online softmax\nmask · max · exp · sum",
-            "WG0 online softmax\nmask · max · exp · sum",
+            "WG0 softmax\nmask · max\nexp · row sum",
+            "WG0 softmax\nmask · max\nexp · row sum",
         ),
         COLORS["softmax"],
-        fontsize=8.7,
+        fontsize=10.5,
     )
-    rounded_box(
+    box(
         ax,
-        13.18,
-        4.42,
-        2.08,
-        0.95,
-        "s_smem_gemm · SMEM\nW weights · 64 × 128",
-        COLORS["smem"],
-        fontsize=8.3,
+        11.42,
+        9.83,
+        2.05,
+        0.78,
+        tr(
+            lang,
+            "max_logits / lse\nGMEM\nsink excluded",
+            "max_logits / lse\nGMEM\n不含 sink",
+        ),
+        COLORS["gmem"],
+        fontsize=9.5,
     )
-    rounded_box(
+    box(
         ax,
-        16.0,
-        6.29,
+        11.42,
+        8.69,
+        2.05,
+        0.78,
+        "mi / real_mi / li\nWG0 registers",
+        COLORS["neutral"],
+        fontsize=10.0,
+    )
+
+    edge(ax, (1.26, 9.66), (1.52, 9.66))
+    edge(ax, (3.07, 9.82), (3.35, 10.26))
+    edge(ax, (3.07, 9.48), (3.35, 9.06))
+    edge(ax, (5.25, 10.26), (5.57, 9.98))
+    edge(ax, (5.25, 9.06), (5.57, 9.34))
+    edge(ax, (6.99, 9.66), (7.37, 9.66))
+    edge(ax, (8.79, 9.66), (9.17, 9.66))
+    edge(ax, (11.07, 9.86), (11.42, 10.22))
+    edge(ax, (11.07, 9.40), (11.42, 9.08))
+
+    panel(
+        ax,
+        0.25,
+        3.20,
+        13.50,
+        4.70,
+        tr(
+            lang,
+            "2 · Sparse gather, PV, and epilogue",
+            "2 · Sparse gather、PV 与 epilogue",
+        ),
+        tr(
+            lang,
+            "indices + KV feed both gather4 paths; O~ / (li + sink)",
+            "indices + KV 同时送入两条 gather4；O~ / (li + sink)",
+        ),
+    )
+
+    box(ax, 0.52, 6.00, 1.05, 0.88, "indices\nGMEM", COLORS["gmem"], fontsize=11.5)
+    box(
+        ax,
+        0.52,
+        4.00,
+        1.15,
+        1.05,
+        "KV cache\nGMEM\n[s_kv,1,\nd_qk]",
+        COLORS["gmem"],
+        fontsize=8.8,
+    )
+    box(
+        ax,
+        2.15,
+        5.90,
         2.05,
         1.08,
         tr(
             lang,
-            "max_logits / lse\nGMEM · sink excluded",
-            "max_logits / lse\nGMEM · 不含 sink",
+            "WG1 K · SMEM\ngather4\n64×d_qk / CTA",
+            "WG1 K · SMEM\ngather4\n64×d_qk / CTA",
         ),
-        COLORS["gmem"],
-        fontsize=8.2,
+        COLORS["smem"],
+        fontsize=10.2,
     )
-    rounded_box(
+    box(
         ax,
-        15.62,
-        5.12,
-        2.35,
-        0.75,
+        2.15,
+        4.00,
+        2.05,
+        1.05,
         tr(
             lang,
-            "mi · real_mi · li\nWG0 registers",
-            "mi · real_mi · li\nWG0 registers",
+            "WG2 V · SMEM\ngather4\n128×256 / CTA",
+            "WG2 V · SMEM\ngather4\n128×256 / CTA",
         ),
-        COLORS["neutral"],
-        fontsize=8.0,
+        COLORS["smem"],
+        fontsize=10.2,
     )
-    rounded_box(
+    box(
         ax,
-        16.10,
-        4.22,
-        1.87,
-        0.64,
-        tr(lang, "optional attn_sink\nGMEM", "可选 attn_sink\nGMEM"),
-        COLORS["gmem"],
-        fontsize=7.7,
-    )
-    arrow(ax, (10.4, 6.93), (10.92, 6.93))
-    arrow(ax, (12.78, 6.93), (13.25, 6.93))
-    arrow(
-        ax,
-        (7.54, 4.92),
-        (13.25, 6.42),
-        label=tr(lang, "mask ready", "mask 就绪"),
-        rad=-0.10,
-    )
-    arrow(
-        ax, (14.22, 6.10), (14.22, 5.37), label=tr(lang, "cast/store W", "转换/写入 W")
-    )
-    arrow(ax, (15.19, 6.93), (16.0, 6.93))
-    arrow(ax, (15.10, 6.36), (15.78, 5.76), color=COLORS["line"], rad=0.05)
-
-    # PV path and epilogue.
-    rounded_box(
-        ax,
-        8.52,
-        2.96,
-        1.78,
+        4.55,
+        5.90,
+        1.85,
         1.08,
-        tr(lang, "PV MMA\nW × V", "PV MMA\nW × V"),
-        COLORS["mma"],
-        fontsize=9.2,
-    )
-    rounded_box(
-        ax,
-        10.92,
-        2.92,
-        1.86,
-        1.14,
-        "o_tmem · TMEM\nO accumulator\n64 × 512 view",
-        COLORS["tmem"],
-        fontsize=8.4,
-    )
-    rounded_box(
-        ax,
-        13.25,
-        2.92,
-        1.94,
-        1.14,
         tr(
             lang,
-            "WG0 epilogue\nO~ / (li + sink term)\n→ bf16",
-            "WG0 epilogue\nO~ /（li + sink 项）\n→ bf16",
+            "validity · SMEM\nbounds + length\n2 × 16 bytes",
+            "validity · SMEM\nbounds + length\n2 × 16 bytes",
+        ),
+        COLORS["barrier"],
+        fontsize=10.0,
+    )
+    box(
+        ax,
+        6.55,
+        5.90,
+        1.95,
+        1.08,
+        "W · BF16\ns_smem_gemm\n64 × 128",
+        COLORS["smem"],
+        fontsize=9.4,
+    )
+    box(ax, 6.82, 4.00, 1.40, 1.05, "PV MMA\nW × V", COLORS["mma"], fontsize=11.4)
+    box(
+        ax,
+        8.62,
+        4.00,
+        1.42,
+        1.05,
+        "O~ · FP32\nTMEM\n64×512",
+        COLORS["tmem"],
+        fontsize=9.8,
+    )
+    box(
+        ax,
+        10.30,
+        3.90,
+        1.75,
+        1.25,
+        tr(
+            lang,
+            "WG0 epilogue\nO~/(li + sink)\n→ BF16",
+            "WG0 epilogue\nO~/(li + sink)\n→ BF16",
         ),
         COLORS["softmax"],
-        fontsize=7.7,
+        fontsize=9.5,
     )
-    rounded_box(
+    box(
         ax,
-        15.65,
-        2.92,
+        8.85,
+        5.95,
         1.55,
-        1.14,
-        "o_smem\nSMEM\n64 × 512",
+        0.95,
+        tr(
+            lang,
+            "attn_sink\nGMEM",
+            "attn_sink\nGMEM",
+        ),
+        COLORS["gmem"],
+        fontsize=9.5,
+    )
+    box(
+        ax,
+        12.34,
+        3.96,
+        1.20,
+        1.13,
+        tr(
+            lang,
+            "o_smem\nBF16\n64×512\nTMA → out",
+            "o_smem\nBF16\n64×512\nTMA → out",
+        ),
         COLORS["smem"],
-        fontsize=8.3,
+        fontsize=9.2,
     )
-    rounded_box(ax, 17.64, 3.04, 1.05, 0.9, "out\nGMEM", COLORS["gmem"], fontsize=8.7)
-    arrow(ax, (5.15, 3.59), (8.52, 3.50), label="V")
-    arrow(ax, (13.18, 4.86), (10.0, 4.04), label="W", rad=0.10)
-    arrow(ax, (10.3, 3.5), (10.92, 3.5))
-    arrow(ax, (12.78, 3.5), (13.25, 3.5), label="O~")
-    arrow(
-        ax,
-        (16.05, 5.12),
-        (14.84, 4.06),
-        label="li",
-        color=COLORS["line"],
-        rad=0.05,
-    )
-    arrow(
-        ax,
-        (16.10, 4.54),
-        (15.19, 3.75),
-        label=tr(lang, "denominator only", "仅进入分母"),
-        color=COLORS["line"],
-        rad=0.03,
-        label_offset=(0.30, -0.04),
-    )
-    arrow(ax, (15.19, 3.5), (15.65, 3.5), label="TMEM→SMEM")
-    arrow(ax, (17.2, 3.5), (17.64, 3.5), label="TMA")
 
-    # Exact lifetime aliasing from the pinned SharedMemoryPlan.
-    outer = FancyBboxPatch(
-        (0.42, 0.22),
-        18.16,
-        1.82,
-        boxstyle="round,pad=0.05,rounding_size=0.06",
-        linewidth=1.2,
-        linestyle="--",
-        edgecolor="#7c3aed",
-        facecolor="#faf5ff",
-        zorder=1,
-    )
-    ax.add_patch(outer)
-    ax.text(
-        0.72,
-        1.80,
-        tr(
-            lang,
-            "Per-CTA SMEM union: the same address range is reused by lifetime",
-            "每个 CTA 的 SMEM union：同一地址范围按生命周期复用",
-        ),
-        ha="left",
-        va="center",
-        fontsize=10,
-        weight="bold",
-        color="#6d28d9",
-        zorder=3,
-    )
-    rounded_box(
+    # Both gather producers consume both the sparse row coordinates and KV source.
+    # The junction makes that all-to-all relationship explicit without four labels.
+    shared = (1.82, 5.48)
+    edge(ax, (1.57, 6.25), shared)
+    edge(ax, (1.67, 4.78), shared)
+    edge(ax, shared, (2.15, 6.25))
+    edge(ax, shared, (2.15, 4.78))
+    ax.plot(*shared, marker="o", markersize=4.0, color=COLORS["line"], zorder=4)
+    edge(ax, (4.20, 6.44), (4.55, 6.44))
+
+    # K enters the QK panel; validity and W cross the layer boundary separately.
+    ax.plot([4.20, 4.38, 6.28], [6.56, 8.02, 8.02], color=COLORS["line"], lw=1.25)
+    edge(ax, (6.28, 8.02), (6.28, 9.01))
+    ax.plot([6.40, 6.40, 10.10], [6.62, 7.98, 7.98], color=COLORS["line"], lw=1.25)
+    edge(ax, (10.10, 7.98), (10.10, 8.93))
+    ax.plot([9.60, 9.60, 7.52], [8.93, 8.08, 8.08], color=COLORS["line"], lw=1.25)
+    edge(ax, (7.52, 8.08), (7.52, 6.98))
+    edge(ax, (4.20, 4.52), (6.82, 4.52))
+    edge(ax, (7.52, 5.90), (7.52, 5.05))
+    edge(ax, (8.22, 4.52), (8.62, 4.52))
+    edge(ax, (10.04, 4.52), (10.30, 4.52))
+    edge(ax, (10.40, 6.28), (10.88, 5.15))
+    edge(ax, (12.05, 4.52), (12.34, 4.52))
+
+    panel(
         ax,
-        0.72,
-        0.52,
-        3.0,
-        0.88,
+        0.25,
+        0.35,
+        13.50,
+        2.45,
         tr(
             lang,
-            "prologue\nq_full = prefix | suffix384",
-            "prologue\nq_full = prefix | suffix384",
+            "3 · Per-CTA SMEM lifetime aliasing",
+            "3 · 每个 CTA 的 SMEM 生命周期复用",
         ),
+        tr(
+            lang,
+            "one in-place K/V region; o_smem later reuses its base",
+            "单份原位 K/V 区域；随后 o_smem 复用其基址",
+        ),
+    )
+    box(
+        ax,
+        0.55,
+        0.77,
+        2.10,
+        0.92,
+        "q_full · SMEM\nprefix | suffix384",
         COLORS["smem"],
-        fontsize=8.3,
+        fontsize=10.2,
     )
-    arrow(
-        ax, (3.72, 0.96), (4.36, 0.96), label=tr(lang, "reuse", "复用"), color="#7c3aed"
-    )
-    plain_rect(ax, 4.42, 0.52, 1.65, 0.88, COLORS["smem"], edgecolor=COLORS["ink"])
-    plain_rect(ax, 6.07, 0.52, 2.0, 0.88, "#ddd6fe", edgecolor=COLORS["ink"])
-    plain_rect(ax, 8.07, 0.52, 2.0, 0.88, "#c4b5fd", edgecolor=COLORS["ink"])
+    edge(ax, (2.65, 1.23), (3.08, 1.23))
+
+    plain_rect(ax, 3.08, 0.77, 1.45, 0.92, COLORS["smem"], edgecolor=COLORS["ink"])
+    plain_rect(ax, 4.53, 0.77, 1.75, 0.92, "#ddd6fe", edgecolor=COLORS["ink"])
+    plain_rect(ax, 6.28, 0.77, 1.75, 0.92, "#c4b5fd", edgecolor=COLORS["ink"])
     ax.text(
-        5.24,
-        0.96,
+        3.80,
+        1.23,
         tr(lang, "Q prefix\nlive", "Q prefix\n存活"),
         ha="center",
         va="center",
-        fontsize=8,
+        fontsize=11.0,
         weight="bold",
-        zorder=4,
     )
     ax.text(
-        7.07,
-        0.96,
+        5.40,
+        1.23,
         tr(lang, "one V\nworkspace", "单份 V\nworkspace"),
         ha="center",
         va="center",
-        fontsize=8,
+        fontsize=11.0,
         weight="bold",
-        zorder=4,
     )
     ax.text(
-        9.07,
-        0.96,
+        7.15,
+        1.23,
         tr(lang, "one K\nworkspace", "单份 K\nworkspace"),
         ha="center",
         va="center",
-        fontsize=8,
+        fontsize=11.0,
         weight="bold",
-        zorder=4,
     )
-    ax.text(
-        7.24,
-        0.32,
-        tr(
-            lang,
-            "steady-state views are adjacent, not duplicate stages",
-            "稳态 views 相邻，并非复制的 stages",
-        ),
-        ha="center",
-        fontsize=7.3,
-        color=COLORS["muted"],
-    )
-    arrow(
+
+    edge(ax, (8.03, 1.23), (8.46, 1.23))
+    box(
         ax,
-        (10.07, 0.96),
-        (10.75, 0.96),
-        label=tr(lang, "reuse", "复用"),
-        color="#7c3aed",
-    )
-    rounded_box(
-        ax,
-        10.82,
-        0.52,
-        2.72,
-        0.88,
-        tr(lang, "epilogue\no_smem · 64 × 512", "epilogue\no_smem · 64 × 512"),
+        8.46,
+        0.77,
+        1.95,
+        0.92,
+        "o_smem · BF16\n64×512",
         COLORS["smem"],
-        fontsize=8.3,
+        fontsize=10.2,
     )
     ax.text(
-        14.0,
-        0.96,
+        10.82,
+        1.23,
         tr(
             lang,
-            "K and V are adjacent in the steady-state region.\nThat region reuses Q's tail; later o_smem reuses the union base for the O epilogue.",
-            "K 与 V 位于相邻的稳态区域。\n该区域复用 Q tail；随后 o_smem 再复用 union base 完成 O epilogue。",
+            "Adjacent K/V workspaces\nbegin at Q's released suffix.",
+            "相邻的 K/V workspace\n从已释放的 Q suffix 开始。",
         ),
         ha="left",
         va="center",
-        fontsize=8.1,
+        fontsize=11.0,
         color=COLORS["muted"],
     )
 

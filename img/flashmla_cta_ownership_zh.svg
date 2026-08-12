@@ -28,6 +28,24 @@ z
 " style="fill: #ffffff"/>
   </g>
   <g id="axes_1">
+   <g id="line2d_1">
+    <path d="M 295.776 244.5696
+L 167.436 244.5696
+L 167.436 312.7608
+" clip-path="url(#pe69daf5f71)" style="fill: none; stroke: #2563eb; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 577.566 244.5696
+L 509.49 244.5696
+L 509.49 312.7608
+" clip-path="url(#pe69daf5f71)" style="fill: none; stroke: #db2777; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_3">
+    <path d="M 859.356 244.5696
+L 1013.364 244.5696
+L 1013.364 312.7608
+" clip-path="url(#pe69daf5f71)" style="fill: none; stroke: #db2777; stroke-linecap: square"/>
+   </g>
    <g id="patch_2">
     <path d="M 180.27 192.1788
 L 411.84 192.1788
@@ -161,32 +179,32 @@ z
 " clip-path="url(#pe69daf5f71)" style="fill: #64748b; stroke: #64748b; stroke-width: 1.25; stroke-linecap: round"/>
    </g>
    <g id="patch_18">
-    <path d="M 295.776 246.568607
-Q 295.776 274.505245 295.776 301.323848
+    <path d="M 169.266597 313.56445
+Q 179.432489 318.027376 188.574654 322.040875
 " clip-path="url(#pe69daf5f71)" style="fill: none; stroke: #2563eb; stroke-linecap: round"/>
-    <path d="M 297.976 296.923848
-L 295.776 301.323848
-L 293.576 296.923848
+    <path d="M 185.430152 318.257741
+L 188.574654 322.040875
+L 183.661445 322.286596
 z
 " clip-path="url(#pe69daf5f71)" style="fill: #2563eb; stroke: #2563eb; stroke-linecap: round"/>
    </g>
    <g id="patch_19">
-    <path d="M 575.63547 245.086549
-Q 506.867816 263.65793 447.936551 301.64434
+    <path d="M 507.683584 313.613312
+Q 498.332024 318.026645 489.991557 321.962807
 " clip-path="url(#pe69daf5f71)" style="fill: none; stroke: #db2777; stroke-linecap: round"/>
-    <path d="M 452.826752 301.109613
-L 447.936551 301.64434
-L 450.44289 297.411343
+    <path d="M 494.909639 322.07448
+L 489.991557 321.962807
+L 493.031744 318.095345
 z
 " clip-path="url(#pe69daf5f71)" style="fill: #db2777; stroke: #db2777; stroke-linecap: round"/>
    </g>
    <g id="patch_20">
-    <path d="M 859.356 246.568607
-Q 859.356 274.505245 859.356 301.323848
+    <path d="M 1011.533403 313.56445
+Q 1001.367511 318.027376 992.225346 322.040875
 " clip-path="url(#pe69daf5f71)" style="fill: none; stroke: #db2777; stroke-linecap: round"/>
-    <path d="M 861.556 296.923848
-L 859.356 301.323848
-L 857.156 296.923848
+    <path d="M 997.138555 322.286596
+L 992.225346 322.040875
+L 995.369848 318.257741
 z
 " clip-path="url(#pe69daf5f71)" style="fill: #db2777; stroke: #db2777; stroke-linecap: round"/>
    </g>

@@ -66,7 +66,7 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         tr(
             lang,
             "Who Chooses the Tokens in Sparse FlashMLA?",
-            "Sparse FlashMLA 中由谁选择 Tokens？",
+            "Sparse FlashMLA 中由谁选择 token？",
         ),
         ha="center",
         va="center",
