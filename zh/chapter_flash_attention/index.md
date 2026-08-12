@@ -266,7 +266,7 @@ elif wg_id == 2:
 
 ## 阅读代码前的约定
 
-本章使用的片段经过少量省略，来源是[与 Apache TVM 0.26 兼容的 `flash_attention4.py` revision](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py)，因此会引用在片段之外定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。下面列出后文反复出现、但不容易只看名字判断含义的符号：
+本章使用的片段经过少量省略，源码见：[`flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py)。这些片段会引用在其他位置定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。下面列出后文反复出现、但不容易只看名字判断含义的符号：
 
 | 名称 | 含义 |
 |---|---|
@@ -842,7 +842,7 @@ Scheduler 将每个 CTA 映射到一个 `(batch, kv_head, m_block)` attention ta
 - Non-causal mode 使用 `FlashAttentionLinearScheduler`。每个 task 都遍历相同数量的 K/V blocks，kernel 启动固定数量的 persistent CTAs；每个 CTA 完成一个 task 后，将线性 task index 增加 `num_ctas`，继续处理下一项工作。
 - Causal mode 使用 `FlashAttentionLPTScheduler`。Causal mask 会让各 tasks 的工作量差异很大：靠前的 Q block 可能只访问一个 K/V block，靠后的 Q block 则需要访问全部 K/V blocks。Scheduler 先反转 `m_block` 顺序，让较后、工作量较大的 blocks 优先进入 launch order，尽量缩小不同 CTAs 的结束时间差。它还将展平后的 `batch × kv_head` 索引按 `L2_SWIZZLE` 分组：在切换到下一个 `m_block` 前，先遍历同组中的 batch/KV-head tasks。这样可以在 `m_block` 向前推进时将有限一组 K/V working sets 保留在 L2 中。当前实现为每个 causal task 启动一个 CTA。
 
-固定版本代码中的调度常量针对本书使用的 B200 配置调优，并不是所有 Blackwell GPU 的通用参数。`max_ctas=148` 将 non-causal persistent worker 数量限制为 148。`L2_SIZE=50 MiB` 则是计算 `L2_SWIZZLE` 时采用的可用 cache budget，并不表示 GPU 的完整 L2 容量。迁移到具有不同 SM 数量或 cache 配置的 Blackwell GPU 时，应重新选择这些值，或改为从目标设备配置中传入。
+这些调度常量针对本书使用的 B200 配置调优，并不是所有 Blackwell GPU 的通用参数。`max_ctas=148` 将 non-causal persistent worker 数量限制为 148。`L2_SIZE=50 MiB` 则是计算 `L2_SWIZZLE` 时采用的可用 cache budget，并不表示 GPU 的完整 L2 容量。迁移到具有不同 SM 数量或 cache 配置的 Blackwell GPU 时，应重新选择这些值，或改为从目标设备配置中传入。
 
 两种 schedulers 使用相同的 loop interface：
 
@@ -859,7 +859,7 @@ while scheduler.valid():
 
 ## 编译与验证
 
-前面使用的都是完整 kernel 中的代码片段。要运行 FA4，请先安装 README 中固定的 companion revision，再导入[对应版本的 `flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py)，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 `get_flash_attention4_kernel` 创建 kernel：
+前面使用的都是完整 kernel 中的代码片段。要运行 FA4，请按 README 安装 companion repository，再导入上述 `flash_attention4.py`，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 `get_flash_attention4_kernel` 创建 kernel：
 
 当前 `flash_attention4.py` 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：
 

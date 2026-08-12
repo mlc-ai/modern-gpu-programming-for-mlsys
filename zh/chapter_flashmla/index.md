@@ -771,12 +771,7 @@ online-softmax state 更新之前。
 对于 TIRx regular head-128 specialization，caller 应避免让 `topk_length`
 之后的 in-range KV rows 含有 NaN；这条优化数据路径不保证屏蔽这类异常输入。
 
-源码清楚分开了这些 roles：[K producer 位于 lines
-608--676](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py#L608-L676)，
-[V producer 位于 lines
-679--729](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py#L679-L729)，
-[validity packing 位于 lines
-841--865](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py#L841-L865)。
+源码见：[`sparse_prefill_head128_phase1.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py)。其中 K producer 位于 lines 608--676，V producer 位于 lines 679--729，validity packing 位于 lines 841--865。
 
 至此，不规则的 addresses 已经变成规则的 K/V SMEM tiles。下一问是 tensor core
 为什么要从两个 memory spaces 读取同一个 QK dot product。

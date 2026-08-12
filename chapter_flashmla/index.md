@@ -872,10 +872,7 @@ Callers should avoid NaNs in in-range KV rows referenced beyond `topk_length`.
 The sparse-prefill interface does not promise to sanitize that exceptional
 case.
 
-The implementation source separates these roles cleanly: the
-[K producer is at lines 608--676](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py#L608-L676),
-the [V producer is at lines 679--729](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py#L679-L729),
-and [validity packing is at lines 841--865](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py#L841-L865).
+In [`sparse_prefill_head128_phase1.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py), the K producer is at lines 608--676, the V producer at lines 679--729, and validity packing at lines 841--865.
 
 ## Why is Q split between SMEM and TMEM?
 

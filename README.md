@@ -67,8 +67,7 @@ python -c "import tvm, tvm.tirx; print(tvm.__version__)"
 **2. Install PyTorch** with a CUDA build matching your GPU (used for the example inputs and the
 reference checks) — see <https://pytorch.org>.
 
-**3. (Optional) install the reference kernels.** Use the companion revision tested with
-Apache TVM 0.26.0:
+**3. (Optional) install the reference kernels.**
 
 ```bash
 git clone https://github.com/mlc-ai/tirx-kernels.git
