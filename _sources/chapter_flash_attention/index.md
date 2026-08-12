@@ -267,7 +267,7 @@ Second, the paper uses otherwise idle TMEM to communicate correction statistics.
 
 ## Conventions for Reading the Code
 
-The excerpts in this chapter are lightly abbreviated from the [Apache TVM 0.26-compatible revision of `flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py), so they refer to shapes, stage indices, and phase variables defined elsewhere in the kernel. Unless a causal difference is called out, the detailed handoff discussion and timeline trace the non-causal configuration used by the verification example. The table below collects the names that recur later but are not self-explanatory:
+The excerpts in this chapter are lightly abbreviated from [`flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py), so they refer to shapes, stage indices, and phase variables defined elsewhere in the kernel. Unless a causal difference is called out, the detailed handoff discussion and timeline trace the non-causal configuration used by the verification example. The table below collects the names that recur later but are not self-explanatory:
 
 | Name | Meaning |
 |------|---------|
@@ -841,7 +841,7 @@ The scheduler maps each CTA to a `(batch, kv_head, m_block)` attention task. One
 - Non-causal mode uses `FlashAttentionLinearScheduler`. Every task visits the same number of K/V blocks, so the kernel launches a fixed set of persistent CTAs. After completing one task, each CTA advances its linear task index by `num_ctas` and processes the next assignment.
 - Causal mode uses `FlashAttentionLPTScheduler`. A Q block near the beginning may visit only one K/V block, while a later Q block may visit all of them. The scheduler first reverses the `m_block` order so that later, heavier blocks are scheduled first, reducing load imbalance near the end of the launch. It also groups the flattened `batch × kv_head` index by `L2_SWIZZLE`: before advancing to the next `m_block`, it visits the batch/KV-head tasks in the current group. This keeps a bounded group of K/V working sets active in L2 as the scheduler advances through `m_block`. The current implementation launches one CTA per causal task.
 
-The scheduling constants in the pinned source are tuned for the B200 configuration used in this book; they are not universal Blackwell parameters. `max_ctas=148` caps the non-causal persistent worker count at 148. `L2_SIZE=50 MiB` is the usable cache budget assumed when computing `L2_SWIZZLE`, not the GPU's full reported L2 capacity. A Blackwell GPU with a different SM count or cache configuration should retune these values or derive them from the target configuration.
+The scheduling constants are tuned for the B200 configuration used in this book; they are not universal Blackwell parameters. `max_ctas=148` caps the non-causal persistent worker count at 148. `L2_SIZE=50 MiB` is the usable cache budget assumed when computing `L2_SWIZZLE`, not the GPU's full reported L2 capacity. A Blackwell GPU with a different SM count or cache configuration should retune these values or derive them from the target configuration.
 
 Both schedulers expose the same loop interface:
 
@@ -858,7 +858,7 @@ The difference lies in `next_tile()`: non-causal mode advances a persistent CTA 
 
 ## Compile and Verify
 
-The preceding sections used excerpts from the complete kernel. To run FA4, install the companion revision pinned in the README, import the [matching `flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py), compile it, and compare its output with a PyTorch reference. Unlike the GEMM examples, this kernel is constructed with `get_flash_attention4_kernel`.
+The preceding sections used excerpts from the complete kernel. To run FA4, install the companion repository as described in the README, import `flash_attention4.py`, compile it, and compare its output with a PyTorch reference. Unlike the GEMM examples, this kernel is constructed with `get_flash_attention4_kernel`.
 
 The current `flash_attention4.py` is specialized for fixed tile shapes rather than serving as a general attention interface. Its inputs must satisfy these constraints:
 
