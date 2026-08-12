@@ -1,51 +1,91 @@
 (chap_flashmla)=
 # FlashMLA
 
-Start with an apparent contradiction. The Blackwell kernel studied in this
-chapter accepts 128 query heads, but its KV tensor has only one head. One cached
-KV entry must somehow serve all 128 heads, preserve head-specific attention, and
-produce 128 different 512-coordinate outputs.
-
-That puzzle has three layers. MLA explains why the cache can be shared.
-Weight absorption explains where the per-head projections went. The FlashMLA
-kernel explains how a sparse list of shared cache rows becomes a dense,
-two-CTA tensor-core computation.
-
-```{figure} ../img/flashmla_cache_story.png
-:width: 100%
-:alt: One latent KV cache entry serving 128 query heads through absorbed projections
-
-The cache stores one latent content vector and one shared RoPE key per token.
-Per-head behavior survives on the query and output sides rather than as 128
-materialized K/V cache entries.
-```
-
 :::{admonition} Overview
 :class: overview
 
-- Derive MLA's shared latent cache, MHA/MQA execution modes, and weight absorption.
-- Turn the sparse-attention contract into a 2-CTA Blackwell dataflow program.
-- Run executable references, then compile and verify the pinned kernel on B200.
+- Start from an ordinary MHA KV cache and derive why MLA stores one shared
+  compressed state per token, including where the head-specific K/V
+  transformations move.
+- Define the FlashMLA sparse-prefill operator: an external indexer selects KV
+  rows, then FlashMLA attends over those rows. An executable reference fixes its
+  numerical behavior and edge cases.
+- Use the TIRx `flash_mla_sparse_fwd` entry to understand shape dispatch and how
+  it specializes the QK scale, then follow the regular head-128
+  specialization through two-CTA ownership, data residency, specialized roles,
+  and the pipeline before compiling and verifying it on B200.
 :::
 
-The name *FlashMLA* combines two ideas that are easy to conflate. MLA is an
-attention architecture that compresses key-value state into a latent vector.
-FlashMLA is DeepSeek's library of optimized attention kernels, spanning dense
-and sparse operators across prefill and decoding.
+Before introducing MLA, recall why ordinary attention needs a **KV cache**. To
+compute a new query, attention must read the keys and values of earlier tokens.
+Recomputing them every time would repeat a large amount of work, so the system
+caches the K/V states and lets later queries read them directly.
 
-We will derive the architecture, make the sparse contract executable, and then
-read one specific library path with the same algorithm-to-schedule depth used
-for FA4: the regular 128-query-head sparse-prefill forward kernel on Blackwell.
+In ordinary multi-head attention (MHA), every attention head has its own K and
+V. The KV cache must therefore store every head's K/V for every processed token.
+As the context grows, the amount of state that must be stored and read grows
+with it. MLA's first goal is to reduce this cache.
 
-Our implementation reference is pinned to
-[`mlc-ai/tirx-kernels@5be39749`](https://github.com/mlc-ai/tirx-kernels/tree/5be39749e7dfd2c4bdae9b4d396f8ec35af07126).
-All TIRx API spellings and excerpts below come from that revision. This matters:
-the compiler APIs are evolving, while a textbook example must be reproducible.
+**Multi-head Latent Attention (MLA)** uses a different cache representation.
+Instead of storing expanded K/V for every head, it stores one compressed state
+per token and shares that state across all heads. This does not merge all heads
+into one. Each head still has its own transformations; the cache simply no
+longer stores the K/V produced by those transformations as long-lived state. We
+will derive how one shared state can preserve head-specific behavior.
 
-## Why does MHA cache separate K/V for every head?
+MLA specifies what the cache stores and how attention is computed; FlashMLA
+addresses how to perform those computations efficiently on a GPU. **FlashMLA**
+is DeepSeek's library of optimized GPU kernels for MLA, with operators for
+different attention stages and cache formats.
 
-Let $h_t\in\mathbb{R}^{d_{model}}$ be the hidden state of token $t$. Ordinary
-multi-head attention (MHA) projects it independently for every head $i$:
+This chapter begins with sparse prefill. *Prefill* means processing the prompt's
+query tokens in parallel; *sparse* means that an external indexer first selects
+the relevant KV rows and attention visits only those rows.
+
+The sparse-prefill operator does not map to one immutable kernel. This chapter
+keeps three layers distinct. The FlashMLA `flash_mla_sparse_fwd` interface is
+the semantic thread: it defines the inputs, outputs, and computation of sparse
+prefill. The TIRx registry entry with the same name is a dispatch bridge with a
+narrower call signature: its specializations bind `sm_scale` to
+`1 / sqrt(d_qk)` and it selects a head-64, regular head-128, or small-top-k
+head-128 specialization by shape. The regular head-128 specialization is the
+implementation thread: it shows how Blackwell schedules that computation.
+Other implementations appear only when comparing operator families, dispatch,
+and design tradeoffs.
+
+In the regular head-128 specialization, MLA's sharing is especially visible.
+One query token corresponds to a query row containing 128 query heads, while
+each cached token contributes one shared KV row. How can 128 heads read the same
+KV row and still produce different results? The next figure gives the first
+clue. What is shared is the source state used to form K/V, not the final
+representation consumed by every head. Head-specific transformations remain on
+the two sides of the dot-product, softmax, and weighted-sum core. We will list
+the exact tensor shapes after deriving MLA.
+
+```{figure} ../img/flashmla_cache_story.png
+:width: 100%
+:alt: Ordinary MHA caches separate key and value data for every head; MLA stores one shared compressed state and keeps head-specific work around attention
+
+Ordinary MHA stores a separate key/value slice per head. MLA stores one shared
+compressed content state plus shared position information per token;
+head-specific query and output transformations happen before and after
+attention.
+```
+
+The figure gives intuition, but it does not yet explain how a shared state
+preserves head-specific behavior or prove why moving these transformations
+leaves the computation unchanged. We will first quantify the ordinary MHA
+cache, derive what MLA stores, and prove why the transformations can move. Only
+then will we turn to the sparse operator and the regular head-128
+specialization's Blackwell schedule.
+
+## Start with the ordinary MHA KV cache
+
+The intuition above does not yet tell us how large the cache is. Let
+$h_t\in\mathbb{R}^{d_{model}}$ be the hidden state of token $t$. Write $n_h$
+for the number of heads and $d_h$ for the width of one head; $i$ selects a head,
+while $s$ will select a cached key-token position. Ordinary MHA produces a
+separate query, key, and value for every head $i$:
 
 $$
 q_{t,i}=W_i^Q h_t,\qquad
@@ -100,22 +140,11 @@ The superscript $C$ denotes the non-positional, or *content*, channel. The key
 observation is that the cache need not store the expanded $k^C$ and $v^C$ for
 every head. It stores one $c^{KV}$ per token instead.
 
-MLA may also factor the query projection through a separate low-rank latent,
-
-$$
-c_t^Q=W^{DQ}h_t,\qquad q_t^C=W^{UQ}c_t^Q.
-$$
-
-This query-side factorization reduces activation memory during training, but it
-does not reduce the KV cache.
-
-It also happens before the core-attention API: the `q` tensor passed to FlashMLA
-already contains the projected query. We therefore treat $q^C$ as an input and
-focus on the KV-side compression that determines the cache and kernel operands.
-
-RoPE complicates this simple picture. A position-dependent rotation between
-$W^{UK}$ and a dot product would prevent the matrices from being reassociated.
-MLA therefore uses a decoupled positional channel: each query head has
+Rotary positional embedding (RoPE) rotates a position-carrying subspace of Q
+and K. This complicates the simple picture above: inserting that
+position-dependent rotation between $W^{UK}$ and a dot product would prevent
+the matrices from being reassociated. MLA therefore uses a decoupled positional
+channel: each query head has
 $q_{t,i}^{R}$, while all heads share a cached $k_t^R$. The actual MHA-form score
 uses
 
@@ -127,12 +156,31 @@ $$
 The cache is now $[c_s^{KV};k_s^R]$, still shared across heads. The positional
 channel remains explicit; weight absorption applies to the content channel.
 
+:::{admonition} The query side can also be compressed
+:class: note
+
+MLA may factor the query projection through a separate low-rank latent,
+
+$$
+c_t^Q=W^{DQ}h_t,\qquad q_t^C=W^{UQ}c_t^Q.
+$$
+
+This factorization mainly reduces activation memory during training; it does
+not shrink the KV cache further. It also happens before FlashMLA's core
+attention: the `q` tensor presented to the sparse-prefill operator is already
+projected. We therefore treat $q^C$ as an input and continue along the KV-cache
+path.
+:::
+
 ### Where do the per-head up-projections go?
 
-MLA admits two algebraically related core-attention modes. This should not be
-taken to mean that every MLA model is an ordinary MQA model.
+We now know what the cache stores, but one question remains: must every head's
+$W_i^{UK}$ and $W_i^{UV}$ still run explicitly before attention? MLA admits two
+algebraically equivalent core-attention modes. Here “MQA mode” names an
+execution strategy; it does not mean that every MLA model is an ordinary MQA
+model.
 
-| MLA execution mode | Core-attention K/V presented to the kernel | Where up-projection occurs |
+| MLA execution mode | K/V used by core attention | Where up-projection occurs |
 | --- | --- | --- |
 | MHA mode | Per-head $[W_i^{UK}c^{KV};k^R]$ and $W_i^{UV}c^{KV}$ | Before core attention |
 | MQA mode | Shared $[c^{KV};k^R]$ and shared latent values $c^{KV}$ | Absorbed into the query and output paths |
@@ -165,21 +213,12 @@ $$
 
 Consequently, $W_i^{UV}$ can be composed with the model's output projection.
 Neither expanded per-head K nor expanded per-head V needs to be materialized by
-the attention kernel.
+the core-attention computation.
 
-The distinction is operational, not merely notational. Appendix A of the
-[DeepSeek-V3.2 report](https://github.com/deepseek-ai/DeepSeek-V3.2-Exp/blob/main/DeepSeek_V3_2.pdf)
-states that DeepSeek-V3.1-Terminus used MHA mode for training and prefill and MQA
-mode for decoding.
-
-DeepSeek Sparse Attention (DSA), by contrast, instantiates MLA in MQA mode even
-for sparse prefill because each selected latent KV entry is shared by all query
-heads.
-
-Thus the $d_{qk}=576$, $d_v=512$ contract commonly seen in this sparse-prefill
-path is an absorbed MQA representation: 512 latent content coordinates plus a
-64-coordinate RoPE channel. It is not a universal shape for MLA or every
-FlashMLA operator. The implementation also supports a $d_{qk}=512$ variant.
+The DeepSeek Sparse Attention (DSA) sparse-prefill operator studied here uses
+this MQA mode: every selected latent KV entry is shared by all query heads.
+Before discussing model-specific choices or implementation shapes such as 512
+and 576, we can verify the algebraic equivalence with a small program.
 
 ### Can a small program prove the two modes agree?
 
@@ -237,7 +276,11 @@ Notice that the scale remains the scale of the model's semantic QK head, not
 $1/\sqrt{D_{latent}}$ merely because the absorbed dot product happens to have
 $D_{latent}$ coordinates.
 
-## Does the sparse kernel choose the tokens?
+Weight absorption has answered how one shared KV row can serve many query
+heads. The next, independent question is who selects the list of KV rows that
+the sparse-prefill operator receives.
+
+## Does the sparse-prefill operator choose the tokens?
 
 Dense attention visits every eligible KV token. DSA first uses a lightweight
 *lightning indexer* to score candidate tokens and chooses a top-$k$ set for each
@@ -247,10 +290,10 @@ $O(L^2)$ to $O(Lk)$ for prefill, although the indexer has its own cost.
 
 ```{figure} ../img/flashmla_sparse_story.png
 :width: 100%
-:alt: A lightning indexer selecting token rows before the sparse FlashMLA attention kernel
+:alt: A lightning indexer selecting token rows before the sparse-prefill attention operator
 
 Selection and attention are separate operators. The indexer produces row
-addresses; the sparse-prefill kernel gathers those rows and performs the
+addresses; the sparse-prefill operator gathers those rows and performs the
 QK--softmax--PV computation.
 ```
 
@@ -270,73 +313,27 @@ not itself a causal mask.
 
 When `topk_length` is present, every query must satisfy
 `0 <= topk_length[q] <= topk`. This is a caller precondition, not a value that
-the kernel clips automatically: a value above `topk` makes the pinned kernel
-walk beyond the logical `indices` storage.
+the TIRx prefill specializations clip automatically. They use it to
+determine how many selected-row tiles to visit, so a value above `topk` can make
+a specialization step beyond the logical `indices` storage.
 
-This prefill interface also has no batch dimension. In the port studied below,
-`h_kv=1`, so `indices` has shape `[s_q, 1, topk]`: each query token supplies one
-selected-token list, and all 128 of its query heads share that list. A serving
-system must flatten or otherwise map batches before making this call.
+This prefill interface also has no batch dimension. Each query token supplies
+one selected-token list, and all `h_q` query heads share that list. A serving
+system must flatten or otherwise map batches before making this call. We will
+define the exact tensor shape and the symbols `s_q`, `h_q`, `h_kv`, and `topk`
+when we enter the regular head-128 specialization.
 
-### Is FlashMLA one kernel or an operator family?
-
-*Prefill* processes the prompt's query tokens in parallel; *decoding* adds a new
-query (or a small speculative group) step by step while reusing the KV cache.
-The [official FlashMLA repository](https://github.com/deepseek-ai/FlashMLA)
-organizes its kernels into four broad families:
-
-| Selection | Sequence stage | Representative purpose |
-| --- | --- | --- |
-| dense | prefill | MHA forward and backward |
-| dense | decoding | read an MLA KV cache for newly generated queries |
-| token-sparse | prefill | DSA core attention over a selected token list |
-| token-sparse | decoding | DSA inference over a selected FP8 KV cache |
-
-FlashMLA is therefore neither synonymous with sparse attention nor with the
-kernel in this chapter.
-
-We use its sparse prefill operator because it makes one systems question
-especially visible: how can irregular TMA gathers feed regular tensor-core
-tiles? Sparse decode has a different paged-cache, scheduling, and reduction
-contract and is outside this chapter's boundary.
-
-The public upstream sparse-prefill call is conceptually
-
-```text
-out, max_logits, lse = flash_mla_sparse_fwd(
-    q, kv, indices, sm_scale,
-    d_v=512,
-    attn_sink=attn_sink,       # optional [h_q], float32
-    topk_length=topk_length,   # optional [s_q], int32
-)
-```
-
-The pinned TIRx repository reuses the public name in its unified
-`flash_mla_sparse_fwd` registry entry, then dispatches to one of three SM100
-phase-1 modules by shape.
-
-:::{admonition} Port scope: `sm_scale` is fixed
-:class: warning
-
-The upstream call above accepts `sm_scale` at runtime. The pinned TIRx entry
-preserves the registry name and shape dispatch, **not** the complete call
-signature. All three prefill modules specialize the scale to `1 / sqrt(d_qk)`,
-and the launch ABI has no scale argument.
-
-In this revision, passing `sm_scale=...` through the `**kwargs` wrappers is
-silently ignored. The B200 examples below therefore validate a fixed-scale
-teaching port, not a drop-in replacement for upstream `flash_mla_sparse_fwd`.
-
-A model whose semantic QK scale differs must expose or specialize the correct
-value. Weight absorption does not justify changing that scale.
-:::
+These rules now say what the operator accepts and rejects. Next we turn them
+into an executable CPU reference, so that the semantics stand on their own
+before we discuss the FlashMLA implementation.
 
 ## Can we make the sparse contract executable first?
 
-Before reading the kernel, we need a reference that makes edge cases explicit.
-For the absorbed MQA contract, `kv[:, 0, :]` supplies both K and V: all `d_qk`
-coordinates participate in QK, while the first `d_v` coordinates are the latent
-value.
+Before examining any GPU specialization, we need a reference that makes edge
+cases explicit. For the absorbed MQA contract, `kv[:, 0, :]` supplies both K and
+V: all `d_qk` coordinates participate in QK, while the first `d_v` coordinates
+are the latent value. Here `d_qk` is the Q/K width, `sm_scale` is the model's
+semantic QK scale, and `d_v` is the requested value/output width.
 
 Invalid indices must be clamped *before* a PyTorch gather and then masked out.
 Directly indexing with `-1` would incorrectly select the last row.
@@ -344,10 +341,32 @@ Directly indexing with `-1` would incorrectly select the last row.
 The gathered V row for an out-of-range address is also cleared before PV,
 because a zero softmax weight does not neutralize a NaN under IEEE arithmetic.
 We deliberately leave an in-range row masked only by `topk_length` unsanitized
-to match the pinned kernel behavior discussed below.
+because neither the FlashMLA interface nor the three TIRx prefill
+specializations promise to sanitize that exceptional input.
 
-The complete CPU block answers whether those rules, the attention sink, and the
-all-invalid convention can coexist in one executable oracle:
+An attention sink is equivalent to adding a logit whose value vector is zero.
+It changes only the output denominator:
+
+$$
+O_i=\frac{\sum_j e^{x_{ij}-m_i}v_j}
+{\sum_j e^{x_{ij}-m_i}+e^{a_i-m_i}}.
+$$
+
+Here $a_i$ is the per-head sink logit. It has no effect on `max_logits` or the
+returned log-sum-exp (`lse`). If every selected position is invalid, the
+operator instead uses the explicit convention `out=0`, `max_logits=-inf`, and
+`lse=+inf`.
+
+The executable oracle follows four stages:
+
+1. validate and safely gather the requested rows;
+2. construct the validity predicate and clear only out-of-range V sentinels;
+3. compute scaled logits, unnormalized weights, numerator, denominator, and the
+   optional sink term; and
+4. normalize the output and return the two statistics, including the all-invalid
+   convention.
+
+The complete CPU block puts those stages in one place:
 
 ```python
 import math
@@ -445,61 +464,121 @@ torch.testing.assert_close(nan_out, torch.tensor([[[2.0, 3.0]]]))
 print(out.shape, max_logits.shape, lse.shape)
 ```
 
-An attention sink is equivalent to adding a logit whose value vector is zero.
-It changes only the output denominator:
+The reference makes the sparse-prefill operator's numerical contract executable
+for defined inputs and return conventions. Its treatment of the exceptional
+NaN case identified above mirrors the TIRx specializations; it does not add a
+sanitization guarantee to the interface. Every dispatched TIRx specialization
+must reproduce the defined results when the operator scale equals its
+specialized `1 / sqrt(d_qk)` value. Tile partitioning, storage reuse, and
+pipeline overlap belong to an implementation, not to the operator contract.
 
-$$
-O_i=\frac{\sum_j e^{x_{ij}-m_i}v_j}
-{\sum_j e^{x_{ij}-m_i}+e^{a_i-m_i}}.
-$$
+## Where does sparse prefill sit in the FlashMLA family?
 
-Here $a_i$ is the per-head sink logit. It has no effect on `max_logits` or the
-returned `lse`, a detail that is easy to miss when writing an independent
-oracle.
+FlashMLA is a library that spans both the sequence stage and the selection
+pattern. Unlike prefill, *decoding* adds a new query (or a small speculative
+group) step by step while reusing the KV cache. The
+[official FlashMLA repository](https://github.com/deepseek-ai/FlashMLA)
+organizes its operators and their implementations into four broad families:
+
+| Selection | Sequence stage | Representative purpose |
+| --- | --- | --- |
+| dense | prefill | MHA forward and backward |
+| dense | decoding | read an MLA KV cache for newly generated queries |
+| token-sparse | prefill | DSA core attention over a selected token list |
+| token-sparse | decoding | DSA inference over a selected FP8 KV cache |
+
+This chapter follows the token-sparse prefill cell. At the operator level, its
+distinctive feature is an externally selected list of irregular KV row
+addresses. We choose the regular head-128 specialization as the implementation
+thread because it makes the corresponding Blackwell question concrete: how can
+the Tensor Memory Accelerator (TMA) gather those addresses into regular
+tensor-core tiles? Sparse decode has a different paged-cache, scheduling, and
+reduction contract and is outside this chapter's boundary. In TIRx it is a
+separately registered implementation that launches a split-KV main kernel
+followed by a separate combine kernel; it is not a fourth target of the
+`flash_mla_sparse_fwd` dispatch bridge.
+
+The FlashMLA sparse-prefill interface is conceptually
+
+```text
+out, max_logits, lse = flash_mla_sparse_fwd(
+    q, kv, indices, sm_scale,
+    d_v=512,
+    attn_sink=attn_sink,       # optional [h_q], float32
+    topk_length=topk_length,   # optional [s_q], int32
+)
+```
+
+The tensor dimensions and explicit arguments have the semantics exercised by
+the oracle: `h_q` is the query-head count, `s_q` is the query-row count,
+`sm_scale` scales QK scores, `d_v` selects the value/output width, `attn_sink`
+optionally adds one zero-valued logit per query head, and `topk_length` limits
+each query's valid index prefix. The call returns the normalized output, maximum
+scaled logit, and log-sum-exp without the sink.
+
+The TIRx tree connects this interface to device code through a registry entry
+that deliberately reuses the name `flash_mla_sparse_fwd`. TIRx
+extends TVM 0.26's TIR Python DSL: `T` denotes the TIR script namespace, while
+`Tx` contains GPU-kernel helpers. The registry entry is a dispatch bridge: by
+shape, it selects one of three SM100 phase-1 specializations of the same
+sparse-prefill computation.
+
+:::{admonition} The TIRx entry specializes `sm_scale`
+:class: warning
+
+The FlashMLA interface above accepts `sm_scale` at runtime. The TIRx dispatch
+entry exposes a narrower call signature: all three prefill specializations bind
+the scale to `1 / sqrt(d_qk)`, and the launch application binary interface
+(ABI) has no scale argument.
+
+Passing `sm_scale=...` through the `**kwargs` wrappers is silently ignored. The
+B200 examples below therefore validate the computation only at
+`sm_scale = 1 / sqrt(d_qk)`; they do not demonstrate runtime-scale parity with
+the complete FlashMLA interface.
+
+A model whose semantic QK scale differs must expose or specialize the correct
+value. Weight absorption does not justify changing that scale.
+:::
 
 ## Which Blackwell case are we studying?
 
 We now focus on
 [`sparse_prefill_head128_phase1.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py).
-Despite the internal `phase1` name inherited from upstream FlashMLA, this
+Despite the internal `phase1` name, this
 prefill path produces the complete `(out, max_logits, lse)` result in one kernel;
 it is not a partial split-KV output awaiting a combine kernel.
 
 This regular head-128 case is a useful bridge from the preceding FlashAttention
 chapter. It retains the familiar QK--softmax--PV chain, then adds irregular
-gather, absorbed latent KV, and cooperative 2-CTA ownership.
+gather, absorbed latent KV, and cooperative thread-block ownership.
+
+In the source, a cooperative thread array (CTA) is one CUDA thread block; a
+thread-block cluster is a hardware group of CTAs that can participate in
+collective operations. A warpgroup is four warps, or 128 threads, assigned one
+specialized role. This kernel pairs two CTAs in one cluster.
 
 One naming warning prevents confusion later. In the mathematical introduction,
-$p$ denotes a normalized softmax probability. In the pinned source, however,
+$p$ denotes a normalized softmax probability. In the implementation, however,
 `tmem_p` and the register variable `p` hold **raw QK logits**. In the schedule
 discussion we will call those logits $L$.
 
 The source's `s_frag` and `s_smem_gemm` hold BF16 **unnormalized exponential
 weights**, which we will call $W$.
 
-The weights are not normalized in place. The final output becomes normalized
-only when the accumulated output is divided by `li` plus the optional sink term
-in the epilogue.
+The weights are not normalized in place. Here `li` names the running softmax
+denominator. The final output becomes normalized only when the accumulated
+output is divided by `li` plus the optional sink term in the epilogue.
 
-All shorter TIRx code blocks below are contextual excerpts from the pinned
-kernel, not standalone programs. The complete module is compiled and
+All shorter TIRx code blocks below are contextual excerpts from the linked
+implementation, not standalone programs. The complete module is compiled and
 numerically verified in the final section. Blocks intended to run independently
 are called out explicitly.
 
 ### Which shapes reach the regular head-128 path?
 
-The regular head-128 module fixes the following tile constants:
-
-```python
-B_H = 128
-B_TOPK = 128
-D_V = 512
-NUM_BUFS = 2
-NUM_THREADS = 512
-D_TQ = 384
-```
-
-Its input and output contract is:
+The algorithmic discussion only needed “one shared latent KV.” Now that we are
+entering a concrete implementation, we can state every tensor shape. The
+regular head-128 module has this shape-specialized signature:
 
 | Tensor | Shape | Type | Meaning |
 | --- | --- | --- | --- |
@@ -512,19 +591,52 @@ Its input and output contract is:
 | `max_logits` | `[s_q, 128]` | FP32 | maximum scaled logit |
 | `lse` | `[s_q, 128]` | FP32 | natural-log sum-exp, without sink |
 
-The module accepts `d_qk` 512 or 576, requires `h_kv=1`, `d_v=512`, and requires
-the regular path's `topk` to be a positive multiple of 128. The unified front
-door makes one additional choice for 128 heads: `d_qk=512` with `topk<=1280` goes to the
-small-top-k implementation; other supported head-128 shapes go to this regular
-implementation. Head-64 shapes use a separate kernel.
+The 128 is the query-head count from the opening question, while the 1 in `kv`
+means that every head shares the same KV row. A common $d_{qk}=576$ case combines
+512 latent-content coordinates with 64 RoPE coordinates; `d_v=512` is the
+latent-value width. These are shapes of this absorbed MQA representation, not a
+universal MLA contract.
 
-The positive-`topk` condition is a required caller precondition. The unified front
-door rejects `topk<=0`, but the pinned per-implementation `_cfg().validate()`
+The choice can also differ by model and stage. Appendix A of the
+[DeepSeek-V3.2 report](https://github.com/deepseek-ai/DeepSeek-V3.2-Exp/blob/main/DeepSeek_V3_2.pdf)
+states that DeepSeek-V3.1-Terminus used MHA mode for training and prefill and MQA
+mode for decoding, whereas DSA sparse prefill uses MQA mode.
+
+With the specialization's tensor shapes fixed, the following constants
+determine one tile's execution:
+
+```python
+B_H = 128
+B_TOPK = 128
+D_V = 512
+NUM_BUFS = 2
+NUM_THREADS = 512
+D_TQ = 384
+```
+
+The names map directly to the work we will trace: `B_H` is the 128-head logical
+tile, `B_TOPK` is the 128 selected rows processed per streaming tile, `D_V` is
+the value/output width, and `D_TQ` is the 384-coordinate Q suffix placed in
+Blackwell tensor memory. `NUM_THREADS=512` gives each CTA four warpgroups.
+`NUM_BUFS=2` names two synchronization slots (and two small validity-mask
+slots), not two full K/V data stages; the residency and pipeline sections will
+make that distinction concrete.
+
+The regular head-128 specialization accepts `d_qk` 512 or 576, requires
+`h_kv=1`, `d_v=512`, and requires `topk` to be a positive multiple of 128. The
+TIRx dispatch entry makes one additional choice for 128 heads: `d_qk=512`
+with `topk<=1280` selects the small-top-k head-128 specialization; other
+supported head-128 shapes select this regular head-128 specialization. Head-64
+shapes select the head-64 specialization.
+
+The positive-`topk` condition is a required caller precondition. The TIRx
+dispatch entry rejects `topk<=0`, but the per-specialization `_cfg().validate()`
 methods check divisibility without checking positivity. A direct import of one
-specialization must therefore still reject or avoid nonpositive `topk`; acceptance
-by that local validator does not make such a launch valid.
+specialization must therefore still reject or avoid nonpositive `topk`;
+acceptance by that local validator does not make such a launch valid.
 
-This dispatch can be inspected without launching a GPU kernel:
+After completing the repository setup in the final section, this dispatch can
+be inspected without launching a GPU kernel:
 
 ```python
 from tirx_kernels.flashmla.flash_mla_sparse_fwd import (
@@ -538,27 +650,35 @@ print(dispatch_reason(**shape))
 # sm100 h_q=128 dispatches to regular head128 phase1
 ```
 
-The dispatch itself is documented in the pinned
+The dispatch itself is documented in
 [`flash_mla_sparse_fwd.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/flash_mla_sparse_fwd.py#L66-L120).
 Keeping dispatch separate from the device schedule prevents a tutorial from
 mistaking one specialization for the entire operator.
 
-### Why does one query row need two CTAs?
+Before assigning hardware roles, reduce one selected tile to six semantic
+steps. This is the bridge between the CPU oracle and the schedule:
 
-The launch grid contains `2 * s_q` CTAs and clusters adjacent CTAs in pairs:
-
-```python
-block_idx = T.cta_id([2 * s_q])
-T.cta_id_in_cluster([2])
-cta_idx: T.let = block_idx % 2
-s_q_idx: T.let = block_idx // 2
-thread_idx = T.thread_id([512])
-T.warpgroup_id([4])
+```text
+for each selected 128-row tile:
+    1. gather the tile's K rows
+    2. gather its V rows and build the validity mask
+    3. compute raw logits L = Q @ K.T
+    4. update masked online softmax, producing W, origin mi, and denominator li
+    5. rescale the running state when needed, then accumulate O~ += W @ V
+after all selected tiles:
+    6. normalize O~ by li + sink; store out, max_logits, and lse
 ```
 
-One cluster therefore owns one query row, and each CTA has four warpgroups.
-Start with the ownership map: the unusual point is that the partition axis
-changes between QK and PV.
+The arithmetic is now familiar. The next question is how two thread blocks can
+cooperate on these six steps without duplicating the whole tile.
+
+### Why does one query row need two CTAs?
+
+The difficulty lies in steps 3 and 5 of the tile skeleton. QK must form every
+pair of 128 query heads and 128 selected tokens; PV then contracts the token
+axis to produce 512 value coordinates. The implementation therefore lets two
+CTAs form one logical tile and changes their partition axis between QK and PV.
+Start with that ownership map before reading the launch code.
 
 ```{figure} ../img/flashmla_cta_ownership.png
 :width: 100%
@@ -580,23 +700,48 @@ The pair divides three different axes in three different ways:
 This is why a 2-CTA tensor-core operation is more than “two CTAs doing half the
 same loop.” QK needs the cross-product of 128 heads and 128 selected tokens; PV
 then contracts those tokens into 512 value coordinates. The partition rotates
-between the two GEMMs. Collective `cta_group=2` MMA, paired SMEM/TMEM layouts,
-and cross-CTA barriers together form the logical tile.
+between the two GEMMs. Collective `cta_group=2` MMA, paired on-chip layouts, and
+cross-CTA synchronization together form the logical tile.
 
-The division follows directly from the pinned source: Q is chunked by
-`cta_idx`, the K producer selects the `cta_idx` half of every top-k block, and
-the V producer starts at `cta_idx * 256`.
+Now return to the source to verify the launch topology. The grid contains
+`2 * s_q` CTAs and clusters adjacent CTAs in pairs:
+
+```python
+block_idx = T.cta_id([2 * s_q])
+T.cta_id_in_cluster([2])
+cta_idx: T.let = block_idx % 2
+s_q_idx: T.let = block_idx // 2
+thread_idx = T.thread_id([512])
+T.warpgroup_id([4])
+```
+
+One cluster therefore owns one query row, and each CTA has four warpgroups. The
+same division appears in the data indexing: Q is chunked by `cta_idx`, the K
+producer selects the `cta_idx` half of every top-k block, and the V producer
+starts at `cta_idx * 256`.
 
 ## Where do the tiles live?
 
-Blackwell's tensor memory (TMEM) lets `tcgen05` keep large accumulators close to
-the tensor cores. It does not replace shared memory (SMEM). TMA gathers arrive in
-SMEM, and the softmax warpgroup must materialize BF16 unnormalized weights in
-SMEM for the PV GEMM.
+The ownership map says *who* computes each piece; residency explains where a
+piece waits between producers and consumers. Four hardware terms are enough to
+read the next figure:
+
+- global memory (GMEM) holds the input and output tensors;
+- shared memory (SMEM) is the ordinary on-chip scratchpad visible to a CTA;
+- the Tensor Memory Accelerator (TMA) moves data asynchronously between GMEM
+  and SMEM and provides the sparse `gather4` path used here;
+- Blackwell tensor memory (TMEM) is a separate on-chip space used by the
+  `tcgen05` tensor-core instruction family for operands and accumulators.
+
+TMEM does not replace SMEM. TMA gathers arrive in SMEM, and the softmax
+warpgroup must materialize BF16 unnormalized weights in SMEM for the PV GEMM.
+In the source's MMA shorthand, **SS** means that both matrix operands come from
+SMEM; **TS** means that the first comes from TMEM and the second from SMEM. The
+Q prefix follows the SS path and its suffix follows the TS path.
 
 ```{figure} ../img/flashmla_dataflow.png
 :width: 100%
-:alt: Data movement between global memory, shared memory, tensor memory, and registers
+:alt: Data residency and lifetime reuse across global memory, shared memory, tensor memory, and WG0 registers during QK, softmax, PV, and the epilogue
 
 Q is split between an SMEM prefix and a TMEM suffix. Gathered K/V enter SMEM,
 raw QK logits and the output accumulate in TMEM, and unnormalized softmax
@@ -620,8 +765,9 @@ These are logical views; CTA-group TMEM layouts and rearrangements give the MMA
 and load/store instructions their physical lane mapping. The source allocates
 one 512-column CTA-group TMEM pool, then carves out O, raw-logit, and Q views.
 
-SMEM is aggressively aliased. `q_full`, the gathered K/V region, and the output
-epilogue reuse a union-like base when their lifetimes permit.
+The source object named `SMEMPool` describes the corresponding shared-memory
+allocation. SMEM is aggressively aliased: `q_full`, the gathered K/V region,
+and the output epilogue reuse a union-like base when their lifetimes permit.
 
 After the final 384 Q columns have moved to TMEM, only the
 $d_{sq}=d_{qk}-384$ prefix must stay live for the first QK part. For
@@ -653,10 +799,14 @@ role assignment is deliberate: one elected lane can issue asynchronous MMA for
 the CTA pair, while many lanes are useful for exponentiation, row reductions,
 packing, and epilogue conversion.
 
+:::{admonition} Why the register limits differ
+:class: note
+
 The register budgets match the roles. WG0 raises its limit to 144 registers and
-WG3 to 168; producer groups lower theirs to 96. The pinned API spells these calls
+WG3 to 168; producer groups lower theirs to 96. The TIRx API spells these calls
 as `T.ptx.setmaxnreg(True, ...)` for an increase and
 `T.ptx.setmaxnreg(False, ...)` for a decrease.
+:::
 
 ### How do irregular rows become regular tiles?
 
@@ -667,7 +817,16 @@ SMEM tile.
 
 The next contextual excerpt answers which addresses one `gather4` issue reads
 and which barrier receives its completion. Its index names and slices are kept
-exactly as they appear at the pinned revision:
+exactly as they appear in the linked implementation:
+
+- `gather4=[...]` supplies the four KV source-row coordinates for this issue;
+- `cur_buf = k % NUM_BUFS` selects the current slot in the two-slot barrier ring;
+  and
+- `bar` is the ready-barrier array passed to this copy helper. `leader_mbar`
+  selects the CTA-pair leader's slot, where TMA reports asynchronous completion.
+
+The remaining names describe the surrounding layouts; they are not additional
+stages hidden from the diagram.
 
 ```python
 _kv_gather_tma = partial(
@@ -709,19 +868,21 @@ not an assumed zero value from the gather, decides whether a finite KV row
 participates in attention. Masking must happen before online-softmax state is
 updated.
 
-As in the upstream API, callers should still avoid NaNs in in-range KV rows
-referenced beyond `topk_length`. The optimized data path does not promise to
-sanitize that exceptional case.
+Callers should avoid NaNs in in-range KV rows referenced beyond `topk_length`.
+The sparse-prefill interface does not promise to sanitize that exceptional
+case.
 
-The pinned source separates these roles cleanly: the
+The implementation source separates these roles cleanly: the
 [K producer is at lines 608--676](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py#L608-L676),
 the [V producer is at lines 679--729](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py#L679-L729),
 and [validity packing is at lines 841--865](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/flashmla/sparse_prefill_head128_phase1.py#L841-L865).
 
-## Why does QK use both SS and TS?
+## Why is Q split between SMEM and TMEM?
 
-The next source excerpt answers how the kernel keeps only part of Q in SMEM. The
-QK dot product is split at $d_{sq}=d_{qk}-384$:
+The gather path has turned irregular K rows into a regular SMEM tile. Q must now
+meet that tile without occupying all of the aliased SMEM workspace. Using the
+SS/TS terms defined with the residency map, the QK dot product is split at
+$d_{sq}=d_{qk}-384$:
 
 ```python
 if d_sq > 0:
@@ -756,9 +917,21 @@ coordinates.
 
 ## How does online softmax avoid needless O rescaling?
 
-For a stream of score tiles, the usual online-softmax recurrence stores a row
-origin $m$, denominator $\ell$, and unnormalized output $\widetilde O$. In base
-2, when the next tile has scaled scores $r$,
+QK has produced raw logits $L$; softmax must now turn each tile into $W$ while
+preserving state from earlier selected tiles. Let $x$ be one raw QK dot product.
+The kernel first places it in the base-2 exponent domain:
+
+$$
+r=x\cdot\text{semantic\_QK\_scale}\cdot\log_2(e).
+$$
+
+The TIRx specialization binds the multiplier named `sm_scale_div_log2` to
+`(1 / sqrt(d_qk)) * log2(e)`. Despite that source name, $r$ is simply the
+model-scaled score expressed in base-2 units so that the kernel can use `exp2`.
+
+For a stream of such score tiles, online softmax stores a base-2 row origin $m$,
+denominator $\ell$, and unnormalized output $\widetilde O$. When the next tile
+contains scores $r$,
 
 $$
 m'=\max(m,\max r),\qquad
@@ -770,14 +943,17 @@ $$
 \widetilde O'=\alpha\widetilde O+\sum_j2^{r_j-m'}v_j.
 $$
 
-Conceptually, the implementation multiplies natural-unit logits by the model's
-semantic QK scale and `log2(e)`, then uses `exp2`. In this fixed-scale port, the
-compile-time `sm_scale_div_log2` is
-`(1 / sqrt(d_qk)) * log2(e)`. This is the same softmax in a form that maps
-directly to fast base-2 exponent instructions.
-
 Rescaling the full 512-coordinate O tile whenever the row maximum increases
-would be expensive. The head-128 kernel uses a lazy threshold:
+would be expensive. Before reading the lazy-threshold excerpt, map its state back
+to the recurrence:
+
+- `cur_pi_max` is the current tile's maximum in the base-2 exponent domain;
+- `mi` is the retained numerical origin $m$;
+- `real_mi` is the exact maximum retained for the reported `max_logits`;
+- `li` is the running denominator $\ell$; and
+- `attn_sink_log2` is the optional sink logit in the same base-2 domain.
+
+The head-128 kernel then makes one warp-uniform decision:
 
 ```python
 should_scale_o: T.bool = (
@@ -798,10 +974,9 @@ but the accumulated O does not need a rescale. Once the difference exceeds 6,
 it rebases and rescales both $\ell$ and, when it already exists, O. The warp-wide
 `any_sync` keeps the decision uniform for the participating rows.
 
-`real_mi` is maintained separately as the exact maximum seen so far. Therefore
-the optimization does not change `max_logits`; `mi` is the numerical origin for
-the recurrence, while `real_mi` is the reported statistic. At the end, the two
-64-token contributions to each logical row are combined, and the kernel emits
+Because `real_mi` is maintained separately, the optimization does not change
+`max_logits`. At the end, the two 64-token contributions to each logical row are
+combined, and the kernel emits
 
 $$
 \mathrm{lse}=m\ln 2+\ln\ell.
@@ -817,7 +992,7 @@ output_scale: T.float32 = T.cuda.fdividef(
 
 but deliberately leaves the reported LSE untouched. All-invalid rows are
 special-cased to output zero with `max_logits=-inf` and `lse=+inf`, matching the
-pinned reference.
+executable reference.
 
 ## How can the stages overlap without racing?
 
@@ -828,13 +1003,30 @@ V segment they need has become reusable.
 
 ```{figure} ../img/flashmla_pipeline_stages.png
 :width: 100%
-:alt: Conceptual sparse-prefill stages and the dependencies that permit steady-state overlap
+:alt: Sparse-prefill pipeline fill, steady state, and drain, including the overlap among QK, softmax, and PV for adjacent tiles
 
-In steady state, softmax($k-1$) may overlap QK($k$). The sole MMA issuer then
-issues PV($k-1$) after QK($k$); once QK($k$) completes, softmax($k$) may overlap
-that PV. Producer warpgroups gather the next safe K/V segments around this
-serial issuer order.
+The fill iteration issues QK(0) without a previous PV, while the drain iteration
+issues PV($N-1$) without a new QK before the final epilogue. In steady state,
+softmax($k-1$) may overlap QK($k$). The sole MMA issuer then issues PV($k-1$)
+after QK($k$); once QK($k$) completes, softmax($k$) may overlap that PV.
+Producer warpgroups gather the next safe K/V segments around this serial issuer
+order.
 ```
+
+At the coarsest level, four ownership handoffs repeat for each tile:
+
+1. WG1/WG2 publish gathered K/V segments, while warp 13 publishes validity;
+2. WG3 completes QK, publishes $L$ to WG0, and returns consumed K segments;
+3. WG0 masks $L$, updates online softmax, publishes $W$ to WG3, and releases the
+   raw-logit and validity storage; and
+4. WG3 completes PV, returning V storage to WG2 and making O safe for WG0 to
+   rescale or finalize.
+
+An **mbarrier** is the hardware completion object behind these handoffs. It
+tracks expected arrivals or TMA bytes and carries a phase, so a wait means that
+the named production step has completed for the intended reuse of a slot. This
+four-step view gives the causal chain; the exact table below splits K and V into
+the finer parts needed for early reuse.
 
 The kernel initializes its mbarriers in warp 0, performs a cluster sync, launches
 the Q prologue, allocates CTA-group TMEM, and then enters specialized loops.
@@ -881,39 +1073,43 @@ is reusable. The two `bar_sv_*` edges do the analogous job for V.
 
 ```{figure} ../img/flashmla_pipeline.png
 :width: 100%
-:alt: Sparse-prefill pipeline showing QK of the current tile and PV of the previous tile
+:alt: Detailed sparse-prefill pipeline showing serial QK and PV issue, part-wise K and V reuse, the mask-slot ring, and the WG0 handoff
 
 The steady state interleaves QK($k$) and PV($k-1$) while other roles perform
 part-wise K/V gathers and softmax work. Barrier phases protect in-place storage
 reuse rather than selecting separate full-tile buffers.
 ```
 
-Two kinds of fences appear around these edges. `T.ptx.tcgen05.fence.*` orders
-TMEM accesses relative to thread-visible work, while
-`T.ptx.fence.proxy_async("shared::cta")` establishes cross-proxy ordering between
-generic and asynchronous accesses to SMEM.
+The memory model has one more distinction. Ordinary thread loads and stores see
+SMEM through the **generic proxy**; TMA and tensor-core asynchronous accesses use
+an **asynchronous proxy**. A barrier reports completion, but completion alone
+does not establish the required visibility and ordering between those proxies.
+
+Two kinds of fences therefore appear around the barrier edges.
+`T.ptx.tcgen05.fence.*` orders TMEM accesses relative to thread-visible work,
+while `T.ptx.fence.proxy_async("shared::cta")` establishes cross-proxy ordering
+between generic and asynchronous accesses to SMEM.
 
 Here the proxy fence is needed both when generic stores of $W$ or the epilogue
 tile precede tcgen05/TMA asynchronous reads, and after an asynchronous SMEM read
 completes before generic code overwrites aliased storage.
 
-An mbarrier communicates completion and an ownership handoff; the proxy fence
-orders memory effects across proxies. Neither is a substitute for the other.
+Thus an mbarrier communicates completion and an ownership handoff, whereas the
+proxy fence orders memory effects across proxies. Neither is a substitute for
+the other.
 
-## How do we compile and verify the entire path?
+## How do we compile and verify the regular head-128 implementation?
 
-The pinned module targets compute capability 10 and its TMA/tcgen05 forms require
-an SM100-class GPU. Use B200, CUDA 12.9 or newer, and the official Apache TVM
-0.26.0 package. The pinned kernel uses that release's TIRx API rather than the
-spellings on a moving development checkout.
+The regular head-128 specialization targets compute capability 10, and its
+TMA/tcgen05 forms require an SM100-class GPU. Use B200, CUDA 12.9 or newer, and
+the dependencies installed below.
 
 First install a CUDA-enabled PyTorch build that supports B200 using the
 [official PyTorch selector](https://pytorch.org/get-started/locally/). The
 companion repository imports PyTorch but does not declare it as a package
 dependency.
 
-The following commands answer exactly which TVM release and kernel revision the
-examples require:
+Install TVM and the companion kernel repository as follows:
 
 ```bash
 python -m pip install "apache-tvm==0.26.0" cuda-bindings
@@ -951,7 +1147,7 @@ row at a time, and checks output, maximum logits, and LSE with explicit
 tolerances. This is the right default verification path; compiling generated
 PTX alone cannot find a wrong head partition or a missing validity bit.
 
-The repository CLI can run the full registered configuration:
+The repository CLI can run the registered regular-head128 configuration:
 
 ```bash
 python -m tirx_kernels.test \
@@ -962,18 +1158,19 @@ python -m tirx_kernels.test \
 Useful negative tests are just as important. Set `inject_invalid_indices=True`
 to cover negative and too-large row IDs, and `have_topk_length=True` to exercise
 the position predicate. Test an all-invalid row and confirm the documented
-zero/-infinity/+infinity convention. Finally, call the unified dispatch entry
-for head-64 and small-top-k shapes so that a successful regular-head128 run is
-not mistaken for full API coverage.
+zero/-infinity/+infinity convention. Finally, call the TIRx dispatch entry for
+head-64 and small-top-k shapes so that a successful regular-head128 run is not
+mistaken for coverage of every prefill specialization. Even that broader
+dispatch check does not establish parity with the complete FlashMLA interface.
 
-## Which five invariants define this path?
+## Which invariants belong to the operator and the specialization?
 
-1. **The cache invariant.** One `h_kv=1` latent KV row can serve 128 query heads
-   because key up-projection is absorbed into each query and value up-projection
-   is moved after core attention. The RoPE channel stays explicit, and the QK
-   scale remains the model's semantic scale.
+1. **The cache invariant.** One `h_kv=1` latent KV row can serve multiple query
+   heads because key up-projection is absorbed into each query and value
+   up-projection is moved after core attention. The RoPE channel stays explicit,
+   and the QK scale remains the model's semantic scale.
 
-2. **The sparse-contract invariant.** Selection happens before this kernel.
+2. **The sparse-contract invariant.** Selection happens before this operator.
    `indices` supplies the rows; duplicates remain duplicates; causal legality is
    the caller's responsibility; and every `topk_length` lies in `[0, topk]`.
    Sink and all-invalid conventions must remain identical in optimized and
@@ -994,17 +1191,19 @@ not mistaken for full API coverage.
    optimization preserves the reported-maximum semantics and the online LSE
    recurrence.
 
-The first two invariants define operator semantics; the last three define this
-specialization's schedule contract. Another dispatch may change tile sizes,
-register budgets, ownership, or barrier topology, but it must replace those
-contracts explicitly rather than silently changing the operator it computes.
+The first two invariants define the sparse-prefill operator semantics. The last
+three define the regular head-128 specialization's schedule contract. Another
+specialization selected by the dispatch bridge may change tile sizes, register
+budgets, ownership, or barrier topology, but it must preserve the operator
+semantics while defining its own schedule contract explicitly.
 
 ## What should you test next?
 
-The regular head-128 kernel is one point in a dispatch space. The pinned tree
-also contains a 64-head phase-1 kernel and a 128-head `d_qk=512` small-top-k
-kernel. Their different schedules are evidence that sparse attention should be
-dispatched by tile economics, not forced through one universal template.
+The regular head-128 specialization is one point in a dispatch space. The
+TIRx dispatch tree also contains a head-64 phase-1 specialization and a head-128
+`d_qk=512` small-top-k specialization. Their different schedules are evidence
+that sparse attention should be dispatched by tile economics, not forced
+through one universal template.
 
 1. **Reproduce weight absorption.** Add a causal mask to the runnable absorption
    proof. Confirm that MHA and MQA modes still agree, then intentionally change

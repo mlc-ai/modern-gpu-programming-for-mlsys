@@ -78,8 +78,8 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         8.28,
         tr(
             lang,
-            "cache the shared source once; preserve per-head behavior on the query and output paths",
-            "共享 source 只缓存一次；各 head 的差异保留在 query 与 output 路径",
+            "store one shared compressed state; keep head-specific work on the query and output sides",
+            "只保存一份共享压缩状态；各 head 的差异留在 query 与 output 两侧",
         ),
         ha="center",
         va="center",
@@ -93,8 +93,12 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         1.30,
         4.45,
         6.45,
-        tr(lang, "1 · MHA cache", "1 · MHA cache"),
-        tr(lang, "materialize K and V for every head", "为每个 head 物化 K 与 V"),
+        tr(lang, "1 · Ordinary MHA cache", "1 · 普通 MHA cache"),
+        tr(
+            lang,
+            "store a key and a value for every head",
+            "为每个 head 保存一份 key 和 value",
+        ),
         COLORS["cta0_dark"],
     )
     _panel(
@@ -103,11 +107,11 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         1.30,
         5.05,
         6.45,
-        tr(lang, "2 · MLA cache", "2 · MLA cache"),
+        tr(lang, "2 · MLA shared cache", "2 · MLA 共享 cache"),
         tr(
             lang,
-            "store one latent source per token",
-            "每个 token 只保存一份 latent source",
+            "compress once and store one shared state",
+            "压缩一次，只保存一份共享状态",
         ),
         "#7c3aed",
     )
@@ -117,11 +121,11 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         1.30,
         7.10,
         6.45,
-        tr(lang, "3 · Absorbed execution", "3 · Absorbed execution"),
+        tr(lang, "3 · Use the shared cache", "3 · 使用共享 cache"),
         tr(
             lang,
-            "head-specific work moves around the core",
-            "各 head 的特定计算移到 core 两侧",
+            "head-specific work happens before and after attention",
+            "各 head 的特定计算放在 attention 前后",
         ),
         COLORS["cta1_dark"],
     )
@@ -136,10 +140,22 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         weight="bold",
     )
     row_entries = (
-        ("head 0", "K_0", "V_0"),
-        ("head 1", "K_1", "V_1"),
+        (
+            "head 0",
+            tr(lang, "cached\nkey", "缓存\nkey"),
+            tr(lang, "cached\nvalue", "缓存\nvalue"),
+        ),
+        (
+            "head 1",
+            tr(lang, "cached\nkey", "缓存\nkey"),
+            tr(lang, "cached\nvalue", "缓存\nvalue"),
+        ),
         ("...", "...", "..."),
-        ("head 127", "K_127", "V_127"),
+        (
+            "head 127",
+            tr(lang, "cached\nkey", "缓存\nkey"),
+            tr(lang, "cached\nvalue", "缓存\nvalue"),
+        ),
     )
     for idx, (label, k_label, v_label) in enumerate(row_entries):
         y = 5.70 - idx * 0.83
@@ -152,7 +168,7 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
             k_label,
             ha="center",
             va="center",
-            fontsize=8.0,
+            fontsize=7.4,
             weight="bold",
         )
         ax.text(
@@ -161,7 +177,7 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
             v_label,
             ha="center",
             va="center",
-            fontsize=8.0,
+            fontsize=7.4,
             weight="bold",
         )
     rounded_box(
@@ -172,8 +188,8 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         0.88,
         tr(
             lang,
-            "cache stores a separate K/V slice\nfor every head",
-            "cache 为每个 head 保存\n独立的 K/V slice",
+            "cache stores a separate key/value slice\nfor every head",
+            "cache 为每个 head 保存\n独立的 key/value slice",
         ),
         COLORS["note"],
         fontsize=8.5,
@@ -181,38 +197,67 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         edgecolor="#ca8a04",
     )
 
-    # MLA: down-project content once and store it with one shared RoPE key.
-    rounded_box(ax, 5.55, 5.83, 1.20, 0.72, "h_s", COLORS["neutral"], fontsize=9.2)
-    rounded_box(ax, 7.12, 5.83, 1.35, 0.72, "W_DKV", COLORS["projection"], fontsize=8.8)
+    # MLA: compress the token's content once and store it with one shared
+    # positional channel.  Matrix names are intentionally deferred to the
+    # derivation that follows this introductory figure.
+    rounded_box(
+        ax,
+        5.45,
+        5.79,
+        1.45,
+        0.80,
+        tr(lang, "token\nrepresentation", "token\n表示"),
+        COLORS["neutral"],
+        fontsize=8.1,
+    )
+    rounded_box(
+        ax,
+        7.12,
+        5.79,
+        1.42,
+        0.80,
+        tr(lang, "compress\ncontent once", "只压缩一次\ncontent"),
+        COLORS["projection"],
+        fontsize=8.0,
+    )
     rounded_box(
         ax,
         8.78,
         5.69,
         1.05,
         1.00,
-        "c_KV\nlatent\n512",
+        tr(lang, "shared\ncontent state\n512 numbers", "共享\ncontent 状态\n512 个数"),
         COLORS["smem"],
-        fontsize=8.0,
+        fontsize=7.4,
     )
-    arrow(ax, (6.75, 6.19), (7.12, 6.19))
-    arrow(ax, (8.47, 6.19), (8.78, 6.19))
+    arrow(ax, (6.90, 6.19), (7.12, 6.19))
+    arrow(ax, (8.54, 6.19), (8.78, 6.19))
     rounded_box(
         ax,
         5.55,
         4.47,
         2.05,
         0.78,
-        tr(lang, "shared RoPE key", "共享 RoPE key"),
+        tr(lang, "position information", "位置信息"),
         "#bfdbfe",
         fontsize=8.4,
     )
-    rounded_box(ax, 8.02, 4.47, 1.81, 0.78, "k_R\nRoPE 64", "#bfdbfe", fontsize=8.4)
+    rounded_box(
+        ax,
+        8.02,
+        4.47,
+        1.81,
+        0.78,
+        tr(lang, "shared position part\n64 numbers", "共享位置信息\n64 个数"),
+        "#bfdbfe",
+        fontsize=7.8,
+    )
     arrow(ax, (7.60, 4.86), (8.02, 4.86))
 
     ax.text(
         7.68,
         3.94,
-        tr(lang, "stored once per token", "每个 token 只存一次"),
+        tr(lang, "one cache entry per token", "每个 token 只有一条 cache entry"),
         ha="center",
         va="center",
         fontsize=9.2,
@@ -222,10 +267,22 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
     plain_rect(ax, 5.82, 2.90, 2.76, 0.76, COLORS["gmem"])
     plain_rect(ax, 8.58, 2.90, 1.20, 0.76, "#bfdbfe")
     ax.text(
-        7.20, 3.28, "c_KV · 512", ha="center", va="center", fontsize=9.0, weight="bold"
+        7.20,
+        3.28,
+        tr(lang, "shared compressed\ncontent · 512", "共享压缩 content\n· 512"),
+        ha="center",
+        va="center",
+        fontsize=7.8,
+        weight="bold",
     )
     ax.text(
-        9.18, 3.28, "k_R · 64", ha="center", va="center", fontsize=8.4, weight="bold"
+        9.18,
+        3.28,
+        tr(lang, "position\npart · 64", "位置信息\n· 64"),
+        ha="center",
+        va="center",
+        fontsize=7.5,
+        weight="bold",
     )
     rounded_box(
         ax,
@@ -235,8 +292,8 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         0.72,
         tr(
             lang,
-            "one shared entry · not 128 expanded pairs",
-            "一份 shared entry · 不是 128 份展开 pair",
+            "one shared entry · not 128 key/value pairs",
+            "一份共享 cache entry，而不是 128 组 key/value",
         ),
         COLORS["note"],
         fontsize=8.2,
@@ -245,16 +302,20 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
     )
     arrow(ax, (9.78, 3.28), (11.15, 4.09), color="#7c3aed", linewidth=1.6, rad=-0.05)
 
-    # Absorbed execution: q_C alone crosses W_UK; q_R remains explicit.
+    # Head-specific query/output work surrounds attention over the shared cache.
     rounded_box(
         ax,
         10.92,
         5.89,
         1.46,
         0.70,
-        "q_C,i\nper head",
+        tr(
+            lang,
+            "content part of query\nfor one head",
+            "某个 head query 的\ncontent 部分",
+        ),
         COLORS["neutral"],
-        fontsize=8.1,
+        fontsize=7.8,
     )
     rounded_box(
         ax,
@@ -262,9 +323,9 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         5.89,
         1.66,
         0.70,
-        "(W_UK,i)^T\ncontent only",
+        tr(lang, "head-specific\nquery transform", "该 head 的\nquery 变换"),
         COLORS["projection"],
-        fontsize=7.8,
+        fontsize=7.7,
     )
     rounded_box(
         ax,
@@ -272,9 +333,9 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         4.93,
         1.46,
         0.70,
-        "q_R,i\nRoPE 64",
+        tr(lang, "position part of query\nfor that head", "该 head query 的\n位置信息"),
         "#bfdbfe",
-        fontsize=8.1,
+        fontsize=7.7,
     )
     rounded_box(
         ax,
@@ -282,9 +343,13 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         5.34,
         2.28,
         1.02,
-        "Q_i = [q_abs,i ; q_R,i]\n512 + 64",
+        tr(
+            lang,
+            "query used by attention\ncontent view + position",
+            "attention 使用的 query\ncontent 视图 + 位置信息",
+        ),
         COLORS["tmem"],
-        fontsize=8.1,
+        fontsize=7.8,
     )
     arrow(ax, (12.38, 6.24), (12.78, 6.24))
     arrow(ax, (14.44, 6.24), (14.88, 6.03))
@@ -292,7 +357,7 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         ax,
         (12.38, 5.28),
         (14.88, 5.62),
-        label=tr(lang, "bypass W_UK", "绕过 W_UK"),
+        label=tr(lang, "position stays separate", "位置信息保持独立"),
         color=COLORS["cta0_dark"],
         rad=-0.05,
         label_offset=(0.0, -0.14),
@@ -304,9 +369,13 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         3.63,
         2.56,
         0.92,
-        "shared K = [c_KV ; k_R]\nshared V = c_KV",
+        tr(
+            lang,
+            "one shared cache entry\nkey side: content + position\nvalue side: content",
+            "一条共享 cache entry\nkey 侧：压缩 content + 位置信息\nvalue 侧：压缩 content",
+        ),
         COLORS["gmem"],
-        fontsize=8.0,
+        fontsize=7.6,
     )
     rounded_box(
         ax,
@@ -314,7 +383,7 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         3.48,
         2.12,
         1.10,
-        tr(lang, "shared-cache\nattention core", "shared-cache\nattention core"),
+        tr(lang, "attention over\nthe shared cache", "在共享 cache 上\n计算 attention"),
         COLORS["mma"],
         fontsize=8.7,
     )
@@ -326,9 +395,9 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         2.22,
         1.60,
         0.72,
-        "latent out_i\n512",
+        tr(lang, "shared-space result\n512 numbers", "共享空间结果\n512 个数"),
         COLORS["tmem"],
-        fontsize=8.0,
+        fontsize=7.6,
     )
     rounded_box(
         ax,
@@ -338,8 +407,8 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         0.72,
         tr(
             lang,
-            "per-head output path\nW_UV,i / W_O",
-            "per-head output 路径\nW_UV,i / W_O",
+            "head-specific\noutput transform",
+            "该 head 的\noutput 变换",
         ),
         COLORS["projection"],
         fontsize=7.6,
@@ -351,8 +420,8 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         1.74,
         tr(
             lang,
-            "repeat the query/output paths for i=0…127\n→ 128 distinct head outputs",
-            "query/output 路径对 i=0…127 各自执行\n→ 128 份不同的 head output",
+            "repeat the query/output work for all 128 heads\n→ 128 distinct head outputs",
+            "对全部 128 个 heads 重复 query/output 处理\n→ 128 份不同的 head output",
         ),
         ha="center",
         va="center",
@@ -369,8 +438,8 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         0.66,
         tr(
             lang,
-            "Only [c_KV ; k_R] is cached. Per-head K/V need not be materialized; head-specific projections survive by reassociation around attention.",
-            "Cache 中只有 [c_KV ; k_R]。无需物化 per-head K/V；通过在 attention 两侧重新结合运算，仍保留各 head 的特定 projection。",
+            "MLA caches one shared compressed state per token. Head-specific transformations happen around attention, so the cache does not store 128 key/value pairs.",
+            "MLA 为每个 token 只缓存一份共享压缩状态。各 head 的特定变换放在 attention 两侧，因此 cache 无需保存 128 组 key/value。",
         ),
         COLORS["note"],
         fontsize=8.4,

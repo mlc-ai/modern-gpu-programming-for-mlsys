@@ -6,25 +6,124 @@ from __future__ import annotations
 import argparse
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import FancyBboxPatch
 
 from flashmla_diagram_common import (
     COLORS,
-    arrow,
+    arrow as _arrow,
     configure_style,
-    rounded_box,
+    rounded_box as _rounded_box,
     save_figure,
     tr,
 )
 
 
-def _row(ax, y: float, title: str, role: str) -> None:
-    rounded_box(
-        ax, 0.12, y, 2.05, 0.82, f"{title}\n{role}", COLORS["neutral"], fontsize=8.4
+def box(ax, x, y, w, h, text, color, *, fontsize=10.8, **kwargs):
+    """Draw a timeline node sized for the book's content column."""
+
+    return _rounded_box(
+        ax,
+        x,
+        y,
+        w,
+        h,
+        text,
+        color,
+        fontsize=fontsize,
+        **kwargs,
     )
-    ax.plot([2.42, 18.7], [y + 0.41, y + 0.41], color="#e5e7eb", lw=1.0, zorder=0)
 
 
-def _barrier_note(ax, x: float, y: float, text: str, *, fontsize: float = 7.0) -> None:
+def edge(
+    ax,
+    start,
+    end,
+    *,
+    label=None,
+    label_offset=(0.0, 0.14),
+    fontsize=10.0,
+    **kwargs,
+):
+    """Draw a dependency edge with an HTML-readable label."""
+
+    line_color = kwargs.get("color") or COLORS["line"]
+    zorder = kwargs.get("zorder", 2)
+    patch = _arrow(ax, start, end, label=None, **kwargs)
+    if label:
+        ax.text(
+            (start[0] + end[0]) / 2 + label_offset[0],
+            (start[1] + end[1]) / 2 + label_offset[1],
+            label,
+            ha="center",
+            va="center",
+            fontsize=fontsize,
+            color=line_color,
+            bbox=dict(
+                boxstyle="round,pad=0.10",
+                facecolor="white",
+                edgecolor="none",
+                alpha=0.94,
+            ),
+            zorder=zorder + 1,
+        )
+    return patch
+
+
+def panel(ax, x, y, w, h, title, subtitle):
+    """Draw one layer of the steady-state dependency story."""
+
+    patch = FancyBboxPatch(
+        (x, y),
+        w,
+        h,
+        boxstyle="round,pad=0.05,rounding_size=0.06",
+        linewidth=1.15,
+        linestyle="--",
+        edgecolor="#c4b5fd",
+        facecolor="#ffffff",
+        zorder=0,
+    )
+    ax.add_patch(patch)
+    ax.text(
+        x + 0.20,
+        y + h - 0.24,
+        title,
+        ha="left",
+        va="center",
+        fontsize=13.0,
+        weight="bold",
+        color="#6d28d9",
+    )
+    ax.text(
+        x + w - 0.20,
+        y + h - 0.24,
+        subtitle,
+        ha="right",
+        va="center",
+        fontsize=10.0,
+        color=COLORS["muted"],
+    )
+
+
+def lane(ax, y, title, role):
+    """Draw a named warpgroup lane and its baseline."""
+
+    box(
+        ax,
+        0.48,
+        y - 0.38,
+        1.42,
+        0.76,
+        f"{title}\n{role}",
+        COLORS["neutral"],
+        fontsize=10.2,
+    )
+    ax.plot([2.08, 13.45], [y, y], color="#e5e7eb", lw=1.0, zorder=0)
+
+
+def tag(ax, x, y, text, *, fontsize=9.8):
+    """Place a completion/ready barrier name away from node text."""
+
     ax.text(
         x,
         y,
@@ -34,7 +133,9 @@ def _barrier_note(ax, x: float, y: float, text: str, *, fontsize: float = 7.0) -
         fontsize=fontsize,
         color="#92400e",
         bbox=dict(
-            boxstyle="round,pad=0.14", facecolor=COLORS["barrier"], edgecolor="#d97706"
+            boxstyle="round,pad=0.10",
+            facecolor=COLORS["barrier"],
+            edgecolor="#d97706",
         ),
         zorder=7,
     )
@@ -42,14 +143,14 @@ def _barrier_note(ax, x: float, y: float, text: str, *, fontsize: float = 7.0) -
 
 def draw(lang: str, output: str, font_path: str | None = None) -> None:
     configure_style(lang, font_path)
-    fig, ax = plt.subplots(figsize=(19.0, 10.5))
-    ax.set_xlim(0, 19)
-    ax.set_ylim(0, 10.5)
+    fig, ax = plt.subplots(figsize=(14.0, 13.2))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 13.2)
     ax.axis("off")
 
     ax.text(
-        9.5,
-        10.16,
+        7,
+        12.84,
         tr(
             lang,
             "Sparse FlashMLA Head128 Regular: Steady-State Pipeline",
@@ -57,381 +158,283 @@ def draw(lang: str, output: str, font_path: str | None = None) -> None:
         ),
         ha="center",
         va="center",
-        fontsize=18,
+        fontsize=20,
         weight="bold",
     )
     ax.text(
-        9.5,
-        9.76,
+        7,
+        12.30,
         tr(
             lang,
-            "softmax(k−1) may overlap QK(k); after QK(k) is issued, softmax(k) may overlap asynchronous PV(k−1); widths are not cycle measurements",
-            "softmax(k−1) 可与 QK(k) 重叠；QK(k) 发出后，softmax(k) 可与异步 PV(k−1) 重叠；方框宽度不表示 cycle 数",
+            "softmax(k−1) may overlap QK(k); once QK(k) completes,\nsoftmax(k) may overlap asynchronous PV(k−1) · box widths are not cycle measurements",
+            "softmax(k−1) 可与 QK(k) 重叠；QK(k) 完成后，\nsoftmax(k) 可与异步 PV(k−1) 重叠 · 方框宽度不表示 cycle 数",
         ),
         ha="center",
         va="center",
-        fontsize=9.4,
+        fontsize=11.5,
         color=COLORS["muted"],
+        linespacing=1.25,
     )
-    arrow(ax, (2.42, 9.24), (18.62, 9.24), color="#9ca3af", linewidth=1.0)
+
+    panel(
+        ax,
+        0.25,
+        6.55,
+        13.50,
+        5.25,
+        tr(
+            lang,
+            "A · One issuer order; four independent part handshakes",
+            "A · 唯一 issuer 的顺序与四个独立分段握手",
+        ),
+        tr(lang, "box widths are not cycle measurements", "方框宽度不表示 cycle 数"),
+    )
+
     ax.text(
-        10.5,
-        9.31,
-        tr(lang, "time", "时间"),
+        1.05,
+        10.72,
+        tr(
+            lang,
+            "WG3 · CTA0 warp 12\nsole MMA issuer",
+            "WG3 · CTA0 warp 12\n唯一 MMA issuer",
+        ),
         ha="center",
-        va="bottom",
-        fontsize=8,
+        va="center",
+        fontsize=10.5,
+        weight="bold",
+        color=COLORS["ink"],
+    )
+    issuer_boxes = [
+        (2.25, "wait p_free[k−1]\nQK(k) · SS prefix"),
+        (5.10, "QK(k) · TS suffix384"),
+        (7.95, "wait so_ready[k−1]\nPV(k−1) · part0"),
+        (10.80, "PV(k−1) · part1"),
+    ]
+    for x, text in issuer_boxes:
+        box(ax, x, 10.25, 2.25, 0.90, text, COLORS["mma"], fontsize=10.4)
+    for x0, x1 in ((4.50, 5.10), (7.35, 7.95), (10.20, 10.80)):
+        edge(ax, (x0, 10.70), (x1, 10.70), color=COLORS["ink"])
+    ax.text(
+        7.0,
+        9.93,
+        tr(lang, "strict issue order", "严格串行发起顺序"),
+        ha="center",
+        va="center",
+        fontsize=10.0,
         color=COLORS["muted"],
         style="italic",
     )
 
-    y_k = 7.83
-    y_v = 6.23
-    y_mma = 4.63
-    y_mask = 3.17
-    y_soft = 1.57
-    _row(ax, y_k, "WG1", tr(lang, "K gather producer", "K gather producer"))
-    _row(ax, y_v, "WG2", tr(lang, "V gather producer", "V gather producer"))
-    _row(ax, y_mma, "WG3 · CTA0 warp 12", tr(lang, "QK / PV issue", "发起 QK / PV"))
-    _row(ax, y_mask, "WG3 · warp 13", tr(lang, "validity mask", "有效性 mask"))
-    _row(ax, y_soft, "WG0", tr(lang, "softmax + O rescale", "softmax + O 重缩放"))
+    handshakes = [
+        (
+            0.70,
+            8.33,
+            tr(
+                lang,
+                "WG1: k_part0_ready[k]\n→ QK SS prefix\n→ qk_part_done[k]\n→ gather K(k+1) part0",
+                "WG1：k_part0_ready[k]\n→ QK SS prefix\n→ qk_part_done[k]\n→ gather K(k+1) part0",
+            ),
+            "#dbeafe",
+        ),
+        (
+            7.10,
+            8.33,
+            tr(
+                lang,
+                "WG1: k_part1_ready[k]\n→ QK TS suffix384\n→ qk_done[k]\n→ gather K(k+1) part1",
+                "WG1：k_part1_ready[k]\n→ QK TS suffix384\n→ qk_done[k]\n→ gather K(k+1) part1",
+            ),
+            "#dbeafe",
+        ),
+        (
+            0.70,
+            6.88,
+            tr(
+                lang,
+                "WG2: v_part0_ready[k−1]\n→ PV part0\n→ sv_part_done[k−1]\n→ gather V(k) part0",
+                "WG2：v_part0_ready[k−1]\n→ PV part0\n→ sv_part_done[k−1]\n→ gather V(k) part0",
+            ),
+            COLORS["tma"],
+        ),
+        (
+            7.10,
+            6.88,
+            tr(
+                lang,
+                "WG2: v_part1_ready[k−1]\n→ PV part1\n→ sv_done[k−1]\n→ gather V(k) part1",
+                "WG2：v_part1_ready[k−1]\n→ PV part1\n→ sv_done[k−1]\n→ gather V(k) part1",
+            ),
+            COLORS["tma"],
+        ),
+    ]
+    for x, y, text, color in handshakes:
+        box(ax, x, y, 6.20, 1.12, text, color, fontsize=10.3, weight="normal")
 
-    # Current K was gathered earlier into the one in-place K workspace.
-    rounded_box(
+    panel(
         ax,
-        2.54,
-        y_k + 0.06,
-        1.18,
-        0.70,
-        "K(k) part0\nready",
-        "#dbeafe",
-        fontsize=7.5,
-        edgecolor="#60a5fa",
-    )
-    rounded_box(
-        ax,
-        3.92,
-        y_k + 0.06,
-        1.18,
-        0.70,
-        "K(k) part1\nready",
-        "#dbeafe",
-        fontsize=7.5,
-        edgecolor="#60a5fa",
-    )
-
-    # The leader issues two QK segments, then two PV segments for the prior tile.
-    rounded_box(
-        ax,
-        5.40,
-        y_mma + 0.03,
-        1.26,
-        0.76,
-        "QK(k)\nSS prefix",
-        COLORS["mma"],
-        fontsize=8.0,
-    )
-    rounded_box(
-        ax,
-        7.35,
-        y_mma + 0.03,
-        1.26,
-        0.76,
-        "QK(k)\nTS suffix384",
-        COLORS["mma"],
-        fontsize=8.0,
-    )
-    rounded_box(
-        ax,
-        10.28,
-        y_mma + 0.03,
-        1.35,
-        0.76,
-        "PV(k−1)\npart0",
-        COLORS["mma"],
-        fontsize=8.0,
-    )
-    rounded_box(
-        ax,
-        12.36,
-        y_mma + 0.03,
-        1.35,
-        0.76,
-        "PV(k−1)\npart1",
-        COLORS["mma"],
-        fontsize=8.0,
-    )
-    arrow(ax, (6.66, y_mma + 0.41), (7.35, y_mma + 0.41), color=COLORS["line"])
-    arrow(ax, (8.61, y_mma + 0.41), (10.28, y_mma + 0.41), color=COLORS["line"])
-    arrow(ax, (11.63, y_mma + 0.41), (12.36, y_mma + 0.41), color=COLORS["line"])
-    ax.text(
-        9.42,
-        y_mma + 0.18,
-        tr(lang, "same issue warp · source order", "同一个 issue warp · 源码顺序"),
-        ha="center",
-        va="center",
-        fontsize=6.9,
-        color=COLORS["muted"],
-        style="italic",
-    )
-
-    # Current K readiness gates each QK segment; score-TMEM reuse has its own gate.
-    arrow(ax, (3.72, y_k + 0.39), (5.73, y_mma + 0.79), color="#2563eb", rad=-0.06)
-    _barrier_note(ax, 4.55, 6.74, "k_part0_ready[k]")
-    arrow(ax, (5.10, y_k + 0.39), (7.68, y_mma + 0.79), color="#2563eb", rad=-0.08)
-    _barrier_note(ax, 6.42, 6.98, "k_part1_ready[k]")
-    rounded_box(
-        ax,
-        4.92,
-        4.06,
-        2.10,
-        0.43,
+        0.25,
+        1.05,
+        13.50,
+        5.15,
         tr(
             lang,
-            "incoming from prior WG0(k−1) · p_free[k−1]",
-            "来自前一轮 WG0(k−1) · p_free[k−1]",
+            "B · Tile k: mask-slot reuse and WG0 handoff",
+            "B · Tile k：mask slot 复用与 WG0 交接",
         ),
-        "#f3e8ff",
-        fontsize=6.5,
-        weight="normal",
-        edgecolor="#7c3aed",
-        linestyle="--",
-    )
-    arrow(
-        ax,
-        (5.97, 4.49),
-        (5.97, y_mma + 0.03),
-        color="#7c3aed",
-        linestyle="--",
-        linewidth=1.1,
-    )
-
-    # QK segment completion releases the same K workspace for k+1, part by part.
-    rounded_box(
-        ax,
-        6.70,
-        y_k + 0.06,
-        1.42,
-        0.70,
-        "gather K(k+1)\npart0",
-        COLORS["tma"],
-        fontsize=7.6,
-    )
-    rounded_box(
-        ax,
-        8.68,
-        y_k + 0.06,
-        1.42,
-        0.70,
-        "gather K(k+1)\npart1",
-        COLORS["tma"],
-        fontsize=7.6,
-    )
-    arrow(ax, (6.03, y_mma + 0.79), (7.12, y_k + 0.06), color="#059669", rad=0.04)
-    _barrier_note(ax, 6.72, 7.25, "qk_part_done[k]")
-    arrow(ax, (7.98, y_mma + 0.79), (9.10, y_k + 0.06), color="#059669", rad=0.04)
-    _barrier_note(ax, 8.64, 7.32, "qk_done[k]")
-
-    # The prior V parts are already ready for PV(k-1).
-    rounded_box(
-        ax,
-        8.18,
-        y_v + 0.06,
-        1.15,
-        0.70,
-        "V(k−1)\npart0 ready",
-        "#dbeafe",
-        fontsize=7.2,
-        edgecolor="#60a5fa",
-    )
-    rounded_box(
-        ax,
-        9.48,
-        y_v + 0.06,
-        1.15,
-        0.70,
-        "V(k−1)\npart1 ready",
-        "#dbeafe",
-        fontsize=7.2,
-        edgecolor="#60a5fa",
-    )
-    arrow(ax, (9.33, y_v + 0.38), (10.62, y_mma + 0.79), color="#2563eb", rad=-0.04)
-    arrow(ax, (10.63, y_v + 0.28), (12.70, y_mma + 0.79), color="#2563eb", rad=-0.08)
-    rounded_box(
-        ax,
-        9.88,
-        4.06,
-        2.14,
-        0.43,
         tr(
             lang,
-            "incoming from prior WG0(k−1) · so_ready[k−1]",
-            "来自前一轮 WG0(k−1) · so_ready[k−1]",
+            "arrows name the barrier that guards reuse",
+            "箭头标出保护复用的 barrier",
         ),
-        "#f3e8ff",
-        fontsize=6.4,
-        weight="normal",
-        edgecolor="#7c3aed",
-        linestyle="--",
     )
-    arrow(
+    box(
         ax,
-        (10.95, 4.49),
-        (10.95, y_mma + 0.03),
-        color="#7c3aed",
-        linestyle="--",
-        linewidth=1.1,
-    )
-
-    # Each completed PV half releases the one V workspace for the matching k half.
-    rounded_box(
-        ax,
-        11.72,
-        y_v + 0.06,
-        1.38,
         0.70,
-        "gather V(k)\npart0",
-        COLORS["tma"],
-        fontsize=7.6,
-    )
-    rounded_box(
-        ax,
-        13.80,
-        y_v + 0.06,
-        1.38,
-        0.70,
-        "gather V(k)\npart1",
-        COLORS["tma"],
-        fontsize=7.6,
-    )
-    arrow(ax, (10.95, y_mma + 0.79), (12.12, y_v + 0.06), color="#059669", rad=0.04)
-    _barrier_note(ax, 11.78, 5.94, "sv_part_done[k−1]")
-    arrow(ax, (13.03, y_mma + 0.79), (14.20, y_v + 0.06), color="#059669", rad=0.04)
-    _barrier_note(ax, 13.87, 5.94, "sv_done[k−1]")
-
-    # Mask production runs on a separate warp and feeds WG0.
-    rounded_box(
-        ax,
-        5.72,
-        y_mask + 0.06,
-        1.92,
-        0.70,
-        tr(
-            lang,
-            "pack mask(k)\n8 indices / lane",
-            "pack mask(k)\n每个 lane 处理 8 indices",
-        ),
+        4.35,
+        2.45,
+        0.92,
+        tr(lang, "WG3 warp 13\npack mask(k)", "WG3 warp 13\npack mask(k)"),
         COLORS["barrier"],
-        fontsize=7.6,
+        fontsize=10.8,
     )
-
-    # WG0 consumes L(k), computes W in registers while PV(k-1) is active, then safely reuses W/O.
-    rounded_box(
+    box(
         ax,
-        8.72,
-        y_soft + 0.03,
-        1.55,
-        0.76,
-        tr(lang, "load L(k)\nfrom TMEM", "从 TMEM\n读取 L(k)"),
-        COLORS["tmem"],
-        fontsize=7.8,
-    )
-    rounded_box(
-        ax,
-        10.55,
-        y_soft + 0.03,
-        2.22,
-        0.76,
+        5.35,
+        4.35,
+        3.10,
+        0.92,
         tr(
             lang,
-            "mask L(k)\nmax / exp / row sum",
-            "mask L(k)\nmax / exp / row sum",
+            "WG0 consumes mask(k)\nwhile processing L(k)",
+            "WG0 处理 L(k) 时\n读取 mask(k)",
         ),
         COLORS["softmax"],
-        fontsize=7.8,
+        fontsize=10.8,
     )
-    rounded_box(
+    box(
         ax,
-        13.78,
-        y_soft + 0.03,
-        3.05,
-        0.76,
-        tr(
-            lang,
-            "after sv_done(k−1): write W(k)\noptional O rescale · so_ready[k]",
-            "等待 sv_done(k−1) 后：写入 W(k)\n按需重缩放 O · so_ready[k]",
-        ),
-        COLORS["softmax"],
-        fontsize=7.7,
-    )
-    arrow(ax, (8.0, y_mma + 0.03), (9.32, y_soft + 0.79), color="#7c3aed", rad=0.05)
-    _barrier_note(ax, 8.50, 3.76, "qk_done[k]")
-    arrow(ax, (7.64, y_mask + 0.41), (10.90, y_soft + 0.79), color="#d97706", rad=0.07)
-    _barrier_note(ax, 8.35, 2.86, "k_valid_ready[k]")
-    arrow(ax, (12.77, y_soft + 0.41), (13.78, y_soft + 0.41), color="#7c3aed")
-    _barrier_note(ax, 13.25, y_soft + 0.72, "wait sv_done[k−1]")
-    arrow(ax, (13.03, y_mma + 0.03), (14.30, y_soft + 0.79), color="#059669", rad=-0.05)
-    arrow(
-        ax,
-        (9.49, y_soft + 0.03),
-        (9.49, 0.94),
-        label=tr(
-            lang,
-            "TMEM L load complete → p_free[k] → future QK(k+1)",
-            "TMEM L 读取完成 → p_free[k] → 后续 QK(k+1)",
-        ),
-        color="#7c3aed",
-        linestyle="--",
-        label_offset=(1.45, 0.0),
-    )
-    arrow(
-        ax,
-        (16.35, y_soft + 0.03),
-        (17.52, 0.94),
-        label=tr(lang, "so_ready[k] → future PV(k)", "so_ready[k] → 后续 PV(k)"),
-        color="#7c3aed",
-        linestyle="--",
-        label_offset=(0.10, 0.0),
-        rad=0.05,
-    )
-    rounded_box(
-        ax,
-        15.42,
-        y_mask + 0.06,
-        2.08,
-        0.70,
-        tr(
-            lang,
-            "pack mask(k+2)\nreuse slot k%2",
-            "pack mask(k+2)\n复用 slot k%2",
-        ),
+        10.35,
+        4.35,
+        2.95,
+        0.92,
+        "WG3 warp 13\npack mask(k+2)\nreuse slot k%2",
         COLORS["barrier"],
-        fontsize=7.4,
+        fontsize=10.6,
     )
-    arrow(
+    edge(
         ax,
-        (11.35, y_soft + 0.79),
-        (15.80, y_mask + 0.06),
+        (3.15, 4.81),
+        (5.35, 4.81),
+        label="k_valid_ready[k]",
+        label_offset=(0.0, 0.22),
+        fontsize=9.7,
+        color="#d97706",
+    )
+    edge(
+        ax,
+        (8.45, 4.81),
+        (10.35, 4.81),
+        label="k_valid_free[k]",
+        label_offset=(0.0, 0.22),
+        fontsize=9.7,
         color="#d97706",
         linestyle="--",
-        rad=-0.08,
     )
-    _barrier_note(ax, 13.55, 2.88, "k_valid_free[k]", fontsize=6.6)
 
-    # Exact scope of the two-slot ring in the pinned regular kernel.
-    rounded_box(
+    box(
         ax,
-        0.62,
-        0.18,
-        17.76,
-        0.62,
+        0.70,
+        2.35,
+        2.45,
+        1.00,
+        tr(lang, "qk_done[k]\nload L(k) from TMEM", "qk_done[k]\n从 TMEM 读取 L(k)"),
+        COLORS["tmem"],
+        fontsize=10.8,
+    )
+    box(
+        ax,
+        5.05,
+        2.35,
+        3.25,
+        1.00,
+        tr(lang, "WG0: mask · max\nexp · row sum", "WG0：mask · max\nexp · row sum"),
+        COLORS["softmax"],
+        fontsize=10.8,
+    )
+    box(
+        ax,
+        9.65,
+        2.20,
+        3.65,
+        1.30,
         tr(
             lang,
-            "NUM_BUFS=2 is a barrier/phase ring: slot=k%2, phase=(k//2)&1. K, V, and s_smem_gemm are single in-place workspaces (plus two small mask slots), not two complete K/V stages.",
-            "NUM_BUFS=2 是 barrier/phase ring：slot=k%2，phase=(k//2)&1。K、V 与 s_smem_gemm 都是单份原位 workspace（另有两个小型 mask slots），并非两份完整 K/V stages。",
+            "wait sv_done(k−1)\nwrite W(k) · optional O rescale\narrive so_ready[k]",
+            "等待 sv_done(k−1)\n写 W(k) · 按需重缩放 O\narrive so_ready[k]",
+        ),
+        COLORS["softmax"],
+        fontsize=10.5,
+    )
+    edge(
+        ax,
+        (3.15, 2.85),
+        (5.05, 2.85),
+        color=COLORS["line"],
+    )
+    edge(
+        ax,
+        (8.30, 2.85),
+        (9.65, 2.85),
+        color="#7c3aed",
+    )
+    ax.text(
+        2.0,
+        1.65,
+        "p_free[k] → QK(k+1)",
+        ha="center",
+        va="center",
+        fontsize=10.3,
+        color="#7c3aed",
+        weight="bold",
+    )
+    edge(
+        ax,
+        (1.95, 2.35),
+        (1.95, 1.87),
+        color="#7c3aed",
+        linestyle="--",
+    )
+    ax.text(
+        11.5,
+        1.65,
+        "so_ready[k] → PV(k)",
+        ha="center",
+        va="center",
+        fontsize=10.3,
+        color="#7c3aed",
+        weight="bold",
+    )
+    edge(
+        ax,
+        (11.5, 2.20),
+        (11.5, 1.87),
+        color="#7c3aed",
+        linestyle="--",
+    )
+
+    box(
+        ax,
+        0.52,
+        0.10,
+        12.96,
+        0.72,
+        tr(
+            lang,
+            "NUM_BUFS=2 is a barrier/phase ring: slot=k%2, phase=(k//2)&1.\nK, V, and W use one in-place workspace each; only the small validity mask has two data slots.",
+            "NUM_BUFS=2 是 barrier/phase ring：slot=k%2，phase=(k//2)&1。\nK、V、W 各自只有一份原位 workspace；只有小型 validity mask 有两个 data slots。",
         ),
         COLORS["note"],
-        fontsize=8.3,
+        fontsize=9.8,
         weight="normal",
         edgecolor="#ca8a04",
     )
