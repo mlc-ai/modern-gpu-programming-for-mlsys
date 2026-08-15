@@ -17,7 +17,9 @@ FlashMLA 是 DeepSeek 为 MLA 开发的高性能 GPU kernel library。本章分�
 
 在本章分析的 kernel 中，一个 query token 对应 128 个 query heads，而每个被选中的历史 token 在 KV cache 中只有一条供这些 heads 共享的 row。但 128 个 heads 读取同一条 row，为什么仍能得到不同的结果？共享的是 cache 中压缩后的状态，各 head 特有的变换仍保留在 query 和 output 路径中。要看清这些变换怎样移动，先从普通 MHA 的 KV cache 算起。
 
-## 普通 MHA 的 KV cache 开销
+## 从普通 MHA 的 KV cache 到 MLA
+
+### 普通 MHA 的 KV cache 开销
 
 普通 MHA 有 $n_h$ 个 heads，每个 head 的宽度为 $d_h$，并拥有自己的 query、key 和 value projections。下面固定其中一个 head，把它的投影矩阵记为 $W^Q$、$W^K$ 和 $W^V$。在某一层中，把送入 attention projections 的当前 token 向量记为 $h_t$，把第 $s$ 个历史 token 的输入向量记为 $h_s$，则
 
@@ -62,7 +64,7 @@ $$
 =W^V\left(\sum_s p_s h_s\right).
 $$
 
-第一式把 key projection 移到当前 query，第二式把 value projection 移到加权求和之后。数值结果保持不变，cache 却只需长期保存一份 $h_s$。这可以看成一个尚未压缩的 latent cache 思想实验。
+第一式改为先对当前 query 计算 $(W^K)^{\mathsf T}q^C$，再与每个 $h_s$ 做点积；第二式则先对 $h_s$ 做加权求和，再应用 $W^V$。数值结果保持不变，cache 却只需长期保存一份 $h_s$。这可以看成一个尚未压缩的 latent cache 思想实验。
 
 $h_s$ 的宽度仍然是 $d_{model}$，直接缓存它虽然实现了共享，QK 打分和 PV 加权聚合却仍要在这个较宽的空间中计算。实际的 MLA 分成两步。
 
@@ -72,107 +74,103 @@ $$
 c_s=Dh_s,\qquad c_s\in\mathbb{R}^{d_c}.
 $$
 
-第二步，每个 head 用自己的矩阵 $U_K$ 和 $U_V$，从 $c_s$ 得到该 head 的 content key 和 value：
+第二步，每个 head 都有自己的 up-projection 矩阵。继续固定其中一个 head，把它对应的矩阵块记为 $U_K$ 和 $U_V$。如果显式展开 K/V，这个 head 的 content key 和 value 为
 
 $$
 k_s^C=U_Kc_s,\qquad
 v_s=U_Vc_s.
 $$
 
-$D$、$U_K$ 和 $U_V$ 会在模型训练时一起学习。由于 $d_c$ 远小于 $d_{model}$，每个 token 需要缓存的 content 状态也随之缩小。
+这两个式子规定了当前 head 应该使用的 K/V。后面的 weight absorption 会保持相同的计算结果，但不再真正生成这些中间向量。$D$、$U_K$ 和 $U_V$ 会在模型训练时一起学习。由于 $d_c$ 远小于 $d_{model}$，每个 token 需要缓存的 content 状态也随之缩小。
 
-### RoPE 与独立的 positional channel
+### 为 RoPE 单独保留一组 Q/K 特征
 
-前面的 content QK 没有加入位置信息，因此移到 query 侧的变换与历史位置 $s$ 无关，一次计算后便可用于所有 cached rows。RoPE 根据 token 位置旋转 Q/K；记 $R_t$ 和 $R_s$ 分别为位置 $t$ 和 $s$ 的旋转。如果直接对 content query 和 content key 使用 RoPE，则
+对于不含位置信息的 content score，可以先对当前 query 计算一次 $U_K^{\mathsf T}q_t^C$，再把结果用于所有历史位置。加入 RoPE 后，首先要确认这项计算还能不能复用。
+
+记 $q_t^C$ 为当前 query 的 content 特征，$R_t$ 和 $R_s$ 分别为 query 位置 $t$ 和历史位置 $s$ 的 RoPE 旋转。如果直接对 content query 和 content key 使用 RoPE，则
 
 $$
-\left(R_tq^{C}\right)^{\mathsf T}
+\left(R_tq_t^{C}\right)^{\mathsf T}
 \left(R_sU_Kc_s\right)
 =
-\left(U_K^{\mathsf T}R_s^{\mathsf T}R_tq^{C}\right)^{\mathsf T}c_s.
+\left(U_K^{\mathsf T}R_s^{\mathsf T}R_tq_t^{C}\right)^{\mathsf T}c_s.
 $$
 
-当前 query 的位置 $t$ 固定，历史位置 $s$ 却会随每条 cached row 改变，因此括号中的 transformed query 也随 $s$ 改变，无法只计算一次再复用于所有历史位置。
+当前 query 的位置 $t$ 固定，但比较不同历史 token 时，key 的位置 $s$ 会改变。上式中的 $U_K^{\mathsf T}R_s^{\mathsf T}R_tq_t^C$ 因而也随 $s$ 改变。也就是说，RoPE 一旦直接作用于 content Q/K，原本想要复用的 query-side 结果就会随历史位置变化，无法用于所有 cached rows。
 
-MLA 把 content 和 position 拆成两条支路。Content 支路不做 RoPE，继续计算 $(q^C)^{\mathsf T}U_Kc_s$；positional channel 则是额外拼接在 Q/K 上的一小段坐标，不是新的 attention head。记 $q_t^R$ 和 $k_s^R$ 分别为在位置 $t$ 和 $s$ 做过 RoPE 后的 positional query 和 key。$q_t^R$ 属于当前 head，$k_s^R$ 由所有 heads 共享并缓存。
+MLA 因此另外生成一组较窄的 Q/K 特征，并只对这组特征使用 RoPE。下面用 $q_t^R$ 和 $k_s^R$ 表示它们经过位置 $t$ 和 $s$ 的 RoPE 旋转后的结果。上标 $R$ 表示这组特征经过了 RoPE；它们仍然由 token 的表示投影得到，并不是只包含位置的向量。$q_t^R$ 属于当前 head，$k_s^R$ 则由所有 heads 共享。
 
-两条支路分别产生
-
-$$
-\mathrm{content}_s=(q^{C})^{\mathsf T}U_Kc_s,
-\qquad
-\mathrm{position}_s=(q_t^{R})^{\mathsf T}k_s^R,
-$$
-
-最终相加得到
+在展开 K/V 的写法中，完整 query 和 key 分别是 $[q_t^C;q_t^R]$ 与 $[U_Kc_s;k_s^R]$，分号表示沿 feature 维拼接。于是完整的 QK 点积为
 
 $$
-\mathrm{score}_s=\mathrm{content}_s+\mathrm{position}_s.
+\mathrm{score}_s
+=[q_t^C;q_t^R]^{\mathsf T}[U_Kc_s;k_s^R]
+=(q_t^C)^{\mathsf T}U_Kc_s
+ +(q_t^R)^{\mathsf T}k_s^R.
 $$
 
-每个历史 token 的 cache 因而是 $[c_s;k_s^R]$：$c_s$ 保存共享的 content，$k_s^R$ 保存共享的位置信息。Content 支路仍可把 $U_K$ 移到 query 侧，positional channel 则保持显式。
+相加的是同一个 QK 点积在两组坐标上的两个标量贡献，并不是把两组向量相加。第一项衡量 content 的相关性；第二项是经过 RoPE 的 Q/K 特征匹配，为 score 加入相对位置信息。
 
-### 各 head 的 up-projection 与 weight absorption
+### Weight absorption：用结合律省去各 head 的 K/V 展开
 
-前面的未压缩思想实验已经展示了怎样移动 projections。现在把同样的重排应用到 $U_K$ 和 $U_V$。MLA 的 core attention 可以用两种代数上等价的模式执行。这里的 “MQA mode” 指 MLA core attention 的一种执行方式，MLA 的模型结构保持不变。
+如果直接按上面的公式计算，缓存中的每个 $c_s$ 都要先乘以 $U_K$ 和 $U_V$，显式生成当前 head 的 content K/V。Weight absorption 利用结合律改变乘法的分组，从而省去这些历史 K/V 中间结果。
 
-| MLA 执行模式 | 提交给 kernel 的 core-attention K/V | Up-projection 发生的位置 |
-| --- | --- | --- |
-| MHA mode | 每个 head 的 $[U_Kc;k^R]$ 和 $U_Vc$ | Core attention 之前 |
-| MQA mode | 共享的 $[c;k^R]$ 和 latent value $c$ | 吸收到 query 与 output 路径 |
-
-```{figure} ../../img/flashmla_mla_modes_zh.svg
-:width: 100%
-:alt: MLA 的 MHA 与 MQA 执行模式，以及两条 weight-absorption 路径
-
-MLA 的 MHA mode 在 core attention 之前展开 latent KV；MQA mode 则把 key up-projection 移到 query 路径，把 value up-projection 移到 output 路径。两种模式都显式保留共享的 RoPE key。
-```
-
-两种模式计算相同的结果，却具有不同的执行成本。MHA mode 先展开 per-head K/V，core attention 的 feature width 较小；如果许多 query rows 会复用这些展开结果，这项成本可以被摊薄。Absorbed MQA mode 让 core attention 直接处理较宽的 latent representation，同时省去为历史 rows materialize per-head K/V 的工作。最佳 mode 由 sequence stage、稀疏性、shape、数据搬运和硬件 schedule 共同决定。
-
-Weight absorption 利用矩阵乘法的结合律改变求值分组，省去展开 K/V 的 materialization；权重和矩阵顺序都保持不变。Key 一侧可以重新结合为：
+先看上一节 score 的 content 项。Key 一侧可以改写为
 
 $$
-(q^{C})^{\mathsf T}U_Kc_s
-=\left(U_K^{\mathsf T}q^{C}\right)^{\mathsf T}c_s
-=(q^A)^{\mathsf T}c_s,
-\qquad q^A=U_K^{\mathsf T}q^C.
+(q_t^C)^{\mathsf T}(U_Kc_s)
+=(U_K^{\mathsf T}q_t^C)^{\mathsf T}c_s.
 $$
 
-吸收权重后的 query $q^A$ 可以直接与 cached latent 做 dot product。
+左边先为每个历史位置生成 content key $U_Kc_s$；右边先为当前 query 计算一次 $U_K^{\mathsf T}q_t^C$，再把结果与所有缓存中的 $c_s$ 做点积。将右式替换回上一节 score 的第一项后，经过 RoPE 的第二项保持不变，完整 score 的数值也不变。使用相同的 scale、mask 和 softmax，得到的 attention weights $p_s$ 因而相同，同时也无需把 $U_Kc_s$ 物化成各 head 的 content key。
 
-用两个坐标算一次就能看清这件事。取 $q=(1,2)^{\mathsf T}$、$c=(3,4)^{\mathsf T}$，以及 $U=\begin{bmatrix}1&2\\0&1\end{bmatrix}$。先展开 key 得到 $q^{\mathsf T}(Uc)=19$；先变换 query 则得到 $(U^{\mathsf T}q)^{\mathsf T}c=19$。前者对每个 cached row 计算 $Uc$，后者对当前 query 只计算一次 $U^{\mathsf T}q$。
-
-Value 一侧则利用线性关系：
+Value 一侧也可以改变计算顺序。记 $p_s$ 为当前 head 对历史位置 $s$ 的 attention weight，则
 
 $$
-\sum_s p_s U_Vc_s
+o
+=\sum_s p_s v_s
+=\sum_s p_s U_Vc_s
 =U_V\left(\sum_s p_s c_s\right).
 $$
 
-因此，$U_V$ 可以与模型的 output projection 合并，attention kernel 直接使用共享 latent representation，省去展开 per-head K/V 的中间结果。
+原来的顺序是先为每个历史位置生成 $v_s=U_Vc_s$，再对这些 values 加权求和。重排后，attention 先在共享的 latent 空间中计算 $\sum_s p_s c_s$，最后只对结果应用一次 $U_V$。Multi-head attention 最后还会用输出投影 $W_O$ 合并各 head 的结果；由于 $U_V$ 也是线性变换，它可以预先与 $W_O$ 中当前 head 对应的矩阵块组合。
 
-下图把普通 MHA cache、MLA shared cache 和两条 weight-absorption 路径放在一起：
+Key 和 Value 两侧都只改变了乘法的结合顺序，模型参数和数值结果保持不变。这两处重排合称为 weight absorption。同一个 MLA layer 因而有两种等价的求值方式：显式生成各 head 的 K/V 称为 MHA mode；使用上述重排、直接在共享 latent 上计算称为 MQA mode。
+
+```{figure} ../../img/flashmla_mla_modes_zh.svg
+:width: 100%
+:alt: MLA 的 MHA 与 MQA 执行模式，以及 Key 和 Value 两侧的 weight absorption
+
+*MHA mode 显式展开各 head 的 K/V。MQA mode 在 QK 前计算 $U_K^{\mathsf T}q_t^C$，在 latent 加权求和后应用 $U_V$；两种方式使用相同的 RoPE 项并产生相同结果。*
+```
+
+两种方式的结果相同，执行成本却不同。MHA mode 需要先生成各 head 的 K/V，但 QK 点积和 value 聚合处理的特征维度较小；如果许多 queries 会复用同一批展开后的 K/V，这项成本就可以被摊薄。MQA mode 不生成这些中间 K/V，却需要直接在维度较大的 latent 空间中完成 QK 和 PV。哪一种更合适，取决于当前处于 prefill 还是 decode、attention 的稀疏程度、张量形状、数据搬运成本和硬件调度方式。
+
+本章研究的 sparse-prefill kernel 采用 MQA mode。
+
+### MLA cache 的组成与大小
+
+在 MQA mode 中，每个历史 token 的 cache 只保存共享的 $c_s$ 和经过 RoPE 的共享 key 特征 $k_s^R$，不保存各 head 展开后的 content K/V。各 head 仍使用自己的 query、$U_K$ 和 $U_V$，因此会得到不同的 attention weights 和 output。下图把普通 MHA cache 与 MLA shared cache 放在一起：
 
 ```{figure} ../../img/flashmla_cache_story_zh.svg
 :width: 100%
 :alt: 普通 MHA 为每个 head 分别缓存 key 和 value；MLA 只保存一份共享压缩状态，并把各 head 特有的计算放在 attention 两侧
 
-*普通 MHA 为每个 head 分别保存一份 key/value。MLA 为每个 token 只保存一份共享的压缩内容状态和位置信息；各 head 特有的 query 与 output 变换分别在 attention 前后完成。*
+*普通 MHA 为每个 head 分别保存一份 key/value。MLA 为每个 token 只保存共享的压缩 content 状态和经过 RoPE 的 key 特征；各 head 特有的 query 与 output 变换分别在 attention 前后完成。*
 ```
 
-现在可以比较不同机制实际缓存的内容。下表只计算每个 token、每层保存的标量元素，不计数据类型和 allocator metadata：
+现在可以比较不同机制实际缓存的内容。下面 $n_{kv}$ 表示 GQA 的 KV-head 数，$d_h^R$ 表示 $k_s^R$ 的宽度。表中的“普通 MQA”指一种 attention 结构，不是上文 MLA 的 MQA 执行方式。元素数均按每层、每个 token 计算，不计数据类型和内存对齐等额外开销：
 
 | 机制 | Cache 元素数 | 缓存的内容 |
 | --- | ---: | --- |
 | MHA | $2n_hd_h$ | 每个 head 的完整 K 和 V |
 | GQA | $2n_{kv}d_h$ | 每个 KV head 的完整 K 和 V |
-| MQA | $2d_h$ | 所有 query heads 共用一组完整 K/V |
+| 普通 MQA | $2d_h$ | 所有 query heads 共用一组完整 K/V |
 | MLA | $d_c+d_h^R$ | 所有 heads 共用 $c_s$ 和 $k_s^R$ |
 
-这里 $n_{kv}$ 是 GQA 的 KV-head 数，$d_h^R$ 是 $k_s^R$ 的宽度。MLA 一行没有 $2d_c$，因为同一个 $c_s$ 同时提供生成 content K 和 V 所需的信息，只需缓存一次。本章使用 $d_c=512$、$d_h^R=64$，所以 $[c_s;k_s^R]$ 一共有 $512+64=576$ 个标量元素；后文 kernel 中的 `d_qk=576` 就是这条 cached row 的宽度。
+MLA 的缓存大小不是 $2d_c$，因为同一个 $c_s$ 已经包含生成 content K 和 V 所需的信息，只需缓存一次。
 
-本章研究的 DeepSeek Sparse Attention（DSA）sparse-prefill 路径采用这种 MQA mode：每个被选中的 latent KV entry 由所有 query heads 共享。为验证 weight absorption 保持数值结果不变，CPU 程序会同时计算两条代数路径。
+本章使用 $d_c=512$、$d_h^R=64$，因此每条 $[c_s;k_s^R]$ 包含 $512+64=576$ 个标量元素。后文 kernel 中的 `d_qk=576` 指的就是这条 cached row 的宽度。
 
 ### 两种执行模式的数值验证
 
