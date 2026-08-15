@@ -24,7 +24,17 @@ From a performance-analysis perspective, a kernel spends its time on two main ac
 
 The compute ceiling, or peak compute throughput, is the maximum FLOP/s the hardware can provide on the compute path used by the current kernel. For dense FP16/BF16 Tensor Core GEMM on B200, this ceiling usually comes from Tensor Core throughput. For scalar or elementwise kernels, it may instead come from CUDA cores, special-function units, or some other execution unit.
 
-The memory-bandwidth ceiling can be estimated by multiplying HBM bandwidth by arithmetic intensity. If a kernel does little computation for each byte moved, its performance is usually limited by HBM bandwidth. If each byte supports many operations, the kernel has a better chance of entering the compute-bound region, where the ceiling is more likely to be set by compute throughput.
+Memory bandwidth is the amount of data that a memory level can transfer per unit time, usually
+measured in GB/s or TB/s. The 8 TB/s value above means that, under ideal conditions, the HBM
+interface can transfer about 8 TB of data per second. A bandwidth number therefore always refers to
+a particular level of the memory hierarchy: HBM, L2, and shared memory have different bandwidths.
+Unless stated otherwise, this chapter uses *memory bandwidth* to mean HBM bandwidth.
+
+Given this bandwidth ceiling, the memory-side performance ceiling can be estimated by multiplying
+HBM bandwidth by arithmetic intensity. If a kernel does little computation for each byte moved, its
+performance is usually limited by HBM bandwidth. If each byte supports many operations, the kernel
+has a better chance of entering the compute-bound region, where the ceiling is more likely to be set
+by compute throughput.
 
 In units of FLOP/s, the basic roofline bound is:
 
@@ -80,14 +90,18 @@ $$
 \approx 250
 $$
 
-A kernel therefore needs to perform roughly 250 FLOPs for every byte moved from HBM before it can
-approach the Tensor Core compute ceiling in this rough model. Below that arithmetic intensity, the
-kernel is **memory-bound**: HBM cannot deliver data quickly enough to keep the compute units busy.
+In this rough model, classify a kernel by comparing its arithmetic intensity with the ridge point:
 
-The value of the roofline model is that it identifies which class of resource limits performance.
-Reducing a few arithmetic instructions rarely helps a memory-bound kernel, while a small memory
-optimization does not change the primary bottleneck of a compute-bound kernel. The first step in
-optimization is therefore to determine which side of the ridge point the kernel occupies.
+- **Below the ridge point:** the memory-bandwidth line sets the roof, so the kernel is more likely
+  memory-bound.
+- **Above the ridge point:** the compute-throughput line sets the roof, so the kernel is more likely
+  compute-bound.
+- **Near the ridge point:** the two ceilings are similar, so either resource may matter.
+
+This comparison is an initial classification rather than a substitute for measurement and
+profiling. It still gives the optimization direction: reducing a few arithmetic instructions rarely
+helps a memory-bound kernel, while a small memory optimization does not change the primary
+bottleneck of a compute-bound kernel.
 
 ![A B200 roofline with example workloads, showing the memory roof, the compute roof, and the ridge point](../img/roofline.png)
 
@@ -137,7 +151,7 @@ data movement and computation to overlap as much as possible.
 
 Once a kernel is known to be memory-bound, there are two avenues for optimization: reduce HBM
 traffic to raise arithmetic intensity, or, when the traffic cannot be reduced further, bring
-effective bandwidth as close as possible to the hardware limit.
+the actual data-transfer rate as close as possible to the bandwidth ceiling.
 
 Fusion is often the most direct method. A common source of low arithmetic intensity is an intermediate tensor that one kernel writes to HBM and the next operation immediately reads back. Fusing the operation that produces the intermediate with the operation that consumes it can keep the value in registers or on-chip storage such as SMEM or TMEM, avoiding the HBM round trip.
 
@@ -320,7 +334,7 @@ A practical kernel analysis can proceed in three steps:
 3. Measure how far the implementation is from the relevant roof, then optimize the resource that is
    actually binding.
 
-For a memory-bound kernel, focus on reducing data movement and increasing effective bandwidth. For a
-compute-bound kernel, focus on reducing idle time in the compute units. The roofline model does not
+For a memory-bound kernel, focus on reducing data movement and making transfers approach the
+bandwidth ceiling. For a compute-bound kernel, focus on reducing idle time in the compute units. The roofline model does not
 produce the final implementation, but it prevents effort from being spent on resources that are not
 the bottleneck.
