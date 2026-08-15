@@ -15,14 +15,10 @@
     specific language governing permissions and limitations
     under the License.
 
-.. _chap_arch:
+:orphan:
 
 Compiler Internals
 ==================
 
-Internals of the TIRx compiler, for contributors.
-
-.. toctree::
-   :maxdepth: 1
-
-   lowering_pipeline
+The compiler-internals guide is now available at
+:ref:`TIRx Compiler Internals: Compilation and Lowering Pipeline <chap_arch>`.

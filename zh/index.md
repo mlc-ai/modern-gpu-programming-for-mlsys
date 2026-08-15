@@ -64,6 +64,6 @@ chapter_flash_attention/index
 
 appendix/index
 tirx_guide/language_reference/index
+TIRx 编译器内部机制 <tirx_guide/arch/lowering_pipeline>
 appendix/debugging_warp_specialized
-tirx_guide/arch/index
 ```

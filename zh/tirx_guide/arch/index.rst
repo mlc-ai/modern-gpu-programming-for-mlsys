@@ -15,14 +15,9 @@
     specific language governing permissions and limitations
     under the License.
 
-.. _chap_arch:
+:orphan:
 
 编译器内部机制
 ==============
 
-本节面向 TIRx 贡献者，介绍编译器内部的工作方式。
-
-.. toctree::
-   :maxdepth: 1
-
-   lowering_pipeline
+完整内容已移至 :ref:`TIRx 编译器内部机制：编译与 Lowering 流水线 <chap_arch>`。

@@ -87,6 +87,6 @@ chapter_flash_attention/index
 
 appendix/index
 tirx_guide/language_reference/index
+TIRx Compiler Internals <tirx_guide/arch/lowering_pipeline>
 appendix/debugging_warp_specialized
-tirx_guide/arch/index
 ```
