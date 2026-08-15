@@ -21,14 +21,32 @@
 
 这里的计算吞吐上限，也就是“峰值计算吞吐”，指的是硬件在当前 kernel 所使用的计算路径上能够提供的最大 FLOP/s。对于 B200 上的 dense FP16/BF16 Tensor Core GEMM，这个上限通常来自 Tensor Core 吞吐；对于 scalar 或 elementwise kernel，这个上限则可能来自 CUDA Core、特殊函数单元，或者其他指令执行单元的吞吐。
 
-内存带宽对应的性能上限可以用 HBM 带宽乘以算术强度来估算。如果一个 kernel 每搬运一个 byte 只做少量计算，它的性能通常会被 HBM 带宽限制；如果每个 byte 对应很多次计算，那么它更有机会进入 compute-bound 区域，性能上限也更可能由计算吞吐决定。
+内存带宽表示一个内存层级在单位时间内能够传输的数据量，单位通常是 GB/s 或 TB/s。前面
+给出的 8 TB/s 表示在理想情况下，HBM 接口每秒最多可以传输约 8 TB 数据。讨论带宽时必须
+明确所指的内存层级：HBM、L2 和 shared memory 各有自己的带宽。如无特别说明，本章的
+“内存带宽”默认指 HBM 带宽。
+
+硬件规格描述的是带宽上限。某个 kernel 实际达到的有效 HBM 带宽为
+
+$$
+B_{\mathrm{eff}} = \frac{Q_{\mathrm{HBM}}}{t},
+$$
+
+其中 $Q_{\mathrm{HBM}}$ 是按照指定口径统计的 HBM 读写总字节数，$t$ 是 kernel 的执行时间。
+$B_{\mathrm{eff}}/B_{\mathrm{roof}}$ 表示带宽利用率。这里的 $B_{\mathrm{roof}}$ 可以采用硬件标称
+峰值，也可以采用目标系统上实测的可持续带宽；报告结果时需要明确使用哪一种口径。
+$Q_{\mathrm{HBM}}$ 与算术强度分母中的字节数还必须采用相同的内存边界和流量统计方式。
+
+给定这一带宽上限后，由内存带宽决定的性能上限可以用 HBM 带宽乘以算术强度来估算。如果
+一个 kernel 每搬运一个 byte 只做少量计算，它的性能通常会被 HBM 带宽限制；如果每个 byte
+对应很多次计算，那么它更有机会进入 compute-bound 区域，性能上限也更可能由计算吞吐决定。
 
 
 以 FLOP/s 为单位，基本的 roofline 性能上界是：
 
 $$
 \text{可达到的性能}
-\le \min(\text{峰值计算吞吐}, \text{内存带宽} \times \text{算术强度})
+\le \min(\text{峰值计算吞吐}, B_{\mathrm{roof}} \times \text{算术强度})
 $$
 
 算术强度定义为：
@@ -52,7 +70,7 @@ $$
 在 roofline 图中，横轴表示**算术强度**，单位是 **FLOP/byte**；纵轴表示 kernel 能达到的性能。由内存带宽给出的性能上限是一条斜线：
 
 $$
-\text{性能} = \text{带宽} \times \text{算术强度}
+\text{性能} = B_{\mathrm{roof}} \times \text{算术强度}
 $$
 由计算吞吐给出的性能上限是一条水平线：
 
@@ -63,7 +81,7 @@ $$
 这条水平线和前面的内存带宽上限线相交的位置称为**拐点（ridge point）**，也就是从 memory-bound（受内存限制）过渡到 compute-bound（受计算限制）的分界点：
 
 $$
-\text{拐点} = \frac{\text{峰值计算吞吐}}{\text{带宽}}
+\text{拐点} = \frac{\text{峰值计算吞吐}}{B_{\mathrm{roof}}}
 $$
 
 用本章的 B200 近似数值代入，拐点的单位是 FLOP/byte：

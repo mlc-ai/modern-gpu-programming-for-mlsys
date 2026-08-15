@@ -24,13 +24,37 @@ From a performance-analysis perspective, a kernel spends its time on two main ac
 
 The compute ceiling, or peak compute throughput, is the maximum FLOP/s the hardware can provide on the compute path used by the current kernel. For dense FP16/BF16 Tensor Core GEMM on B200, this ceiling usually comes from Tensor Core throughput. For scalar or elementwise kernels, it may instead come from CUDA cores, special-function units, or some other execution unit.
 
-The memory-bandwidth ceiling can be estimated by multiplying HBM bandwidth by arithmetic intensity. If a kernel does little computation for each byte moved, its performance is usually limited by HBM bandwidth. If each byte supports many operations, the kernel has a better chance of entering the compute-bound region, where the ceiling is more likely to be set by compute throughput.
+Memory bandwidth is the amount of data that a memory level can transfer per unit time, usually
+measured in GB/s or TB/s. The 8 TB/s value above means that, under ideal conditions, the HBM
+interface can transfer about 8 TB of data per second. A bandwidth number therefore always refers to
+a particular level of the memory hierarchy: HBM, L2, and shared memory have different bandwidths.
+Unless stated otherwise, this chapter uses *memory bandwidth* to mean HBM bandwidth.
+
+The hardware specification describes a bandwidth ceiling. The effective HBM bandwidth reached by
+a particular kernel is
+
+$$
+B_{\mathrm{eff}} = \frac{Q_{\mathrm{HBM}}}{t},
+$$
+
+where $Q_{\mathrm{HBM}}$ is the total number of bytes read from and written to HBM under the chosen
+counting convention, and $t$ is the kernel execution time. The ratio
+$B_{\mathrm{eff}}/B_{\mathrm{roof}}$ is the bandwidth utilization. Here $B_{\mathrm{roof}}$ may be a
+published peak or a sustained bandwidth measured on the target system; benchmark reports should
+state which one they use. $Q_{\mathrm{HBM}}$ and the byte count used for arithmetic intensity must
+also use the same memory boundary and traffic-counting convention.
+
+Given this bandwidth ceiling, the memory-side performance ceiling can be estimated by multiplying
+HBM bandwidth by arithmetic intensity. If a kernel does little computation for each byte moved, its
+performance is usually limited by HBM bandwidth. If each byte supports many operations, the kernel
+has a better chance of entering the compute-bound region, where the ceiling is more likely to be set
+by compute throughput.
 
 In units of FLOP/s, the basic roofline bound is:
 
 $$
 \text{attainable performance}
-\le \min(\text{peak compute throughput}, \text{memory bandwidth} \times \text{arithmetic intensity})
+\le \min(\text{peak compute throughput}, B_{\mathrm{roof}} \times \text{arithmetic intensity})
 $$
 
 Arithmetic intensity is:
@@ -57,7 +81,7 @@ The memory level must be specified. For an HBM roofline, the bytes are HBM bytes
 On a roofline plot, the x axis is **arithmetic intensity**, measured in **FLOP/byte**. The y axis is the performance the kernel can reach. The memory-bandwidth ceiling is a sloped line:
 
 $$
-\text{performance} = \text{bandwidth} \times \text{arithmetic intensity}
+\text{performance} = B_{\mathrm{roof}} \times \text{arithmetic intensity}
 $$
 
 The compute-throughput ceiling is a horizontal line:
@@ -69,7 +93,7 @@ $$
 The point where this horizontal line intersects the memory-bandwidth line is called the **ridge point**, the boundary between memory-bound and compute-bound behavior:
 
 $$
-\text{ridge point} = \frac{\text{peak compute throughput}}{\text{bandwidth}}
+\text{ridge point} = \frac{\text{peak compute throughput}}{B_{\mathrm{roof}}}
 $$
 
 Using the B200 round numbers from this chapter, the ridge point has units of FLOP/byte:
