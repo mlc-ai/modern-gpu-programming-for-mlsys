@@ -51,7 +51,9 @@ results? The cached compressed state is shared, but every head retains its own
 transformations on the query and output paths. To see how those transformations
 move, start with the KV cache of ordinary MHA.
 
-## Ordinary MHA KV-cache cost
+## From the ordinary MHA KV cache to MLA
+
+### Ordinary MHA KV-cache cost
 
 Ordinary MHA has $n_h$ heads of width $d_h$, each with its own query, key, and
 value projections. Fix one head and write its projection matrices as $W^Q$,
@@ -114,9 +116,10 @@ $$
 =W^V\left(\sum_s p_s h_s\right).
 $$
 
-The first identity moves the key projection to the current query; the second
-moves the value projection after the weighted sum. The numerical results stay
-the same, while the cache only needs to retain one $h_s$. Think of this as an
+The first identity applies $(W^K)^{\mathsf T}$ to the current query once and
+then dots the result with every $h_s$. The second first takes the weighted sum
+of the $h_s$ vectors and only then applies $W^V$. The numerical results stay the
+same, while the cache only needs to retain one $h_s$. Think of this as an
 uncompressed latent-cache thought experiment.
 
 $h_s$ is still $d_{model}$ coordinates wide. Caching it shares state across
@@ -131,163 +134,170 @@ $$
 c_s=Dh_s,\qquad c_s\in\mathbb{R}^{d_c}.
 $$
 
-Second, each head uses its own matrices $U_K$ and $U_V$ to obtain that head's
-content key and value from $c_s$:
+Second, each head has its own up-projection matrices. Continue to fix one head
+and write its matrix blocks as $U_K$ and $U_V$. If K/V are expanded explicitly,
+this head's content key and value are
 
 $$
 k_s^C=U_Kc_s,\qquad
 v_s=U_Vc_s.
 $$
 
+These equations define the K/V that this head must use. Weight absorption later
+preserves the same result without materializing these intermediate vectors.
 $D$, $U_K$, and $U_V$ are learned together during model training. Because $d_c$
 is much smaller than $d_{model}$, the content state cached for each token is
 correspondingly smaller.
 
-### RoPE and the separate positional channel
+### A separate Q/K feature block for RoPE
 
-The preceding content-only QK path has no position-dependent transform on the
-query side, so one transformed query can be reused for every cached row. RoPE
-rotates Q/K according to token position; let $R_t$ and $R_s$ be the rotations
-at positions $t$ and $s$. Applying it directly to the content query and content
-key would give
+For a content score without positional information, the current query can be
+multiplied by $U_K^{\mathsf T}$ once and the result reused for every historical
+position. After adding RoPE, we first need to check whether that reuse remains
+possible.
+
+Let $q_t^C$ be the current query's content feature, and let $R_t$ and $R_s$ be
+the RoPE rotations at query position $t$ and historical position $s$. Applying
+RoPE directly to the content query and content key would give
 
 $$
-\left(R_tq^{C}\right)^{\mathsf T}
+\left(R_tq_t^{C}\right)^{\mathsf T}
 \left(R_sU_Kc_s\right)
 =
-\left(U_K^{\mathsf T}R_s^{\mathsf T}R_tq^{C}\right)^{\mathsf T}c_s.
+\left(U_K^{\mathsf T}R_s^{\mathsf T}R_tq_t^{C}\right)^{\mathsf T}c_s.
 $$
 
-The query position $t$ is fixed, but the historical position $s$ changes from
-one cached row to another. The transformed query in parentheses therefore also
-changes with $s$ and cannot be computed once and reused across the history.
+The query position $t$ is fixed, but the key position $s$ changes as the query
+is compared with different historical tokens. The vector
+$U_K^{\mathsf T}R_s^{\mathsf T}R_tq_t^C$ therefore also changes with $s$ and
+cannot remain a single vector determined only by the current query. Once RoPE
+is applied directly to content Q/K, the query-side result that was meant to be
+reused now changes with each historical position.
 
-MLA instead separates content and position into two paths. The content path
-does not apply RoPE and continues to compute $(q^C)^{\mathsf T}U_Kc_s$. The
-positional channel is a small extra block of Q/K coordinates, not another
-attention head. Let $q_t^R$ and $k_s^R$ denote the positional query and key
-after RoPE has been applied at positions $t$ and $s$. $q_t^R$ belongs to the
-current head, whereas $k_s^R$ is shared by all heads and cached.
+MLA therefore produces a separate, narrower block of Q/K features and applies
+RoPE only to that block. Let $q_t^R$ and $k_s^R$ denote the results after the
+RoPE rotations at positions $t$ and $s$. The superscript $R$ means that these
+features have passed through RoPE; they are still learned projections of token
+representations rather than pure position vectors. $q_t^R$ belongs to the
+current head, while $k_s^R$ is shared by all heads.
 
-The two paths produce
-
-$$
-\mathrm{content}_s=(q^{C})^{\mathsf T}U_Kc_s,
-\qquad
-\mathrm{position}_s=(q_t^{R})^{\mathsf T}k_s^R,
-$$
-
-and the final score is
+In the expanded-K/V form, the complete query and key are
+$[q_t^C;q_t^R]$ and $[U_Kc_s;k_s^R]$, where the semicolon denotes
+concatenation along the feature dimension. Their complete QK dot product is
 
 $$
-\mathrm{score}_s=\mathrm{content}_s+\mathrm{position}_s.
+\mathrm{score}_s
+=[q_t^C;q_t^R]^{\mathsf T}[U_Kc_s;k_s^R]
+=(q_t^C)^{\mathsf T}U_Kc_s
+ +(q_t^R)^{\mathsf T}k_s^R.
 $$
 
-Each historical token therefore caches $[c_s;k_s^R]$: $c_s$ carries shared
-content, while $k_s^R$ carries shared position information. The content path
-can still move $U_K$ to the query side; the positional channel remains
-explicit.
+The sum combines two scalar contributions from different coordinate blocks of
+the same QK dot product; it does not add the two vectors. The first term
+measures content similarity. The second matches RoPE-transformed Q/K features,
+adding relative-position information to the score.
 
-### Per-head up-projections and weight absorption
+### Weight absorption: avoiding per-head K/V expansion with associativity
 
-The uncompressed thought experiment already showed how to move the projections.
-Now apply the same regrouping to $U_K$ and $U_V$. MLA
-admits two algebraically equivalent core-attention modes. Here “MQA mode” names
-an execution strategy; it does not mean that every MLA model is an ordinary
-MQA model.
+Evaluating these formulas directly would multiply every cached $c_s$ by $U_K$
+and $U_V$, explicitly producing this head's historical content K/V. Weight
+absorption is the use of associativity to change the parenthesization and avoid
+those intermediate tensors.
 
-| MLA execution mode | K/V used by core attention | Where up-projection occurs |
-| --- | --- | --- |
-| MHA mode | Per-head $[U_Kc;k^R]$ and $U_Vc$ | Before core attention |
-| MQA mode | Shared $[c;k^R]$ and latent values $c$ | Absorbed into the query and output paths |
-
-```{figure} ../img/flashmla_mla_modes.png
-:width: 100%
-:alt: MHA and MQA execution modes of MLA and the two weight-absorption paths
-
-MLA's MHA mode expands latent KV before core attention. Its MQA mode moves the key
-up-projection to the query path and the value up-projection to the output path.
-The shared RoPE key stays explicit in both modes.
-```
-
-The two modes compute the same result, but their execution costs need not be
-the same. MHA mode expands per-head K/V and then uses a narrower core-attention
-feature width; that expansion can be amortized when many query rows reuse the
-same expanded state. Absorbed MQA mode makes core attention operate on the wider
-latent representation, but avoids materializing and rereading per-head K/V for
-the history. The best choice therefore depends on sequence stage, sparsity,
-shape, data movement, and hardware schedule--not on a rule that prefill must
-always use MHA or decode must always use MQA.
-
-This distinction appears in practice as well. Appendix A of the
-[DeepSeek-V3.2 report](https://github.com/deepseek-ai/DeepSeek-V3.2-Exp/blob/main/DeepSeek_V3_2.pdf)
-states that DeepSeek-V3.1-Terminus used MHA mode for training and prefill and
-MQA mode for decoding, whereas DSA sparse prefill uses MQA mode.
-
-**Weight absorption** uses associativity to regroup fixed linear maps so that
-expanded K/V need not be materialized. On the key side, reassociate the matrix
-multiplication:
+First consider the content term in the preceding score. The key side can be
+rewritten as
 
 $$
-(q^{C})^{\mathsf T}U_Kc_s
-=\left(U_K^{\mathsf T}q^{C}\right)^{\mathsf T}c_s
-=(q^A)^{\mathsf T}c_s,
-\qquad q^A=U_K^{\mathsf T}q^C.
+(q_t^C)^{\mathsf T}(U_Kc_s)
+=(U_K^{\mathsf T}q_t^C)^{\mathsf T}c_s.
 $$
 
-The absorbed query $q^A$ can now be dotted directly with the cached latent.
+The left side forms the content key $U_Kc_s$ at every historical position. The
+right side computes $U_K^{\mathsf T}q_t^C$ once for the current query and dots
+the result with every cached $c_s$. Replacing the first term of the preceding
+score with the right side leaves the RoPE term and the complete score unchanged.
+Using the same scale, mask, and softmax therefore produces the same attention
+weights $p_s$, without materializing $U_Kc_s$ as a per-head content key.
 
-A two-coordinate example makes the regrouping concrete. Let
-$q=(1,2)^{\mathsf T}$, $c=(3,4)^{\mathsf T}$, and
-$U=\begin{bmatrix}1&2\\0&1\end{bmatrix}$. Expanding the key first gives
-$q^{\mathsf T}(Uc)=19$; transforming the query first gives
-$(U^{\mathsf T}q)^{\mathsf T}c=19$. The first form computes $Uc$ for every
-cached row, while the second computes $U^{\mathsf T}q$ once for the current
-query.
-
-On the value side, linearity gives
+The value side permits the same change of evaluation order. Let $p_s$ be this
+head's attention weight for historical position $s$. Then
 
 $$
-\sum_s p_s U_Vc_s
+o
+=\sum_s p_s v_s
+=\sum_s p_s U_Vc_s
 =U_V\left(\sum_s p_s c_s\right).
 $$
 
-Consequently, $U_V$ can be composed with the model's output projection,
-and core attention can operate on the latent states without materializing
-expanded per-head K/V.
+The original order first forms $v_s=U_Vc_s$ for every historical position and
+then takes their weighted sum. After regrouping, attention first computes
+$\sum_s p_s c_s$ in the shared latent space and applies $U_V$ only once to the
+result. Multi-head attention finally uses the output projection $W_O$ to
+combine the heads; because $U_V$ is also linear, it can be composed in advance
+with this head's matrix block in $W_O$.
 
-The following figure brings together the ordinary MHA cache, the shared MLA
-cache, and the two weight-absorption paths:
+Both the key-side and value-side changes only regroup the multiplications; the
+model parameters and numerical result remain unchanged. Together these two
+regroupings are called weight absorption. The same MLA layer therefore has two
+equivalent evaluation modes: explicitly producing each head's K/V is called
+MHA mode, while evaluating attention directly on the shared latent state with
+the regrouping above is called MQA mode.
+
+```{figure} ../img/flashmla_mla_modes.png
+:width: 100%
+:alt: MHA and MQA execution modes of MLA and key-side and value-side weight absorption
+
+*MHA mode explicitly expands each head's K/V. MQA mode computes
+$U_K^{\mathsf T}q_t^C$ before QK and applies $U_V$ after the latent weighted
+sum; both modes use the same RoPE term and produce the same result.*
+```
+
+The two modes produce the same result but incur different costs. MHA mode must
+first produce each head's K/V, but QK/PV use a narrower feature width; the
+expansion can be amortized when many queries reuse it. MQA mode removes those
+intermediate K/V tensors, but QK and PV work directly in the wider latent
+space. The right choice depends on the usage stage, sparsity, tensor shape,
+data movement, and hardware schedule.
+
+The sparse-prefill kernel studied in this chapter uses MQA mode.
+
+### MLA cache contents and footprint
+
+In MQA mode, each historical token caches only the shared $c_s$ and the shared
+RoPE-transformed key feature $k_s^R$, rather than expanded per-head content K/V.
+Every head still has its own query, $U_K$, and $U_V$, so heads can produce
+different attention weights and outputs. The following figure compares the
+ordinary MHA cache with the shared MLA cache:
 
 ```{figure} ../img/flashmla_cache_story.png
 :width: 100%
 :alt: Ordinary MHA caches separate key and value data for every head; MLA stores one shared compressed state and keeps head-specific work around attention
 
 *Ordinary MHA stores a separate key/value slice per head. MLA stores one shared
-compressed content state plus shared position information per token;
+compressed content state and one shared RoPE-transformed key feature per token;
 head-specific query and output transformations happen before and after
 attention.*
 ```
 
-We can now compare what each mechanism actually caches. The table counts scalar
-elements stored per token per layer, excluding dtype and allocator metadata:
+We can now compare what each mechanism actually caches. Here $n_{kv}$ is the
+number of GQA KV heads, and $d_h^R$ is the width of $k_s^R$. “Ordinary MQA” in
+the table names an attention architecture rather than MLA's MQA execution mode.
+The counts are scalar elements stored per token per layer, excluding dtype,
+alignment, and other overhead:
 
 | Mechanism | Cached elements | Cached state |
 | --- | ---: | --- |
 | MHA | $2n_hd_h$ | Complete K and V for every head |
 | GQA | $2n_{kv}d_h$ | Complete K and V for every KV head |
-| MQA | $2d_h$ | One complete K/V pair shared by all query heads |
+| Ordinary MQA | $2d_h$ | One complete K/V pair shared by all query heads |
 | MLA | $d_c+d_h^R$ | One $c_s$ and $k_s^R$ shared by all heads |
 
-Here $n_{kv}$ is the number of GQA KV heads, and $d_h^R$ is the width of
-$k_s^R$. The MLA row does not contain $2d_c$: the same $c_s$ supplies the
-information used to form both the content K and V, so it is cached only once.
-This chapter uses $d_c=512$ and $d_h^R=64$, giving $512+64=576$ scalar elements
-in $[c_s;k_s^R]$. The later kernel parameter `d_qk=576` is the width of this
-cached row.
+MLA does not cache $2d_c$ elements: the same $c_s$ contains the information
+needed to form both content K and V and is stored only once.
 
-The DeepSeek Sparse Attention (DSA) sparse-prefill operator studied here uses
-this MQA mode: every selected latent KV entry is shared by all query heads.
+This chapter uses $d_c=512$ and $d_h^R=64$, so every $[c_s;k_s^R]$ contains
+$512+64=576$ scalar elements. The later kernel parameter `d_qk=576` denotes
+the width of this cached row.
 
 ### Numerical verification of the two execution modes
 
