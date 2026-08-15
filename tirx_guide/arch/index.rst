@@ -17,8 +17,8 @@
 
 .. _chap_arch:
 
-TIRx Compiler Internals
-=======================
+Compiler Internals
+==================
 
 This section explains how the TIRx compiler lowers an authored module into a
 CPU-side launcher and GPU device code. It follows the compilation pipeline from

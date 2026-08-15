@@ -20,7 +20,7 @@ TIRx 编译流水线
 
 ``tvm.compile(mod, target, tir_pipeline="tirx")`` 接收一个 TIRx module，最终生成两部分代码：CPU 端的启动函数负责准备参数并启动 GPU，GPU 端的 kernel 负责执行计算。编译器不是一步完成这项转换，而是依次运行多个编译步骤。每个步骤称为一个 pass，负责对 IR 做一类特定的转换、检查或标注。
 
-TIRx 的完整 pass 顺序定义在 Apache TVM 源码中的 `compilation_pipeline.py
+TIRx 的完整 pass 顺序定义在 Apache TVM 源码中的 `python/tvm/tirx/compilation_pipeline.py
 <https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/compilation_pipeline.py>`_。
 
 整体编译路径
@@ -148,7 +148,7 @@ Host 与 Device 的后续处理
 ------------------------
 
 ``LowerTIRx`` 主要完成两个任务：为 tile-level 操作选择具体实现，以及把逻辑数据布局转换成实际的内存索引。它的核心转换由下面两个 passes 组成，定义在 Apache TVM 源码中的
-`lower_tirx.cc
+`src/tirx/transform/lower_tirx.cc
 <https://github.com/apache/tvm/blob/v0.26.0/src/tirx/transform/lower_tirx.cc>`_：
 
 .. code-block:: text

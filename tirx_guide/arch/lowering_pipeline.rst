@@ -25,7 +25,7 @@ computation. The compiler reaches that result through an ordered series of
 passes. Each pass performs a particular transformation, validation, or
 annotation on the IR.
 
-The exact pass order is defined in Apache TVM's `compilation_pipeline.py
+The exact pass order is defined in Apache TVM's `python/tvm/tirx/compilation_pipeline.py
 <https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/compilation_pipeline.py>`_.
 
 The overall compilation path
@@ -175,7 +175,7 @@ Inside ``LowerTIRx``
 ``LowerTIRx`` has two main jobs: choosing concrete implementations for tile-level
 operations, and turning logical data layouts into physical memory indices. Its
 core transformation is the following two-pass sequence, defined in Apache TVM's
-`lower_tirx.cc
+`src/tirx/transform/lower_tirx.cc
 <https://github.com/apache/tvm/blob/v0.26.0/src/tirx/transform/lower_tirx.cc>`_:
 
 .. code-block:: text
