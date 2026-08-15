@@ -15,10 +15,8 @@
     specific language governing permissions and limitations
     under the License.
 
-.. _chap_arch:
-
-TIRx Compiler Internals
-=======================
+TIRx Lowering Pipeline
+======================
 
 ``tvm.compile(mod, target, tir_pipeline="tirx")`` takes a TIRx module and
 eventually produces two pieces of code: a CPU-side launcher that prepares the

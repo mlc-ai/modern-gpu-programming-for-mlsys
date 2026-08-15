@@ -15,9 +15,17 @@
     specific language governing permissions and limitations
     under the License.
 
-:orphan:
+.. _chap_arch:
 
-Compiler Internals
-==================
+TIRx Compiler Internals
+=======================
 
-The compiler-internals guide is now available at :ref:`chap_arch`.
+This section explains how the TIRx compiler lowers an authored module into a
+CPU-side launcher and GPU device code. It follows the compilation pipeline from
+high-level TIRx constructs through host/device separation and CUDA code
+generation.
+
+.. toctree::
+   :maxdepth: 1
+
+   lowering_pipeline

@@ -15,10 +15,8 @@
     specific language governing permissions and limitations
     under the License.
 
-.. _chap_arch:
-
-TIRx 编译器内部机制
-===================
+TIRx 编译流水线
+===============
 
 ``tvm.compile(mod, target, tir_pipeline="tirx")`` 接收一个 TIRx module，最终生成两部分代码：CPU 端的启动函数负责准备参数并启动 GPU，GPU 端的 kernel 负责执行计算。编译器不是一步完成这项转换，而是依次运行多个编译步骤。每个步骤称为一个 pass，负责对 IR 做一类特定的转换、检查或标注。
 
