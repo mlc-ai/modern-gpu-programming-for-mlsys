@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>TIRx lowering pipeline &#8212; Modern GPU Programming For MLSys</title>
+    <title>TIRx Lowering Pipeline &#8212; Modern GPU Programming For MLSys</title>
   
   
   
@@ -54,6 +54,7 @@
     <link rel="icon" href="../../_static/mlc-favicon.ico"/>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
+    <link rel="next" title="Debugging Warp-Specialized Kernels" href="../../appendix/debugging_warp_specialized.html" />
     <link rel="prev" title="Compiler Internals" href="index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -194,11 +195,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Compiler Internals</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
-<li class="toctree-l2 current active"><a class="current reference internal" href="#">TIRx lowering pipeline</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">TIRx Lowering Pipeline</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
 </ul>
 
     </div>
@@ -374,7 +375,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>TIRx lowering pipeline</h1>
+    <h1>TIRx Lowering Pipeline</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -384,11 +385,12 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#where-it-sits">Where it sits</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-passes">The passes</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inside-lowertirx">Inside LowerTIRx</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-worked-example">A worked example</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reproduce-it-yourself">Reproduce it yourself</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-overall-compilation-path">The overall compilation path</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pass-order-inside-tirx-pipeline">Pass order inside <code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#host-and-device-finalization">Host and device finalization</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inside-lowertirx">Inside <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#compiling-a-simple-kernel-to-cuda">Compiling a Simple Kernel to CUDA</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inspecting-intermediate-ir-and-generated-code">Inspecting intermediate IR and generated code</a></li>
 </ul>
             </nav>
         </div>
@@ -401,203 +403,299 @@
                 <article class="bd-article">
                   
   <section id="tirx-lowering-pipeline">
-<h1>TIRx lowering pipeline<a class="headerlink" href="#tirx-lowering-pipeline" title="Link to this heading">#</a></h1>
-<p><code class="docutils literal notranslate"><span class="pre">tvm.compile(mod,</span> <span class="pre">target,</span> <span class="pre">tir_pipeline=&quot;tirx&quot;)</span></code> passes a TIRx module through the
-<strong>tirx pipeline</strong>, an ordered sequence of TIR passes. These passes lower the
-high-level constructs in the source—tile primitives, <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>-typed buffers,
-and execution-scope IDs—and split the module into <strong>host</strong> and <strong>device</strong> functions.
-The CUDA backend then generates source for the device functions. The pipeline is defined in
-<code class="docutils literal notranslate"><span class="pre">python/tvm/tirx/compilation_pipeline.py</span></code> (<code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code>); this page walks the
-passes in order.</p>
-<section id="where-it-sits">
-<h2>Where it sits<a class="headerlink" href="#where-it-sits" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">tvm.compile</span></code> first binds the target, runs the <strong>tirx pipeline</strong> (the module-level
-passes below), then applies <strong>finalization</strong> passes separately to the host and
-device functions, and finally hands each device function to the CUDA code
-generator:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>authored TIRx  ──BindTarget──▶  tirx_pipeline  ──▶  host func  ──host finalize──▶  C/LLVM
-                                      │
-                                      └──────────▶  device func ──device finalize──▶  CUDA
+<h1>TIRx Lowering Pipeline<a class="headerlink" href="#tirx-lowering-pipeline" title="Link to this heading">#</a></h1>
+<p><code class="docutils literal notranslate"><span class="pre">tvm.compile(mod,</span> <span class="pre">target,</span> <span class="pre">tir_pipeline=&quot;tirx&quot;)</span></code> takes a TIRx module and
+eventually produces two pieces of code: a CPU-side launcher that prepares the
+arguments and launches a GPU kernel, and the GPU kernel that performs the
+computation. The compiler reaches that result through an ordered series of
+passes. Each pass performs a particular transformation, validation, or
+annotation on the IR.</p>
+<p>The exact pass order is defined in Apache TVM’s <a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/compilation_pipeline.py">python/tvm/tirx/compilation_pipeline.py</a>.</p>
+<section id="the-overall-compilation-path">
+<h2>The overall compilation path<a class="headerlink" href="#the-overall-compilation-path" title="Link to this heading">#</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">target</span></code> identifies the hardware and code-generation backend. The example
+below uses CUDA for the device and LLVM for the host. <code class="docutils literal notranslate"><span class="pre">tvm.compile</span></code> first
+attaches that target information to the module and then runs the module-level
+<strong>tirx pipeline</strong>. Once the pipeline has separated the CPU-side host function
+from the GPU-side device function, each follows a target-specific finalization
+path before code generation:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>authored TIRx
+      │ BindTarget
+      ▼
+tirx_pipeline
+(SplitHostDevice creates the two paths)
+      ├── host PrimFunc   ──host finalization──▶ C/LLVM
+      └── device PrimFunc ─device finalization─▶ CUDA
 </pre></div>
 </div>
+<p>A <code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code> is TIR’s representation of a function. The host PrimFunc above is
+the CPU-side launcher, while the device PrimFunc is the GPU kernel.
+<code class="docutils literal notranslate"><span class="pre">Finalization</span></code> refers to the last target-specific transformations performed
+before code generation.</p>
 </section>
-<section id="the-passes">
-<h2>The passes<a class="headerlink" href="#the-passes" title="Link to this heading">#</a></h2>
-<p>The <code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code> module pass applies this exact sequence (a few are gated by
-<code class="docutils literal notranslate"><span class="pre">PassContext</span></code> config):</p>
+<section id="pass-order-inside-tirx-pipeline">
+<h2>Pass order inside <code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code><a class="headerlink" href="#pass-order-inside-tirx-pipeline" title="Link to this heading">#</a></h2>
+<p>The table lists the 19 pipeline steps in execution order. An ABI is the calling
+convention between functions; the ABI passes below adapt ordinary TIR functions
+to forms that the runtime can invoke. <code class="docutils literal notranslate"><span class="pre">PassContext</span></code> holds compiler options:
+common-subexpression elimination can be disabled, and it also controls aspects
+of vectorization and unrolling.</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 6.0%" />
-<col style="width: 32.0%" />
-<col style="width: 62.0%" />
+<col style="width: 24.0%" />
+<col style="width: 24.0%" />
+<col style="width: 46.0%" />
 </colgroup>
 <thead>
 <tr class="row-odd"><th class="head"><p>#</p></th>
+<th class="head"><p>Category</p></th>
 <th class="head"><p>Pass</p></th>
 <th class="head"><p>What it does</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>1</p></td>
+<td><p>TIRx lowering</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code></p></td>
 <td><p>the core lowering — see <a class="reference internal" href="#inside-lowertirx">Inside LowerTIRx</a> below</p></td>
 </tr>
 <tr class="row-odd"><td><p>2</p></td>
+<td><p>TIR normalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">UnifyThreadBinding</span></code></p></td>
 <td><p>merges equivalent thread-axis bindings so each <code class="docutils literal notranslate"><span class="pre">threadIdx</span></code> / <code class="docutils literal notranslate"><span class="pre">blockIdx</span></code>
 axis is declared once</p></td>
 </tr>
 <tr class="row-even"><td><p>3</p></td>
+<td><p>TIR normalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">StmtSimplify</span></code></p></td>
-<td><p>statement-level arithmetic simplification (the arith analyzer)</p></td>
+<td><p>simplifies arithmetic expressions in the IR</p></td>
 </tr>
 <tr class="row-odd"><td><p>4</p></td>
+<td><p>TIR normalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">LowerTIRxOpaque</span></code></p></td>
-<td><p>lowers remaining opaque TIRx constructs to plain TIR</p></td>
+<td><p>converts thread-binding loops, eliminates unannotated unit loops, and
+normalizes loop pragmas</p></td>
 </tr>
 <tr class="row-even"><td><p>5</p></td>
+<td><p>TIR normalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FlattenBuffer</span></code></p></td>
-<td><p>flattens multi-dimensional <code class="docutils literal notranslate"><span class="pre">BufferLoad</span></code> / <code class="docutils literal notranslate"><span class="pre">BufferStore</span></code> to 1-D</p></td>
+<td><p>flattens the remaining multi-dimensional TIR <code class="docutils literal notranslate"><span class="pre">BufferLoad</span></code> /
+<code class="docutils literal notranslate"><span class="pre">BufferStore</span></code> accesses to 1-D</p></td>
 </tr>
 <tr class="row-odd"><td><p>6</p></td>
+<td><p>Compute legalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">BF16ComputeLegalize</span></code></p></td>
-<td><p>rewrites <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> compute to a legal (f32-up-cast) form</p></td>
+<td><p>when the target lacks native <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> compute, promotes operations to
+<code class="docutils literal notranslate"><span class="pre">float32</span></code> and rewrites them into a legal form</p></td>
 </tr>
 <tr class="row-even"><td><p>7</p></td>
+<td><p>TIR normalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">NarrowDataType(32)</span></code></p></td>
-<td><p>narrows index/loop scalar <code class="docutils literal notranslate"><span class="pre">Expr</span></code> types to 32-bit where provably safe</p></td>
+<td><p>narrows index expressions and loop variables to 32 bits where provably safe</p></td>
 </tr>
 <tr class="row-odd"><td><p>8</p></td>
+<td><p>Loop lowering</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">VectorizeLoop</span></code></p></td>
-<td><p>turns <code class="docutils literal notranslate"><span class="pre">T.vectorized</span></code> loops into vector ops (skipped if
-<code class="docutils literal notranslate"><span class="pre">tir.disable_vectorize</span></code>)</p></td>
+<td><p>lowers <code class="docutils literal notranslate"><span class="pre">T.vectorized</span></code> loops to vector operations; when
+<code class="docutils literal notranslate"><span class="pre">tir.disable_vectorize</span></code> is set, it instead scalarizes those loops</p></td>
 </tr>
 <tr class="row-even"><td><p>9</p></td>
+<td><p>Loop lowering</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">UnrollLoop</span></code></p></td>
-<td><p>unrolls loops marked <code class="docutils literal notranslate"><span class="pre">T.unroll</span></code> (and small constant loops)</p></td>
+<td><p>unrolls loops marked <code class="docutils literal notranslate"><span class="pre">T.unroll</span></code>; ordinary constant loops are
+auto-unrolled only when the corresponding config or pragma enables it</p></td>
 </tr>
 <tr class="row-odd"><td><p>10</p></td>
+<td><p>TIR normalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">StmtSimplify</span></code></p></td>
-<td><p>simplify again, now that vectorize/unroll exposed constants</p></td>
+<td><p>simplifies again after vectorization and unrolling expose more constants</p></td>
 </tr>
 <tr class="row-even"><td><p>11</p></td>
+<td><p>TIR normalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">CommonSubexprElim</span></code></p></td>
 <td><p>hoists repeated subexpressions into temporaries (skipped if
 <code class="docutils literal notranslate"><span class="pre">tir.disable_cse_tir</span></code>)</p></td>
 </tr>
 <tr class="row-odd"><td><p>12</p></td>
+<td><p>Compute legalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FP8ComputeLegalize</span></code></p></td>
-<td><p>rewrites <code class="docutils literal notranslate"><span class="pre">float8</span></code> compute to a legal form</p></td>
+<td><p>when the target lacks native <code class="docutils literal notranslate"><span class="pre">float8</span></code> compute, promotes operations to a
+supported type (<code class="docutils literal notranslate"><span class="pre">float32</span></code> by default)</p></td>
 </tr>
 <tr class="row-even"><td><p>13</p></td>
+<td><p>Validation and ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">VerifyMemory</span></code></p></td>
-<td><p>checks no host-side code directly dereferences device memory (a safety gate)</p></td>
+<td><p>ensures that host-side code does not directly dereference device memory</p></td>
 </tr>
 <tr class="row-odd"><td><p>14</p></td>
+<td><p>Validation and ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">AnnotateEntryFunc</span></code></p></td>
-<td><p>marks the single PrimFunc as the module entry point</p></td>
+<td><p>marks the sole function, or the sole externally visible PrimFunc in a
+multi-function module, as the entry point</p></td>
 </tr>
 <tr class="row-even"><td><p>15</p></td>
+<td><p>Validation and ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code></p></td>
-<td><p>splits each kernel into a <strong>host</strong> function and a <strong>device</strong> function at the
-<code class="docutils literal notranslate"><span class="pre">launch_thread</span></code> boundary</p></td>
+<td><p>identifies device regions, splits host and device PrimFuncs, and lowers
+host-to-device calls to the kernel-launch ABI</p></td>
 </tr>
 <tr class="row-odd"><td><p>16</p></td>
+<td><p>Validation and ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">LowerIket</span></code></p></td>
-<td><p>removes frontend-only NVIDIA IKET annotations for normal builds, or emits
-IKET metadata and placeholders when the IRModule is explicitly IKET-enabled</p></td>
+<td><p>removes NVIDIA IKET annotations in normal builds, or lowers them for
+tracing when IKET is enabled</p></td>
 </tr>
 <tr class="row-even"><td><p>17</p></td>
+<td><p>Validation and ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">MakePackedAPI</span></code></p></td>
-<td><p>rewrites the host function to the packed-func ABI (the launcher TVM calls)</p></td>
+<td><p>rewrites the host function to the packed-function ABI used by the TVM runtime</p></td>
 </tr>
 <tr class="row-odd"><td><p>18</p></td>
+<td><p>Storage legalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FP8StorageLegalize</span></code></p></td>
-<td><p>legalizes <code class="docutils literal notranslate"><span class="pre">float8</span></code> storage (packing into supported container types)</p></td>
+<td><p>when the target lacks native <code class="docutils literal notranslate"><span class="pre">float8</span></code> storage, uses <code class="docutils literal notranslate"><span class="pre">uint8</span></code> containers</p></td>
 </tr>
 <tr class="row-even"><td><p>19</p></td>
+<td><p>Storage legalization</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">BF16StorageLegalize</span></code></p></td>
-<td><p>legalizes <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> storage</p></td>
+<td><p>when the target lacks native <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> storage, uses <code class="docutils literal notranslate"><span class="pre">uint16</span></code> containers</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p><strong>Finalization</strong> then runs per function kind:</p>
+</section>
+<section id="host-and-device-finalization">
+<h2>Host and device finalization<a class="headerlink" href="#host-and-device-finalization" title="Link to this heading">#</a></h2>
+<p>The 19 listed steps form <code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code>. After that module-level pipeline,
+<code class="docutils literal notranslate"><span class="pre">tvm.compile</span></code> runs a different finalization sequence for each function kind:</p>
 <ul class="simple">
-<li><p><strong>host</strong>: <code class="docutils literal notranslate"><span class="pre">LowerTVMBuiltin</span></code> (lower <code class="docutils literal notranslate"><span class="pre">tvm_*</span></code> builtins), <code class="docutils literal notranslate"><span class="pre">LowerIntrin</span></code>
-(target-specific intrinsics)</p></li>
-<li><p><strong>device</strong>: <code class="docutils literal notranslate"><span class="pre">LowerWarpMemory</span></code> (warp-scoped buffers → shuffles), <code class="docutils literal notranslate"><span class="pre">StmtSimplify</span></code>,
-<code class="docutils literal notranslate"><span class="pre">LowerIntrin</span></code></p></li>
+<li><p><strong>host</strong>: <code class="docutils literal notranslate"><span class="pre">LowerTVMBuiltin</span></code> (lowers <code class="docutils literal notranslate"><span class="pre">tvm_*</span></code> builtins), <code class="docutils literal notranslate"><span class="pre">LowerIntrin</span></code>
+(lowers target-specific intrinsics)</p></li>
+<li><p><strong>device</strong>: <code class="docutils literal notranslate"><span class="pre">LowerWarpMemory</span></code> (lowers warp-scoped buffers to shuffles),
+<code class="docutils literal notranslate"><span class="pre">StmtSimplify</span></code>, <code class="docutils literal notranslate"><span class="pre">LowerIntrin</span></code></p></li>
 </ul>
 </section>
 <section id="inside-lowertirx">
-<h2>Inside LowerTIRx<a class="headerlink" href="#inside-lowertirx" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> is itself a small sequence (<code class="docutils literal notranslate"><span class="pre">src/tirx/transform/lower_tirx.cc</span></code>):</p>
+<h2>Inside <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code><a class="headerlink" href="#inside-lowertirx" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> has two main jobs: choosing concrete implementations for tile-level
+operations, and turning logical data layouts into physical memory indices. Its
+core transformation is the following two-pass sequence, defined in Apache TVM’s
+<a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/src/tirx/transform/lower_tirx.cc">src/tirx/transform/lower_tirx.cc</a>:</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>LowerTIRx = Sequential([ TilePrimitiveDispatch, LowerTIRxCleanup ])
 </pre></div>
 </div>
 <ul class="simple">
-<li><p><strong>``TilePrimitiveDispatch``</strong> selects a backend variant for every
-<code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> (<code class="docutils literal notranslate"><span class="pre">copy</span></code>, <code class="docutils literal notranslate"><span class="pre">gemm</span></code>, <code class="docutils literal notranslate"><span class="pre">reduction</span></code>, …) and replaces the
-call with the implementation emitted by that variant.</p></li>
-<li><p><strong>``LowerTIRxCleanup``</strong> runs the <code class="docutils literal notranslate"><span class="pre">LayoutApplier</span></code>: it resolves every
-<code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>-typed buffer access into concrete physical address arithmetic
-(<code class="docutils literal notranslate"><span class="pre">addr</span> <span class="pre">=</span> <span class="pre">data</span> <span class="pre">+</span> <span class="pre">elem_offset</span> <span class="pre">+</span> <span class="pre">layout.apply(*coord,</span> <span class="pre">shape=shape)</span></code>), flattens the buffers, and
-lowers the execution-scope ids (<code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> / <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> / … →
-<code class="docutils literal notranslate"><span class="pre">blockIdx</span></code> / <code class="docutils literal notranslate"><span class="pre">threadIdx</span></code> via <code class="docutils literal notranslate"><span class="pre">launch_thread</span></code>).</p></li>
+<li><p><strong>``TilePrimitiveDispatch``</strong> chooses concrete implementations for tile
+operations. TIRx represents operations such as <code class="docutils literal notranslate"><span class="pre">copy</span></code>, <code class="docutils literal notranslate"><span class="pre">gemm</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">reduction</span></code> as <code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> nodes; this pass selects a backend
+implementation for each one. It also turns abstract execution-scope
+identifiers such as <code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> and <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> into kernel-launch
+parameters and thread bindings.</p></li>
+<li><p><strong>``LowerTIRxCleanup``</strong> maps logical coordinates to physical indices. It
+applies supported logical layouts to buffer accesses so later passes can work
+directly with concrete index expressions.</p></li>
 </ul>
-<p>So after <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> the module is plain TIR: no tile primitives, no
-<code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> indirection, scope ids resolved to thread axes.</p>
+<p>After <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code>, tile operations have been replaced by their selected
+implementations, logical layouts have become physical indices, and abstract
+identifiers such as <code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> and <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> have become thread
+bindings. Thread-binding loops and TIRx-specific loop annotations may still
+remain; <code class="docutils literal notranslate"><span class="pre">LowerTIRxOpaque</span></code> normalizes those structures before
+<code class="docutils literal notranslate"><span class="pre">tirx.transform.FlattenBuffer</span></code> flattens ordinary TIR buffer accesses.</p>
 </section>
-<section id="a-worked-example">
-<h2>A worked example<a class="headerlink" href="#a-worked-example" title="Link to this heading">#</a></h2>
-<p>Take a one-line scale kernel:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
+<section id="compiling-a-simple-kernel-to-cuda">
+<h2>Compiling a Simple Kernel to CUDA<a class="headerlink" href="#compiling-a-simple-kernel-to-cuda" title="Link to this heading">#</a></h2>
+<p>The following scale kernel illustrates two transformations: how <code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code>
+and <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> become concrete thread identifiers, and how one TIRx
+function is split into a CPU-side launcher and a GPU kernel. The kernel processes
+1,024 elements using 4 CUDA thread blocks (CTAs), with 256 threads per CTA.</p>
+<p><strong>1. TIRx source uses abstract thread identifiers.</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>
+
+<span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">scale</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">,</span> <span class="n">B_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
-    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
-    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
-    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">();</span> <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">1</span><span class="p">]);</span> <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">thread_id</span><span class="p">([</span><span class="mi">256</span><span class="p">])</span>
-    <span class="n">B</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
+    <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">4</span><span class="p">])</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">thread_id</span><span class="p">([</span><span class="mi">256</span><span class="p">])</span>
+    <span class="n">B</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 </pre></div>
 </div>
-<p><strong>After ``LowerTIRx``</strong> the scope ids are real thread axes and the layout is applied
-(<code class="docutils literal notranslate"><span class="pre">A_1</span></code> / <code class="docutils literal notranslate"><span class="pre">B_1</span></code> are the flattened 1-D views):</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="k">as</span> <span class="n">blockIdx_x</span><span class="p">:</span>
-    <span class="n">threadIdx_x</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span>
-    <span class="n">bx</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">blockIdx_x</span>
-    <span class="n">tx</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">threadIdx_x</span>
-    <span class="n">B_1</span><span class="p">[</span><span class="n">threadIdx_x</span><span class="p">]</span> <span class="o">=</span> <span class="n">A_1</span><span class="p">[</span><span class="n">threadIdx_x</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
+<p><code class="docutils literal notranslate"><span class="pre">T.device_entry()</span></code> marks the entry into GPU code. <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> uses the
+marker to establish the corresponding thread bindings; the later
+<code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code> pass extracts the resulting device region into a separate
+kernel. <code class="docutils literal notranslate"><span class="pre">T.cta_id([4])</span></code> specifies 4 CTAs along x, while
+<code class="docutils literal notranslate"><span class="pre">T.thread_id([256])</span></code> specifies 256 threads per CTA. At this point, <code class="docutils literal notranslate"><span class="pre">bx</span></code> and
+<code class="docutils literal notranslate"><span class="pre">tx</span></code> are still abstract TIRx identifiers.</p>
+<p><strong>2. ``LowerTIRx`` lowers the abstract identifiers to TIR thread bindings.</strong> It
+binds <code class="docutils literal notranslate"><span class="pre">bx</span></code> to <code class="docutils literal notranslate"><span class="pre">blockIdx.x</span></code> and <code class="docutils literal notranslate"><span class="pre">tx</span></code> to <code class="docutils literal notranslate"><span class="pre">threadIdx.x</span></code>. Omitting buffer
+declarations, the core computation is equivalent to:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="k">as</span> <span class="n">bx</span><span class="p">:</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span>
+    <span class="n">B</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 </pre></div>
 </div>
-<p><strong>After ``SplitHostDevice`` + ``LowerIket`` + ``MakePackedAPI``</strong> the one function has become two —
-a host launcher and a device kernel:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>@I.ir_module
-class Module:
-    def main(...):          # host: packed-API launcher (computes the grid/block, launches)
-        ...
-    def scale_kernel(...):  # device: the __global__ body, run on the GPU
+<p>This is still TIR, not CUDA source code. The excerpt retains only the important
+mapping; the next section shows how to print the complete compiler output.</p>
+<p><strong>3. Later passes split host/device code and generate CUDA.</strong> The compiler starts
+with one TIRx function. After <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> establishes thread bindings and a
+device region, <code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code> produces two TIR functions (PrimFuncs):</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>host launcher (generated from scale)
+  `-- launch scale_kernel with gridDim.x = 4 and blockDim.x = 256
+
+device scale_kernel
+  `-- each GPU thread multiplies one input element by 2
 </pre></div>
 </div>
-<p>The CUDA backend then renders <code class="docutils literal notranslate"><span class="pre">scale_kernel</span></code> to the <code class="docutils literal notranslate"><span class="pre">__global__</span></code> function
-(<code class="docutils literal notranslate"><span class="pre">B_ptr[threadIdx.x]</span> <span class="pre">=</span> <span class="pre">A_ptr[threadIdx.x]</span> <span class="pre">*</span> <span class="pre">2.0f</span></code>).</p>
+<p>The host function retains the kernel-launch logic, while the device function
+retains the elementwise computation. <code class="docutils literal notranslate"><span class="pre">MakePackedAPI</span></code> then adapts the host
+function to the uniform calling convention used by the TVM runtime. The device
+function proceeds to the CUDA backend, which generates code equivalent to:</p>
+<div class="highlight-cuda notranslate"><div class="highlight"><pre><span></span><span class="kr">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">scale_kernel</span><span class="p">(</span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">256</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="n">B</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">2.0f</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>In short, TIRx describes the thread organization and computation,
+<code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> turns abstract identifiers into TIR thread bindings,
+<code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code> separates CPU-side launch logic from GPU-side computation,
+and the CUDA backend finally emits CUDA source code.</p>
+<p>No bounds check is needed here because <code class="docutils literal notranslate"><span class="pre">4</span> <span class="pre">*</span> <span class="pre">256</span></code> is exactly 1,024. For a
+general length <code class="docutils literal notranslate"><span class="pre">N</span></code>, choose the CTA count with ceiling division and guard the
+kernel body with <code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">&lt;</span> <span class="pre">N</span></code>.</p>
 </section>
-<section id="reproduce-it-yourself">
-<h2>Reproduce it yourself<a class="headerlink" href="#reproduce-it-yourself" title="Link to this heading">#</a></h2>
-<p>You can run any prefix of the pipeline by hand to inspect a stage — this is how the
-IR snippets across these docs were produced:</p>
+<section id="inspecting-intermediate-ir-and-generated-code">
+<h2>Inspecting intermediate IR and generated code<a class="headerlink" href="#inspecting-intermediate-ir-and-generated-code" title="Link to this heading">#</a></h2>
+<p>To inspect an intermediate IR, run only the first few passes and stop before the
+rest of the pipeline. The following code first places <code class="docutils literal notranslate"><span class="pre">scale</span></code> in an
+<code class="docutils literal notranslate"><span class="pre">IRModule</span></code> under the global name <code class="docutils literal notranslate"><span class="pre">main</span></code>. The CUDA target selects the GPU
+backend, while <code class="docutils literal notranslate"><span class="pre">with_host(&quot;llvm&quot;)</span></code> selects LLVM for the CPU-side launcher.
+<code class="docutils literal notranslate"><span class="pre">BindTarget</span></code> attaches both choices to the module, after which we run only
+<code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code>:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx</span><span class="w"> </span><span class="kn">import</span> <span class="n">transform</span> <span class="k">as</span> <span class="n">TT</span>
 
-<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
-<span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">BindTarget</span><span class="p">(</span><span class="n">target</span><span class="o">.</span><span class="n">with_host</span><span class="p">(</span><span class="s2">&quot;llvm&quot;</span><span class="p">))(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">}))</span>
-<span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">LowerTIRx</span><span class="p">()(</span><span class="n">mod</span><span class="p">)</span>         <span class="c1"># tile primitives dispatched, layouts applied</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">mod</span><span class="o">.</span><span class="n">script</span><span class="p">())</span>               <span class="c1"># inspect the lowered TIRx IR</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">with_host</span><span class="p">(</span><span class="s2">&quot;llvm&quot;</span><span class="p">)</span>
+<span class="n">mod</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">})</span>
+<span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">BindTarget</span><span class="p">(</span><span class="n">target</span><span class="p">)(</span><span class="n">mod</span><span class="p">)</span>
+<span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">LowerTIRx</span><span class="p">()(</span><span class="n">mod</span><span class="p">)</span>         <span class="c1"># run LowerTIRx to lower abstract thread IDs</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">mod</span><span class="o">.</span><span class="n">script</span><span class="p">())</span>               <span class="c1"># inspect the IR after LowerTIRx</span>
 </pre></div>
 </div>
-<p>Or compile the whole module and read the generated CUDA:</p>
+<p>The output should contain thread bindings for <code class="docutils literal notranslate"><span class="pre">blockIdx.x</span></code> and <code class="docutils literal notranslate"><span class="pre">threadIdx.x</span></code>;
+the original <code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> and <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> calls should be gone.</p>
+<p>To inspect the final CUDA, run the complete pipeline. The host module in this
+example imports exactly one device module, so <code class="docutils literal notranslate"><span class="pre">imports[0]</span></code> is the generated
+CUDA module, and <code class="docutils literal notranslate"><span class="pre">inspect_source()</span></code> returns its source code:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">exe</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">&quot;tirx&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">exe</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">())</span>
+<span class="n">cuda_mod</span> <span class="o">=</span> <span class="n">exe</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">cuda_mod</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">())</span>
 </pre></div>
 </div>
+<p>The generated code should contain <code class="docutils literal notranslate"><span class="pre">blockIdx.x</span></code>, <code class="docutils literal notranslate"><span class="pre">threadIdx.x</span></code>, and the
+elementwise multiplication that doubles each input value.</p>
 </section>
 </section>
 
@@ -621,6 +719,15 @@ IR snippets across these docs were produced:</p>
         <p class="prev-next-title">Compiler Internals</p>
       </div>
     </a>
+    <a class="right-next"
+       href="../../appendix/debugging_warp_specialized.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Debugging Warp-Specialized Kernels</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
 </div>
                 </footer>
               
@@ -639,11 +746,12 @@ IR snippets across these docs were produced:</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#where-it-sits">Where it sits</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-passes">The passes</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inside-lowertirx">Inside LowerTIRx</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#a-worked-example">A worked example</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#reproduce-it-yourself">Reproduce it yourself</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-overall-compilation-path">The overall compilation path</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pass-order-inside-tirx-pipeline">Pass order inside <code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#host-and-device-finalization">Host and device finalization</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inside-lowertirx">Inside <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code></a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#compiling-a-simple-kernel-to-cuda">Compiling a Simple Kernel to CUDA</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#inspecting-intermediate-ir-and-generated-code">Inspecting intermediate IR and generated code</a></li>
 </ul>
   </nav></div>
 

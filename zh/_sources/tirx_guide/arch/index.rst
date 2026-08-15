@@ -20,7 +20,7 @@
 编译器内部机制
 ==============
 
-本节面向 TIRx 贡献者，介绍编译器内部的工作方式。
+本节介绍 TIRx 编译器如何将编写好的 module 转换成 CPU 端的启动函数和 GPU 端的 device code，并沿着编译流水线说明 TIRx 高层结构、host/device 拆分以及 CUDA 代码生成之间的关系。
 
 .. toctree::
    :maxdepth: 1

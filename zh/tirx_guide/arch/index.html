@@ -56,8 +56,8 @@
     <link rel="icon" href="../../_static/mlc-favicon.ico"/>
     <link rel="index" title="索引" href="../../genindex.html" />
     <link rel="search" title="搜索" href="../../search.html" />
-    <link rel="next" title="TIRx Lowering Pipeline" href="lowering_pipeline.html" />
-    <link rel="prev" title="调试 Warp-Specialized Kernels" href="../../appendix/debugging_warp_specialized.html" />
+    <link rel="next" title="TIRx 编译流水线" href="lowering_pipeline.html" />
+    <link rel="prev" title="CUDA C++/PTX Intrinsics" href="../language_reference/cuda/threads_sync.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="zh-CN"/>
   <meta name="docsearch:version" content="" />
@@ -197,11 +197,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">编译器内部机制</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
+<li class="toctree-l2"><a class="reference internal" href="lowering_pipeline.html">TIRx 编译流水线</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 </ul>
 
     </div>
@@ -325,10 +325,10 @@
                   
   <section id="chap-arch">
 <span id="id1"></span><h1>编译器内部机制<a class="headerlink" href="#chap-arch" title="Link to this heading">#</a></h1>
-<p>本节面向 TIRx 贡献者，介绍编译器内部的工作方式。</p>
+<p>本节介绍 TIRx 编译器如何将编写好的 module 转换成 CPU 端的启动函数和 GPU 端的 device code，并沿着编译流水线说明 TIRx 高层结构、host/device 拆分以及 CUDA 代码生成之间的关系。</p>
 <div class="toctree-wrapper compound">
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="lowering_pipeline.html">TIRx 编译流水线</a></li>
 </ul>
 </div>
 </section>
@@ -345,12 +345,12 @@
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../../appendix/debugging_warp_specialized.html"
+       href="../language_reference/cuda/threads_sync.html"
        title="上一页">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">上一页</p>
-        <p class="prev-next-title">调试 Warp-Specialized Kernels</p>
+        <p class="prev-next-title">CUDA C++/PTX Intrinsics</p>
       </div>
     </a>
     <a class="right-next"
@@ -358,7 +358,7 @@
        title="下一页">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">下一页</p>
-        <p class="prev-next-title">TIRx Lowering Pipeline</p>
+        <p class="prev-next-title">TIRx 编译流水线</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

@@ -8,7 +8,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 
-    <title>TIRx Lowering Pipeline &#8212; 面向 MLSys 的现代 GPU 编程</title>
+    <title>TIRx 编译流水线 &#8212; 面向 MLSys 的现代 GPU 编程</title>
   
   
   
@@ -56,6 +56,7 @@
     <link rel="icon" href="../../_static/mlc-favicon.ico"/>
     <link rel="index" title="索引" href="../../genindex.html" />
     <link rel="search" title="搜索" href="../../search.html" />
+    <link rel="next" title="调试 Warp-Specialized Kernels" href="../../appendix/debugging_warp_specialized.html" />
     <link rel="prev" title="编译器内部机制" href="index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="zh-CN"/>
@@ -196,11 +197,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">编译器内部机制</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
-<li class="toctree-l2 current active"><a class="current reference internal" href="#">TIRx Lowering Pipeline</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">TIRx 编译流水线</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 </ul>
 
     </div>
@@ -310,7 +311,7 @@
               
 
 <div id="jb-print-docs-body" class="onlyprint">
-    <h1>TIRx Lowering Pipeline</h1>
+    <h1>TIRx 编译流水线</h1>
     <!-- Table of contents -->
     <div id="print-main-content">
         <div id="jb-print-toc">
@@ -320,11 +321,12 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pipeline">Pipeline 在编译流程中的位置</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pass">Pass 执行顺序</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lowertirx">LowerTIRx 内部做了什么</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">完整示例</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">手动检查中间结果</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">整体编译路径</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tirx-pipeline-pass"><code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code> 的 pass 顺序</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#host-device">Host 与 Device 的后续处理</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lowertirx"><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 的内部组成</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#kernel">一个简单 Kernel 的编译过程</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ir">检查中间 IR 与生成代码</a></li>
 </ul>
             </nav>
         </div>
@@ -336,204 +338,249 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section id="tirx-lowering-pipeline">
-<h1>TIRx Lowering Pipeline<a class="headerlink" href="#tirx-lowering-pipeline" title="Link to this heading">#</a></h1>
-<p>调用 <code class="docutils literal notranslate"><span class="pre">tvm.compile(mod,</span> <span class="pre">target,</span> <span class="pre">tir_pipeline=&quot;tirx&quot;)</span></code> 时，编译器会将输入的
-TIRx module 依次送入一组 TIR passes，这组 passes 称为 <strong>tirx pipeline</strong>。
-它负责把 tile primitives、使用 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 的 buffers 和 execution-scope
-ids 等高层结构逐步转换为彼此分离的 <strong>host</strong> 与 <strong>device</strong> functions，最后再
-由 CUDA backend 生成源码。</p>
-<p>Pipeline 定义在 <code class="docutils literal notranslate"><span class="pre">python/tvm/tirx/compilation_pipeline.py</span></code> 的
-<code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code> 中。下面按执行顺序介绍其中的 passes。</p>
-<section id="pipeline">
-<h2>Pipeline 在编译流程中的位置<a class="headerlink" href="#pipeline" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">tvm.compile</span></code> 首先绑定 target，再运行下面的 module-level <strong>tirx
-pipeline</strong>。随后，host 和 device functions 分别经过 finalization passes，
-device function 最终交给 CUDA code generator：</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>authored TIRx  ──BindTarget──▶  tirx_pipeline  ──▶  host func  ──host finalize──▶  C/LLVM
-                                      │
-                                      └──────────▶  device func ──device finalize──▶  CUDA
+  <section id="tirx">
+<h1>TIRx 编译流水线<a class="headerlink" href="#tirx" title="Link to this heading">#</a></h1>
+<p><code class="docutils literal notranslate"><span class="pre">tvm.compile(mod,</span> <span class="pre">target,</span> <span class="pre">tir_pipeline=&quot;tirx&quot;)</span></code> 接收一个 TIRx module，最终生成两部分代码：CPU 端的启动函数负责准备参数并启动 GPU，GPU 端的 kernel 负责执行计算。编译器不是一步完成这项转换，而是依次运行多个编译步骤。每个步骤称为一个 pass，负责对 IR 做一类特定的转换、检查或标注。</p>
+<p>TIRx 的完整 pass 顺序定义在 Apache TVM 源码中的 <a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/compilation_pipeline.py">python/tvm/tirx/compilation_pipeline.py</a>。</p>
+<section id="id1">
+<h2>整体编译路径<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">target</span></code> 指定代码要在哪种硬件和后端上运行。下面的例子在 GPU 端使用 CUDA，在 CPU 端使用 LLVM：<code class="docutils literal notranslate"><span class="pre">tvm.compile</span></code> 先将 target 信息写入 module，再运行模块级的 <strong>tirx pipeline</strong>。<code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code> 拆出 CPU 端的 host 函数和 GPU 端的 device 函数后，两者分别经过最后一轮面向具体 target 的转换，再交给相应的代码生成器：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>编写好的 TIRx
+      │ BindTarget
+      ▼
+tirx_pipeline
+（SplitHostDevice 在其中拆分两条路径）
+      ├── host PrimFunc   ──host finalization──▶ C/LLVM
+      └── device PrimFunc ─device finalization─▶ CUDA
 </pre></div>
 </div>
+<p><code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code> 是 TIR 中的函数表示。上图中的 host PrimFunc 就是 CPU 端的启动函数，device PrimFunc 则是 GPU 上执行的 kernel；<code class="docutils literal notranslate"><span class="pre">finalization</span></code> 表示代码生成之前针对具体 target 所做的最后几步转换。</p>
 </section>
-<section id="pass">
-<h2>Pass 执行顺序<a class="headerlink" href="#pass" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code> 依次执行下表中的 passes，其中少数 pass 会由
-<code class="docutils literal notranslate"><span class="pre">PassContext</span></code> 配置控制是否启用：</p>
+<section id="tirx-pipeline-pass">
+<h2><code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code> 的 pass 顺序<a class="headerlink" href="#tirx-pipeline-pass" title="Link to this heading">#</a></h2>
+<p>下表按照实际执行顺序列出 <code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code> 中的 19 个步骤。ABI 是函数之间的调用约定；表中的 ABI passes 负责把普通 TIR 函数改造成 runtime 能够调用的形式。<code class="docutils literal notranslate"><span class="pre">PassContext</span></code> 是控制编译选项的配置对象：公共子表达式消除可以关闭，向量化和循环展开的行为也可以通过它调整。</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <colgroup>
 <col style="width: 6.0%" />
-<col style="width: 32.0%" />
-<col style="width: 62.0%" />
+<col style="width: 24.0%" />
+<col style="width: 24.0%" />
+<col style="width: 46.0%" />
 </colgroup>
 <thead>
 <tr class="row-odd"><th class="head"><p>#</p></th>
+<th class="head"><p>类别</p></th>
 <th class="head"><p>Pass</p></th>
 <th class="head"><p>作用</p></th>
 </tr>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>1</p></td>
+<td><p>TIRx lowering</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code></p></td>
-<td><p>完成 TIRx 的核心转换，详见下方 <a class="reference internal" href="#lowertirx">LowerTIRx 内部做了什么</a></p></td>
+<td><p>完成 TIRx 的核心转换，详见下方 <a class="reference internal" href="#lowertirx">LowerTIRx 的内部组成</a></p></td>
 </tr>
 <tr class="row-odd"><td><p>2</p></td>
+<td><p>TIR 规范化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">UnifyThreadBinding</span></code></p></td>
 <td><p>合并等价的 thread-axis bindings，使每个 <code class="docutils literal notranslate"><span class="pre">threadIdx</span></code> / <code class="docutils literal notranslate"><span class="pre">blockIdx</span></code>
 axis 只声明一次</p></td>
 </tr>
 <tr class="row-even"><td><p>3</p></td>
+<td><p>TIR 规范化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">StmtSimplify</span></code></p></td>
-<td><p>使用 arithmetic analyzer 简化 statement 中的算术表达式</p></td>
+<td><p>简化 IR 中的算术表达式</p></td>
 </tr>
 <tr class="row-odd"><td><p>4</p></td>
+<td><p>TIR 规范化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">LowerTIRxOpaque</span></code></p></td>
-<td><p>将剩余的 opaque TIRx constructs 转换为普通 TIR</p></td>
+<td><p>转换绑定到线程轴的循环，消除未标注的长度为 1 的循环，并规范化循环 pragma</p></td>
 </tr>
 <tr class="row-even"><td><p>5</p></td>
+<td><p>TIR 规范化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FlattenBuffer</span></code></p></td>
-<td><p>将多维 <code class="docutils literal notranslate"><span class="pre">BufferLoad</span></code> / <code class="docutils literal notranslate"><span class="pre">BufferStore</span></code> 展平为一维访问</p></td>
+<td><p>将剩余的多维 TIR <code class="docutils literal notranslate"><span class="pre">BufferLoad</span></code> / <code class="docutils literal notranslate"><span class="pre">BufferStore</span></code> 展平为一维访问</p></td>
 </tr>
 <tr class="row-odd"><td><p>6</p></td>
+<td><p>计算合法化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">BF16ComputeLegalize</span></code></p></td>
-<td><p>将 <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> 计算改写为合法形式，其中计算会提升到 f32</p></td>
+<td><p>target 不原生支持 <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> 计算时，将其提升到 <code class="docutils literal notranslate"><span class="pre">float32</span></code> 并改写为合法形式</p></td>
 </tr>
 <tr class="row-even"><td><p>7</p></td>
+<td><p>TIR 规范化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">NarrowDataType(32)</span></code></p></td>
-<td><p>在能够证明安全时，将 index 和 loop 的 scalar <code class="docutils literal notranslate"><span class="pre">Expr</span></code> type 缩窄为 32 bits</p></td>
+<td><p>在能够证明安全时，将索引表达式和循环变量缩窄至 32 位</p></td>
 </tr>
 <tr class="row-odd"><td><p>8</p></td>
+<td><p>循环转换</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">VectorizeLoop</span></code></p></td>
-<td><p>将 <code class="docutils literal notranslate"><span class="pre">T.vectorized</span></code> loops 改写为 vector operations；设置
-<code class="docutils literal notranslate"><span class="pre">tir.disable_vectorize</span></code> 时跳过</p></td>
+<td><p>将 <code class="docutils literal notranslate"><span class="pre">T.vectorized</span></code> 循环转换为向量操作；设置 <code class="docutils literal notranslate"><span class="pre">tir.disable_vectorize</span></code> 时，则改写为普通标量循环</p></td>
 </tr>
 <tr class="row-even"><td><p>9</p></td>
+<td><p>循环转换</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">UnrollLoop</span></code></p></td>
-<td><p>展开标记为 <code class="docutils literal notranslate"><span class="pre">T.unroll</span></code> 的 loops，以及较小的常量 loops</p></td>
+<td><p>展开标记为 <code class="docutils literal notranslate"><span class="pre">T.unroll</span></code> 的循环；普通常量循环只有在相应配置或
+pragma 启用时才会自动展开</p></td>
 </tr>
 <tr class="row-odd"><td><p>10</p></td>
+<td><p>TIR 规范化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">StmtSimplify</span></code></p></td>
-<td><p>Vectorize 和 unroll 暴露出更多常量后，再次执行简化</p></td>
+<td><p>向量化和循环展开后会出现更多可简化的常量，再次执行简化</p></td>
 </tr>
 <tr class="row-even"><td><p>11</p></td>
+<td><p>TIR 规范化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">CommonSubexprElim</span></code></p></td>
 <td><p>将重复的子表达式提取为临时变量；设置 <code class="docutils literal notranslate"><span class="pre">tir.disable_cse_tir</span></code> 时跳过</p></td>
 </tr>
 <tr class="row-odd"><td><p>12</p></td>
+<td><p>计算合法化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FP8ComputeLegalize</span></code></p></td>
-<td><p>将 <code class="docutils literal notranslate"><span class="pre">float8</span></code> 计算改写为合法形式</p></td>
+<td><p>target 不原生支持 <code class="docutils literal notranslate"><span class="pre">float8</span></code> 计算时，将其提升为受支持的类型
+（默认为 <code class="docutils literal notranslate"><span class="pre">float32</span></code>）</p></td>
 </tr>
 <tr class="row-even"><td><p>13</p></td>
+<td><p>校验与 ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">VerifyMemory</span></code></p></td>
-<td><p>检查 host 代码没有直接解引用 device memory</p></td>
+<td><p>确保 host 代码不会直接解引用 device memory</p></td>
 </tr>
 <tr class="row-odd"><td><p>14</p></td>
+<td><p>校验与 ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">AnnotateEntryFunc</span></code></p></td>
-<td><p>将 module 中唯一的 PrimFunc 标记为入口函数</p></td>
+<td><p>只有一个 PrimFunc 时直接将其标记为入口；有多个 PrimFunc 时，则标记其中唯一对外可见的函数</p></td>
 </tr>
 <tr class="row-even"><td><p>15</p></td>
+<td><p>校验与 ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code></p></td>
-<td><p>在 <code class="docutils literal notranslate"><span class="pre">launch_thread</span></code> 边界处，将每个 kernel 拆分为 <strong>host</strong> function
-和 <strong>device</strong> function</p></td>
+<td><p>识别 device regions，拆分 host 与 device PrimFuncs，并将 host 侧调用转换为 kernel-launch ABI</p></td>
 </tr>
 <tr class="row-odd"><td><p>16</p></td>
+<td><p>校验与 ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">LowerIket</span></code></p></td>
-<td><p>普通 build 中移除 frontend-only NVIDIA IKET annotations；IRModule 显式
-启用 IKET 时则生成 IKET metadata 和 placeholders</p></td>
+<td><p>普通 build 中移除 NVIDIA IKET annotations；启用 IKET 时则将其转换为 tracing 所需的形式</p></td>
 </tr>
 <tr class="row-even"><td><p>17</p></td>
+<td><p>校验与 ABI</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">MakePackedAPI</span></code></p></td>
-<td><p>将 host function 改写为 TVM launcher 使用的 packed-function ABI</p></td>
+<td><p>将 host function 改写为 TVM runtime 通过 packed-function ABI 调用的形式</p></td>
 </tr>
 <tr class="row-odd"><td><p>18</p></td>
+<td><p>存储合法化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">FP8StorageLegalize</span></code></p></td>
-<td><p>将 <code class="docutils literal notranslate"><span class="pre">float8</span></code> storage 打包为 backend 支持的容器类型</p></td>
+<td><p>target 不原生支持 <code class="docutils literal notranslate"><span class="pre">float8</span></code> storage 时，改用 <code class="docutils literal notranslate"><span class="pre">uint8</span></code> container 保存</p></td>
 </tr>
 <tr class="row-even"><td><p>19</p></td>
+<td><p>存储合法化</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">BF16StorageLegalize</span></code></p></td>
-<td><p>将 <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> storage 改写为合法形式</p></td>
+<td><p>target 不原生支持 <code class="docutils literal notranslate"><span class="pre">bfloat16</span></code> storage 时，改用 <code class="docutils literal notranslate"><span class="pre">uint16</span></code> container 保存</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>之后，编译器会根据 function 类型分别执行 <strong>finalization</strong>：</p>
+</section>
+<section id="host-device">
+<h2>Host 与 Device 的后续处理<a class="headerlink" href="#host-device" title="Link to this heading">#</a></h2>
+<p>上面列出的 19 个步骤组成 <code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code>。这条模块级 pipeline
+结束后，<code class="docutils literal notranslate"><span class="pre">tvm.compile</span></code> 会根据函数类型分别执行 finalization：</p>
 <ul class="simple">
 <li><p><strong>host</strong>：<code class="docutils literal notranslate"><span class="pre">LowerTVMBuiltin</span></code> 处理 <code class="docutils literal notranslate"><span class="pre">tvm_*</span></code> builtins，<code class="docutils literal notranslate"><span class="pre">LowerIntrin</span></code>
-处理 target-specific intrinsics。</p></li>
+处理面向具体 target 的 intrinsics。</p></li>
 <li><p><strong>device</strong>：<code class="docutils literal notranslate"><span class="pre">LowerWarpMemory</span></code> 将 warp-scoped buffers 转换为
 shuffles，随后执行 <code class="docutils literal notranslate"><span class="pre">StmtSimplify</span></code> 和 <code class="docutils literal notranslate"><span class="pre">LowerIntrin</span></code>。</p></li>
 </ul>
 </section>
 <section id="lowertirx">
-<h2>LowerTIRx 内部做了什么<a class="headerlink" href="#lowertirx" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 本身由两个 passes 组成，定义在
-<code class="docutils literal notranslate"><span class="pre">src/tirx/transform/lower_tirx.cc</span></code>：</p>
+<h2><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 的内部组成<a class="headerlink" href="#lowertirx" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 主要完成两个任务：为 tile-level 操作选择具体实现，以及把逻辑数据布局转换成实际的内存索引。它的核心转换由下面两个 passes 组成，定义在 Apache TVM 源码中的
+<a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/src/tirx/transform/lower_tirx.cc">src/tirx/transform/lower_tirx.cc</a>：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>LowerTIRx = Sequential([ TilePrimitiveDispatch, LowerTIRxCleanup ])
 </pre></div>
 </div>
 <ul class="simple">
-<li><p><strong>``TilePrimitiveDispatch``</strong> 根据选中的 backend dispatch，将每个
-<code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall``（``copy</span></code>、<code class="docutils literal notranslate"><span class="pre">gemm</span></code>、<code class="docutils literal notranslate"><span class="pre">reduction</span></code> 等）替换为对应
-的实现。</p></li>
-<li><p><strong>``LowerTIRxCleanup``</strong> 运行 <code class="docutils literal notranslate"><span class="pre">LayoutApplier</span></code>，将使用
-<code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 的 buffer access 变成具体的物理地址计算
-（<code class="docutils literal notranslate"><span class="pre">addr</span> <span class="pre">=</span> <span class="pre">data</span> <span class="pre">+</span> <span class="pre">elem_offset</span> <span class="pre">+</span> <span class="pre">layout.apply(*coord,</span> <span class="pre">shape=shape)</span></code>），再展平 buffers，
-并将 execution-scope ids 转换为 thread axes，例如
-<code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> / <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> 通过 <code class="docutils literal notranslate"><span class="pre">launch_thread</span></code> 变为
-<code class="docutils literal notranslate"><span class="pre">blockIdx</span></code> / <code class="docutils literal notranslate"><span class="pre">threadIdx</span></code>。</p></li>
+<li><p><strong>``TilePrimitiveDispatch``</strong> 为 tile 操作选择具体实现。TIRx 中的 <code class="docutils literal notranslate"><span class="pre">copy</span></code>、
+<code class="docutils literal notranslate"><span class="pre">gemm</span></code>、<code class="docutils literal notranslate"><span class="pre">reduction</span></code> 等操作以 <code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 表示；这个 pass 根据
+backend 选择对应实现。它还会把 <code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code>、<code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> 等抽象的执行范围编号转换成 kernel launch 参数和线程绑定。</p></li>
+<li><p><strong>``LowerTIRxCleanup``</strong> 将逻辑坐标转换为物理索引。它把支持的逻辑 layout 应用到 buffer access 上，使后续 passes 可以直接处理具体的索引表达式。</p></li>
 </ul>
-<p>完成 <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 后，module 中只剩普通 TIR：tile primitives 已经展开，
-<code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 间接层已经消失，scope ids 也已经解析为 thread axes。</p>
+<p>完成 <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 后，tile 操作已经换成选定的底层实现，逻辑 layout 也已经落实为物理索引，<code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> 和 <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> 等抽象编号则变成了线程绑定。此时仍可能保留 thread-binding loops 和 TIRx 特有的 loop annotations；后续的
+<code class="docutils literal notranslate"><span class="pre">LowerTIRxOpaque</span></code> 会规范化这些结构，再由 <code class="docutils literal notranslate"><span class="pre">tirx.transform.FlattenBuffer</span></code>
+展平普通 TIR 中的 buffer access。</p>
 </section>
-<section id="id1">
-<h2>完整示例<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
-<p>以下面的 scale kernel 为例：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
+<section id="kernel">
+<h2>一个简单 Kernel 的编译过程<a class="headerlink" href="#kernel" title="Link to this heading">#</a></h2>
+<p>下面用一个 scale kernel 观察两件事：<code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> 和 <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> 怎样落实为具体的线程编号，以及一个 TIRx 函数如何拆成 CPU 端的启动函数与 GPU 上执行的 kernel。这个 kernel 处理 1,024 个元素，使用 4 个 CUDA thread blocks（CTA），每个 CTA 包含 256 个线程。</p>
+<p><strong>1. TIRx 源码使用抽象的线程编号。</strong></p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>
+
+<span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">scale</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">,</span> <span class="n">B_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
-    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
-    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
-    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">();</span> <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">1</span><span class="p">]);</span> <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">thread_id</span><span class="p">([</span><span class="mi">256</span><span class="p">])</span>
-    <span class="n">B</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
+    <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">4</span><span class="p">])</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">thread_id</span><span class="p">([</span><span class="mi">256</span><span class="p">])</span>
+    <span class="n">B</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>执行 <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 后，scope ids 已经变成真实的 thread axes，layout 也已经
-应用到 buffer access 上。这里的 <code class="docutils literal notranslate"><span class="pre">A_1</span></code> 和 <code class="docutils literal notranslate"><span class="pre">B_1</span></code> 是展平后的一维 views：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="k">as</span> <span class="n">blockIdx_x</span><span class="p">:</span>
-    <span class="n">threadIdx_x</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span>
-    <span class="n">bx</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">blockIdx_x</span>
-    <span class="n">tx</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">let</span> <span class="o">=</span> <span class="n">threadIdx_x</span>
-    <span class="n">B_1</span><span class="p">[</span><span class="n">threadIdx_x</span><span class="p">]</span> <span class="o">=</span> <span class="n">A_1</span><span class="p">[</span><span class="n">threadIdx_x</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
+<p><code class="docutils literal notranslate"><span class="pre">T.device_entry()</span></code> 标记 GPU 代码的入口。<code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 根据这个标记建立线程绑定；后面的 <code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code> 再从所得设备代码区域（device region）中拆出单独的 device kernel。<code class="docutils literal notranslate"><span class="pre">T.cta_id([4])</span></code> 表示 x 方向有 4 个 CTA，
+<code class="docutils literal notranslate"><span class="pre">T.thread_id([256])</span></code> 表示每个 CTA 有 256 个线程。这里的 <code class="docutils literal notranslate"><span class="pre">bx</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tx</span></code>
+仍是 TIRx 提供的抽象编号。</p>
+<p><strong>2. ``LowerTIRx`` 将抽象编号转换为 TIR 线程绑定。</strong> 它把 <code class="docutils literal notranslate"><span class="pre">bx</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tx</span></code>
+分别绑定到 <code class="docutils literal notranslate"><span class="pre">blockIdx.x</span></code> 与 <code class="docutils literal notranslate"><span class="pre">threadIdx.x</span></code>。省略 buffer declarations 后，核心计算等价于：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="k">as</span> <span class="n">bx</span><span class="p">:</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span>
+    <span class="n">B</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>经过 <code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code>、<code class="docutils literal notranslate"><span class="pre">LowerIket</span></code> 和 <code class="docutils literal notranslate"><span class="pre">MakePackedAPI</span></code> 后，一个 function 会拆成 host
-launcher 和 device kernel：</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>@I.ir_module
-class Module:
-    def main(...):          # host: packed-API launcher (computes the grid/block, launches)
-        ...
-    def scale_kernel(...):  # device: the __global__ body, run on the GPU
+<p>这里仍然是 TIR，还不是 CUDA 源码。这段代码只保留了关键映射，不是编译器输出的完整 IR；下一节会给出打印完整结果的命令。</p>
+<p><strong>3. 后续 passes 拆分 host/device，并生成 CUDA。</strong> 编译开始时只有一个 TIRx
+函数。<code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 生成线程绑定和 device region 后，<code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code> 将其拆成两个 TIR 函数（PrimFunc）：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>host launcher（由 scale 生成）
+  └── 启动 scale_kernel，gridDim.x = 4，blockDim.x = 256
+
+device scale_kernel
+  └── 每个 GPU 线程将一个输入元素乘以 2
 </pre></div>
 </div>
-<p>CUDA backend 随后将 <code class="docutils literal notranslate"><span class="pre">scale_kernel</span></code> 生成 <code class="docutils literal notranslate"><span class="pre">__global__</span></code> function：
-<code class="docutils literal notranslate"><span class="pre">B_ptr[threadIdx.x]</span> <span class="pre">=</span> <span class="pre">A_ptr[threadIdx.x]</span> <span class="pre">*</span> <span class="pre">2.0f</span></code>。</p>
+<p>host 函数保存 kernel 的启动逻辑；device 函数保存真正的逐元素计算。
+<code class="docutils literal notranslate"><span class="pre">MakePackedAPI</span></code> 随后将 host 函数转换为 TVM runtime 使用的统一调用形式。Device 函数则交给 CUDA backend，生成与下面代码等价的 CUDA
+kernel：</p>
+<div class="highlight-cuda notranslate"><div class="highlight"><pre><span></span><span class="kr">__global__</span><span class="w"> </span><span class="kt">void</span><span class="w"> </span><span class="n">scale_kernel</span><span class="p">(</span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">A</span><span class="p">,</span><span class="w"> </span><span class="kt">float</span><span class="o">*</span><span class="w"> </span><span class="n">B</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">blockIdx</span><span class="p">.</span><span class="n">x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">256</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="nb">threadIdx</span><span class="p">.</span><span class="n">x</span><span class="p">;</span>
+<span class="w">    </span><span class="n">B</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">A</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">2.0f</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>整个过程可以概括为：TIRx 描述线程组织和计算，<code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 将抽象编号落实为
+TIR 线程绑定，<code class="docutils literal notranslate"><span class="pre">SplitHostDevice</span></code> 分开 CPU 端的启动逻辑与 GPU 端的计算，CUDA
+backend 最后生成 CUDA 源码。</p>
+<p>这里不需要边界判断，因为 <code class="docutils literal notranslate"><span class="pre">4</span> <span class="pre">*</span> <span class="pre">256</span></code> 恰好等于 1,024。处理一般长度 <code class="docutils literal notranslate"><span class="pre">N</span></code>
+时，需要向上取整得到 CTA 数量，并在 kernel 中判断 <code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">&lt;</span> <span class="pre">N</span></code>。</p>
 </section>
-<section id="id2">
-<h2>手动检查中间结果<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
-<p>可以手动运行 pipeline 的任意前缀，检查某个阶段的 IR。本书中的 IR 片段也是
-用这种方式生成的：</p>
+<section id="ir">
+<h2>检查中间 IR 与生成代码<a class="headerlink" href="#ir" title="Link to this heading">#</a></h2>
+<p>为了查看中间 IR，可以只运行完整 pipeline 最前面的几步，然后停下来打印结果。下面先把 <code class="docutils literal notranslate"><span class="pre">scale</span></code> 以全局名 <code class="docutils literal notranslate"><span class="pre">main</span></code> 放入 <code class="docutils literal notranslate"><span class="pre">IRModule</span></code>。CUDA target 指定 GPU
+端生成 CUDA，<code class="docutils literal notranslate"><span class="pre">with_host(&quot;llvm&quot;)</span></code> 则指定 CPU 端生成 LLVM 代码。
+<code class="docutils literal notranslate"><span class="pre">BindTarget</span></code> 将这组 target 信息写入 module，随后只运行 <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code>：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx</span><span class="w"> </span><span class="kn">import</span> <span class="n">transform</span> <span class="k">as</span> <span class="n">TT</span>
 
-<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
-<span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">BindTarget</span><span class="p">(</span><span class="n">target</span><span class="o">.</span><span class="n">with_host</span><span class="p">(</span><span class="s2">&quot;llvm&quot;</span><span class="p">))(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">}))</span>
-<span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">LowerTIRx</span><span class="p">()(</span><span class="n">mod</span><span class="p">)</span>         <span class="c1"># tile primitives dispatched, layouts applied</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">mod</span><span class="o">.</span><span class="n">script</span><span class="p">())</span>               <span class="c1"># inspect the lowered TIRx IR</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">with_host</span><span class="p">(</span><span class="s2">&quot;llvm&quot;</span><span class="p">)</span>
+<span class="n">mod</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">})</span>
+<span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">BindTarget</span><span class="p">(</span><span class="n">target</span><span class="p">)(</span><span class="n">mod</span><span class="p">)</span>
+<span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">LowerTIRx</span><span class="p">()(</span><span class="n">mod</span><span class="p">)</span>         <span class="c1"># 运行 LowerTIRx，转换抽象线程编号</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">mod</span><span class="o">.</span><span class="n">script</span><span class="p">())</span>               <span class="c1"># 查看 LowerTIRx 之后的 IR</span>
 </pre></div>
 </div>
-<p>也可以编译完整 module，再查看生成的 CUDA：</p>
+<p>输出中应该能看到 <code class="docutils literal notranslate"><span class="pre">blockIdx.x</span></code> 和 <code class="docutils literal notranslate"><span class="pre">threadIdx.x</span></code> 对应的线程绑定，而原来的
+<code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> 与 <code class="docutils literal notranslate"><span class="pre">T.thread_id</span></code> 已经消失。</p>
+<p>要查看最终 CUDA，可以运行完整 pipeline。这里的 host module 只导入了一个
+device module，因此 <code class="docutils literal notranslate"><span class="pre">imports[0]</span></code> 就是生成的 CUDA module；
+<code class="docutils literal notranslate"><span class="pre">inspect_source()</span></code> 返回它的源码：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">exe</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">&quot;tirx&quot;</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="n">exe</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">())</span>
+<span class="n">cuda_mod</span> <span class="o">=</span> <span class="n">exe</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">cuda_mod</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">())</span>
 </pre></div>
 </div>
+<p>生成的代码中应该能找到 <code class="docutils literal notranslate"><span class="pre">blockIdx.x</span></code>、<code class="docutils literal notranslate"><span class="pre">threadIdx.x</span></code>，以及将每个输入元素乘以 2 的计算。</p>
 </section>
 </section>
 
@@ -557,6 +604,15 @@ class Module:
         <p class="prev-next-title">编译器内部机制</p>
       </div>
     </a>
+    <a class="right-next"
+       href="../../appendix/debugging_warp_specialized.html"
+       title="下一页">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">下一页</p>
+        <p class="prev-next-title">调试 Warp-Specialized Kernels</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
 </div>
                 </footer>
               
@@ -575,11 +631,12 @@ class Module:
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pipeline">Pipeline 在编译流程中的位置</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#pass">Pass 执行顺序</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lowertirx">LowerTIRx 内部做了什么</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">完整示例</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">手动检查中间结果</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">整体编译路径</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tirx-pipeline-pass"><code class="docutils literal notranslate"><span class="pre">tirx_pipeline</span></code> 的 pass 顺序</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#host-device">Host 与 Device 的后续处理</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lowertirx"><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 的内部组成</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#kernel">一个简单 Kernel 的编译过程</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#ir">检查中间 IR 与生成代码</a></li>
 </ul>
   </nav></div>
 

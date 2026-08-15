@@ -54,8 +54,8 @@
     <link rel="icon" href="../../_static/mlc-favicon.ico"/>
     <link rel="index" title="Index" href="../../genindex.html" />
     <link rel="search" title="Search" href="../../search.html" />
-    <link rel="next" title="TIRx lowering pipeline" href="lowering_pipeline.html" />
-    <link rel="prev" title="Debugging Warp-Specialized Kernels" href="../../appendix/debugging_warp_specialized.html" />
+    <link rel="next" title="TIRx Lowering Pipeline" href="lowering_pipeline.html" />
+    <link rel="prev" title="CUDA C++/PTX intrinsics" href="../language_reference/cuda/threads_sync.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
   <meta name="docsearch:version" content="" />
@@ -195,11 +195,11 @@
 <li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
-<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
 <li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">Compiler Internals</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="lowering_pipeline.html">TIRx lowering pipeline</a></li>
+<li class="toctree-l2"><a class="reference internal" href="lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
 </ul>
 
     </div>
@@ -389,10 +389,13 @@
                   
   <section id="compiler-internals">
 <span id="chap-arch"></span><h1>Compiler Internals<a class="headerlink" href="#compiler-internals" title="Link to this heading">#</a></h1>
-<p>Internals of the TIRx compiler, for contributors.</p>
+<p>This section explains how the TIRx compiler lowers an authored module into a
+CPU-side launcher and GPU device code. It follows the compilation pipeline from
+high-level TIRx constructs through host/device separation and CUDA code
+generation.</p>
 <div class="toctree-wrapper compound">
 <ul>
-<li class="toctree-l1"><a class="reference internal" href="lowering_pipeline.html">TIRx lowering pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
 </div>
 </section>
@@ -409,12 +412,12 @@
                   
 <div class="prev-next-area">
     <a class="left-prev"
-       href="../../appendix/debugging_warp_specialized.html"
+       href="../language_reference/cuda/threads_sync.html"
        title="previous page">
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">previous</p>
-        <p class="prev-next-title">Debugging Warp-Specialized Kernels</p>
+        <p class="prev-next-title">CUDA C++/PTX intrinsics</p>
       </div>
     </a>
     <a class="right-next"
@@ -422,7 +425,7 @@
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">TIRx lowering pipeline</p>
+        <p class="prev-next-title">TIRx Lowering Pipeline</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>
