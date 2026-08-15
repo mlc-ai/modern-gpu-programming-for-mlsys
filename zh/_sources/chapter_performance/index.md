@@ -21,7 +21,9 @@
 
 这里的计算吞吐上限，也就是“峰值计算吞吐”，指的是硬件在当前 kernel 所使用的计算路径上能够提供的最大 FLOP/s。对于 B200 上的 dense FP16/BF16 Tensor Core GEMM，这个上限通常来自 Tensor Core 吞吐；对于 scalar 或 elementwise kernel，这个上限则可能来自 CUDA Core、特殊函数单元，或者其他指令执行单元的吞吐。
 
-内存带宽对应的性能上限可以用 HBM 带宽乘以算术强度来估算。如果一个 kernel 每搬运一个 byte 只做少量计算，它的性能通常会被 HBM 带宽限制；如果每个 byte 对应很多次计算，那么它更有机会进入 compute-bound 区域，性能上限也更可能由计算吞吐决定。
+内存带宽表示一个内存层级在单位时间内能够传输的数据量，单位通常是 GB/s 或 TB/s。前面给出的 8 TB/s 表示在理想情况下，HBM 接口每秒最多可以传输约 8 TB 数据。讨论带宽时必须明确所指的内存层级：HBM、L2 和 shared memory 各有自己的带宽。如无特别说明，本章的“内存带宽”默认指 HBM 带宽。
+
+给定这一带宽上限后，由内存带宽决定的性能上限可以用 HBM 带宽乘以算术强度来估算。如果一个 kernel 每搬运一个 byte 只做少量计算，它的性能通常会被 HBM 带宽限制；如果每个 byte 对应很多次计算，那么它更有机会进入 compute-bound 区域，性能上限也更可能由计算吞吐决定。
 
 
 以 FLOP/s 为单位，基本的 roofline 性能上界是：
@@ -73,9 +75,13 @@ $$
 \approx \frac{2000}{8}
 \approx 250
 $$
-在这个粗略模型中，一个 kernel 每从 HBM 搬运 1 byte 数据，需要完成大约 250 FLOPs，才有机会接近 Tensor Core 的计算吞吐上限。算术强度低于这个值时，kernel 就是 **memory-bound**：计算单元会因为 HBM 无法及时提供数据而等待。
+在这个粗略模型中，只需把 kernel 的算术强度与拐点比较：
 
-Roofline 模型的价值在于判断当前是哪类资源限制了性能。对于 memory-bound kernel，减少少量计算指令通常没有帮助；对于 compute-bound kernel，少量访存优化也不会改变主要瓶颈。因此，优化前应先判断 kernel 位于拐点的哪一侧。
+- **低于拐点：** 性能上限由内存带宽决定，kernel 更可能是 memory-bound。
+- **高于拐点：** 性能上限由计算吞吐决定，kernel 更可能是 compute-bound。
+- **接近拐点：** 两个上限相近，内存与计算都可能影响性能。
+
+这个比较只能给出初步分类，不能代替实际测量和 profiling，但它可以指出优化方向。对于 memory-bound kernel，减少少量计算指令通常没有帮助；对于 compute-bound kernel，少量访存优化也不会改变主要瓶颈。
 
 
 ![B200 roofline 示例：图中展示内存上限、计算上限和拐点](../../img/roofline.png)
@@ -114,7 +120,7 @@ Attention 介于这两个极端之间。它的算术强度取决于序列长度�
 
 ## 优化 Memory-Bound Kernel
 
-确定一个 kernel 是 memory-bound 后，优化有两个方向：一是减少 HBM 搬运量，提高算术强度；二是在搬运量无法继续减少时，让有效带宽尽可能接近硬件上限。
+确定一个 kernel 是 memory-bound 后，优化有两个方向：一是减少 HBM 搬运量，提高算术强度；二是在搬运量无法继续减少时，让实际数据传输速度尽可能接近带宽上限。
 
 算子融合通常是最直接的方法。低算术强度的一个常见来源是：kernel 把中间张量写入 HBM，而下一个操作又立刻把它读回来。把 producer（产生中间结果的操作）和 consumer（使用中间结果的操作）融合在一起后，这个中间结果就可以保留在寄存器或片上存储中，例如 SMEM 或 TMEM，从而避免这次 HBM 往返。
 
@@ -174,7 +180,7 @@ $$
 
 除了增加片上复用，还可以缩小数据类型。从 fp32 换成 fp16、fp8 或 fp4，可以减少数据搬运量，并提高每 byte 对应的有效计算量。如果低精度格式需要额外的 metadata、scale factor 或类型转换，实际收益会低于按 dtype 大小估算的结果。Scale factor 是低精度数据使用的缩放系数，用来恢复相应数据块的数值尺度；block-scaled fp8 和 fp4 都需要这类辅助数据。即便如此，使用更小的 dtype 通常仍是提高算术强度的直接方法。
 
-如果算术强度已经很难提高，优化目标就应转向有效带宽。纯 copy、简单的 elementwise 操作或大 tensor 上的 single-pass reduction，通常缺少可融合的中间结果，也没有足够的数据复用。这时应尽量做到：
+如果算术强度已经很难提高，优化目标就应转向数据搬运本身。纯 copy、简单的 elementwise 操作或大 tensor 上的 single-pass reduction，通常缺少可融合的中间结果，也没有足够的数据复用。这时应尽量做到：
 
 - 每个 byte 只搬运一次，避免冗余读取；
 - 使用 coalesced 或 vectorized 访存；
@@ -251,4 +257,4 @@ SM 占用率受 registers、shared memory、warp slots 和 CTA slots 的限制�
 2. 将算术强度与 roofline 拐点比较，判断性能更可能受内存带宽还是计算吞吐限制。
 3. 检查实际实现离对应上限还有多远，并优化真正处于瓶颈的资源。
 
-对于 memory-bound kernel，重点是减少数据搬运并提高有效带宽；对于 compute-bound kernel，重点是减少计算单元的等待时间。Roofline 模型不能直接给出最终实现，但可以避免在不构成瓶颈的部分反复调参。
+对于 memory-bound kernel，重点是减少数据搬运，并让传输速度尽可能接近带宽上限；对于 compute-bound kernel，重点是减少计算单元的等待时间。Roofline 模型不能直接给出最终实现，但可以避免在不构成瓶颈的部分反复调参。
