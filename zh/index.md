@@ -64,6 +64,6 @@ chapter_flash_attention/index
 
 appendix/index
 tirx_guide/language_reference/index
-appendix/debugging_warp_specialized
 tirx_guide/arch/index
+appendix/debugging_warp_specialized
 ```
