@@ -20,5 +20,4 @@
 Compiler Internals
 ==================
 
-The compiler-internals guide is now available at
-:ref:`TIRx Compiler Internals: Compilation and Lowering Pipeline <chap_arch>`.
+The compiler-internals guide is now available at :ref:`chap_arch`.
