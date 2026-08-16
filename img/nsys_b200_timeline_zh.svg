@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="500" viewBox="0 0 1500 500">
+<rect width="100%" height="100%" fill="#ffffff" rx="14"/>
+<style>text { font-family: Inter, Arial, "Noto Sans CJK SC", sans-serif; }</style>
+<text x="235" y="35" font-size="24" font-weight="700">B200 上的一次真实 Nsight Systems 采集</text>
+<text x="235" y="61" font-size="15" fill="#58677c">4096×4096 BF16：H2D copy → GEMM → ReLU</text>
+<line x1="235" y1="88" x2="1440" y2="88" stroke="#9aa7b8" stroke-width="1"/>
+<line x1="235.00" y1="83" x2="235.00" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="235.00" y="80" font-size="12" text-anchor="middle" fill="#64748b">0 μs</text>
+<line x1="368.89" y1="83" x2="368.89" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="368.89" y="80" font-size="12" text-anchor="middle" fill="#64748b">100 μs</text>
+<line x1="502.78" y1="83" x2="502.78" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="502.78" y="80" font-size="12" text-anchor="middle" fill="#64748b">200 μs</text>
+<line x1="636.67" y1="83" x2="636.67" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="636.67" y="80" font-size="12" text-anchor="middle" fill="#64748b">300 μs</text>
+<line x1="770.56" y1="83" x2="770.56" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="770.56" y="80" font-size="12" text-anchor="middle" fill="#64748b">400 μs</text>
+<line x1="904.44" y1="83" x2="904.44" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="904.44" y="80" font-size="12" text-anchor="middle" fill="#64748b">500 μs</text>
+<line x1="1038.33" y1="83" x2="1038.33" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="1038.33" y="80" font-size="12" text-anchor="middle" fill="#64748b">600 μs</text>
+<line x1="1172.22" y1="83" x2="1172.22" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="1172.22" y="80" font-size="12" text-anchor="middle" fill="#64748b">700 μs</text>
+<line x1="1306.11" y1="83" x2="1306.11" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="1306.11" y="80" font-size="12" text-anchor="middle" fill="#64748b">800 μs</text>
+<line x1="1440.00" y1="83" x2="1440.00" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="1440.00" y="80" font-size="12" text-anchor="middle" fill="#64748b">900 μs</text>
+<text x="217" y="147" font-size="15" font-weight="600" text-anchor="end">外层 NVTX</text>
+<line x1="235" y1="170" x2="1440" y2="170" stroke="#eef1f5"/>
+<text x="217" y="232" font-size="15" font-weight="600" text-anchor="end">子 NVTX ranges</text>
+<line x1="235" y1="255" x2="1440" y2="255" stroke="#eef1f5"/>
+<text x="217" y="317" font-size="15" font-weight="600" text-anchor="end">CUDA APIs</text>
+<line x1="235" y1="340" x2="1440" y2="340" stroke="#eef1f5"/>
+<text x="217" y="402" font-size="15" font-weight="600" text-anchor="end">GPU stream 7</text>
+<line x1="235" y1="425" x2="1440" y2="425" stroke="#eef1f5"/>
+<rect x="235.00" y="125" width="1165.58" height="34" rx="6" fill="#365f9d" stroke="#243247" stroke-width="0.8"/>
+<text x="817.79" y="147" font-size="13" font-weight="600" text-anchor="middle" style="fill:#ffffff">target operation · host NVTX 870.6 μs</text>
+<rect x="251.81" y="210" width="216.28" height="34" rx="6" fill="#72a7d8" stroke="#243247" stroke-width="0.8"/>
+<text x="359.95" y="232" font-size="13" font-weight="600" text-anchor="middle" style="fill:#ffffff">H2D input</text>
+<rect x="490.53" y="210" width="225.27" height="34" rx="6" fill="#598bc2" stroke="#243247" stroke-width="0.8"/>
+<text x="603.16" y="232" font-size="13" font-weight="600" text-anchor="middle" style="fill:#ffffff">BF16 GEMM</text>
+<rect x="722.70" y="210" width="65.62" height="34" rx="6" fill="#86b6df" stroke="#243247" stroke-width="0.8"/>
+<text x="755.51" y="232" font-size="13" font-weight="600" text-anchor="middle" style="fill:#243247">ReLU</text>
+<rect x="390.67" y="295" width="45.75" height="34" rx="6" fill="#e39c45" stroke="#243247" stroke-width="0.8"/>
+<rect x="662.81" y="295" width="45.88" height="34" rx="6" fill="#d7832f" stroke="#243247" stroke-width="0.8"/>
+<rect x="766.75" y="295" width="14.81" height="34" rx="6" fill="#c76d25" stroke="#243247" stroke-width="0.8"/>
+<rect x="880.89" y="295" width="515.23" height="34" rx="6" fill="#b85f46" stroke="#243247" stroke-width="0.8"/>
+<text x="1138.51" y="317" font-size="13" font-weight="600" text-anchor="middle" style="fill:#ffffff">cudaDeviceSynchronize · 384.8 μs</text>
+<line x1="413.54" y1="295" x2="413.54" y2="279" stroke="#8a4c23"/>
+<text x="413.54" y="274" font-size="12" text-anchor="middle" fill="#7a4222">memcpy API</text>
+<line x1="685.76" y1="295" x2="685.76" y2="279" stroke="#8a4c23"/>
+<text x="685.76" y="274" font-size="12" text-anchor="middle" fill="#7a4222">GEMM launch</text>
+<line x1="774.16" y1="295" x2="786.16" y2="279" stroke="#8a4c23"/>
+<text x="786.16" y="274" font-size="12" text-anchor="start" fill="#7a4222">ReLU launch</text>
+<rect x="430.32" y="380" width="813.01" height="34" rx="6" fill="#3d9b72" stroke="#243247" stroke-width="0.8"/>
+<text x="836.82" y="402" font-size="13" font-weight="600" text-anchor="middle" style="fill:#ffffff">H2D copy · 607.2 μs</text>
+<rect x="1248.56" y="380" width="124.72" height="34" rx="6" fill="#6f55b5" stroke="#243247" stroke-width="0.8"/>
+<text x="1310.92" y="402" font-size="13" font-weight="600" text-anchor="middle" style="fill:#ffffff">GEMM</text>
+<text x="1310.92" y="371" font-size="12" text-anchor="middle" fill="#58408e">93.2 μs</text>
+<rect x="1373.58" y="380" width="14.82" height="34" rx="6" fill="#a574d1" stroke="#243247" stroke-width="0.8"/>
+<line x1="1380.99" y1="380" x2="1365.99" y2="362" stroke="#6f4b8d"/>
+<text x="1362.99" y="357" font-size="12" text-anchor="end" fill="#6f4b8d">ReLU · 11.1 μs</text>
+<text x="235" y="475" font-size="13" fill="#58677c">时间以外层 NVTX range 的起点为 0；横向长度来自真实采集，并非示意比例。</text>
+</svg>

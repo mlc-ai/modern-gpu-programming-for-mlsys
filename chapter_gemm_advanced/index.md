@@ -861,7 +861,7 @@ def hgemm_v9(M, N, K):
 
 ## End-to-End Results
 
-The table below follows the progression from the naive baseline to the warp-specialized cluster kernel, with cuBLAS included as a reference. The measurements use an NVIDIA B200 with `M=N=K=4096`, fp16 inputs, locked clocks, and 1,000 timed iterations per measured version:
+The table below follows the progression from the naive baseline to the warp-specialized cluster kernel, with cuBLAS included as a reference. The measurements use an NVIDIA B200 with `M=N=K=4096`, fp16 inputs, locked clocks, and 1,000 timed iterations per measured version. New measurements and reproduction attempts should follow the full protocol in {ref}`chap_benchmarking`.
 
 | Step | Technique | Time | Speedup |
 |------|-----------|------|---------|

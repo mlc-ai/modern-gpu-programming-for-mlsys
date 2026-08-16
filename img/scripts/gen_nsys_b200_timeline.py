@@ -1,0 +1,120 @@
+"""Render the measured Nsight Systems timeline used by the benchmarking appendix."""
+
+from html import escape
+from pathlib import Path
+
+
+WIDTH = 1500
+HEIGHT = 500
+LEFT = 235
+RIGHT = 1440
+T_MAX = 900.0
+BAR_HEIGHT = 34
+
+
+def x_pos(time_us: float) -> float:
+    return LEFT + (RIGHT - LEFT) * time_us / T_MAX
+
+
+def render(*, chinese: bool, output: Path) -> None:
+    title = (
+        "B200 上的一次真实 Nsight Systems 采集"
+        if chinese
+        else "One Real Nsight Systems Capture on B200"
+    )
+    subtitle = (
+        "4096×4096 BF16：H2D copy → GEMM → ReLU"
+        if chinese
+        else "4096×4096 BF16: H2D copy → GEMM → ReLU"
+    )
+    rows = (
+        ["外层 NVTX", "子 NVTX ranges", "CUDA APIs", "GPU stream 7"]
+        if chinese
+        else ["Outer NVTX", "Child NVTX ranges", "CUDA APIs", "GPU stream 7"]
+    )
+    note = (
+        "时间以外层 NVTX range 的起点为 0；横向长度来自真实采集，并非示意比例。"
+        if chinese
+        else "Time is relative to the outer NVTX-range start; horizontal lengths come from the measured capture."
+    )
+
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}">',
+        '<rect width="100%" height="100%" fill="#ffffff" rx="14"/>',
+        '<style>text { font-family: Inter, Arial, "Noto Sans CJK SC", sans-serif; }</style>',
+        f'<text x="{LEFT}" y="35" font-size="24" font-weight="700">{escape(title)}</text>',
+        f'<text x="{LEFT}" y="61" font-size="15" fill="#58677c">{escape(subtitle)}</text>',
+    ]
+
+    axis_y = 88
+    parts.append(f'<line x1="{LEFT}" y1="{axis_y}" x2="{RIGHT}" y2="{axis_y}" stroke="#9aa7b8" stroke-width="1"/>')
+    for tick in range(0, 901, 100):
+        x = x_pos(float(tick))
+        parts.append(f'<line x1="{x:.2f}" y1="{axis_y - 5}" x2="{x:.2f}" y2="430" stroke="#e5e9ef" stroke-width="1"/>')
+        parts.append(f'<text x="{x:.2f}" y="80" font-size="12" text-anchor="middle" fill="#64748b">{tick} μs</text>')
+
+    row_y = [125, 210, 295, 380]
+    for label, y in zip(rows, row_y):
+        parts.append(f'<text x="{LEFT - 18}" y="{y + 22}" font-size="15" font-weight="600" text-anchor="end">{escape(label)}</text>')
+        parts.append(f'<line x1="{LEFT}" y1="{y + BAR_HEIGHT + 11}" x2="{RIGHT}" y2="{y + BAR_HEIGHT + 11}" stroke="#eef1f5"/>')
+
+    def rect(start: float, end: float, y: float, color: str, label: str = "", text_color: str = "#ffffff") -> None:
+        x = x_pos(start)
+        width = x_pos(end) - x
+        parts.append(
+            f'<rect x="{x:.2f}" y="{y}" width="{width:.2f}" height="{BAR_HEIGHT}" rx="6" '
+            f'fill="{color}" stroke="#243247" stroke-width="0.8"/>'
+        )
+        if label:
+            parts.append(
+                f'<text x="{x + width / 2:.2f}" y="{y + 22}" font-size="13" font-weight="600" '
+                f'text-anchor="middle" style="fill:{text_color}">{escape(label)}</text>'
+            )
+
+    # Outer and child NVTX ranges, relative to target-operation start.
+    rect(0.0, 870.561, row_y[0], "#365f9d", "target operation · host NVTX 870.6 μs")
+    rect(12.553, 174.087, row_y[1], "#72a7d8", "H2D input")
+    rect(190.849, 359.104, row_y[1], "#598bc2", "BF16 GEMM")
+    rect(364.257, 413.265, row_y[1], "#86b6df", "ReLU", "#243247")
+
+    # Host CUDA API intervals.
+    rect(116.267, 150.436, row_y[2], "#e39c45")
+    rect(319.529, 353.799, row_y[2], "#d7832f")
+    rect(397.159, 408.223, row_y[2], "#c76d25")
+    rect(482.407, 867.228, row_y[2], "#b85f46", "cudaDeviceSynchronize · 384.8 μs")
+    for time_us, label, anchor in [
+        (133.351, "memcpy API", "middle"),
+        (336.664, "GEMM launch", "middle"),
+        (402.691, "ReLU launch", "start"),
+    ]:
+        x = x_pos(time_us)
+        dx = 12 if anchor == "start" else 0
+        parts.append(f'<line x1="{x:.2f}" y1="{row_y[2]}" x2="{x + dx:.2f}" y2="{row_y[2] - 16}" stroke="#8a4c23"/>')
+        parts.append(
+            f'<text x="{x + dx:.2f}" y="{row_y[2] - 21}" font-size="12" text-anchor="{anchor}" fill="#7a4222">{escape(label)}</text>'
+        )
+
+    # GPU activity on the default stream.
+    rect(145.879, 753.109, row_y[3], "#3d9b72", "H2D copy · 607.2 μs")
+    rect(757.013, 850.165, row_y[3], "#6f55b5", "GEMM")
+    gemm_x = (x_pos(757.013) + x_pos(850.165)) / 2
+    parts.append(f'<text x="{gemm_x:.2f}" y="{row_y[3] - 9}" font-size="12" text-anchor="middle" fill="#58408e">93.2 μs</text>')
+    rect(850.389, 861.461, row_y[3], "#a574d1")
+    relu_x = x_pos(855.925)
+    parts.append(f'<line x1="{relu_x:.2f}" y1="{row_y[3]}" x2="{relu_x - 15:.2f}" y2="{row_y[3] - 18}" stroke="#6f4b8d"/>')
+    parts.append(f'<text x="{relu_x - 18:.2f}" y="{row_y[3] - 23}" font-size="12" text-anchor="end" fill="#6f4b8d">ReLU · 11.1 μs</text>')
+
+    parts.append(f'<text x="{LEFT}" y="475" font-size="13" fill="#58677c">{escape(note)}</text>')
+    parts.append('</svg>')
+    output.write_text("\n".join(parts), encoding="utf-8")
+
+
+def main() -> None:
+    image_dir = Path(__file__).resolve().parents[1]
+    render(chinese=False, output=image_dir / "nsys_b200_timeline.svg")
+    render(chinese=True, output=image_dir / "nsys_b200_timeline_zh.svg")
+
+
+if __name__ == "__main__":
+    main()

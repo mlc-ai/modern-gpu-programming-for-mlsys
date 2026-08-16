@@ -1,11 +1,12 @@
 (chap_appendix)=
 # Overview
 
-The main text runs through Parts I–IV. The Reference section collects material you may want to consult while reading:
+The main text runs through Parts I–IV. The appendices collect material you may want to consult while reading:
 
 | Need | Where |
 |------|-----|
 | Look up a TIRx language feature | **{ref}`chap_language_reference`** |
+| Measure, compare, and profile GPU kernels reproducibly | **{ref}`chap_benchmarking`** |
 | Compiler internals (the lowering pipeline) | **{ref}`chap_arch`** |
 | Debug asynchronous GEMM/FA hangs, crashes, wrong results, or slowdowns | **{ref}`chap_warp_spec_debug`** |
 

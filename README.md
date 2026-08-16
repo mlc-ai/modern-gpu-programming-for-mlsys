@@ -25,7 +25,9 @@ vehicle is **TIRx** (Tensor IR next), a Python DSL for writing GPU kernels at th
   persistent scheduling, warp specialization, and 2-CTA clusters.
 - **Part IV — Flash Attention 4.** A complete attention kernel built from the Part III techniques:
   two MMAs with softmax between them, online-softmax rescaling, causal masking, and GQA.
-- **Reference.** TIRx language reference and compiler internals.
+- **Appendices.** TIRx language reference, [reproducible GPU benchmarking and
+  profiling](appendix/benchmarking_gpu_kernels.md), compiler internals, and asynchronous-kernel
+  debugging.
 
 ## Build the book locally
 
