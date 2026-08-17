@@ -21,7 +21,7 @@
 | Nsight Compute（`ncu`） | 一个选定的 GPU kernel 主要受哪类硬件资源或等待限制？ |
 | IKET（可选） | 一个选定的 kernel 内部，哪些命名阶段或 warp roles 占用了时间？ |
 
-### Profile 结果的三种常见形式
+### 三类 Profile 视图
 
 Profile 不是一个数字，也不只有一种报告格式。本章使用的工具会生成三种互补的视图：
 
@@ -174,7 +174,7 @@ print(f"median end-to-end time: {median(host_samples_ms):.4f} ms")
 
 比较多个实现时，所有实现必须使用相同的计时方法和边界。如果同时报告这两种结果，应分别命名为“CUDA Event GPU 时间”和“单次端到端时间”，而不是把使用不同 timer 得到的数字都写成同一种 latency。
 
-### 重叠执行时如何计时
+### 重叠执行的计时方法
 
 前面的 GEMM 只在当前 CUDA stream 上运行，因此 start 和 end events 可以直接包住全部工作。如果一个 operator 同时使用多个 streams，仅在当前 stream 记录 events 就不够了：其他 stream 上的工作可能在 start 之前已经开始，也可能在 end 之后仍未完成。
 
@@ -210,9 +210,9 @@ PDL（Programmatic Dependent Launch）是另一种可能产生重叠的情况。
 
 前面的 benchmark 只告诉我们整个 operation 用了多长时间。如果它会启动多个 kernels，还需要找出时间具体花在哪些 kernels 上。Proton 可以列出每个 kernel 的调用次数、平均时间和累计时间。
 
-Proton 是 Triton 项目提供的 GPU profiler。它记录 CUDA kernel 活动，因此也能看到由 TVM 编译的 TIRx kernels；这些 kernels 并不是由 Triton 编译的。前面介绍的 `bench` 也支持 `timer="proton"`：它会汇总每次调用中的 kernel 执行时间，并返回多次测量的统计结果。如果想知道其中有哪些 kernels、各调用了多少次，就需要单独采集一棵 kernel 树。
+Proton 是 Triton 项目提供的 GPU profiler。它观察的是 CUDA kernel 活动，因此也可以分析由 TVM 编译的 TIRx kernels。前面介绍的 `bench(timer="proton")` 只返回汇总后的 kernel time；这里单独创建一个 Proton session，以查看每个 kernel 的调用次数和耗时。
 
-下面继续使用前面分配好的矩阵，并把 GEMM 和 ReLU 组成一个两-kernel operation。代码先完成 warm-up，只采集后面的 100 次调用，最后在当前目录生成 `operator.hatchet`：
+下面继续使用前面分配好的矩阵，把 GEMM 和 ReLU 组成一个 operation。代码先完成 warm-up，只采集后面的 100 次调用，最后在当前目录生成 `operator.hatchet`：
 
 ```python
 import torch
@@ -254,7 +254,13 @@ proton-viewer --metrics time/ms,count --print-sorted operator.hatchet
 proton-viewer --metrics avg_time/us,time/ms --print-sorted operator.hatchet
 ```
 
-如果 viewer 提示缺少 `pandas` 或 `hatchet`，可在 profiling 环境中运行 `python -m pip install pandas llnl-hatchet`。下面是这段代码在 B200 上的一次实际结果；为了便于阅读，缩短了 kernel 名称：
+如果 `proton-viewer` 报告缺少可选依赖，再安装：
+
+```bash
+python -m pip install pandas llnl-hatchet
+```
+
+下面是这段代码在 B200 上的一次实际结果；为了便于阅读，缩短了 kernel 名称：
 
 ```text
 target_operation               calls    avg/us    total/ms
@@ -262,17 +268,19 @@ target_operation               calls    avg/us    total/ms
 └── ReLU kernel                  100       4.23        0.423
 ```
 
-先确认预期的 kernels 和调用次数是否正确，再比较叶节点的平均时间与总时间。这个例子中 GEMM 的总时间最大，因此它是更值得继续使用 Nsight Compute 分析的对象。一个 kernel 即使单次很短，也可能因为调用次数很多而占用大量总时间；父 scope 的平均值则不能当作一次完整 operation 的 latency。
+首先核对预期的 kernels 是否都出现、调用次数是否正确，再比较各 kernel 的平均时间和累计时间。这个例子中 GEMM 的累计时间最大，因此下一步应优先用 Nsight Compute 分析 GEMM。也要留意调用次数很多的短 kernel：它们单次耗时不高，累计开销却可能很大。
 
-这棵树适合寻找耗时的 kernel，不能替代前面的计时结果。存在重叠时，各 kernel 的时间会重复覆盖同一段区间；内存拷贝、同步和 stream 空隙也不一定出现在树中。此外，这段采集会复用同一组矩阵，没有采用前面 TVM timer 的 L2 驱逐策略，因此两处数字不能直接比较。完整 operation 的时间仍由前面的 CUDA Event 或 wall-clock benchmark 给出。
+Proton 只统计捕获到的 kernel 时间，不包含内存拷贝、同步和 stream 空隙；如果 kernels 发生重叠，各项 duration 的总和还会重复计算重叠区间。因此，这些数据用于定位需要继续分析的 kernel，不表示整个 operation 的 latency。
 
-## 使用 Nsight Systems 阅读应用时间线
+这次采集反复使用同一组矩阵，而前面的 TVM timer 会在每次测量前驱逐 L2，两者的 cache 条件也不相同。完整 operation 的 latency 仍应使用 CUDA Events 或同步的 wall-clock timer 测量。
+
+## 使用 Nsight Systems 分析应用时间线
 
 Proton 可以汇总各 kernel 的时间，却看不到它们以什么顺序执行，也看不到 kernel 之间的空隙、数据拷贝和 host 等待。分析这些问题时，需要使用 Nsight Systems 的时间线。
 
-### 采集一份可复现的报告
+### 采集目标 operation 的时间线
 
-仓库中的 `appendix/nsys_example.py` 构造了一个简单的三阶段 operation：先把一个 $4096\times4096$ 的 BF16 matrix 从 pinned host memory 复制到 GPU，再执行 GEMM 和 ReLU。输入和输出都在采集前分配。脚本中的核心代码是：
+下面用一个简单例子说明怎样限定 Nsight Systems 的采集范围。`appendix/nsys_example.py` 中的 operation 依次完成三个步骤：把一个 $4096\times4096$ 的 BF16 matrix 从 pinned host memory 复制到 GPU（host-to-device，H2D），执行 GEMM，再执行 ReLU。所需 tensors 均在采集前分配，因此报告只聚焦这三个步骤。脚本的核心代码如下：
 
 ```python
 import torch
@@ -300,9 +308,9 @@ def run_once_for_profiler(run, *, warmup_calls):
     cudart.cudaProfilerStop()
 ```
 
-Warm-up 位于采集范围之外，`target operation` 则为这次调用提供一个容易识别的 NVTX 名称。同步放在这个 range 内，保证三个 GPU operations 都在 range 结束前完成。`cudaProfilerStart()` 和 `cudaProfilerStop()` 只控制采集范围，不负责性能计时。
+`run_once_for_profiler` 先在 profiler 尚未启动时完成 warm-up，并等待 GPU 上的 warm-up 工作结束。随后，`cudaProfilerStart()` 开始采集；NVTX range `target operation` 为这次 operation 添加名称，便于在时间线中定位。这个 range 内的同步确保三项 GPU 工作在 `cudaProfilerStop()` 之前完成。`cudaProfilerStart()` 和 `cudaProfilerStop()` 只用于限定采集范围，不用于计时。
 
-运行下面的命令会生成 `reports/target-timeline.nsys-rep`：
+下面的命令运行这个脚本，并将报告写入 `reports/target-timeline.nsys-rep`：
 
 ```bash
 mkdir -p reports
@@ -317,13 +325,29 @@ nsys profile \
   python appendix/nsys_example.py --profile-once
 ```
 
-`--trace=cuda,nvtx` 记录 CUDA API、GPU activity 和 NVTX ranges。这里关闭 CPU sampling 与 context-switch tracing，让第一份报告只聚焦 CUDA 时间线。如果报告显示 GPU 长时间没有工作，再单独采集 host scheduling 或 OS runtime 信息。
+`--capture-range=cudaProfilerApi` 只采集 `cudaProfilerStart()` 与 `cudaProfilerStop()` 之间的区间。`--trace=cuda,nvtx` 记录 CUDA API、GPU activity 和 NVTX ranges。这里先关闭 CPU sampling 与 context-switch tracing，使报告集中显示 CUDA 时间线。如果时间线中出现较长的 GPU 空隙，再单独采集一份包含 host scheduling 或 OS runtime 信息的报告。
 
-可以在 GUI 中打开报告，也可以从命令行打印这次采集最有用的五张表：
+报告生成后，可以直接用 Nsight Systems GUI 打开时间线：
 
 ```bash
 nsys-ui reports/target-timeline.nsys-rep
+```
 
+### 时间线中的拷贝、排队与执行时间
+
+这个例子使用 PyTorch，是为了用较少的代码构造数据拷贝和多个 CUDA kernels；后面的时间线读法同样适用于 TIRx operation。
+
+下面用一份实际采集的报告说明如何阅读 Nsight Systems 的结果。报告来自一台 NVIDIA B200，软件版本为 NVIDIA driver 595.58.03、CUDA 13.0、PyTorch 2.12.0+cu130 和 Nsight Systems 2025.6.3。
+
+![一次真实的 Nsight Systems 时间线：CPU 上的 NVTX ranges 和 CUDA APIs 位于上方，实际 H2D、GEMM 与 ReLU 位于同一条 GPU stream 上](../../img/nsys_b200_timeline_zh_en_tracks.svg)
+
+*本图根据实际采集结果重绘，横条长度与各项操作的实测时长成比例。*
+
+`GPU stream 7` 中的 `7` 是 Nsight Systems 在这次采集中显示的 stream 标识，不表示第七个执行阶段，换一次运行也可能不同。图中的 H2D copy、GEMM 和 ReLU 位于同一条 stream 上，因此按提交顺序执行。
+
+除了在 GUI 中查看时间线，也可以让 `nsys stats` 从同一份报告中整理出下面使用的时间数据：
+
+```bash
 nsys stats \
   --format=column \
   --timeunit=us \
@@ -335,13 +359,11 @@ nsys stats \
   reports/target-timeline.nsys-rep
 ```
 
-### 读懂一份真实报告
-
-下面的数据来自一次真实采集：NVIDIA B200、driver 595.58.03、CUDA 13.0、PyTorch 2.12.0+cu130 和 Nsight Systems 2025.6.3。数值只用于演示读法，不能作为这个 workload 的性能基准。
-
-![一次真实的 Nsight Systems 时间线：CPU 上的 NVTX ranges 和 CUDA APIs 位于上方，实际 H2D、GEMM 与 ReLU 位于同一条 GPU stream 上](../../img/nsys_b200_timeline_zh.svg)
-
-*时间线根据这份报告中的 `cuda_api_trace`、`nvtx_pushpop_trace` 和 `cuda_gpu_trace` 时间戳重绘。横条长度与实测时长成比例。*
+`--report` 后面是 Nsight Systems 自带的统计名称。`nvtx_gpu_proj_sum` 和
+`nvtx_pushpop_trace` 分别给出 NVTX range 在 GPU 上覆盖的区间和 host 端的 range 记录；
+`cuda_gpu_sum` 汇总 kernels 与 CUDA memory operations；`cuda_kern_exec_trace` 将 host 上的
+launch API 与对应的 GPU kernel 关联起来；`cuda_api_sum` 则汇总 host 端的 CUDA API 调用。
+运行 `nsys stats --help-reports` 可以查看当前版本支持的全部名称和定义。
 
 `cuda_gpu_sum` 给出三项 GPU activity 的时间：
 
@@ -379,13 +401,13 @@ python appendix/nsys_example.py --event-samples 20
 
 Report scripts 会随 Nsight Systems 版本变化。运行 `nsys stats --help-reports` 可以查看当前版本支持的名称，并应在实验记录中保留 `nsys --version`。[Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html) 介绍了 CLI 和 GUI，[Analysis Guide](https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html) 则进一步解释 API、queue 和 kernel execution time。
 
-## 使用 Nsight Compute 分析单个 kernel
+## 采集单个 kernel 的 Nsight Compute 报告
 
 Nsight Systems 告诉我们各个 kernel 在什么时候运行；选定一个 kernel 后，Nsight Compute 可以继续查看它的启动配置、occupancy、计算与访存吞吐，以及 scheduler 状态。采集这些指标时，NCU 可能多次重放同一个 kernel，因此它适合诊断原因，不应使用报告中的 `Duration` 代替正常运行时测得的 latency。
 
 上一节的时间线表明，示例 operation 的主要时间花在 H2D copy。下面选择其中耗时 93.152 μs 的 BF16 GEMM 演示 NCU 的读法；这并不表示 GEMM 是整个 operation 最该优化的部分。
 
-### 只采集一次目标 kernel
+### 选择一次目标 kernel launch
 
 继续使用上一节脚本的 `--profile-once` 模式，可以把 warm-up 留在采集范围之外，并且只执行一次目标 operation。这个 operation 会依次启动 GEMM 和 ReLU；下面通过 kernel-name filter 选中 GEMM，并用 `--launch-count 1` 只采集第一个匹配的 launch。命令采用 kernel replay，因此只适合能够独立重放的 kernel。若一段工作包含跨 kernel 依赖或并发，应先查看 Nsight Systems 时间线，再决定是否需要后文介绍的其他 replay mode。
 
@@ -434,7 +456,7 @@ ncu --import reports/bf16-gemm-basic.ncu-rep \
 
 `header` 适合先查看主要指标；后文使用的 Work ID/CLC 明细和完整 throughput breakdown 可在 GUI 中展开，或把命令中的 `header` 改为 `all` 后打印。
 
-## 读懂一份真实的 NCU 报告
+## 分析 Nsight Compute 报告
 
 下面的数据来自同一台 B200 上的一次真实采集，使用 Nsight Compute 2026.1。NCU 用 9 个 replay passes 完成了 `basic` 报告。表中的百分比表示相应 throughput 指标占硬件子系统可持续峰值的比例，不是直接用应用 FLOPs 除以芯片标称峰值得到的利用率。
 
@@ -483,7 +505,7 @@ NCU 还会显示 `Est. Speedup` 等规则生成的提示。它们是在若干简
 “Memory throughput 高”不等于“DRAM-bound”。限制项也可能来自 L1、L2、shared memory 或
 memory-instruction pipeline。展开 breakdown 后才能判断。
 
-### 继续阅读前，先按需扩展报告
+### 根据 Basic 报告选择下一组指标
 
 `basic` 报告只覆盖前 3 步。根据其中的线索，只采集回答下一个问题所需的 sections：
 
@@ -572,7 +594,7 @@ mkdir -p "$TVM_KERNEL_DUMP"
 设置 `TVM_KERNEL_DUMP` 后，TVM 会保留生成文件，并在 NVCC 编译时加入 `-lineinfo`。NCU 采集命令还要加入 `--import-source yes --source-folders "$TVM_KERNEL_DUMP"`。保存
 `inspect_source("cuda")` 仍便于手工对照，但它本身不能给已经编译的 binary 补上 line information。一个 Python line 可能 lower 成多条 CUDA 或 SASS instructions，异步 tile primitive 也可能只能在这些 lower-level views 中看清。
 
-### 高级情况：NCU 会改变实验条件
+### NCU 采集对实验条件的影响
 
 NCU 采集会改变执行条件：
 
@@ -590,7 +612,7 @@ filter。不要将 NCU 的 `Duration` 直接与无 profiler 的 hot-cache CUDA E
 [counter permission 指南](https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-nsightcompute)
 配置权限，或请系统管理员开放所需访问；不应把所有实验长期使用 root 运行作为默认方案。
 
-## 可选工具：IKET
+## 使用 IKET 分析 kernel 内部阶段（可选）
 
 在 Nsight Systems 时间线中，一个 kernel 只显示为完整的 GPU 执行区间；NCU 给出的指标也覆盖整个 kernel。对于已经加入阶段标记的 warp-specialized TIRx kernel，可以使用 IKET（In-Kernel Event Tracing）查看不同 warp 分工在何时工作、等待或发生重叠。
 

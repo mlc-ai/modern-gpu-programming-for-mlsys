@@ -27,11 +27,7 @@ def render(*, chinese: bool, output: Path) -> None:
         if chinese
         else "4096×4096 BF16: H2D copy → GEMM → ReLU"
     )
-    rows = (
-        ["外层 NVTX", "子 NVTX ranges", "CUDA APIs", "GPU stream 7"]
-        if chinese
-        else ["Outer NVTX", "Child NVTX ranges", "CUDA APIs", "GPU stream 7"]
-    )
+    rows = ["Outer NVTX", "Child NVTX ranges", "CUDA APIs", "GPU stream 7"]
     note = (
         "时间以外层 NVTX range 的起点为 0；横向长度来自真实采集，并非示意比例。"
         if chinese
@@ -113,7 +109,7 @@ def render(*, chinese: bool, output: Path) -> None:
 def main() -> None:
     image_dir = Path(__file__).resolve().parents[1]
     render(chinese=False, output=image_dir / "nsys_b200_timeline.svg")
-    render(chinese=True, output=image_dir / "nsys_b200_timeline_zh.svg")
+    render(chinese=True, output=image_dir / "nsys_b200_timeline_zh_en_tracks.svg")
 
 
 if __name__ == "__main__":

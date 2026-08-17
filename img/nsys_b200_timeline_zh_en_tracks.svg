@@ -25,9 +25,9 @@
 <text x="1306.11" y="80" font-size="12" text-anchor="middle" fill="#64748b">800 μs</text>
 <line x1="1440.00" y1="83" x2="1440.00" y2="430" stroke="#e5e9ef" stroke-width="1"/>
 <text x="1440.00" y="80" font-size="12" text-anchor="middle" fill="#64748b">900 μs</text>
-<text x="217" y="147" font-size="15" font-weight="600" text-anchor="end">外层 NVTX</text>
+<text x="217" y="147" font-size="15" font-weight="600" text-anchor="end">Outer NVTX</text>
 <line x1="235" y1="170" x2="1440" y2="170" stroke="#eef1f5"/>
-<text x="217" y="232" font-size="15" font-weight="600" text-anchor="end">子 NVTX ranges</text>
+<text x="217" y="232" font-size="15" font-weight="600" text-anchor="end">Child NVTX ranges</text>
 <line x1="235" y1="255" x2="1440" y2="255" stroke="#eef1f5"/>
 <text x="217" y="317" font-size="15" font-weight="600" text-anchor="end">CUDA APIs</text>
 <line x1="235" y1="340" x2="1440" y2="340" stroke="#eef1f5"/>

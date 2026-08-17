@@ -30,7 +30,7 @@ The tools used in this workflow have different jobs:
 | Nsight Compute (`ncu`) | Why does one selected GPU kernel spend its cycles the way it does? |
 | IKET (optional) | Which named phases or warp roles consume time inside one selected kernel? |
 
-### Three Common Profile Views
+### Three Profile Views
 
 A profile is not a single number or a single report format. The tools in this chapter produce three
 complementary views:
@@ -336,15 +336,14 @@ The preceding benchmark tells us how long the complete operation takes. If it la
 we still need to determine where that time is spent. Proton reports each kernel's call count, average
 time, and cumulative time.
 
-Proton is a GPU profiler provided by the Triton project. It records CUDA kernel activity and can
-therefore see TIRx kernels compiled by TVM; those kernels are not compiled by Triton. The `bench`
-helper introduced above also supports `timer="proton"`: it aggregates kernel execution times for each
-invocation and returns a statistic across the measured invocations. To see which kernels ran and how
-often, collect a kernel tree in a separate Proton session.
+Proton is a GPU profiler provided by the Triton project. It observes CUDA kernel activity and can
+therefore analyze TIRx kernels compiled by TVM. The `bench(timer="proton")` helper introduced above
+returns an aggregate kernel-time result. Here we create a separate Proton session to inspect each
+kernel's call count and execution time.
 
-The following example reuses the matrices allocated above and combines GEMM with ReLU into a
-two-kernel operation. It finishes warm-up, collects the next 100 calls, and writes `operator.hatchet`
-in the current directory:
+The following example reuses the matrices allocated above and combines GEMM with ReLU in one
+operation. It finishes warm-up, collects the next 100 calls, and writes `operator.hatchet` in the
+current directory:
 
 ```python
 import torch
@@ -387,9 +386,13 @@ proton-viewer --metrics time/ms,count --print-sorted operator.hatchet
 proton-viewer --metrics avg_time/us,time/ms --print-sorted operator.hatchet
 ```
 
-If the viewer reports that `pandas` or `hatchet` is missing, install the optional packages with
-`python -m pip install pandas llnl-hatchet`. The following is one real B200 result from this code;
-kernel names are shortened for readability:
+If `proton-viewer` reports missing optional dependencies, install them with:
+
+```bash
+python -m pip install pandas llnl-hatchet
+```
+
+The following is one real B200 result from this code; kernel names are shortened for readability:
 
 ```text
 target_operation               calls    avg/us    total/ms
@@ -397,28 +400,32 @@ target_operation               calls    avg/us    total/ms
 └── ReLU kernel                  100       4.23        0.423
 ```
 
-First confirm that the expected kernels and call counts appear, then compare the leaf averages and
-totals. GEMM has the largest total in this example, making it the better candidate for further
-analysis with Nsight Compute. A short kernel can still accumulate substantial total time when it is
-launched often. An average shown for a parent scope, however, is not the latency of one complete
+First confirm that all expected kernels appear with the correct call counts, then compare their
+average and cumulative times. GEMM has the largest cumulative time in this example, so it should be
+the first kernel examined with Nsight Compute. Also watch for short kernels that are launched often:
+their individual calls may be inexpensive while their cumulative cost is substantial.
+
+Proton includes only the captured kernel times, not memory copies, synchronization, or stream gaps.
+When kernels overlap, summing their durations also counts the overlapping interval more than once.
+These data therefore identify kernels for further analysis; they are not the latency of the complete
 operation.
 
-This tree is useful for finding expensive kernels, but it does not replace the benchmark above.
-Overlapping kernels cover some of the same elapsed interval, while copies, synchronization, and stream
-gaps may be absent from the tree. This capture also reuses the same matrices instead of reproducing the
-L2-eviction policy of the earlier TVM timer, so the two sets of numbers are not directly comparable.
-Obtain complete-operation time from the CUDA Event or wall-clock benchmark above.
+This capture repeatedly uses the same matrices, whereas the earlier TVM timer evicts L2 before each
+measurement, so the two experiments also have different cache conditions. Measure complete-operation
+latency with CUDA Events or a synchronized wall-clock timer.
 
-## Read an Application Timeline with Nsight Systems
+## Analyze an Application Timeline with Nsight Systems
 
 Proton can aggregate kernel time, but it cannot show execution order, gaps between kernels, copies,
 or host waits. Use the Nsight Systems timeline to examine those relationships.
 
-### Capture a Reproducible Report
+### Capture the Target Operation Timeline
 
-The repository's `appendix/nsys_example.py` defines a small three-stage operation. It copies a
-$4096\times4096$ BF16 matrix from pinned host memory to the GPU, then runs GEMM and ReLU. Inputs and
-outputs are allocated before collection. The core of the script is:
+The following example shows how to restrict Nsight Systems collection to one target operation. In
+`appendix/nsys_example.py`, that operation performs three steps in sequence: it copies a
+$4096\times4096$ BF16 matrix from pinned host memory to the GPU in a host-to-device (H2D) copy, runs
+GEMM, and applies ReLU. All required tensors are allocated before collection, so the report focuses
+on these three steps. The core of the script is:
 
 ```python
 import torch
@@ -446,12 +453,13 @@ def run_once_for_profiler(run, *, warmup_calls):
     cudart.cudaProfilerStop()
 ```
 
-Warm-up remains outside the capture. The `target operation` NVTX range gives the invocation a clear
-name, and the synchronization inside that range ensures that all three GPU operations finish before
-the range closes. `cudaProfilerStart()` and `cudaProfilerStop()` control collection; they are not a
-performance timer.
+`run_once_for_profiler` completes warm-up before the profiler starts and waits for the warm-up work on
+the GPU to finish. It then calls `cudaProfilerStart()` and labels the measured invocation with the
+`target operation` NVTX range, making it easy to locate in the timeline. The synchronization inside
+the range ensures that all three GPU operations finish before `cudaProfilerStop()`. These profiler
+APIs define the collection range; they do not measure performance.
 
-The following command writes `reports/target-timeline.nsys-rep`:
+The following command runs the script and writes `reports/target-timeline.nsys-rep`:
 
 ```bash
 mkdir -p reports
@@ -466,16 +474,39 @@ nsys profile \
   python appendix/nsys_example.py --profile-once
 ```
 
-`--trace=cuda,nvtx` records CUDA APIs, GPU activity, and NVTX ranges. Disabling CPU sampling and
-context-switch tracing keeps the first report focused on the CUDA timeline. If the report exposes a
-long period with no GPU work, collect a separate report with the relevant host-scheduling or OS
-runtime tracing enabled.
+`--capture-range=cudaProfilerApi` restricts collection to the interval between
+`cudaProfilerStart()` and `cudaProfilerStop()`. `--trace=cuda,nvtx` records CUDA APIs, GPU activity,
+and NVTX ranges. CPU sampling and context-switch tracing are disabled here to keep the report focused
+on the CUDA timeline. If that timeline contains a long GPU gap, collect a separate report with the
+relevant host-scheduling or OS runtime tracing enabled.
 
-Open the report in the GUI, or print the five most useful tables for this capture:
+Once the report has been generated, open its timeline in the Nsight Systems GUI:
 
 ```bash
 nsys-ui reports/target-timeline.nsys-rep
+```
 
+### Copy, Queue, and Execution Time in the Timeline
+
+This example uses PyTorch to construct a copy-plus-multiple-kernel workload with little setup. The
+same timeline-reading method applies to a TIRx operation.
+
+The following real report illustrates how to interpret Nsight Systems results. It was collected on an
+NVIDIA B200 with NVIDIA driver 595.58.03, CUDA 13.0, PyTorch 2.12.0+cu130, and Nsight Systems 2025.6.3.
+
+![A measured Nsight Systems timeline: CPU NVTX ranges and CUDA APIs appear above the H2D copy, GEMM, and ReLU on one GPU stream](../img/nsys_b200_timeline.svg)
+
+*This figure was redrawn from an actual capture. Each bar is scaled to the measured duration of the
+corresponding activity.*
+
+The `7` in `GPU stream 7` is the stream identifier shown by Nsight Systems for this capture. It does
+not mean the seventh execution stage and may differ in another run. The H2D copy, GEMM, and ReLU share
+that stream and therefore execute in submission order.
+
+In addition to viewing the timeline in the GUI, use `nsys stats` to extract the timing data used
+below from the same report:
+
+```bash
 nsys stats \
   --format=column \
   --timeunit=us \
@@ -487,16 +518,12 @@ nsys stats \
   reports/target-timeline.nsys-rep
 ```
 
-### Interpret a Real Report
-
-The following values come from one real capture on an NVIDIA B200 with driver 595.58.03, CUDA 13.0,
-PyTorch 2.12.0+cu130, and Nsight Systems 2025.6.3. They demonstrate how to read a report and should
-not be treated as reference performance for this workload.
-
-![A measured Nsight Systems timeline: CPU NVTX ranges and CUDA APIs appear above the H2D copy, GEMM, and ReLU on one GPU stream](../img/nsys_b200_timeline.svg)
-
-*This figure was redrawn from the timestamps in `cuda_api_trace`, `nvtx_pushpop_trace`, and
-`cuda_gpu_trace`. Bar lengths are proportional to the measured durations.*
+The names following `--report` refer to summaries built into Nsight Systems.
+`nvtx_gpu_proj_sum` and `nvtx_pushpop_trace` report the GPU projection of an NVTX range and its
+host-side range records, respectively. `cuda_gpu_sum` summarizes kernels and CUDA memory operations;
+`cuda_kern_exec_trace` correlates host launch APIs with their GPU kernels; and `cuda_api_sum`
+summarizes host-side CUDA API calls. Run `nsys stats --help-reports` to list the names and definitions
+available in the installed version.
 
 `cuda_gpu_sum` reports the three GPU activities:
 
@@ -560,7 +587,7 @@ available in the installed version, and record `nsys --version` with the experim
 CLI and GUI; the [Analysis Guide](https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html)
 explains API, queue, and kernel-execution intervals in more detail.
 
-## Analyze One Kernel with Nsight Compute
+## Collect an Nsight Compute Report for One Kernel
 
 Nsight Systems shows when kernels run; Nsight Compute explains why one selected kernel behaves as it
 does. It collects launch configuration, occupancy, compute and memory throughput, scheduler state,
@@ -572,7 +599,7 @@ The timeline above showed that the H2D copy dominates the example operation. The
 still selects the 93.152 μs BF16 GEMM—not because it is the operation's primary bottleneck, but to
 show how the metrics from one launch determine what to inspect next.
 
-### Collect One Target Kernel
+### Select One Target Kernel Launch
 
 Reuse the `--profile-once` path from the Nsight Systems example. Warm-up stays outside the capture
 range, and only one target operation runs inside it. That operation launches a GEMM followed by
@@ -639,7 +666,7 @@ ncu --import reports/bf16-gemm-basic.ncu-rep \
 `header` is a compact first view. Expand the Work ID/CLC and throughput tables in the GUI, or replace
 `header` with `all` to print the complete details used below.
 
-## Interpret a Real NCU Report
+## Analyze an Nsight Compute Report
 
 The following values come from a real capture on the same B200 with Nsight Compute 2026.1. NCU used
 nine replay passes to build the `basic` report. The percentages are NCU throughput metrics relative
@@ -711,7 +738,7 @@ sustained peaks:
 L2, shared memory, or a memory-instruction pipeline. Expand the breakdown before calling a kernel
 DRAM-bound.
 
-### Expand the report before continuing
+### Choose the Next Metrics from the Basic Report
 
 The `basic` report covers steps 1–3. Use its evidence to collect only the sections needed for the
 next question:
@@ -811,7 +838,7 @@ When `TVM_KERNEL_DUMP` is set, TVM retains the generated files and passes `-line
 information to a compiled binary. A Python line may lower to many CUDA or SASS instructions, and an
 asynchronous tile primitive may be understandable only in those lower-level views.
 
-### Advanced: NCU Changes the Experiment
+### Effects of NCU Collection on Experimental Conditions
 
 NCU collection can change the execution conditions:
 
@@ -833,7 +860,7 @@ If NCU reports `ERR_NVGPUCTRPERM`, hardware-counter access is restricted. Follow
 or ask the system administrator to enable the required access; do not make running every experiment as
 root the default solution.
 
-## Optional Tool: IKET
+## Analyze In-Kernel Stages with IKET (Optional)
 
 Nsight Systems represents one kernel as a single GPU activity, while NCU aggregates hardware metrics
 across the kernel. Neither produces a named timeline for load, compute, and wait phases inside a
