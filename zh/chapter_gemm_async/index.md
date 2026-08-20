@@ -62,9 +62,11 @@ TMA load 发出后，数据传输仍会在 TMA engine 中继续执行。`cta_syn
 
 本节 kernel 使用相同的同步过程，只是 tile 更大。A、B tiles 都包含 `128×64` 个 fp16 元素，各占 `16384 bytes`，因此 `arrive.expect_tx` 登记的总字节数是 `32768`。
 
-TMA store 使用另一套完成机制。Threads 将结果写入 `Dsmem` 后，`fence.proxy_async` 和 `warpgroup_sync` 保证整块 buffer 已经写完，并且这些写入对 TMA engine 可见。
+TMA store 使用另一套完成机制。Threads 将结果写入 `Dsmem` 后，`fence.proxy_async` 使每个 thread 的写入对 TMA 使用的 async proxy 可见。第一次执行 `warpgroup_sync(10)` 时，程序会等待 warpgroup 的 128 个 threads 全部完成写入和 fence，随后 `tid == 0` 才发出 TMA store，再由 TMA engine 异步读取完整的 buffer。
 
-随后，`tid == 0` 的 thread 发起从 `Dsmem` 到 GMEM 的异步 copy，并执行 `cp_async.bulk.commit_group()`，把此前发出但尚未提交的 TMA stores 归入一个 bulk async group。`cp_async.bulk.wait_group(0)` 中的 `0` 表示不允许任何先前提交的 group 仍处于 pending 状态，因此它会等到这些 stores 全部完成后才返回。在此之前，`Dsmem` 不能被覆盖或复用。
+`warpgroup_sync(10)` 会 lower 为 `bar.sync 10, 128`。其中，`10` 选择 CTA 的 16 个 named-barrier slots 之一，ID 范围为 0 到 15；`128` 是 intrinsic 给出的参与同步的 thread 数。ID 10 没有特殊的 TMA 含义；这个单 warpgroup kernel 使用它，是因为当前没有其他 active named barrier 占用这个 slot。这里的 named barrier 与前面跟踪 TMA load 的 shared-memory mbarrier 属于两套机制；一次同步完成后 slot 会重置，因此可以继续复用同一个 ID。
+
+随后，`tid == 0` 的 thread 发起从 `Dsmem` 到 GMEM 的异步 copy，并执行 `cp_async.bulk.commit_group()`，把此前发出但尚未提交的 TMA stores 归入一个 bulk async group。`cp_async.bulk.wait_group(0)` 中的 `0` 表示不允许任何先前提交的 group 仍处于 pending 状态，因此它会等到这些 stores 全部完成后才返回。第二次执行 `warpgroup_sync(10)` 时会复用 ID 10，并让其他 threads 等到 `tid == 0` 对应的 thread 完成这次 store wait。在此之前，`Dsmem` 不能被覆盖或复用。
 
 ### 完整 Kernel
 

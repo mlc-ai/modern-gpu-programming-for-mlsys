@@ -62,9 +62,11 @@ Step 3 is performed by the TMA engine. As A and B arrive in SMEM, the hardware u
 
 The kernel uses the same protocol with larger tiles. A and B each contain `128×64` fp16 elements and occupy 16384 bytes, so `arrive.expect_tx` registers 32768 bytes in total.
 
-TMA stores use a different completion mechanism. After the threads write the result to `Dsmem`, a `fence.proxy_async` followed by `warpgroup_sync` ensures that the complete buffer is present and visible to the TMA engine.
+TMA stores use a different completion mechanism. After the threads write the result to `Dsmem`, `fence.proxy_async` makes each thread's writes visible to the async proxy. The first `warpgroup_sync(10)` then ensures that all 128 warpgroup threads have completed their writes and fences before `tid == 0` issues the TMA store; the TMA engine can then read the complete buffer asynchronously.
 
-The `tid == 0` thread then starts the asynchronous copy from `Dsmem` to GMEM and calls `cp_async.bulk.commit_group()`, which collects its previously issued but uncommitted TMA stores into one bulk async group. The `0` in `cp_async.bulk.wait_group(0)` means that no previously committed group may remain pending, so the call returns only after all of those stores have completed. Until then, `Dsmem` cannot be overwritten or reused.
+`warpgroup_sync(10)` lowers to `bar.sync 10, 128`. Here, `10` selects one of the CTA's 16 named-barrier slots, whose IDs range from 0 to 15; `128` is the participating thread count supplied by the intrinsic. ID 10 has no TMA-specific meaning. This single-warpgroup kernel uses it because no other active named barrier occupies that slot. The named barrier is separate from the shared-memory mbarrier used above to track TMA loads, and it resets after each completed synchronization so the same ID can be used again.
+
+The `tid == 0` thread then starts the asynchronous copy from `Dsmem` to GMEM and calls `cp_async.bulk.commit_group()`, which collects its previously issued but uncommitted TMA stores into one bulk async group. The `0` in `cp_async.bulk.wait_group(0)` means that no previously committed group may remain pending, so the call returns only after all of those stores have completed. The second `warpgroup_sync(10)` reuses ID 10 and holds the other threads until the `tid == 0` thread finishes waiting for the store. Until then, `Dsmem` cannot be overwritten or reused.
 
 ### Complete Kernel
 
