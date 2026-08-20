@@ -8,7 +8,7 @@ WIDTH = 1500
 HEIGHT = 500
 LEFT = 235
 RIGHT = 1440
-T_MAX = 900.0
+T_MAX = 400.0
 BAR_HEIGHT = 34
 
 
@@ -23,13 +23,13 @@ def render(*, chinese: bool, output: Path) -> None:
         else "One Real Nsight Systems Capture on B200"
     )
     subtitle = (
-        "4096×4096 BF16：H2D copy → GEMM → ReLU"
+        "4096×4096 BF16：GEMM → ReLU"
         if chinese
-        else "4096×4096 BF16: H2D copy → GEMM → ReLU"
+        else "4096×4096 BF16: GEMM → ReLU"
     )
     rows = ["Outer NVTX", "Child NVTX ranges", "CUDA APIs", "GPU stream 7"]
     note = (
-        "时间以外层 NVTX range 的起点为 0；横向长度来自真实采集，并非示意比例。"
+        "时间以外层 NVTX range 的起点为 0；横向长度按真实采集比例绘制。"
         if chinese
         else "Time is relative to the outer NVTX-range start; horizontal lengths come from the measured capture."
     )
@@ -45,7 +45,7 @@ def render(*, chinese: bool, output: Path) -> None:
 
     axis_y = 88
     parts.append(f'<line x1="{LEFT}" y1="{axis_y}" x2="{RIGHT}" y2="{axis_y}" stroke="#9aa7b8" stroke-width="1"/>')
-    for tick in range(0, 901, 100):
+    for tick in range(0, 401, 50):
         x = x_pos(float(tick))
         parts.append(f'<line x1="{x:.2f}" y1="{axis_y - 5}" x2="{x:.2f}" y2="430" stroke="#e5e9ef" stroke-width="1"/>')
         parts.append(f'<text x="{x:.2f}" y="80" font-size="12" text-anchor="middle" fill="#64748b">{tick} μs</text>')
@@ -69,37 +69,32 @@ def render(*, chinese: bool, output: Path) -> None:
             )
 
     # Outer and child NVTX ranges, relative to target-operation start.
-    rect(0.0, 870.561, row_y[0], "#365f9d", "target operation · host NVTX 870.6 μs")
-    rect(12.553, 174.087, row_y[1], "#72a7d8", "H2D input")
-    rect(190.849, 359.104, row_y[1], "#598bc2", "BF16 GEMM")
-    rect(364.257, 413.265, row_y[1], "#86b6df", "ReLU", "#243247")
+    rect(0.0, 375.992, row_y[0], "#365f9d", "target operation · host NVTX 376.0 μs")
+    rect(5.927, 201.012, row_y[1], "#598bc2", "BF16 GEMM")
+    rect(213.209, 272.981, row_y[1], "#86b6df", "ReLU", "#243247")
 
     # Host CUDA API intervals.
-    rect(116.267, 150.436, row_y[2], "#e39c45")
-    rect(319.529, 353.799, row_y[2], "#d7832f")
-    rect(397.159, 408.223, row_y[2], "#c76d25")
-    rect(482.407, 867.228, row_y[2], "#b85f46", "cudaDeviceSynchronize · 384.8 μs")
+    rect(135.682, 186.399, row_y[2], "#d7832f")
+    rect(255.070, 268.544, row_y[2], "#c76d25")
+    rect(352.196, 372.905, row_y[2], "#b85f46")
     for time_us, label, anchor in [
-        (133.351, "memcpy API", "middle"),
-        (336.664, "GEMM launch", "middle"),
-        (402.691, "ReLU launch", "start"),
+        (161.041, "GEMM launch · 50.7 μs", "middle"),
+        (261.807, "ReLU launch · 13.5 μs", "middle"),
+        (362.551, "sync · 20.7 μs", "end"),
     ]:
         x = x_pos(time_us)
-        dx = 12 if anchor == "start" else 0
+        dx = 12 if anchor == "start" else (-12 if anchor == "end" else 0)
         parts.append(f'<line x1="{x:.2f}" y1="{row_y[2]}" x2="{x + dx:.2f}" y2="{row_y[2] - 16}" stroke="#8a4c23"/>')
         parts.append(
             f'<text x="{x + dx:.2f}" y="{row_y[2] - 21}" font-size="12" text-anchor="{anchor}" fill="#7a4222">{escape(label)}</text>'
         )
 
     # GPU activity on the default stream.
-    rect(145.879, 753.109, row_y[3], "#3d9b72", "H2D copy · 607.2 μs")
-    rect(757.013, 850.165, row_y[3], "#6f55b5", "GEMM")
-    gemm_x = (x_pos(757.013) + x_pos(850.165)) / 2
-    parts.append(f'<text x="{gemm_x:.2f}" y="{row_y[3] - 9}" font-size="12" text-anchor="middle" fill="#58408e">93.2 μs</text>')
-    rect(850.389, 861.461, row_y[3], "#a574d1")
-    relu_x = x_pos(855.925)
+    rect(180.786, 273.394, row_y[3], "#6f55b5", "GEMM · 92.6 μs")
+    rect(273.618, 284.562, row_y[3], "#a574d1")
+    relu_x = x_pos(279.090)
     parts.append(f'<line x1="{relu_x:.2f}" y1="{row_y[3]}" x2="{relu_x - 15:.2f}" y2="{row_y[3] - 18}" stroke="#6f4b8d"/>')
-    parts.append(f'<text x="{relu_x - 18:.2f}" y="{row_y[3] - 23}" font-size="12" text-anchor="end" fill="#6f4b8d">ReLU · 11.1 μs</text>')
+    parts.append(f'<text x="{relu_x - 18:.2f}" y="{row_y[3] - 23}" font-size="12" text-anchor="end" fill="#6f4b8d">ReLU · 10.9 μs</text>')
 
     parts.append(f'<text x="{LEFT}" y="475" font-size="13" fill="#58677c">{escape(note)}</text>')
     parts.append('</svg>')

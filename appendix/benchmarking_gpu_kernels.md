@@ -2,17 +2,11 @@
 # Measuring and Analyzing GPU Kernel Performance
 
 GPU kernel optimization involves two separate questions: how fast the operation is, and where its
-time goes. A benchmark answers the first question; a profile helps answer the second. Because a
-profiler changes the execution environment, final claims about complete-operator or application
-latency should be confirmed with an unprofiled measurement.
+time goes. A benchmark answers the first question; a profile helps answer the second.
 
 One Python call does not necessarily correspond to one GPU kernel. It may launch several kernels,
 enqueue memory copies, or wait for GPU work to finish. Before timing, define which of those steps
 belong to the operation and use the same boundary for every implementation.
-
-In practice, first verify correctness and establish an unprofiled baseline, then use a profiler to
-investigate where the time goes. After changing the implementation, repeat the same measurement. An
-optimization is successful only when it improves the unprofiled baseline.
 
 The performance chapter ({ref}`chap_performance`) uses roofline analysis to reason about compute and
 memory limits. Here the focus shifts to experiments: defining the timing boundary, choosing warm-up
@@ -25,29 +19,15 @@ The tools used in this workflow have different jobs:
 | Tool | Primary question |
 |---|---|
 | CUDA Events | How much GPU-stream time elapsed across the measured region? A stream is an ordered queue of GPU work. |
+| Synchronized wall-clock timer | How much wall-clock time elapsed between starting a host call and completing all GPU work required by it? |
 | Proton (provided by Triton) | Which GPU kernels were launched, how often, and which kernels account for most of the time? |
 | Nsight Systems | How do host work, streams, copies, kernels, and communication overlap on a timeline? |
-| Nsight Compute (`ncu`) | Why does one selected GPU kernel spend its cycles the way it does? |
-| IKET (optional) | Which named phases or warp roles consume time inside one selected kernel? |
-
-### Three Profile Views
-
-A profile is not a single number or a single report format. The tools in this chapter produce three
-complementary views:
-
-| View | Tools | How to read it |
-|---|---|---|
-| Aggregation tree | Proton | Compare call count, average duration, and total duration to locate expensive kernels. |
-| Timeline | Nsight Systems; IKET inside one kernel | Read time from left to right across tracks; inspect gaps, overlap, and dependencies. |
-| Per-kernel metric report | Nsight Compute | Read launch configuration, utilization, scheduler state, memory traffic, and source/SASS evidence for one launch. |
-
-Profiles explain where time is spent; they do not replace the performance measurement. After changing
-an implementation, disable profiling and measure it again with the same timing boundary used for the
-baseline.
+| Nsight Compute (`ncu`) | What is the selected kernel doing internally, and which resource or stall should be investigated next? |
+| IKET (optional) | After adding in-kernel markers, when are the data-movement, compute, and writeback phases active, waiting, or overlapping? |
 
 ## Verify Correctness Before Timing
 
-Verify correctness separately before collecting performance:
+Verify correctness before measuring performance:
 
 1. Construct representative inputs, including relevant boundary cases.
 2. Run the implementation and synchronize so that GPU work has completed.
@@ -55,9 +35,30 @@ Verify correctness separately before collecting performance:
 4. If the kernel accumulates into an existing output or modifies an input in place, restore the same
    initial state before each correctness check.
 
-Reference computation and result comparison stay outside performance timing. Design the benchmark
-only after correctness passes; whether state reset is timed depends on the operation boundary defined
-in the next section.
+For a custom GEMM, let `actual` be the implementation's output. One possible reference is a PyTorch
+GEMM computed in FP32 and then converted to the target output type:
+
+```python
+import torch
+
+
+torch.set_float32_matmul_precision("highest")
+actual = my_gemm(a, b)  # replace with your implementation
+torch.cuda.synchronize()
+expected = torch.mm(a.float(), b.float()).to(actual.dtype)
+rtol = 1e-2  # example only; adjust for the output dtype, accumulation, and shape
+atol = 1e-2
+torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol)
+```
+
+`torch.set_float32_matmul_precision("highest")` prevents this CUDA FP32 reference from using
+reduced-precision internal matrix multiplication. The example `rtol` and `atol` control relative and
+absolute error, respectively. The value `1e-2` is only a runnable starting point; adjust it for the
+output dtype, accumulation method, shape, and operator contract. Use the same reference and
+tolerances throughout one comparison.
+
+Reference computation and result comparison stay outside performance timing. Whether state reset is
+timed depends on the operation boundary defined in the next section.
 
 ## Define the Timing Boundary
 
@@ -67,7 +68,13 @@ result. State explicitly whether compilation, input construction, allocation, or
 part of that operation. Implementations are directly comparable only when they perform the same work
 inside the measured boundary.
 
-After fixing the scope, choose the timer:
+The GEMM-plus-ReLU example later in this chapter can use three different boundaries. CUDA Events
+around `torch.mm` measure GEMM GPU-stream time. Events around the complete `run()` measure
+GEMM-plus-ReLU GPU-stream time. A CPU timer started before `run()` and stopped after synchronizing
+measures end-to-end latency for one Python call. Matrix allocation and warm-up remain outside all
+three boundaries by default.
+
+Once the scope is defined, choose the timer:
 
 - **CUDA Events** record timestamps when a GPU stream reaches two points. They can measure the
   device-timeline interval around one kernel or a complete operator. Kernels, memory copies, and idle
@@ -79,22 +86,20 @@ After fixing the scope, choose the timer:
 
 For example, if the GPU executes the start event before the host submits the next launch, that idle
 stream time remains inside the CUDA Event interval. An Event interval is therefore not necessarily
-the same as a kernel's start-to-finish execution interval in a profiler. Profilers are useful for
-examining execution and overlap, but diagnostic profiles do not directly replace unprofiled timing at
-the same boundary.
+the same as a kernel's start-to-finish execution interval in a profiler.
 
-## Measure GPU Time with CUDA Events
+## Measure GPU Time and Single-Call Latency
 
-CUDA launches are normally asynchronous. Python can continue after submitting work to a CUDA stream,
-before the GPU has finished. A CPU timer placed immediately around that Python call can therefore
-stop too early and mostly measure host submission time. Use CUDA Events to measure elapsed time on a
-GPU stream. Use the synchronized wall-clock timer shown later when the boundary runs from the Python
-call through GPU completion. The
+### Measure GPU Stream Time with CUDA Events
+
+CUDA launches are normally asynchronous, so an unsynchronized CPU timer can stop before the GPU
+finishes and mostly reflect host submission time. The
 [PyTorch CUDA semantics documentation](https://docs.pytorch.org/docs/stable/notes/cuda.html#asynchronous-execution)
-describes this behavior in more detail.
+describes this behavior. The following benchmark uses CUDA Events to measure elapsed time on the
+current stream.
 
-Start with a complete CUDA Event benchmark. The following runnable example allocates its matrices,
-runs a warm-up, and then measures five rounds of one FP16 GEMM before reporting their median:
+The following runnable CUDA Event benchmark allocates its matrices, runs a warm-up, measures an FP16
+GEMM over five rounds, and reports the median round result:
 
 ```python
 from statistics import median
@@ -112,7 +117,7 @@ def gemm():
 
 
 def measure_batch_ms(fn, calls):
-    """Return mean CUDA Event time per call over one consecutive batch, in ms."""
+    """Return mean CUDA Event time per call for one batch of back-to-back calls, in ms."""
     start = torch.cuda.Event(enable_timing=True)
     end = torch.cuda.Event(enable_timing=True)
 
@@ -141,43 +146,37 @@ print(f"median CUDA Event time: {median(samples_ms):.4f} ms")
 ```
 
 `measure_batch_ms` records start and end events in the current CUDA stream and divides their elapsed
-time by the number of calls. The result is the mean GPU-stream time per GEMM during consecutive
-execution. `end.synchronize()` only makes the CPU wait for that round of GPU work so that the Event
-result can be read.
+time by the number of calls. The result is the average GPU-stream time per GEMM across back-to-back
+calls. `end.synchronize()` makes the CPU wait for that round of GPU work so that the Event result can
+be read.
 
-Here `warmup_calls=500`, `repeat=100`, and `rounds=5` are invocation or measurement counts. They are
-example values selected from measurements of this GEMM on a B200, not universal defaults. In a
-ten-round calibration, 50 warm-up calls still produced a first-to-last decline from 0.01425 ms to
-0.01296 ms. At 500 calls, the change narrowed to 0.01332 ms to 0.01301 ms. Results with `repeat=100`
-were also more stable than with `repeat=10`.
+`warmup_calls=500` and `repeat=100` count invocations; `rounds=5` requests five independent
+measurement batches. These values came from stability testing on the B200: results were still falling
+after 50 warm-up calls but stabilized by 500, and `repeat=100` was more stable than `repeat=10`. For
+another workload, first increase
+`warmup_calls` until the early rounds stop drifting; if variation remains large, increase `repeat` or
+`rounds`. If longer runs instead shift the overall timing level, inspect temperature, power, and clock
+behavior.
 
-For another workload, increase `warmup_calls` until the first rounds no longer become consistently
-faster or slower. Then increase `repeat` or `rounds` until the variation is acceptable for the
-experiment. Larger counts are not automatically better: if longer runs systematically shift the
-timing level, inspect temperature, power, and clock behavior and decide whether the experiment should
-represent short bursts or sustained execution. Long-running kernels generally need smaller counts.
+This code always reuses the same matrices, so it represents a warm-cache workload with repeated
+inputs. Whether the accesses actually hit in cache still depends on the total amount of data revisited
+by this computation and the hardware cache capacity.
 
-This code reuses the same matrices, so later calls may find some data in cache. It therefore represents
-a warm-cache workload. A published result should also record the GPU model, software versions, and
-clock settings.
-
-When benchmarking the TIRx kernels in this book, there is no need to rewrite the warm-up, repeated
-timing, and statistics loop for every kernel. TVM's
+This book uses TVM's
 [`tvm.tirx.bench.bench`](https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/bench.py)
-already provides those steps. Pass it a function that launches the prepared implementation; inputs,
-outputs, and workspace remain allocated outside the measured interval.
-
-The helper uses a different cache policy from the manual example. The example repeatedly reuses the
-same matrices, whereas `bench` evicts L2 before each measured invocation and records an independent
-CUDA Event interval. Invoke it as follows:
+to handle warm-up, repeated timing, and statistics. The supplied function only launches a prepared
+implementation; inputs, outputs, and workspace remain outside the timed interval. Unlike the manual
+warm-cache example, `bench` writes a 256 MiB buffer before each measured invocation to reduce reuse
+of data retained in L2 from the previous invocation, then records an independent CUDA Event interval:
 
 ```python
 from tvm.tirx.bench import bench
 
 
-# run is a no-argument function that launches the operation on preallocated tensors.
+# Reuse gemm from above. For a custom TIRx kernel, substitute its no-argument callable.
+run = gemm
 result = bench(
-    {"tirx": run},
+    {"gemm": run},
     timer="event",
     warmup=25,
     repeat=100,
@@ -185,41 +184,28 @@ result = bench(
     cooldown_s=1.0,
 )
 
-print(result["impls"]["tirx"])           # five-round mean, in us
-print(result["round_samples"]["tirx"])  # result from each round
+print(result["impls"]["gemm"])           # five-round mean, in us
+print(result["round_samples"]["gemm"])  # result from each round
 ```
 
-Here `warmup=25` and `repeat=100` are time budgets in milliseconds, not invocation counts. The Event
-timer first performs a short estimate, then converts the 25 ms warm-up budget and 100 ms measurement
-budget into iteration counts. That estimate includes both L2 eviction and the measured call, so the
-resulting counts are approximate. In the reported samples, the L2 eviction occurs before the start
-event and only the invocation is timed. Short kernels therefore run more times than long kernels.
-`rounds=5` repeats the complete measurement five times, while `cooldown_s=1.0` waits one second before
-measuring an implementation in each round. `impls` contains the five-round mean and `round_samples`
-retains the individual results. The 25/100 ms values are the Event timer defaults. Five rounds are the
-default used by the TIRx-kernels CLI; `bench` itself defaults to one round.
+`warmup=25` and `repeat=100` are millisecond budgets. The Event timer uses a short calibration run to
+convert them into invocation counts. The reported Event intervals cover only the measured calls; the
+256 MiB write used to reduce L2 reuse occurs before each start event. `rounds=5` runs five rounds,
+and `cooldown_s=1.0` pauses before each one. `impls` stores the five-round mean, while
+`round_samples` stores the individual results. Adjust budgets
+and rounds by the same stability criteria used above, and use the same settings for every
+implementation.
 
-These values are starting points rather than a standard for every workload. Increase the warm-up
-budget if results continue to drift between rounds. Increase the measurement budget or number of
-rounds if the results remain noisy. Use the same timer, budgets, and rounds for every implementation,
-and retain all round results instead of reporting only the fastest one.
-
-TIRx-kernels uses this helper in its `run_bench` entry points; see
-[`tirx_kernels/attention/flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py).
-The local benchmark defaults to Proton when `timer` is omitted. Specify `timer="event"` as above when
-the intended result is a CUDA Event interval. The two timers report different quantities, so a result
-must identify which one was used.
-
-The function passed to `bench` is invoked repeatedly. If a kernel accumulates into its output or
-modifies an input in place, restore equivalent state before every call or ensure that every measured
-invocation receives fresh preallocated state. A reset inside the measured function belongs to the
-operation boundary defined earlier. Otherwise later calls no longer represent the same workload.
+The `run_bench` entry points in TIRx-kernels also use this helper. Outside distributed mode, omitting
+`timer` selects Proton by default; specify `timer="event"` for a CUDA Event interval. A repeatedly
+invoked in-place kernel must still follow the reset rule above. If reset occurs inside the measured
+function, its cost belongs to the operation.
 
 ### Measure End-to-End Time for One Call
 
-Use a synchronized wall-clock timer when the target is the complete interval from one Python call
-until its GPU work finishes. The following code continues with the `gemm()` defined and warmed up
-above:
+Use a synchronized wall-clock timer when the target is the complete interval from the start of a
+Python call until its GPU work finishes. The following code continues with the `gemm()` defined and
+warmed up above:
 
 ```python
 from statistics import median
@@ -246,68 +232,127 @@ print(f"median end-to-end time: {median(host_samples_ms):.4f} ms")
 
 The first synchronization keeps unfinished earlier work outside the measurement. The second ensures
 that this GEMM finishes before the timer stops. Each sample contains exactly one call, so the result
-includes the Python call, CUDA launch, GPU execution, and the wait for completion. The CUDA Event
-benchmark above instead reports mean GPU-stream time per GEMM during consecutive execution.
+includes the Python call, CUDA launch, GPU execution, and the wait for completion. By comparison, the
+CUDA Event benchmark above reports average GPU-stream time per GEMM across back-to-back calls.
 
 Every implementation in a comparison must use the same timer and boundary. If both results are
-reported, name them separately as *CUDA Event GPU time* and *single-call end-to-end time* rather than
-placing values from different timers under one generic latency label.
+reported, name them separately as *CUDA Event GPU time* and *single-call end-to-end time* so that
+their different boundaries remain visible.
 
-### Timing Overlapping GPU Work
+### Advanced: Timing a Multi-Stream Operation
 
-The GEMM examples above run entirely in the current CUDA stream, so their start and end events cover
-all of the work. An operator that uses several streams needs additional synchronization. Events
-recorded only in the current stream do not automatically include work elsewhere, which may begin
-before the start event or remain unfinished after the end event.
+When one operation submits work to several CUDA streams, the timing stream must connect the start
+and finish of every branch. In this example, `sin` and `cos` run on separate streams. The timing
+stream waits for both branches before adding their results:
 
-To time the complete operator, use the start event as a common starting signal. Every work stream
-waits for start before beginning the measured work and signals completion when it finishes. The stream
-that records the end event waits for all of those completion signals first. The resulting interval
-then spans the operation from its earliest start through its final completion.
+```python
+import torch
 
-Programmatic Dependent Launch (PDL) is another source of possible overlap. On GPUs with compute
-capability 9.0 or newer, it can start a later kernel early in the same stream. That kernel may perform
-preparation that does not depend on earlier results, then wait before consuming those results. PDL
-must be enabled explicitly and follow its trigger-and-wait contract; see the
+
+x = torch.randn(1 << 20, device="cuda")
+left = torch.empty_like(x)
+right = torch.empty_like(x)
+output = torch.empty_like(x)
+
+stream_left = torch.cuda.Stream()
+stream_right = torch.cuda.Stream()
+timing_stream = torch.cuda.current_stream()
+
+start = torch.cuda.Event(enable_timing=True)
+left_done = torch.cuda.Event()
+right_done = torch.cuda.Event()
+end = torch.cuda.Event(enable_timing=True)
+
+
+def measure_operation_ms():
+    torch.cuda.synchronize()
+    start.record(timing_stream)
+
+    stream_left.wait_event(start)
+    with torch.cuda.stream(stream_left):
+        torch.sin(x, out=left)
+    left_done.record(stream_left)
+
+    stream_right.wait_event(start)
+    with torch.cuda.stream(stream_right):
+        torch.cos(x, out=right)
+    right_done.record(stream_right)
+
+    timing_stream.wait_event(left_done)
+    timing_stream.wait_event(right_done)
+    torch.add(left, right, out=output)
+
+    end.record(timing_stream)
+    end.synchronize()
+    return start.elapsed_time(end)
+
+
+elapsed_ms = measure_operation_ms()
+torch.testing.assert_close(output, torch.sin(x) + torch.cos(x))
+print(f"multi-stream operation: {elapsed_ms:.4f} ms")
+```
+
+`start` is the common starting signal. `left_done` and `right_done` mark the ends of the two
+branches. The timing stream waits for both completion events, performs the final addition, and then
+records `end`. Each `wait_event` creates a GPU-side dependency while the CPU continues submitting
+work; only `end.synchronize()` waits on the CPU.
+
+The event graph is:
+
+```text
+timing stream: start ──────────── wait(left_done, right_done) ─ add ─ end
+left stream:          wait(start) ─ sin ─ left_done
+right stream:         wait(start) ─ cos ─ right_done
+```
+
+The graph permits the two branches to execute concurrently; actual overlap depends on their GPU
+resource use. Confirm the realized schedule in a Nsight Systems timeline. For formal measurement,
+call `measure_operation_ms()` several times for warm-up, then call it repeatedly to collect
+single-call samples and report their median and variation.
+
+#### PDL Within One Stream
+
+Programmatic Dependent Launch (PDL) applies to a custom CUDA or DSL launch path that explicitly
+enables it. The primary and secondary kernels are submitted to the same stream. After the primary
+emits a trigger, the secondary may begin preparation that does not depend on the primary's result;
+it performs the PDL dependency synchronization before consuming that result.
+
+```text
+primary:   initial work ─ trigger ─ remaining work
+secondary:                    preamble ─ wait ─ dependent work
+```
+
+Record `start` before launching the primary and `end` after launching the secondary. That complete
+Event interval is the GPU time of the launch sequence. The two kernels may overlap, so the sum of
+their profiler durations can exceed the complete operation latency. Use a Nsight Systems timeline
+to confirm the realized overlap.
+
+PDL creates an opportunity for concurrent execution, while the runtime may still serialize the
+kernels. Kernel correctness must cover both schedules. The `torch.cuda.Stream` interface above does
+not expose PDL launch attributes; a custom CUDA or DSL implementation supplies them. See the
 [CUDA Programming Guide](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/programmatic-dependent-launch.html)
-for the API details.
-
-The timing rule is the same whether overlap comes from multiple streams or PDL: place CUDA Events
-around the complete operation. Overlapping kernels can cover the same time interval, so adding their
-profiler durations does not produce operator latency. A Nsight Systems timeline shows the actual
-ordering and overlap. Because PDL overlap is opportunistic, program correctness cannot require it to
-occur.
+for the enablement details.
 
 ## Keep Experimental Conditions Consistent
 
-The preceding sections established the timing boundary and timer. The remaining experimental
-conditions must also be held constant. The examples above start after allocation and warm-up, so they
-measure subsequent repeated calls. A first call may also include CUDA initialization, JIT compilation,
-autotuning, or other one-time work. If first-call latency or a complete application path is the target,
-include those steps in the boundary and report the result separately from repeated-call performance.
+The examples above measure repeated calls after allocation and warm-up. If first-call latency or a
+complete application path is the target, include the relevant CUDA initialization, JIT compilation,
+and autotuning in the timing boundary and report that result separately.
 
-One measurement is not enough to establish stability. The manual CUDA Event example retains five
-rounds and reports their median. `bench` reports the mean across rounds and also stores the raw values
-in `round_samples`. Whichever summary is used, keep the per-round results, inspect them for trends and
-outliers, and state whether the reported value is a median or mean rather than selecting only the
-fastest round. When comparing implementations, repeat the experiment in a different order so that one
-implementation is not always measured on a colder or hotter device.
+Keep every per-round result and state whether the summary is a median or mean. A continuing trend
+across rounds calls for checking warm-up, temperature, and clock state before summarizing the full
+set of measurements. When comparing implementations, alternate their measurement order so that no
+implementation is consistently measured on a colder or hotter device.
 
-Cache conditions also affect the result. The manual example repeatedly uses the same matrices and
-therefore measures a warm-cache workload.
-The TVM 0.26 Event and Proton timers instead write a 256 MiB buffer before every measured invocation
-to evict existing L2 data; that write remains outside the timed interval. Either policy can be valid.
-Choose the one that represents the target application and apply it consistently to every
-implementation. `torch.cuda.empty_cache()` releases unused blocks from PyTorch's caching allocator.
-It does not clear GPU L2 and cannot implement a cold-L2 measurement.
+Use one cache policy throughout the comparison. The manual example repeatedly reuses the same
+matrices and is therefore biased toward warm-cache reuse, although the actual hit rate still depends
+on the total amount of data revisited and the cache capacity. The TVM 0.26 Event and Proton timers
+instead write a 256 MiB buffer before each measured invocation to reduce L2 reuse; this write is
+outside the timed interval. Choose the policy that represents the target application.
+`torch.cuda.empty_cache()` only releases unused blocks from PyTorch's allocator; GPU L2 contents
+remain managed by the hardware cache policy.
 
-Finally, record the GPU model, driver, CUDA runtime, framework and compiler versions, and the workload
-dtype and shape. Also record clock and power settings, keep unrelated processes off the device, and
-watch for thermal throttling. If clocks are locked, provide the actual values and command; "fixed
-clocks" alone is not enough to reproduce the experiment.
-
-Matching tensor shapes alone does not make two implementations comparable. Align at least three
-classes of conditions:
+Also align the following conditions across implementations:
 
 - **Numerical semantics:** input and output dtype, layout, transpose convention, alignment,
   accumulation precision, scale, mask, epilogue, output definition, and accuracy tolerance;
@@ -316,69 +361,99 @@ classes of conditions:
 - **Tuning conditions:** workspace limits, whether per-shape autotuning is allowed, and the search
   budget available to each implementation.
 
-Every implementation should also use the same cache, clock, warm-up, sampling, and timing policies.
-For a library baseline, record its version, selected algorithm, and workspace. Autotuning may run
-outside the timed interval, but its search budget and final configuration remain part of the
-experimental record.
+Record the GPU, driver, CUDA, framework, and compiler versions, along with dtype, shape, clock, and
+power settings. For a library baseline, also record the library version, selected algorithm, and
+workspace. Autotuning may run outside the timed interval, but its search budget and final
+configuration are still part of the experimental setup.
 
 ## Convert Latency to Throughput
 
-Throughput is not measured directly by the timer. It is computed by dividing a defined amount of work
-by the measured latency. A table that reports TFLOP/s, GB/s, or tokens/s should therefore retain the
-original latency and explain how the work was counted. This book counts GEMM as $2MNK$ FLOPs. For
-attention and fused kernels, specify whether the count represents the full dense problem, the elements
-actually selected, or the work executed by the kernel. See {ref}`chap_performance` for the corresponding
-formulas and roofline analysis.
+Compute throughput by dividing a clearly defined amount of work by the measured latency. For a
+multiplication of an $M\times K$ matrix by a $K\times N$ matrix with latency `t_us` in
+microseconds:
 
-## Use Proton to Find Expensive Kernels
-
-The preceding benchmark tells us how long the complete operation takes. If it launches several kernels,
-we still need to determine where that time is spent. Proton reports each kernel's call count, average
-time, and cumulative time.
-
-Proton is a GPU profiler provided by the Triton project. It observes CUDA kernel activity and can
-therefore analyze TIRx kernels compiled by TVM. The `bench(timer="proton")` helper introduced above
-returns an aggregate kernel-time result. Here we create a separate Proton session to inspect each
-kernel's call count and execution time.
-
-The following example reuses the matrices allocated above and combines GEMM with ReLU in one
-operation. It finishes warm-up, collects the next 100 calls, and writes `operator.hatchet` in the
-current directory:
-
-```python
-import torch
-import triton.profiler as proton
-
-
-def operation():
-    torch.mm(a, b, out=c)
-    torch.clamp_min(c, 0, out=c)
-
-
-def collect_proton(run, *, warmup_calls, profile_calls):
-    for _ in range(warmup_calls):
-        run()
-    torch.cuda.synchronize()
-
-    session = proton.start("operator", context="shadow", data="tree")
-    if session is None:
-        raise RuntimeError("Proton session could not be created")
-    try:
-        with proton.scope("target_operation"):
-            for _ in range(profile_calls):
-                run()
-        torch.cuda.synchronize()
-    finally:
-        proton.finalize(session)
-
-
-collect_proton(operation, warmup_calls=500, profile_calls=100)
+```text
+TFLOP/s = 2 × M × N × K / t_us / 10^6
 ```
 
-Here `warmup_calls` and `profile_calls` are invocation counts, not the millisecond budgets used by
-`bench`. Install a Triton version compatible with TVM and record that version with the experiment.
+The numerator and timing boundary must describe the same work. The complete GEMM-plus-ReLU operation
+below takes 105.152 μs. Dividing $2\times4096^3$ by that duration gives about 1307 TFLOP/s, but this
+is only *effective throughput*: GEMM work divided by the complete operation time, whose denominator
+also contains ReLU. To report the GEMM kernel's own TFLOP/s, the timed interval must cover only GEMM.
 
-First list the stored metrics. The next two commands print call counts, total time, and average time:
+A table that reports TFLOP/s, GB/s, or tokens/s should retain the original latency and explain how
+the work was counted. For attention and fused kernels, also state whether the numerator represents
+the full dense problem, the elements actually selected, or the work executed by the kernel. See
+{ref}`chap_performance` for the corresponding formulas and roofline analysis.
+
+## Find the Most Expensive Kernel with Proton
+
+From this point onward, the baseline, Proton, Nsight Systems, and Nsight Compute all run the same
+operation from `appendix/nsys_example.py`: multiply two $4096\times4096$ BF16 matrices and then apply
+ReLU to the result. The inputs, intermediate result, and output are allocated before timing or
+collection. The operation in the script is:
+
+```python
+def run():
+    with torch.cuda.nvtx.range("BF16 GEMM"):
+        torch.mm(a, b, out=c)
+    with torch.cuda.nvtx.range("ReLU"):
+        torch.clamp_min(c, 0, out=output)
+```
+
+Before entering any timing or collection mode, the script runs one operation and synchronizes. It
+then computes an FP32 `torch.mm` reference, applies ReLU, converts the result to BF16, and compares it
+with the output using `rtol=2e-2` and `atol=1e-2`. A mismatch stops the command before the benchmark
+or profiler begins. This preflight check is outside both the baseline timing interval and the
+collection range used below.
+
+The earlier $2048\times2048$ FP16 example was a standalone demonstration of the timing APIs. The
+results below all use this BF16 operation and do not mix the two workloads.
+
+### Establish an Unprofiled Baseline
+
+Before asking where time is spent, measure the complete operation under normal execution:
+
+```bash
+python appendix/nsys_example.py \
+  --size 4096 \
+  --warmup-calls 500 \
+  --event-samples 20
+```
+
+The 500 warm-up calls finish before formal timing. Each sample then uses one pair of CUDA Events
+around one GEMM-plus-ReLU operation. One actual B200 run produced:
+
+```text
+median=105.152 us, min=103.136 us, max=131.200 us
+```
+
+The median is the baseline to revisit after changing code. The minimum and maximum show the sample
+variation. This baseline covers the complete GEMM-plus-ReLU operation; the profiler tables below
+report individual kernels from separate captures.
+
+### Use Proton to Compare the Kernels in the Operation
+
+Proton reports each kernel's call count, average time, and cumulative time. Before running it,
+confirm that the environment has a Triton installation compatible with TVM;
+Proton and `proton-viewer` are provided with Triton. The viewer also requires two Python packages:
+
+```bash
+python -m pip install pandas llnl-hatchet
+```
+
+The script's `--proton-calls` mode reuses the same `run()`, completes warm-up, profiles 100 calls to
+the operation, and writes `operator.hatchet`:
+
+```bash
+python appendix/nsys_example.py \
+  --size 4096 \
+  --warmup-calls 500 \
+  --proton-calls 100
+```
+
+Here `warmup-calls` and `proton-calls` are invocation counts, while the similarly named warm-up and
+repeat arguments to `bench` are millisecond budgets. After generating the report, run:
 
 ```bash
 proton-viewer --list operator.hatchet
@@ -386,60 +461,41 @@ proton-viewer --metrics time/ms,count --print-sorted operator.hatchet
 proton-viewer --metrics avg_time/us,time/ms --print-sorted operator.hatchet
 ```
 
-If `proton-viewer` reports missing optional dependencies, install them with:
-
-```bash
-python -m pip install pandas llnl-hatchet
-```
-
-The following is one real B200 result from this code; kernel names are shortened for readability:
+`proton-viewer` prints two separate tables. First use the full kernel name to confirm the call count
+and cumulative time in the `count,time/ms` output. Then find the same row in the
+`avg_time/us,time/ms` output to read the average time. Select the
+target primarily by `time/ms`, which is the time accumulated by that kernel across 100 operations;
+`avg_time/us` reports its per-call average. The display below joins the two tables and shortens the
+kernel names for readability:
 
 ```text
 target_operation               calls    avg/us    total/ms
-├── GEMM kernel                  100      14.83        1.483
-└── ReLU kernel                  100       4.23        0.423
+├── GEMM kernel                  100      87.00        8.700
+└── ReLU kernel                  100      11.71        1.171
 ```
 
-First confirm that all expected kernels appear with the correct call counts, then compare their
-average and cumulative times. GEMM has the largest cumulative time in this example, so it should be
-the first kernel examined with Nsight Compute. Also watch for short kernels that are launched often:
-their individual calls may be inexpensive while their cumulative cost is substantial.
+First confirm that both expected kernels appear and that each was called 100 times, then compare
+cumulative time. GEMM accounts for much more time, so it becomes the target for deeper analysis.
+Before profiling it with NCU, use Nsight Systems to confirm the kernel order and gaps and correlate
+them with the host launch APIs for one operation.
 
-Proton includes only the captured kernel times, not memory copies, synchronization, or stream gaps.
-When kernels overlap, summing their durations also counts the overlapping interval more than once.
-These data therefore identify kernels for further analysis; they are not the latency of the complete
-operation.
-
-This capture repeatedly uses the same matrices, whereas the earlier TVM timer evicts L2 before each
-measurement, so the two experiments also have different cache conditions. Measure complete-operation
-latency with CUDA Events or a synchronized wall-clock timer.
+This manual Proton session preserves the normal cache state, unlike `bench(timer="proton")`, which
+writes a 256 MiB buffer before each measured call. Use values from the same Proton report to rank
+kernels. Compare implementations with the CUDA Event baseline above, using a timing interval that
+covers the full operation.
 
 ## Analyze an Application Timeline with Nsight Systems
 
-Proton can aggregate kernel time, but it cannot show execution order, gaps between kernels, copies,
-or host waits. Use the Nsight Systems timeline to examine those relationships.
+Proton provides an aggregate ranking, but it does not show kernel ordering, gaps, copies, or host
+waits. Nsight Systems answers those questions with a timeline.
 
 ### Capture the Target Operation Timeline
 
-The following example shows how to restrict Nsight Systems collection to one target operation. In
-`appendix/nsys_example.py`, that operation performs three steps in sequence: it copies a
-$4096\times4096$ BF16 matrix from pinned host memory to the GPU in a host-to-device (H2D) copy, runs
-GEMM, and applies ReLU. All required tensors are allocated before collection, so the report focuses
-on these three steps. The core of the script is:
+The script's `--profile-once` mode completes warm-up while the profiler is still inactive and waits
+for that work to finish. It then submits exactly one GEMM-plus-ReLU operation between
+`cudaProfilerStart()` and `cudaProfilerStop()`:
 
 ```python
-import torch
-
-
-def run():
-    with torch.cuda.nvtx.range("H2D input"):
-        a.copy_(host_a, non_blocking=True)
-    with torch.cuda.nvtx.range("BF16 GEMM"):
-        torch.mm(a, b, out=c)
-    with torch.cuda.nvtx.range("ReLU"):
-        torch.clamp_min(c, 0, out=output)
-
-
 def run_once_for_profiler(run, *, warmup_calls):
     for _ in range(warmup_calls):
         run()
@@ -453,11 +509,9 @@ def run_once_for_profiler(run, *, warmup_calls):
     cudart.cudaProfilerStop()
 ```
 
-`run_once_for_profiler` completes warm-up before the profiler starts and waits for the warm-up work on
-the GPU to finish. It then calls `cudaProfilerStart()` and labels the measured invocation with the
-`target operation` NVTX range, making it easy to locate in the timeline. The synchronization inside
-the range ensures that all three GPU operations finish before `cudaProfilerStop()`. These profiler
-APIs define the collection range; they do not measure performance.
+The NVTX range makes the target operation easy to locate in the timeline. Synchronization inside the
+range ensures that both kernels finish before collection stops. `cudaProfilerStart()` and
+`cudaProfilerStop()` only delimit the collection range; they do not measure time.
 
 The following command runs the script and writes `reports/target-timeline.nsys-rep`:
 
@@ -471,7 +525,10 @@ nsys profile \
   --capture-range-end=stop \
   --output=reports/target-timeline \
   --force-overwrite=true \
-  python appendix/nsys_example.py --profile-once
+  python appendix/nsys_example.py \
+    --size 4096 \
+    --warmup-calls 500 \
+    --profile-once
 ```
 
 `--capture-range=cudaProfilerApi` restricts collection to the interval between
@@ -486,137 +543,177 @@ Once the report has been generated, open its timeline in the Nsight Systems GUI:
 nsys-ui reports/target-timeline.nsys-rep
 ```
 
-### Copy, Queue, and Execution Time in the Timeline
+### Locate the Most Expensive Kernel in the Timeline
 
-This example uses PyTorch to construct a copy-plus-multiple-kernel workload with little setup. The
-same timeline-reading method applies to a TIRx operation.
+The following report was collected on an NVIDIA B200 with NVIDIA driver 595.58.03, CUDA 13.0,
+PyTorch 2.12.0+cu130, and Nsight Systems 2025.6.3.
 
-The following real report illustrates how to interpret Nsight Systems results. It was collected on an
-NVIDIA B200 with NVIDIA driver 595.58.03, CUDA 13.0, PyTorch 2.12.0+cu130, and Nsight Systems 2025.6.3.
+![A measured Nsight Systems timeline: CPU NVTX ranges and CUDA APIs appear above GEMM and ReLU on one GPU stream](../img/nsys_b200_timeline.svg)
 
-![A measured Nsight Systems timeline: CPU NVTX ranges and CUDA APIs appear above the H2D copy, GEMM, and ReLU on one GPU stream](../img/nsys_b200_timeline.svg)
-
-*This figure was redrawn from an actual capture. Each bar is scaled to the measured duration of the
-corresponding activity.*
-
-The `7` in `GPU stream 7` is the stream identifier shown by Nsight Systems for this capture. It does
-not mean the seventh execution stage and may differ in another run. The H2D copy, GEMM, and ReLU share
-that stream and therefore execute in submission order.
-
-In addition to viewing the timeline in the GUI, use `nsys stats` to extract the timing data used
-below from the same report:
+The `7` in `GPU stream 7` is the stream identifier in this report. Both kernels are in the same
+stream and therefore execute in submission order. The times used below can also be extracted from
+the command line:
 
 ```bash
 nsys stats \
+  --force-export=true \
   --format=column \
   --timeunit=us \
-  --report nvtx_gpu_proj_sum \
-  --report nvtx_pushpop_trace \
   --report cuda_gpu_sum \
   --report cuda_kern_exec_trace \
+  --report cuda_api_trace \
+  --report nvtx_gpu_proj_sum \
+  --report nvtx_pushpop_trace \
   --report cuda_api_sum \
   reports/target-timeline.nsys-rep
 ```
 
-The names following `--report` refer to summaries built into Nsight Systems.
-`nvtx_gpu_proj_sum` and `nvtx_pushpop_trace` report the GPU projection of an NVTX range and its
-host-side range records, respectively. `cuda_gpu_sum` summarizes kernels and CUDA memory operations;
-`cuda_kern_exec_trace` correlates host launch APIs with their GPU kernels; and `cuda_api_sum`
-summarizes host-side CUDA API calls. Run `nsys stats --help-reports` to list the names and definitions
-available in the installed version.
+`--force-export=true` regenerates the SQLite data from the current `.nsys-rep`, preventing stale
+SQLite data with the same name from being reused. `cuda_gpu_sum` summarizes GPU activities;
+`cuda_kern_exec_trace` correlates each host launch API with its GPU kernel and gives the kernel start
+and duration; `cuda_api_trace` gives the start and duration of every CUDA API call. The two NVTX
+reports provide the range's GPU projection and host-side record, while `cuda_api_sum` summarizes
+host CUDA APIs. Run
+`nsys stats --help-reports` for the complete definitions in the installed version.
 
-`cuda_gpu_sum` reports the three GPU activities:
+The command prints several tables in sequence. Extract values in this order:
+
+1. Compare cumulative durations in `cuda_gpu_sum` to find the most expensive GPU kernel.
+2. In `cuda_kern_exec_trace`, read each kernel's start and duration and identify its host launch API.
+   Compute its end as `end = start + duration`; use the same calculation for CUDA APIs.
+3. Compute the inter-kernel gap as `ReLU start - (GEMM start + GEMM duration)`. This uses the trace
+   timestamp and duration columns.
+4. Finally, use the `nvtx_*` reports, `cuda_api_trace`, and `cuda_api_sum` to interpret the host
+   range and synchronization APIs. To determine whether a synchronization call actually waited for
+   the GPU, compare its start time in `cuda_api_trace` with the end of the final kernel.
+
+`cuda_gpu_sum` reports the execution time of both kernels:
 
 | GPU activity | Count | GPU duration | Share of listed GPU time |
 |---|---:|---:|---:|
-| 32 MiB H2D copy | 1 | 607.230 μs | 85.4% |
-| BF16 GEMM | 1 | 93.152 μs | 13.1% |
-| ReLU | 1 | 11.072 μs | 1.6% |
+| BF16 GEMM | 1 | 92.608 μs | 89.4% |
+| ReLU | 1 | 10.944 μs | 10.6% |
 
 `cuda_kern_exec_trace` correlates each kernel with its launch API and reports API time, positive queue
 time, and GPU execution separately. Positive queue time is the interval from API return to a later
-kernel start; it has no positive value when the kernel starts earlier.
+kernel start. If the kernel starts before the API returns, the report shows no positive queue time.
 
 | Kernel | API time | Positive queue time | GPU execution |
 |---|---:|---:|---:|
-| BF16 GEMM | 34.270 μs | 403.214 μs | 93.152 μs |
-| ReLU | 11.064 μs | 442.166 μs | 11.072 μs |
+| BF16 GEMM | 50.717 μs | — | 92.608 μs |
+| ReLU | 13.474 μs | 5.074 μs | 10.944 μs |
 
-This report supports four concrete observations:
+Read the results in this order:
 
-1. **The H2D copy dominates this region.** It accounts for 85.4% of the three GPU-duration sum.
-   Looking only at `cuda_gpu_kern_sum` would omit the copy entirely, so this example uses
-   `cuda_gpu_sum`, which includes both kernels and memory operations.
-2. **Queue time is not launch overhead.** GEMM and ReLU wait behind earlier work on the same stream.
-   Their queue intervals are long because they follow the H2D copy and GEMM, not because their launch
-   APIs took hundreds of microseconds.
-3. **A long synchronization interval usually means that the host is waiting for the GPU.**
-   `cudaDeviceSynchronize` occupied 384.821 μs on the CPU because GPU work remained unfinished when
-   the host called it. That number is neither one kernel's duration nor the complete operation
-   latency.
-4. **Intervals at different scopes cannot be added.** The three GPU durations sum to 711.454 μs.
-   `nvtx_gpu_proj_sum` measures from the first enclosed GPU operation's start to the last one's end,
-   producing 715.582 μs; the roughly 4.1 μs difference is gaps between activities. The original
-   `target operation` range on the CPU is 870.561 μs because it also includes dispatch and the final
-   synchronization wait.
+1. **Select the target first.** GEMM accounts for 89.4% of the two kernels' total execution time, so
+   GEMM becomes the NCU analysis target.
+2. **Distinguish API time from GPU time.** The GEMM launch API took 50.717 μs on the host, while the
+   GPU executed GEMM for 92.608 μs; these are different intervals. ReLU's 5.074 μs positive queue
+   time means that it waited briefly after the launch API returned before starting on the GPU.
+3. **Check the gap between kernels.** Their durations sum to 103.552 μs. The GPU span from the start
+   of GEMM through the end of ReLU is 103.776 μs, leaving only a 0.224 μs gap.
+4. **Interpret the host range according to its timing boundary.** The `target operation` host range
+   in the figure covers Python/PyTorch dispatch, both launches, and the synchronization API.
+   Because `cudaDeviceSynchronize` begins after ReLU ends, its measured duration mostly reflects
+   host-side API overhead; GPU execution was already complete.
 
-In a separate unprofiled run, 20 CUDA Event samples of the same operation had a median of 722.816 μs
-and a range of 718.400–726.336 μs. The same measurement method can be rerun with:
+When inspecting another Nsight Systems timeline, follow the same order: confirm the capture range,
+inspect GPU kernels, copies, gaps, and overlap, and then correlate them with host launch or
+synchronization APIs. See the
+[Nsight Systems Analysis Guide](https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html) for
+the interval definitions and additional UI details.
 
-```bash
-python appendix/nsys_example.py --event-samples 20
-```
+## Use Nsight Compute to Analyze a Single Kernel
 
-That unprofiled result is the appropriate performance number to report. The single Nsight Systems
-timeline explains where time went; the two numbers need not match exactly.
+Use Nsight Systems to select the target kernel and NCU to explain its hardware behavior. This section
+begins with a reusable workflow, applies it to a BF16 GEMM on a B200, and then explains the supporting
+metrics and calculations.
 
-These numbers also show why the timing boundary matters. If the production operation truly includes
-the H2D copy, reducing or overlapping the transfer is the first place to look. If the application
-already holds its input on the GPU, the copy does not belong inside the measured region. Do not
-assume that GEMM is the first target merely because it is the main compute kernel.
+### How to Read an NCU Report
 
-Apply the same reading order to other reports: first confirm that the NVTX range excludes warm-up and
-initialization; inspect kernels, copies, gaps, and overlap on the GPU streams; then follow correlation
-back to launch or synchronization APIs on the host. Durations on different streams cannot simply be
-added, and visible overlap proves only that it occurred in this capture. Verify any claimed latency
-benefit with the same unprofiled boundary.
+An SM (streaming multiprocessor) is a GPU compute unit that hosts thread blocks and executes their
+instructions. A warp contains 32 threads and is the basic group that a scheduler selects when issuing
+an instruction. A block or warp is resident after it has been assigned to an SM and before it finishes.
 
-Report scripts vary across Nsight Systems releases. Run `nsys stats --help-reports` to list those
-available in the installed version, and record `nsys --version` with the experiment. The
-[Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html) covers the
-CLI and GUI; the [Analysis Guide](https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html)
-explains API, queue, and kernel-execution intervals in more detail.
+Analyze a new NCU report in this order:
 
-## Collect an Nsight Compute Report for One Kernel
+| Current question | Where to look first | Purpose |
+|---|---|---|
+| Which kernel does this report describe? | Kernel, device, and grid/block in the report header, plus Warnings/Errors | Confirm the filter and collection result |
+| Does the launch expose enough device-wide parallelism? | `Grid Size` and `Waves Per SM` in `LaunchStats` | Determine whether the grid provides enough device-wide parallelism |
+| How much work can reside on each SM at once? | `Block Limit` fields and theoretical/achieved occupancy in `Occupancy` | Quantify theoretical and achieved residency, and identify which resources set the theoretical limit |
+| Which part of the hardware should be investigated first? | Compute, Memory, and DRAM throughput in `SpeedOfLight` | Choose the compute, memory, or scheduling path |
+| Can the scheduler consistently find an instruction to issue? | `Scheduler Statistics` → `Warps Per Scheduler`; when issue-ready work is scarce, continue to `Warp State Statistics` → `Warp State (All Cycles)` | Compare resident, ready, and issued warps; inspect the main wait states when ready work is scarce |
 
-Nsight Systems shows when kernels run; Nsight Compute explains why one selected kernel behaves as it
-does. It collects launch configuration, occupancy, compute and memory throughput, scheduler state,
-and other hardware metrics. NCU can replay the kernel several times while collecting those metrics,
-so it is a diagnostic tool: do not substitute the report's `Duration` for latency measured during a
-normal run.
+`Grid Size` is the number of blocks submitted by the launch. `Waves Per SM` divides that count by the
+number of blocks that could theoretically reside across the whole GPU at once. A value of 1 means
+the two counts are equal; 3.46 means that the grid contains 3.46 times the device-wide theoretical
+resident-block capacity. This ratio helps determine whether the grid contains enough blocks to cover
+the GPU. It does not record the actual block-scheduling order.
 
-The timeline above showed that the H2D copy dominates the example operation. The NCU walkthrough
-still selects the 93.152 μs BF16 GEMM—not because it is the operation's primary bottleneck, but to
-show how the metrics from one launch determine what to inspect next.
+Each `Block Limit` reports how many blocks one SM could host if registers, shared memory, threads, or
+another listed resource were the only constraint. The smallest value sets the theoretical block
+limit. Theoretical occupancy is the maximum resident-warp count allowed by those limits as a fraction
+of the hardware capacity. Achieved occupancy is the average active-warp count observed during
+collection, expressed against the same capacity. These metrics describe resident concurrency;
+scheduler metrics show whether that concurrency affects instruction issue.
 
-### Select One Target Kernel Launch
+In `SpeedOfLight`, Compute represents the busiest SM compute path, Memory the busiest memory-side
+path, and DRAM only the external-memory interface. Each uses its own sustainable peak as the
+denominator. On a B200, HBM provides external device memory, L2 is shared across the GPU, and L1TEX is
+the SM-side path that handles memory requests. A high Memory value means that some memory-side path
+is busy; DRAM shows whether the external HBM interface is near saturation. In
+`ComputeWorkloadAnalysis`, active cycles show when a pipeline still has work in flight, while
+`Issue Slots Busy` reports how many scheduler issue opportunities were used.
 
-Reuse the `--profile-once` path from the Nsight Systems example. Warm-up stays outside the capture
-range, and only one target operation runs inside it. That operation launches a GEMM followed by
-ReLU. The kernel-name filter below selects the GEMM, and `--launch-count 1` collects only the first
-matching launch. Kernel replay is appropriate only when the selected kernel can be replayed in
-isolation. Inspect a dependent or concurrent multi-kernel region in Nsight Systems before choosing a
-different replay mode.
+`SchedulerStats` distinguishes several warp states. An active warp is resident and unfinished. An
+eligible warp has a decoded next instruction whose dependencies are ready and whose required
+execution unit is available. An issued warp issued an instruction in the current cycle. After
+confirming the target launch and examining the grid, residency, and `SpeedOfLight`, select the next
+metrics:
 
-Start with the `basic` section set:
+- **Compute is closer to its peak:** In `ComputeWorkloadAnalysis`, open
+  `Pipe Utilization (Elapsed Cycles)` → `Pipe Utilization (% of elapsed cycles)` and find the compute
+  path with the most active cycles. Then inspect `Issue Slots Busy` in the same section's summary.
+  If one path keeps processing work while most issue slots remain empty, continue to
+  `Scheduler Statistics` → `Warps Per Scheduler` to explain the low instruction-issue rate.
+- **Memory is closer to its peak:** Collect `MemoryWorkloadAnalysis`,
+  `MemoryWorkloadAnalysis_Chart`, and `MemoryWorkloadAnalysis_Tables`. First follow the data path
+  through DRAM, L2, and L1/TEX under `Memory Workload Analysis Chart` → `Memory Chart`. Then read
+  throughput, read/write bytes, hit rate, and the shared- and local-memory fields under
+  `Memory Workload Analysis Tables` → `Memory Tables`. If DRAM is also near its peak, investigate
+  external HBM traffic first. If DRAM is low, shift attention to L2, L1/TEX, shared memory, or local
+  memory. Local memory is a per-thread private address space; its physical traffic traverses the
+  L1/L2 caches and external device memory.
+- **Compute and Memory are both low:** Use the grid size and waves to determine whether the launch
+  provides enough blocks to cover the GPU. If it does not, inspect the grid, block, and cluster
+  configuration or divide the work into more blocks. If it does, inspect `SchedulerStats`. If active
+  warps exist but eligible warps are scarce, use `WarpStateStats` to see whether they are waiting on
+  data, synchronization, or another dependency.
+- **Compute and Memory are both high:** Expand both sides, identify one specific bottleneck candidate
+  on each, and change one factor at a time to determine which candidate affects kernel time.
+
+`MemoryWorkloadAnalysis` summarizes traffic and cache behavior for the whole kernel across DRAM, L2,
+L1TEX, and other memory paths. `SourceCounters` then maps sampled stalls and instruction activity to
+SASS (GPU machine instructions) or source locations to help trace a specific load dependency.
+
+Judge “high” and “low” in the context of the current GPU, workload, and the metrics in the same
+report. Once the report points to code that can be changed and predicts how its metrics and latency
+should respond, the current pass has produced a testable hypothesis. If the scope is still too broad,
+collect the next section along the relevant path above.
+
+### Worked Example: A B200 BF16 GEMM
+
+#### 1. Collect the First `basic` Report
+
+Continue using the script's `--profile-once` mode. The application submits one GEMM and then one ReLU
+inside the collection range; NCU waits for the range to begin and profiles only the GEMM:
 
 ```bash
 mkdir -p reports
 ncu \
   --config-file off \
-  --target-processes application-only \
   --profile-from-start off \
-  --kernel-name-base function \
   --kernel-name 'regex:.*nvjet_sm100.*' \
   --launch-count 1 \
   --set basic \
@@ -626,27 +723,30 @@ ncu \
   --pipeline-boost-state stable \
   --export reports/bf16-gemm-basic \
   --force-overwrite \
-  python appendix/nsys_example.py --profile-once
+  python appendix/nsys_example.py \
+    --size 4096 \
+    --warmup-calls 500 \
+    --profile-once
 ```
 
-`--profile-from-start off` makes NCU wait for the profiler API range in the script. The regular
-expression then selects the GEMM whose name contains `nvjet_sm100`. Generated kernel names can change
-with PyTorch and CUDA versions, so copy the actual name from Nsight Systems before writing a narrower
-filter for another program.
+The key options control the capture range, target, metrics, and collection conditions:
 
-`--set basic` collects launch, occupancy, workload-distribution, and high-level throughput sections.
-Cache and clock controls are explicit because they change the profiling conditions. In particular,
-`--cache-control all` flushes the GPU caches that NCU can control before every replay iteration. That
-helps stabilize counter collection but does not reproduce the hot-cache policy of the headline
-benchmark. Section sets and defaults can change between releases, so record `ncu --version` and
-inspect `ncu --config-file off --list-sets` on the collection machine.
+- `--profile-from-start off` makes NCU wait until the script calls `cudaProfilerStart()`.
+- `--kernel-name` selects kernels in that range whose name contains `nvjet_sm100`, and
+  `--launch-count 1` produces a report for the first matching launch. The expression comes from the
+  preceding timeline; replace it with the name from your own program.
+- `--set basic` collects the launch, occupancy, and high-level throughput sections needed for this
+  first pass.
+- `--replay-mode kernel` allows NCU to replay the selected GEMM while collecting hardware counters.
+  `--cache-control all` flushes controllable caches before replay, while the remaining options control
+  clocks and pipeline boost state during collection. Kernel replay is appropriate here because this
+  GEMM can be replayed independently. Workloads with cross-kernel dependencies or concurrency need a
+  replay mode that preserves the required application or range state.
 
-If the script cannot use profiler start/stop, rerun the command with `--profile-from-start on` (or
-remove `--profile-from-start off`) and use `--launch-skip N --launch-count 1` to select an invocation
-after warm-up. `--launch-skip` counts matching kernel launches, so a changed filter or launch order
-can select a different invocation. The
-[Nsight Compute CLI documentation](https://docs.nvidia.com/nsight-compute/NsightComputeCli/)
-describes the kernel and launch filters in detail.
+Here, “one GEMM” means one launch submitted by the application. NCU can still replay that GEMM
+internally to collect all requested hardware counters. The 500 warm-up calls stay outside the
+collection range, avoiding initialization and lazy-loading work. NCU's cache control then changes the
+normal warm-cache conditions.
 
 Open the report in the GUI:
 
@@ -654,177 +754,366 @@ Open the report in the GUI:
 ncu-ui reports/bf16-gemm-basic.ncu-rep
 ```
 
-or inspect it in the terminal:
+Without a GUI, print the Details page in the terminal:
 
 ```bash
 ncu --import reports/bf16-gemm-basic.ncu-rep \
     --page details \
-    --print-details header \
+    --print-details all \
     --print-metric-name label-name
 ```
 
-`header` is a compact first view. Expand the Work ID/CLC and throughput tables in the GUI, or replace
-`header` with `all` to print the complete details used below.
+See the [Nsight Compute CLI documentation](https://docs.nvidia.com/nsight-compute/NsightComputeCli/)
+for other filters and collection options. If NCU reports `ERR_NVGPUCTRPERM`, follow NVIDIA's
+[counter-permission guidance](https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-nsightcompute)
+or ask the system administrator to enable access.
 
-## Analyze an Nsight Compute Report
+#### 2. Use the `basic` Report to Choose What to Investigate
 
-The following values come from a real capture on the same B200 with Nsight Compute 2026.1. NCU used
-nine replay passes to build the `basic` report. The percentages are NCU throughput metrics relative
-to the sustained peak of the corresponding hardware subsystem; they are not application FLOPs
-divided by the chip's advertised peak.
+First confirm the device, kernel name, grid and block dimensions, and warnings in the report header.
+Once they match the intended launch, use these three observations to choose what to inspect next:
 
-| Metric | Measured value |
-|---|---:|
-| Kernel duration | 95.87 μs |
-| Grid / block size | 512 blocks / 256 threads |
-| Cluster size | 4 blocks |
-| Registers | 255 / thread |
-| Dynamic shared memory | 213.28 KB / block |
-| Waves per SM | 3.46 |
-| Theoretical / achieved occupancy | 12.50% / 8.98% |
-| SM compute-throughput metric | 77.34% |
-| Memory-throughput metric | 38.51% |
-| DRAM / L2 / L1-TEX throughput metrics | 20.42% / 34.60% / 46.93% |
-
-NCU's 95.87 μs differs slightly from the 93.152 μs captured by Nsight Systems above. The values come
-from separate profiling runs, and NCU also changes cache, clock, and replay conditions. This is why
-the report's `Duration` cannot replace the headline benchmark.
-
-Read the table in three passes: verify the selected launch, see how its work covers the GPU, and only
-then choose which throughput breakdown to expand.
-
-### 1. Launch Statistics and Workload Distribution
-
-The captured name is `nvjet_sm100_tst_128x256_64x6_2x2_2cta_h_bz_NNT`, which matches the GEMM in the
-timeline above. It launches 512 blocks of 256 threads and groups four blocks into each cluster.
-`Waves Per SM = 3.46` means that the grid requires three full waves and one partial wave. It describes
-how the grid covers the GPU over time; it is not occupancy.
-
-This report also carries a Work ID/Cluster Launch Control warning. Although the nominal launch has
-512 CTAs, only 380 were granted. When this warning appears, treat metrics derived from block, warp,
-or thread counts cautiously rather than assuming that the nominal launch count is the executed
-count.
-
-### 2. Occupancy
-
-This kernel uses 255 registers per thread and 213.28 KB of dynamic shared memory per block. Both the
-register and shared-memory limits allow only one block to reside on an SM. The resulting theoretical
-occupancy is 12.50%, and the measured achieved occupancy is 8.98%.
-
-Those values show that few warps are resident; they do not establish occupancy as the bottleneck.
-This GEMM deliberately uses four-CTA clusters and an asynchronous pipeline. Reducing registers or
-shared memory merely to raise occupancy can introduce spills or sacrifice tile reuse and make the
-kernel slower.
-
-NCU also emits rule-based `Est. Speedup` suggestions. They are local upper bounds under simplified
-assumptions and are useful as investigation prompts, not as expected speedups from changing the
-kernel.
-
-### 3. Speed of Light
-
-The basic report shows an SM compute-throughput metric of 77.34% and a memory-throughput metric of
-38.51%, with DRAM at only 20.42%. The evidence therefore does not support calling the kernel
-DRAM-bound; expanding the compute pipelines is the more useful next step.
-
-For another kernel, compare the high-level compute and memory metrics against their respective
-sustained peaks:
-
-- high compute and lower memory throughput suggests a compute-pipeline limit;
-- high memory and lower compute throughput suggests investigating the memory hierarchy;
-- both low suggests underfill, dependency latency, synchronization, imbalance, or too few eligible
-  warps before it suggests a peak-throughput limit.
-
-"Memory throughput" is not synonymous with DRAM throughput. Its limiting contributor can be L1,
-L2, shared memory, or a memory-instruction pipeline. Expand the breakdown before calling a kernel
-DRAM-bound.
-
-### Choose the Next Metrics from the Basic Report
-
-The `basic` report covers steps 1–3. Use its evidence to collect only the sections needed for the
-next question:
-
-| Evidence from the basic report | Add next |
+| Observation in `basic` | Next step in this example |
 |---|---|
-| Register, shared-memory, or resident-block limit | `LaunchStats`, `Occupancy` are already in `basic`; inspect their limit tables before collecting more |
-| Compute path appears dominant | `ComputeWorkloadAnalysis` |
-| Memory hierarchy appears dominant | `MemoryWorkloadAnalysis`; add `_Chart` for the visual breakdown or `_Tables` for detailed requests and sectors |
-| Too few eligible warps or unexplained issue gaps | `SchedulerStats`, then `WarpStateStats` |
-| A source or instruction location is required | `SourceCounters` |
+| `Grid Size = 512 blocks`; `Waves Per SM = 3.46` | The grid supplies enough blocks to occupy the whole GPU; next check how much work can reside on each SM |
+| The register and shared-memory `Block Limit` values are both 1; theoretical/achieved occupancy is 12.50%/8.97% | Each SM can theoretically host at most eight resident warps, while the observed average is lower; use scheduler metrics to inspect instruction readiness |
+| Compute 77.74%, Memory 38.71%, DRAM 12.88% | Compute is closest to its own peak, so expand the compute side first; aggregate HBM throughput across the device still has ample headroom |
 
-The compute metric is higher in this report, so add `ComputeWorkloadAnalysis` for the same isolated
-launch:
+Start with the wave calculation. The current resource limits allow one resident block per SM, and
+this B200 has 148 SMs, so the whole GPU's theoretical simultaneous capacity is 148 blocks. The grid
+contains 512 blocks, and $512 / 148 = 3.46$: its block count is 3.46 times that theoretical capacity.
+This calculation only explains the capacity ratio reported by NCU. Because this example uses
+thread-block clusters, use the reported `Waves Per SM = 3.46` as the authoritative value. The ratio
+confirms that the grid contains enough blocks to cover the device.
+
+Next consider occupancy. A B200 SM can hold at most 2,048 threads. At 32 threads per warp, that is a
+hardware limit of 64 warps. This launch configuration permits at most one 256-thread block per SM, or
+eight resident warps, so its theoretical occupancy is $8 / 64 = 12.50\%$. This theoretical resident
+concurrency is low relative to the hardware capacity. `Achieved Occupancy = 8.97%` is the average
+number of active warps observed during collection as a fraction of the same hardware capacity, below
+the 12.50% theoretical maximum. The theoretical value establishes that all schedulers on one SM
+have at most eight resident warps in total; `SchedulerStats` then reports how many warps assigned to
+each scheduler are ready on average.
+
+Finally, compare throughput. Compute is closer to its peak than Memory, so investigate the compute
+side first. The term `compute-bound` makes a stronger claim: further speedup is ultimately constrained
+by the throughput limit of the compute units. The `basic` report only selects an entry point. The
+follow-up report shows that issue opportunities are rarely used and most scheduler cycles have no
+eligible (ready) warp; calling the kernel `compute-bound` at this point would hide that key clue.
+
+The grid can occupy the whole device, but each SM can host at most eight resident warps, and the
+compute side is closest to its peak. The next report expands the compute pipelines and collects
+scheduler metrics.
+
+#### 3. Collect Follow-Up Metrics Along the Compute Path
+
+The next command collects all three sections in a single run. Read them in the order
+`ComputeWorkloadAnalysis` → `SchedulerStats` → `WarpStateStats`. For a new kernel, decide whether to
+add each section after reading the preceding one.
 
 ```bash
-mkdir -p reports
 ncu \
   --config-file off \
-  --target-processes application-only \
   --profile-from-start off \
-  --kernel-name-base function \
   --kernel-name 'regex:.*nvjet_sm100.*' \
   --launch-count 1 \
   --section ComputeWorkloadAnalysis \
+  --section SchedulerStats \
+  --section WarpStateStats \
   --replay-mode kernel \
   --cache-control all \
   --clock-control boost \
   --pipeline-boost-state stable \
-  --export reports/bf16-gemm-compute \
+  --export reports/bf16-gemm-followup \
   --force-overwrite \
-  python appendix/nsys_example.py --profile-once
+  python appendix/nsys_example.py \
+    --size 4096 \
+    --warmup-calls 500 \
+    --profile-once
 ```
 
-The follow-up report contains these values:
+This is an independent NCU run. Percentages can vary slightly between the reports—for example,
+77.74% becomes 78.39%—without indicating a performance change. The earlier `basic` report selected
+the investigation path; the follow-up report uses compute, scheduler, and warp-state metrics from
+one collection to narrow the cause.
 
-| Pipeline | Throughput metric |
+#### 4. Read the Three Sections in Order
+
+Start at `ComputeWorkloadAnalysis` → `Pipe Utilization (Elapsed Cycles)` →
+`Pipe Utilization (% of elapsed cycles)`, the active-cycle view. `Tensor (FP)` is the floating-point
+tensor-compute path. `TMEM (Tensor Memory)` is an on-chip memory path that serves tensor operations;
+it is distinct from external HBM/DRAM and from TMA, the asynchronous data-movement engine. These
+paths are active during about 78% of clock cycles, while the same section's summary reports
+`Issue Slots Busy = 3.20%`. A multi-cycle operation can issue once and keep a pipeline active, so
+frequent pipeline activity and infrequent new instruction issue can occur together.
+
+Next, open `Scheduler Statistics` → `Warps Per Scheduler` to see why instructions issue so
+infrequently. Each scheduler averages 1.44 active warps that have not finished, but only 0.04
+eligible (ready) warps; 0.04 is an average warp count, not 4%. The denominator for `No Eligible`
+includes only cycles in which the scheduler's SM subpartition has at least one warp in flight. Its
+value of 96.11% means that no eligible warp is available in 96.11% of those cycles. This explains
+the low 3.20% issue rate. Work resides on the SM, but most of the time no warp can continue.
+
+Finally, open `Warp State Statistics` → `Warp State (All Cycles)` to see what those warps are waiting
+for. One warp spending one clock cycle in a state contributes one warp-cycle. Each issued warp
+instruction corresponds to 37.00 warp-cycles, of which 32.11—about 87%—are attributed to
+`Long Scoreboard`. This 87% is the share of warp-state cycles after normalization by issued warp
+instructions, not a share of kernel execution time. A scoreboard is the hardware
+dependency table that records whether results of earlier operations are ready. `Long Scoreboard`
+means that the next instruction is still waiting for a memory operation handled by L1TEX. L1TEX is
+the SM-side path for global, local, surface, and texture memory requests; the requested data may
+ultimately come from L1, L2, or DRAM, so this field alone cannot identify the serving memory level.
+`MemoryWorkloadAnalysis` characterizes aggregate L1, L2, and DRAM behavior for the whole kernel; use
+the SASS/source view in `SourceCounters` to continue locating the specific load.
+
+The three sections now form one reading path:
+
+```text
+Tensor/TMEM paths are often active
+→ the scheduler issues few new instructions
+→ most cycles have no eligible (ready) warp
+→ Long Scoreboard is the largest wait category
+```
+
+Start with the L1TEX-related data dependency. Each SM can host at most eight resident warps, which may
+make data-access latency harder to cover with other work. In the earlier `basic` report,
+`DRAM Throughput = 12.88%` shows that aggregate HBM bandwidth is far from saturation; individual
+requests can still reach DRAM and incur long latency. Investigate the data dependency first, then see
+whether Tensor Core throughput becomes the next limit. The `nvjet` GEMM in this example is a library
+implementation, so the next report can collect `MemoryWorkloadAnalysis` and compare aggregate L1,
+L2, and DRAM traffic, throughput, and cache behavior for the whole kernel.
+
+For a kernel you control, the report suggests two directions that can be tested separately:
+
+- **Increase resident warps:** Adjust the tile, block, or resource use so that more work can reside
+  on each SM.
+- **Shorten the data-dependency wait:** Hold residency constant and move the load or prefetch
+  earlier, or shorten the dependency chain.
+
+The later section “Test the Hypothesis with a Code Change” gives the concrete modifications and
+validation steps.
+
+### Metric Calculations, Units, and Boundaries
+
+The main walkthrough already established the reading order and the conclusion for this kernel. The
+following sections retain only complete field lists, calculations, units, and boundaries that are
+easy to misread; consult them as needed for another kernel.
+
+#### `LaunchStats` and `Occupancy`
+
+The complete launch fields used by this example appear in `LaunchStats`:
+
+| Field | Value in this report |
 |---|---:|
-| TMEM | 77.23% |
-| Tensor Core | 77.04% |
-| Tensor FP | 76.90% |
-| ALU / TMA / FMA | all below 2% |
+| `Grid Size` | 512 blocks |
+| `Block Size` | 256 threads |
+| `Cluster Size` | 4 blocks |
+| `Waves Per SM` | 3.46 |
 
-That evidence resolves the basic report's aggregate 77.34% compute metric to the Tensor Core and
-Tensor Memory path. For another hypothesis, keep the command shape and replace the `--section` lines
-rather than accumulating every section in one report. This keeps the report smaller and reduces
-replay overhead.
+- `Block Size = 256` means that each block has 256 threads, or eight warps. This value enters the
+  occupancy calculation below.
+- `Cluster Size = 4` groups every four blocks into one thread-block cluster, giving 128 clusters in
+  the grid. The cluster's blocks are scheduled together according to a layout supported by the
+  hardware.
+- For cluster launches, including this one, use the `Waves Per SM` value reported by NCU; use
+  `cudaOccupancyMaxActiveClusters` to calculate resident clusters programmatically.
 
-### 4. Compute and Memory Workload Analysis
+Per-block resource use appears in `LaunchStats`:
 
-Compute Workload Analysis identifies which execution pipelines are active. Check the Tensor Core,
-FMA, ALU, special-function, and relevant asynchronous pipelines rather than inferring Tensor Core
-utilization from one aggregate compute percentage.
+| Field | Value in this report |
+|---|---:|
+| `Registers Per Thread` | 255 |
+| `Dynamic Shared Memory Per Block` | 213.28 KB |
 
-Memory Workload Analysis separates DRAM, L2, L1/TEX, shared memory, and local-memory effects. Read
-traffic volume together with bandwidth, cache hit rate, and local-memory spill. Detailed sector and
-request tables require `MemoryWorkloadAnalysis_Tables`; source-level coalescing and shared-memory
-conflict evidence can require `SourceCounters`. A high cache hit rate alone says little when the
-traffic volume is small.
+The `Occupancy` section shows the residency permitted by those resources:
 
-### 5. Scheduler and Warp States
+| Field | Value in this report |
+|---|---:|
+| `Block Limit Registers` | 1 block / SM |
+| `Block Limit Shared Mem` | 1 block / SM |
+| `Theoretical Occupancy` | 12.50% |
+| `Achieved Occupancy` | 8.97% |
 
-Scheduler Statistics shows active, eligible, and issued warps. First determine whether schedulers
-often have no eligible instruction to issue. Only then use Warp State Statistics to investigate why.
-The NCU guide explicitly warns that stalls are not all avoidable and do not automatically limit
-performance.
+When a block becomes resident, the SM reserves its registers and shared memory. The
+[NVIDIA Blackwell Tuning Guide](https://docs.nvidia.com/cuda/blackwell-tuning-guide/index.html#occupancy)
+specifies 65,536 32-bit registers, 228 KB of shared memory, and at most 2,048 resident threads per
+B200 SM.
 
-Common states should be interpreted as clues:
+- `Registers Per Thread = 255`. With 256 threads, one block needs about
+  $255 \times 256 = 65{,}280$ registers, nearly the entire register file. Two blocks would need
+  130,560 registers, exceeding 65,536.
+- `Dynamic Shared Memory Per Block = 213.28 KB`. One block already uses most of the 228 KB available;
+  two blocks would need at least 426.56 KB and cannot reside together.
+- `Block Limit Registers = 1` and `Block Limit Shared Mem = 1` are the result of those two resource
+  calculations. Either resource alone permits only one resident block per SM. NCU's exact calculation
+  also accounts for allocation granularity and driver-reserved shared memory.
+- `Achieved Occupancy = 8.97%` is the average active-warp ratio observed during collection, not
+  “percent of peak kernel performance.” It is below 12.50%, so execution did not sustain the
+  theoretical residency limit throughout the launch. The two percentages measure residency, not
+  closeness to peak performance.
 
-| State | Useful interpretation | Do not conclude from it alone |
+#### `SpeedOfLight` Denominators and `Duration`
+
+The `SpeedOfLight` section reports these four fields:
+
+| Field | Value in this report |
+|---|---:|
+| `Duration` | 95.30 μs |
+| `Compute (SM) Throughput` | 77.74% |
+| `Memory Throughput` | 38.71% |
+| `DRAM Throughput` | 12.88% |
+
+Treat `Duration` as specific to its profiler run. This NCU capture reports 95.30 μs, while a separate
+Nsight Systems capture reports 92.608 μs. Compare implementations with the unprofiled CUDA Event
+baseline. NCU also controls clocks, flushes caches, and may replay or serialize kernels; see
+[Nsight Compute's workload-duration guidance](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#workload-durations).
+
+The three throughput percentages use separate hardware peaks as their denominators. They cannot be
+added and do not represent fractions of execution time. The
+[Nsight Compute Profiling Guide](https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#metrics-structure)
+defines throughput metrics and their constituents.
+
+#### Compute Pipelines, the Scheduler, and Warp States
+
+##### `Compute Throughput Breakdown` Fields
+
+The report location is `SpeedOfLight` → `GPU Throughput Breakdown` →
+`Compute Throughput Breakdown`:
+
+| Field | Value in this report |
+|---|---:|
+| `SM: Mem Tensor Cycles Active` | 77.74% |
+| `SM: Pipe Tc Cycles Active` | 77.48% |
+| `SM: Pipe Tensor Cycles Active` | 77.42% |
+| `SM: Pipe Alu Cycles Active` | 1.36% |
+| `SM: Pipe Tma Cycles Active` | 1.10% |
+| `SM: Pipe Fma Cycles Active` | 0.61% |
+
+- `Mem Tensor` is an on-chip path related to Blackwell tensor memory. External data is stored in
+  DRAM/HBM, while TMA handles asynchronous multidimensional transfers; these three names refer to
+  distinct hardware paths. At 77.74%, `Mem Tensor` is the most heavily utilized compute-side path in
+  this report.
+- `Pipe Tc` and `Pipe Tensor` are two distinct pipeline counters in NCU. Both are near 77%,
+  consistent with a BF16 GEMM performing substantial tensor-MMA-related work. They may cover
+  overlapping hardware activity, so read them separately; summing them would double-count activity.
+- `Pipe Alu` primarily corresponds to general integer and logic operations, while `Pipe Fma` covers
+  ordinary FP32 arithmetic and some integer multiply-add operations. At 1.36% and 0.61%, respectively,
+  this GEMM does not approach the peak of either path.
+- `Pipe Tma` corresponds to Tensor Memory Accelerator's asynchronous data-movement path. Its 1.10%
+  value shows that TMA is far from its own peak. Data supply also involves TMEM, caches, shared
+  memory, and dependency latency, each described by other metrics.
+
+##### The Two `Pipe Utilization` Denominators
+
+The `ComputeWorkloadAnalysis` summary reports `Issue Slots Busy = 3.20%`. The two full view names are
+`Pipe Utilization (% of elapsed cycles)` and
+`Pipe Utilization (% of peak instructions executed over elapsed cycles)`.
+
+Putting each pipeline on one row makes the contrast easier to see:
+
+| Pipeline field | Active-cycle view | Instruction-rate view |
+|---|---:|---:|
+| `TMEM (Tensor Memory)` | 78.39% | 0.04% |
+| `TC` | 78.12% | 0.38% |
+| `Tensor (FP)` | 78.07% | 0.61% |
+
+The views use different denominators to compare occupied pipeline cycles with instruction execution
+rate; do not add or subtract their values.
+
+##### Complete `SchedulerStats` Fields
+
+The report location is `Scheduler Statistics` → `Warps Per Scheduler`:
+
+| Field | Value in this report |
+|---|---:|
+| `GPU Maximum Warps Per Scheduler` | 16 |
+| `Theoretical Warps Per Scheduler` | 2.00 |
+| `Active Warps Per Scheduler` | 1.44 |
+| `Eligible Warps Per Scheduler` | 0.04 |
+| `Issued Warp Per Scheduler` | 0.04 |
+
+The summary in the same section also reports `No Eligible = 96.11%`.
+
+`GPU Maximum = 16` is the hardware capacity of one scheduler. `Theoretical = 2.00` comes from this
+kernel's theoretical maximum of eight resident warps per SM divided among four schedulers.
+
+##### `WarpStateStats` Normalization
+
+One warp spending one cycle in a state contributes one warp-cycle; four warps spending the same cycle
+in a state contribute four warp-cycles. NCU then normalizes those cycles by the number of issued warp
+instructions. The report summary gives the first field below, and `Warp State (All Cycles)` gives the
+second:
+
+| Field | Value in this report |
+|---|---:|
+| `Warp Cycles Per Issued Instruction` | 37.00 warp-cycles / issued instruction |
+| `Stall Long Scoreboard` | 32.11 warp-cycles / issued instruction |
+
+The report averages 37.00 warp-cycles per issued warp instruction. Of those, 32.11, or about 86.8%,
+are assigned to `Long Scoreboard`. These values are normalized across all warps and use
+warp-cycles / issued instruction, a different unit from the scheduler's average issue rate.
+
+The `Est. Speedup` shown next to an NCU rule is a model-based estimate of the potential reduction in
+workload time for that rule. Use it to prioritize the investigation; only a benchmark of the modified
+kernel can establish the actual speedup.
+
+##### Other Common Warp States
+
+| Warp state | Direct meaning | What to inspect next |
 |---|---|---|
-| Long Scoreboard | Waiting on a dependency associated with the L1TEX path | Every wait reached DRAM |
-| Short Scoreboard | Waiting on an MIO-path dependency, often involving shared memory | A bank conflict definitely exists |
-| Barrier | Waiting for a synchronization dependency | The barrier is unnecessary |
-| Not Selected | The warp was eligible but another warp issued | The scheduler is starved |
-| Math/MIO Throttle | A pipeline or queue is under pressure | Removing arbitrary instructions will improve runtime |
+| `Short Scoreboard` | Usually waiting for shared memory or another on-chip unit to produce a result | Inspect shared-memory accesses and the corresponding source |
+| `Barrier` | Waiting for other warps to reach a synchronization point | Compare the work assigned to different warps and when they arrive |
+| `Not Selected` | The warp is ready, but another warp was selected in this cycle | Check whether many ready warps are competing for issue opportunities |
 
-For warp-specialized kernels, aggregate stall percentages also combine roles with intentionally
-different behavior. Relate the result to the producer, MMA, softmax, or writeback role before changing
-synchronization.
+#### Locate SASS or Source with `SourceCounters`
 
-### 6. Source and SASS Correlation
+`WarpStateStats` shows what the kernel spends time waiting for as a whole. `SourceCounters` takes the
+next step by placing sampled waits and execution counts beside individual SASS instructions. The
+Source page then reveals where those waits are concentrated. If the binary contains line information
+and NCU can find the source file, the instructions are also correlated with CUDA source lines. The
+data comes from periodic sampling of warp stall reasons together with instruction counts and selected
+memory-access metrics.
 
-The SASS view and instruction attribution do not require CUDA line information. Correlating generated
-CUDA source back to SASS does: the binary needs line information, and NCU must be able to find the
-source file. For a TIRx module compiled through NVCC, dump the generated source before compilation:
+The `nvjet` GEMM is a library implementation, so this tutorial has no CUDA source file to import for
+it. The SASS view is still available. Reuse the earlier filter and collection conditions:
+
+```bash
+ncu \
+  --config-file off \
+  --profile-from-start off \
+  --kernel-name 'regex:.*nvjet_sm100.*' \
+  --launch-count 1 \
+  --section SourceCounters \
+  --replay-mode kernel \
+  --cache-control all \
+  --clock-control boost \
+  --pipeline-boost-state stable \
+  --export reports/bf16-gemm-source \
+  --force-overwrite \
+  python appendix/nsys_example.py \
+    --size 4096 \
+    --warmup-calls 500 \
+    --profile-once
+```
+
+Select SASS on the GUI's Source page, or print the same view in the terminal:
+
+```bash
+ncu --import reports/bf16-gemm-source.ncu-rep \
+    --page source \
+    --print-source sass
+```
+
+Start with `Warp Stall Sampling (Not-issued Samples)` and `Instructions Executed`. The first counts
+sampling observations taken when the warp scheduler issued no instruction; the second counts
+executions of the corresponding SASS instruction per warp. If `WarpStateStats` was dominated by
+`Long Scoreboard` and the Source page concentrates corresponding samples near one load, that
+instruction becomes a candidate for closer inspection. These values come from periodic sampling and
+identify hotspot locations. Determining whether the data came from L1, L2, or DRAM still requires
+the kernel-wide evidence in `MemoryWorkloadAnalysis` together with the code's access relationships.
+
+For a TIRx kernel that you compile yourself, the SASS can also be correlated with generated CUDA.
+First select NVCC, retain the generated source, and enable line information:
 
 ```bash
 export TVM_CUDA_COMPILE_MODE=nvcc
@@ -832,66 +1121,210 @@ export TVM_KERNEL_DUMP="$PWD/reports/tvm-kernels"
 mkdir -p "$TVM_KERNEL_DUMP"
 ```
 
-When `TVM_KERNEL_DUMP` is set, TVM retains the generated files and passes `-lineinfo` to NVCC. Add
-`--import-source yes --source-folders "$TVM_KERNEL_DUMP"` to the NCU collection command. Saving
-`inspect_source("cuda")` is still useful for manual comparison, but by itself it cannot add line
-information to a compiled binary. A Python line may lower to many CUDA or SASS instructions, and an
-asynchronous tile primitive may be understandable only in those lower-level views.
+After setting the variables, restart the workload so that the target kernel is recompiled in that
+process. The following is a collection-command template; replace `YOUR_KERNEL_NAME` and the program
+path on the final line:
 
-### Effects of NCU Collection on Experimental Conditions
+```bash
+ncu \
+  --config-file off \
+  --kernel-name 'regex:.*YOUR_KERNEL_NAME.*' \
+  --launch-count 1 \
+  --section SourceCounters \
+  --replay-mode kernel \
+  --cache-control all \
+  --clock-control boost \
+  --pipeline-boost-state stable \
+  --import-source yes \
+  --source-folders "$TVM_KERNEL_DUMP" \
+  --export reports/tirx-source \
+  --force-overwrite \
+  python path/to/your_workload.py
+```
 
-NCU collection can change the execution conditions:
+Open `ncu-ui reports/tirx-source.ncu-rep` and use the CUDA/SASS correlation on the Source page. The
+terminal equivalent is
+`ncu --import reports/tirx-source.ncu-rep --page source --print-source cuda,sass`.
+If `executable` is your TIRx compilation result,
+`executable.mod.imports[0].inspect_source("cuda")` prints the generated source for manual inspection.
+NCU's line-by-line correlation depends on line information embedded in the binary during this
+recompilation.
 
-- it can replay a kernel to collect counter groups;
-- its default cache control can flush GPU caches between replay iterations;
-- it can control GPU clocks;
-- replay can serialize or otherwise alter concurrent work;
-- application replay reruns the entire program and requires deterministic execution and launch
-  matching; it is not a remedy for a nondeterministic launch order;
-- a dependent multi-kernel region may require range replay rather than replaying one kernel in
-  isolation.
+#### Test the Hypothesis with a Code Change
 
-Record the NCU version, replay mode, cache control, clock control, selected sections, and kernel
-filter. Do not compare NCU's `Duration` column directly with an unprofiled hot-cache CUDA Event result.
-Do not run Proton and NCU in the same profiling process.
+Because this example calls the library-provided `torch.mm`, the kernel itself is not editable here.
+The following steps give concrete modifications and validation checks for a custom TIRx kernel or
+another DSL kernel.
 
-If NCU reports `ERR_NVGPUCTRPERM`, hardware-counter access is restricted. Follow NVIDIA's
-[counter-permission guidance](https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-nsightcompute)
-or ask the system administrator to enable the required access; do not make running every experiment as
-root the default solution.
+To test the hypothesis that the kernel has too few resident warps to hide L1TEX latency, adjust the
+tile, block, or pipeline stages to reduce `Registers Per Thread` and
+`Dynamic Shared Memory Per Block`. Then read both block limits again. A second block can reside only
+if both `Block Limit Registers` and `Block Limit Shared Mem` rise from one to at least two; improving
+only one is insufficient. Reducing register use can cause spills into local memory, and reducing
+shared-memory use may reduce data reuse. Also confirm that every other block limit is at least two,
+then inspect NCU's recalculated theoretical active blocks and occupancy. Use the latency measurement
+to determine whether the trade-off helps overall.
 
-## Analyze In-Kernel Stages with IKET (Optional)
+For a separate experiment, hold residency constant while moving a load or prefetch earlier or
+shortening the dependency chain. If `Long Scoreboard` and latency fall together, that supports the
+explanation that warps now spend less time waiting for data. Because this metric is normalized per
+issued instruction, a decrease in this value alone does not establish a speedup. Change one key
+factor at a time, then check three things:
 
-Nsight Systems represents one kernel as a single GPU activity, while NCU aggregates hardware metrics
-across the kernel. Neither produces a named timeline for load, compute, and wait phases inside a
-warp-specialized kernel. A TIRx kernel with phase annotations can use IKET (In-Kernel Event Tracing)
-to show when different warp roles work, wait, or overlap.
+1. **Correctness:** Compare both outputs with the same reference on the same inputs and with the same
+   tolerance. The current script already performs an FP32 reference check before timing or collection
+   begins; use the same reference and tolerance after substituting your own implementation.
+2. **Predicted metrics:** Collect the same NCU sections again and inspect the metrics relevant to the
+   prediction: for a residency experiment, inspect theoretical/active and eligible/issued warps;
+   for a dependency-chain experiment, inspect `Long Scoreboard`. Higher occupancy shows that the
+   residency experiment reached its resource target; the next check determines whether that change
+   also improves latency.
+3. **Actual latency:** Disable Proton, Nsight Systems, and NCU. Measure both implementations with
+   exactly the same shape, dtype, input policy, warm-up, CUDA Event boundary, and sample count used
+   at the beginning.
 
-TVM 0.26 integrates IKET for SM90-or-newer CUDA targets and validates a strict set of CUTLASS DSL,
-NVRTC, and related tool versions. The instrumentation changes the generated kernel, so its timing is
-useful for understanding phase relationships, not for reporting latency. See
+```bash
+python appendix/nsys_example.py \
+  --size 4096 \
+  --warmup-calls 500 \
+  --event-samples 20
+```
+
+Compare the unprofiled medians before and after the change, and inspect sample variation as well. If
+the correctness check passes, the metrics change as predicted, and CUDA Event latency decreases
+consistently, the hypothesis is supported. If the NCU metrics move as expected but latency does not
+improve, check whether another bottleneck has emerged or the original hypothesis was incomplete.
+
+## Use IKET to Inspect Phases Inside a DSL Kernel
+
+IKET (In-Kernel Event Tracing) adds an internal timeline to a warp-specialized TIRx kernel. Nsight
+Systems shows the beginning and end of the whole kernel, NCU aggregates hardware metrics across the
+launch, and IKET records when each warp role executes producer, wait, consumer, or other marked
+regions.
+
+### Run a Complete Example
+
+TVM 0.26 uses a version-pinned `cutlass-4.6.0` profiling profile. For the CUDA 13 environment used in
+this chapter, install the matching dependencies and confirm that `run-iket` is available:
+
+```bash
+python -m pip install \
+  'nvidia-cutlass-dsl[cu13]==4.6.0' \
+  'nvidia-cuda-nvdisasm==13.3.73' \
+  'nvidia-cuda-nvrtc==13.2.78'
+run-iket --help
+```
+
+The complete script below is available as `appendix/iket_example.py`. One CTA contains two warps.
+Warp 0 moves 256 elements from global to shared memory, both warps meet at a CTA barrier, and warp 1
+reads shared memory, computes the result, and writes it out. Three `range_push()` / `range_pop()`
+pairs mark the producer, wait, and consumer regions:
+
+```python
+"""Minimal TIRx workload with IKET ranges for two warp roles."""
+
+from pathlib import Path
+
+import numpy as np
+
+import tvm
+from tvm.script import tirx as T
+from tvm.tirx.cuda import iket
+
+
+N = 256
+ELEMS_PER_LANE = 8
+
+
+@T.prim_func
+def warp_role_example(inp: T.Buffer((N,), "float32"), out: T.Buffer((N,), "float32")):
+    T.device_entry()
+    profiler = iket.IketProfiler()
+    warp_id = T.warp_id([2])
+    lane = T.lane_id([32])
+    shared = T.alloc_buffer((N,), "float32", scope="shared")
+
+    profiler.mark("kernel_start", warp_id)
+    if warp_id == 0:
+        profiler.range_push("producer_load")
+        for i in T.serial(ELEMS_PER_LANE, unroll=False):
+            index = i * 32 + lane
+            shared[index] = inp[index]
+        profiler.range_pop()
+
+    profiler.range_push("wait_for_data")
+    T.cuda.cta_sync()
+    profiler.range_pop()
+
+    if warp_id == 1:
+        profiler.range_push("consumer_compute")
+        for i in T.serial(ELEMS_PER_LANE, unroll=False):
+            index = i * 32 + lane
+            out[index] = shared[index] * T.float32(2) + T.float32(1)
+        profiler.range_pop()
+
+
+def profile_workload():
+    target = tvm.target.Target({"kind": "cuda", "arch": "sm_100a"})
+    executable = tvm.compile(warp_role_example, target=target, tir_pipeline="tirx")
+    module = executable.jit()
+
+    input_numpy = np.arange(N, dtype=np.float32)
+    inp = tvm.runtime.tensor(input_numpy, device=tvm.cuda())
+    out = tvm.runtime.empty((N,), "float32", device=tvm.cuda())
+    module.main(inp, out)
+    tvm.cuda().sync()
+
+    expected = input_numpy * 2 + 1
+    np.testing.assert_array_equal(out.numpy(), expected)
+
+
+def main():
+    result = iket.run(
+        profile_workload,
+        output_dir=Path("reports/iket-warp-roles"),
+        postprocess="all",
+        clobber=True,
+        timeout=600.0,
+    )
+    print(f"IKET output directory: {result.output_dir}")
+    for path in (*result.json_traces, *result.perfetto_traces, *result.html_reports):
+        print(f"IKET artifact: {path}")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run it directly on a B200:
+
+```bash
+python appendix/iket_example.py
+```
+
+`iket.run` restarts the current script inside the IKET collection process and calls
+`profile_workload()`. Keeping `tvm.compile()` and `.jit()` inside that function ensures that the
+kernel is compiled and loaded while IKET recording is active. The script also verifies that the
+output equals `input * 2 + 1`.
+
+With `postprocess="all"`, the `reports/iket-warp-roles` directory receives JSON, `*.pftrace`, and HTML
+artifacts. Load the `*.pftrace` file in Perfetto to inspect `producer_load`, `wait_for_data`, and
+`consumer_compute`. Warp 1 reaches the barrier before warp 0 and therefore usually has a longer
+`wait_for_data` region. For an H100, change `sm_100a` in the script to `sm_90a`.
+
+### Move the Annotations into Your Kernel
+
+Create an `IketProfiler` inside the `PrimFunc`. Use `mark()` for an instantaneous event, and use
+matched `range_push()` / `range_pop()` or `range_start()` / `range_end()` calls around a phase. Every
+warp's actual control-flow path must keep ranges balanced. Mark waiting explicitly, as the example
+does with `wait_for_data`.
+
+Keep compilation and the first JIT load inside the function passed to `iket.run`. IKET supports
+Hopper and newer architectures and validates the CUTLASS DSL packages, NVRTC, `nvdisasm`, and related
+binaries against the pinned profile. The recording code inserted by IKET changes the generated
+kernel and adds overhead, so use the IKET trace to study phases and warp roles. Measure formal
+latency with the uninstrumented CUDA Event benchmark. See
 [`python/tvm/backend/cuda/iket.py`](https://github.com/apache/tvm/blob/v0.26.0/python/tvm/backend/cuda/iket.py)
 and the
 [NVIDIA IKET guide](https://github.com/NVIDIA/cutlass/blob/v4.6.0/media/docs/pythonDSL/cute_dsl_general/iket_profiling.rst)
-for the required versions, annotations, and Perfetto trace workflow.
-
-## Benchmark Checklist
-
-Before publishing a benchmark table or pull request, use this checklist to ensure that another person
-can reconstruct the measurement:
-
-| Category | Record |
-|---|---|
-| Hardware | Exact GPU, number of devices, topology when relevant, clock and power policy |
-| Software | Driver, CUDA, framework, compiler, library versions, and source commit |
-| Workload | Shapes, dtype, layouts, mask, scale, epilogue, input distribution, batch/sequence details, state and reset policy |
-| Correctness | Reference, tolerance, accumulation and output dtype, exceptional-input policy |
-| Timing | Timer type, kernel/operator/end-to-end boundary, stream policy, CUDA Graph use, values and units for `warmup`/`repeat`, `rounds`, and raw per-round results |
-| Cache | Reused inputs, rotating inputs, explicit flush policy, and whether the policy models the application |
-| Statistics | Raw latency unit, median or mean, spread, independent runs, implementation order |
-| Baseline | Library and algorithm, workspace, tuning budget, selected configuration |
-| Profiling | Proton/IKET/Nsight Systems/NCU versions, kernel filters, IKET ranges and trace format, Nsight Systems capture options and trace, NCU sections and replay/cache/clock controls |
-
-The final workflow is deliberately circular. A benchmark establishes that a change matters; a profile
-suggests why; the next unprofiled benchmark determines whether the explanation led to a real
-improvement.
+for the complete API and trace options.

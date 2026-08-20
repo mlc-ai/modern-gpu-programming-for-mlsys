@@ -1,4 +1,4 @@
-"""Small multi-stage CUDA workload for the Nsight Systems appendix example."""
+"""Reusable CUDA workload for the benchmarking and profiling appendix."""
 
 import argparse
 from statistics import median
@@ -7,21 +7,23 @@ import torch
 
 
 def make_workload(size: int):
-    host_a = torch.randn((size, size), dtype=torch.bfloat16, pin_memory=True)
-    a = torch.empty_like(host_a, device="cuda")
+    a = torch.randn((size, size), dtype=torch.bfloat16, device="cuda")
     b = torch.randn((size, size), dtype=torch.bfloat16, device="cuda")
     c = torch.empty((size, size), dtype=torch.bfloat16, device="cuda")
     output = torch.empty_like(c)
 
     def run():
-        with torch.cuda.nvtx.range("H2D input"):
-            a.copy_(host_a, non_blocking=True)
         with torch.cuda.nvtx.range("BF16 GEMM"):
             torch.mm(a, b, out=c)
         with torch.cuda.nvtx.range("ReLU"):
             torch.clamp_min(c, 0, out=output)
 
-    return run, output
+    def validate():
+        torch.set_float32_matmul_precision("highest")
+        expected = torch.clamp_min(torch.mm(a.float(), b.float()), 0).to(output.dtype)
+        torch.testing.assert_close(output, expected, rtol=2e-2, atol=1e-2)
+
+    return run, validate
 
 
 def run_once_for_profiler(run, *, warmup_calls: int):
@@ -54,16 +56,41 @@ def measure_event_us(run, *, warmup_calls: int, samples: int):
     return values
 
 
+def collect_proton(run, *, warmup_calls: int, profile_calls: int, output: str):
+    import triton.profiler as proton
+
+    for _ in range(warmup_calls):
+        run()
+    torch.cuda.synchronize()
+
+    session = proton.start(output, context="shadow", data="tree")
+    if session is None:
+        raise RuntimeError("Proton session could not be created")
+    try:
+        with proton.scope("target_operation"):
+            for _ in range(profile_calls):
+                run()
+        torch.cuda.synchronize()
+    finally:
+        proton.finalize(session)
+
+
 def main():
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--profile-once", action="store_true")
     mode.add_argument("--event-samples", type=int, default=0)
+    mode.add_argument("--proton-calls", type=int, default=0)
     parser.add_argument("--size", type=int, default=4096)
-    parser.add_argument("--warmup-calls", type=int, default=5)
+    parser.add_argument("--warmup-calls", type=int, default=500)
+    parser.add_argument("--proton-output", default="operator")
     args = parser.parse_args()
 
-    run, output = make_workload(args.size)
+    run, validate = make_workload(args.size)
+    run()
+    torch.cuda.synchronize()
+    validate()
+
     if args.profile_once:
         run_once_for_profiler(run, warmup_calls=args.warmup_calls)
     elif args.event_samples:
@@ -76,12 +103,16 @@ def main():
             f"median={median(values):.3f} us, "
             f"min={min(values):.3f} us, max={max(values):.3f} us"
         )
+    elif args.proton_calls:
+        collect_proton(
+            run,
+            warmup_calls=args.warmup_calls,
+            profile_calls=args.proton_calls,
+            output=args.proton_output,
+        )
     else:
         run()
         torch.cuda.synchronize()
-
-    if not torch.isfinite(output).all().item():
-        raise RuntimeError("workload produced a non-finite output")
 
 
 if __name__ == "__main__":
