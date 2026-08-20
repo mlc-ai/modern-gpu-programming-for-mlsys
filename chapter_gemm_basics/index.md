@@ -320,6 +320,11 @@ tflops = 2 * M * N * K / ms / 1e9
 print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 ```
 
+This short timing loop is sufficient for a smoke measurement, but it is not a complete experimental
+protocol. For reported results, follow {ref}`chap_benchmarking`: define the timing boundary, collect
+multiple samples, state the cache and clock policy, and separate unprofiled latency measurements from
+Proton or Nsight Compute analysis.
+
 ### Limits of the Single-Tile Kernel
 
 The kernel is correct, but it still has a narrow operating range:

@@ -258,3 +258,6 @@ SM 占用率受 registers、shared memory、warp slots 和 CTA slots 的限制�
 3. 检查实际实现离对应上限还有多远，并优化真正处于瓶颈的资源。
 
 对于 memory-bound kernel，重点是减少数据搬运，并让传输速度尽可能接近带宽上限；对于 compute-bound kernel，重点是减少计算单元的等待时间。Roofline 模型不能直接给出最终实现，但可以避免在不构成瓶颈的部分反复调参。
+
+Roofline 分析需要从可靠的测量结果出发。怎样测量 kernel 时间、怎样用 Proton 找到主要耗时的
+launch，以及怎样用 Nsight Compute 检验硬件层面的判断，统一整理在 {ref}`chap_benchmarking` 中。
