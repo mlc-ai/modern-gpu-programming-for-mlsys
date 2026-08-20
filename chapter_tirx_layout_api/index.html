@@ -184,7 +184,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Appendices</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../appendix/index.html">Overview</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx Language Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -195,6 +195,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -636,7 +637,7 @@
 <p>Now evaluate the layout assembled earlier from a shard, replica, and offset. Interpret <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">3)</span></code> as a coordinate in an <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">16)</span></code> input tile:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layout</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">[</span><span class="mi">8</span><span class="p">,</span> <span class="mi">16</span><span class="p">])</span>
 
-<span class="c1"># {&quot;laneid&quot;: 5, &quot;warpid&quot;: 5, &quot;m&quot;: 1}</span>
+<span class="c1"># {"laneid": 5, "warpid": 5, "m": 1}</span>
 </pre></div>
 </div>
 <p>The result follows in three steps. First, <code class="docutils literal notranslate"><span class="pre">(1,</span> <span class="pre">3)</span></code> becomes flat index <code class="docutils literal notranslate"><span class="pre">19</span></code> in the row-major <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">16)</span></code> shape. Splitting <code class="docutils literal notranslate"><span class="pre">19</span></code> according to the shard extents <code class="docutils literal notranslate"><span class="pre">(8,</span> <span class="pre">2,</span> <span class="pre">4,</span> <span class="pre">2)</span></code> gives:</p>

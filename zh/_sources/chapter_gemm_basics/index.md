@@ -318,6 +318,10 @@ tflops = 2 * M * N * K / ms / 1e9
 print(f"Performance: {ms:.3f} ms, {tflops:.1f} TFLOPS")
 ```
 
+这段计时循环适合快速确认数量级，但还不是完整的实验协议。需要报告性能结果时，请遵循
+{ref}`chap_benchmarking`：明确计时边界，采集多组样本，说明 cache 与 clock 策略，并将
+无 profiler 的 latency 测量和 Proton、Nsight Compute 分析分开运行。
+
 ### 单 Tile Kernel 的限制
 
 这个 kernel 已经能够算对，但适用范围很窄。当前仍有以下限制：

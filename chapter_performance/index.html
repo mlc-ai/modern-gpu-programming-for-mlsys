@@ -186,7 +186,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Appendices</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../appendix/index.html">Overview</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx Language Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -197,6 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -699,6 +700,9 @@ actually binding.</p></li>
 bandwidth ceiling. For a compute-bound kernel, focus on reducing idle time in the compute units. The roofline model does not
 produce the final implementation, but it prevents effort from being spent on resources that are not
 the bottleneck.</p>
+<p>Roofline interpretation starts from a trustworthy measurement. The practical workflow for timing a
+kernel, locating its expensive launches with Proton, and testing a hardware hypothesis with Nsight
+Compute is collected in <a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html#chap-benchmarking"><span class="std std-ref">Measuring and Analyzing GPU Kernel Performance</span></a>.</p>
 </section>
 </section>
 

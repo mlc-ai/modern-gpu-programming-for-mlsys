@@ -186,7 +186,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">概览</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -197,6 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
 </ul>
@@ -325,7 +326,7 @@
                   
   <section class="tex2jax_ignore mathjax_ignore" id="chap-appendix">
 <span id="id1"></span><h1>概览<a class="headerlink" href="#chap-appendix" title="Link to this heading">#</a></h1>
-<p>本书的主线内容位于第一至第四部分。阅读过程中需要查询具体细节时，可以使用下面的参考资料：</p>
+<p>本书的主线内容位于第一至第四部分。附录收录了阅读过程中可能需要查询的补充内容：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>需要查询的内容</p></th>
@@ -336,10 +337,13 @@
 <tr class="row-even"><td><p>TIRx 语言特性的准确写法和语义</p></td>
 <td><p><strong><a class="reference internal" href="../tirx_guide/language_reference/index.html#chap-language-reference"><span class="std std-ref">TIRx 语言参考</span></a></strong></p></td>
 </tr>
-<tr class="row-odd"><td><p>编译器内部机制与 lowering 流程</p></td>
+<tr class="row-odd"><td><p>可复现地测量、比较和分析 GPU kernel 性能</p></td>
+<td><p><strong><a class="reference internal" href="benchmarking_gpu_kernels.html#chap-benchmarking"><span class="std std-ref">GPU Kernel 性能测量与分析</span></a></strong></p></td>
+</tr>
+<tr class="row-even"><td><p>编译器内部机制与 lowering 流程</p></td>
 <td><p><strong><a class="reference internal" href="../tirx_guide/arch/index.html#chap-arch"><span class="std std-ref">编译器内部机制</span></a></strong></p></td>
 </tr>
-<tr class="row-even"><td><p>排查异步 GEMM 或 Flash Attention kernel 的卡死、崩溃、错误结果和性能下降</p></td>
+<tr class="row-odd"><td><p>排查异步 GEMM 或 Flash Attention kernel 的卡死、崩溃、错误结果和性能下降</p></td>
 <td><p><strong><a class="reference internal" href="debugging_warp_specialized.html#chap-warp-spec-debug"><span class="std std-ref">调试 Warp-Specialized Kernels</span></a></strong></p></td>
 </tr>
 </tbody>

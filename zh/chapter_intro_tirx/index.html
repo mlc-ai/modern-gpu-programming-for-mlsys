@@ -186,7 +186,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../appendix/index.html">概览</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -197,6 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
 </ul>
@@ -354,7 +355,7 @@
 </pre></div>
 </div>
 <p>安装后可以运行下面的命令，确认 TVM 和 TIRx 能够正常导入：</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import tvm, tvm.tirx; print(tvm.__version__)&quot;</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import tvm, tvm.tirx; print(tvm.__version__)"</span>
 </pre></div>
 </div>
 <p>后续章节中的可运行示例也使用同一套环境。</p>
@@ -400,10 +401,10 @@ D:   tcgen05.mma -&gt; TMEM -&gt; registers -&gt; GMEM
 <p>函数 <code class="docutils literal notranslate"><span class="pre">hgemm_v1(M,</span> <span class="pre">N,</span> <span class="pre">K)</span></code> 会构造并返回一个 TIRx <code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code>：</p>
 <p><code class="docutils literal notranslate"><span class="pre">&#64;T.prim_func</span></code> 用来定义这个 GPU 函数，<code class="docutils literal notranslate"><span class="pre">T.device_entry()</span></code> 标记 device 代码的入口。<code class="docutils literal notranslate"><span class="pre">T.cta_id</span></code> 取得 CTA 在 grid 中的坐标，<code class="docutils literal notranslate"><span class="pre">T.warpgroup_id</span></code> 取得 warpgroup 在 CTA 中的编号，<code class="docutils literal notranslate"><span class="pre">T.warp_id_in_wg</span></code> 取得 warp 在 warpgroup 中的编号，<code class="docutils literal notranslate"><span class="pre">T.lane_id</span></code> 则取得 thread 在 warp 中的 lane ID。后面的 scope 和条件判断会使用这些值。</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">hgemm_v1</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">K</span><span class="p">):</span>
-    <span class="n">a_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
-    <span class="n">b_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
-    <span class="n">d_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float16&quot;</span><span class="p">)</span>
-    <span class="n">acc_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">a_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">"float16"</span><span class="p">)</span>
+    <span class="n">b_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">"float16"</span><span class="p">)</span>
+    <span class="n">d_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">"float16"</span><span class="p">)</span>
+    <span class="n">acc_type</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">DataType</span><span class="p">(</span><span class="s2">"float32"</span><span class="p">)</span>
 
     <span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">,</span> <span class="n">BLK_K</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">64</span>
     <span class="n">A_layout</span> <span class="o">=</span> <span class="n">mma_shared_layout</span><span class="p">(</span><span class="n">a_type</span><span class="p">,</span> <span class="n">SwizzleMode</span><span class="o">.</span><span class="n">SWIZZLE_128B_ATOM</span><span class="p">,</span> <span class="p">(</span><span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">))</span>
@@ -425,8 +426,8 @@ D:   tcgen05.mma -&gt; TMEM -&gt; registers -&gt; GMEM
 
         <span class="c1"># --- 申请 SMEM ---</span>
         <span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>
-        <span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>
-        <span class="n">mma_bar</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint64&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+        <span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"uint32"</span><span class="p">)</span>
+        <span class="n">mma_bar</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"uint64"</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
         <span class="n">pool</span><span class="o">.</span><span class="n">move_base_to</span><span class="p">(</span><span class="mi">1024</span><span class="p">)</span>
         <span class="n">Asmem</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">),</span> <span class="n">a_type</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">A_layout</span><span class="p">)</span>
         <span class="n">Bsmem</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">),</span> <span class="n">b_type</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">B_layout</span><span class="p">)</span>
@@ -438,12 +439,12 @@ D:   tcgen05.mma -&gt; TMEM -&gt; registers -&gt; GMEM
                 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="mi">1</span><span class="p">)</span>
             <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">address_of</span><span class="p">(</span><span class="n">tmem_addr</span><span class="p">),</span> <span class="n">n_cols</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 
-        <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">proxy_async</span><span class="p">(</span><span class="s2">&quot;shared::cta&quot;</span><span class="p">)</span>
+        <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">proxy_async</span><span class="p">(</span><span class="s2">"shared::cta"</span><span class="p">)</span>
         <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">fence</span><span class="o">.</span><span class="n">mbarrier_init</span><span class="p">()</span>
         <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
 
         <span class="n">tmem</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
-            <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span> <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+            <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"tmem"</span><span class="p">,</span> <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
             <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)])</span>
         <span class="p">)</span>
 
@@ -461,7 +462,7 @@ D:   tcgen05.mma -&gt; TMEM -&gt; registers -&gt; GMEM
             <span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
                 <span class="n">Tx</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span>
                     <span class="n">tmem</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">],</span> <span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span>
-                    <span class="n">accum</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">dispatch</span><span class="o">=</span><span class="s2">&quot;tcgen05&quot;</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span>
+                    <span class="n">accum</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">dispatch</span><span class="o">=</span><span class="s2">"tcgen05"</span><span class="p">,</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span>
                 <span class="p">)</span>
                 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">tcgen05</span><span class="o">.</span><span class="n">commit</span><span class="p">(</span><span class="n">mma_bar</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]),</span> <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
 
@@ -495,13 +496,13 @@ D:   tcgen05.mma -&gt; TMEM -&gt; registers -&gt; GMEM
 <p>编译后的 <code class="docutils literal notranslate"><span class="pre">ex.mod(...)</span></code> 可以直接接收 PyTorch tensors，不需要手工转换数据：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 
-<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
-<span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">"cuda"</span><span class="p">)</span>
+<span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s2">"cuda"</span><span class="p">)</span>
 
 <span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">K</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">64</span>
 <span class="n">kernel</span> <span class="o">=</span> <span class="n">hgemm_v1</span><span class="p">(</span><span class="n">M</span><span class="p">,</span> <span class="n">N</span><span class="p">,</span> <span class="n">K</span><span class="p">)</span>
 <span class="k">with</span> <span class="n">target</span><span class="p">:</span>
-    <span class="n">ex</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">kernel</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">&quot;tirx&quot;</span><span class="p">)</span>
+    <span class="n">ex</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">"main"</span><span class="p">:</span> <span class="n">kernel</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">"tirx"</span><span class="p">)</span>
 
 <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">empty_cache</span><span class="p">()</span>
 <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
@@ -513,9 +514,9 @@ D:   tcgen05.mma -&gt; TMEM -&gt; registers -&gt; GMEM
 
 <span class="n">D_ref</span> <span class="o">=</span> <span class="p">(</span><span class="n">A_tensor</span><span class="o">.</span><span class="n">float</span><span class="p">()</span> <span class="o">@</span> <span class="n">B_tensor</span><span class="o">.</span><span class="n">float</span><span class="p">()</span><span class="o">.</span><span class="n">T</span><span class="p">)</span><span class="o">.</span><span class="n">half</span><span class="p">()</span>
 <span class="n">max_err</span> <span class="o">=</span> <span class="nb">float</span><span class="p">((</span><span class="n">D_tensor</span> <span class="o">-</span> <span class="n">D_ref</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">())</span>
-<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Max error vs torch reference: </span><span class="si">{</span><span class="n">max_err</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Max error vs torch reference: </span><span class="si">{</span><span class="n">max_err</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
 <span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">D_tensor</span><span class="p">,</span> <span class="n">D_ref</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="mf">2e-2</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="mf">1e-2</span><span class="p">)</span>
-<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;PASS&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"PASS"</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>如果最后输出 <code class="docutils literal notranslate"><span class="pre">PASS</span></code>，说明编译后的 kernel 与 PyTorch 参考实现的结果在允许误差内一致。</p>
@@ -535,8 +536,8 @@ D:   tcgen05.mma -&gt; TMEM -&gt; registers -&gt; GMEM
 <section id="id2">
 <h2>TIRx 如何编译<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
 <p>前面已经用下面两行代码编译了 kernel：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
-<span class="n">ex</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">kernel</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">&quot;tirx&quot;</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">"cuda"</span><span class="p">)</span>
+<span class="n">ex</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">"main"</span><span class="p">:</span> <span class="n">kernel</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">"tirx"</span><span class="p">)</span>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code> 首先被放入一个 <code class="docutils literal notranslate"><span class="pre">IRModule</span></code>，随后交给 <code class="docutils literal notranslate"><span class="pre">tvm.compile</span></code>。<code class="docutils literal notranslate"><span class="pre">tir_pipeline=&quot;tirx&quot;</span></code> 会启动 TIRx lowering pipeline。其中的核心 pass <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 根据每项 tile primitive 的 scope、layout 和 dispatch 选择具体实现，将 <code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code>、<code class="docutils literal notranslate"><span class="pre">Tx.cta.copy</span></code> 等高层 tile 操作展开成更底层的 TIR。</p>

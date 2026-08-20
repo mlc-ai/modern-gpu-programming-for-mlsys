@@ -184,7 +184,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Appendices</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../appendix/index.html">Overview</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../language_reference/index.html">TIRx Language Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -195,6 +195,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/benchmarking_gpu_kernels.html">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">Compiler Internals</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -615,8 +616,8 @@ function is split into a CPU-side launcher and a GPU kernel. The kernel processe
 
 <span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">scale</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">,</span> <span class="n">B_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
-    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
-    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
     <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
     <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">4</span><span class="p">])</span>
     <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">thread_id</span><span class="p">([</span><span class="mi">256</span><span class="p">])</span>
@@ -632,8 +633,8 @@ kernel. <code class="docutils literal notranslate"><span class="pre">T.cta_id([4
 <p><strong>2. ``LowerTIRx`` lowers the abstract identifiers to TIR thread bindings.</strong> It
 binds <code class="docutils literal notranslate"><span class="pre">bx</span></code> to <code class="docutils literal notranslate"><span class="pre">blockIdx.x</span></code> and <code class="docutils literal notranslate"><span class="pre">tx</span></code> to <code class="docutils literal notranslate"><span class="pre">threadIdx.x</span></code>. Omitting buffer
 declarations, the core computation is equivalent to:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="k">as</span> <span class="n">bx</span><span class="p">:</span>
-    <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">"blockIdx.x"</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="k">as</span> <span class="n">bx</span><span class="p">:</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">"threadIdx.x"</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span>
     <span class="n">B</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 </pre></div>
 </div>
@@ -677,8 +678,8 @@ backend, while <code class="docutils literal notranslate"><span class="pre">with
 <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code>:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx</span><span class="w"> </span><span class="kn">import</span> <span class="n">transform</span> <span class="k">as</span> <span class="n">TT</span>
 
-<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">with_host</span><span class="p">(</span><span class="s2">&quot;llvm&quot;</span><span class="p">)</span>
-<span class="n">mod</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">})</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">"cuda"</span><span class="p">)</span><span class="o">.</span><span class="n">with_host</span><span class="p">(</span><span class="s2">"llvm"</span><span class="p">)</span>
+<span class="n">mod</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">"main"</span><span class="p">:</span> <span class="n">scale</span><span class="p">})</span>
 <span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">BindTarget</span><span class="p">(</span><span class="n">target</span><span class="p">)(</span><span class="n">mod</span><span class="p">)</span>
 <span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">LowerTIRx</span><span class="p">()(</span><span class="n">mod</span><span class="p">)</span>         <span class="c1"># run LowerTIRx to lower abstract thread IDs</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">mod</span><span class="o">.</span><span class="n">script</span><span class="p">())</span>               <span class="c1"># inspect the IR after LowerTIRx</span>
@@ -689,7 +690,7 @@ the original <code class="docutils literal notranslate"><span class="pre">T.cta_
 <p>To inspect the final CUDA, run the complete pipeline. The host module in this
 example imports exactly one device module, so <code class="docutils literal notranslate"><span class="pre">imports[0]</span></code> is the generated
 CUDA module, and <code class="docutils literal notranslate"><span class="pre">inspect_source()</span></code> returns its source code:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">exe</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">&quot;tirx&quot;</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">exe</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">"main"</span><span class="p">:</span> <span class="n">scale</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">"tirx"</span><span class="p">)</span>
 <span class="n">cuda_mod</span> <span class="o">=</span> <span class="n">exe</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">cuda_mod</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">())</span>
 </pre></div>

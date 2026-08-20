@@ -861,7 +861,7 @@ def hgemm_v9(M, N, K):
 
 ## 完整优化结果
 
-下表列出从朴素 baseline 到 warp-specialized cluster kernel 的各个阶段，并给出 cuBLAS 作为参考。测试使用 NVIDIA B200、`M=N=K=4096`、fp16 和固定 clocks，每个版本计时 1000 次：
+下表列出从朴素 baseline 到 warp-specialized cluster kernel 的各个阶段，并给出 cuBLAS 作为参考。测试使用 NVIDIA B200、`M=N=K=4096`、fp16 和固定 clocks，每个版本计时 1000 次。新增测量或尝试复现这组结果时，应遵循 {ref}`chap_benchmarking` 中的完整协议。
 
 | 步骤 | 优化方法 | 时间 | 相对第 1 步的累计加速比 |
 |------|----------|------|--------|

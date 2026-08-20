@@ -186,7 +186,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../appendix/index.html">概览</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -197,6 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">编译器内部机制</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">TIRx 编译流水线</a></li>
 </ul>
@@ -513,8 +514,8 @@ backend 选择对应实现。它还会把 <code class="docutils literal notransl
 
 <span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">scale</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">,</span> <span class="n">B_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
-    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
-    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
     <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
     <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">4</span><span class="p">])</span>
     <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">thread_id</span><span class="p">([</span><span class="mi">256</span><span class="p">])</span>
@@ -526,8 +527,8 @@ backend 选择对应实现。它还会把 <code class="docutils literal notransl
 仍是 TIRx 提供的抽象编号。</p>
 <p><strong>2. ``LowerTIRx`` 将抽象编号转换为 TIR 线程绑定。</strong> 它把 <code class="docutils literal notranslate"><span class="pre">bx</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tx</span></code>
 分别绑定到 <code class="docutils literal notranslate"><span class="pre">blockIdx.x</span></code> 与 <code class="docutils literal notranslate"><span class="pre">threadIdx.x</span></code>。省略 buffer declarations 后，核心计算等价于：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;blockIdx.x&quot;</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="k">as</span> <span class="n">bx</span><span class="p">:</span>
-    <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">&quot;threadIdx.x&quot;</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">with</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">"blockIdx.x"</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="k">as</span> <span class="n">bx</span><span class="p">:</span>
+    <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">launch_thread</span><span class="p">(</span><span class="s2">"threadIdx.x"</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span>
     <span class="n">B</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">bx</span> <span class="o">*</span> <span class="mi">256</span> <span class="o">+</span> <span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 </pre></div>
 </div>
@@ -563,8 +564,8 @@ backend 最后生成 CUDA 源码。</p>
 <code class="docutils literal notranslate"><span class="pre">BindTarget</span></code> 将这组 target 信息写入 module，随后只运行 <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code>：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx</span><span class="w"> </span><span class="kn">import</span> <span class="n">transform</span> <span class="k">as</span> <span class="n">TT</span>
 
-<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">with_host</span><span class="p">(</span><span class="s2">&quot;llvm&quot;</span><span class="p">)</span>
-<span class="n">mod</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">})</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">"cuda"</span><span class="p">)</span><span class="o">.</span><span class="n">with_host</span><span class="p">(</span><span class="s2">"llvm"</span><span class="p">)</span>
+<span class="n">mod</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">"main"</span><span class="p">:</span> <span class="n">scale</span><span class="p">})</span>
 <span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">BindTarget</span><span class="p">(</span><span class="n">target</span><span class="p">)(</span><span class="n">mod</span><span class="p">)</span>
 <span class="n">mod</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">LowerTIRx</span><span class="p">()(</span><span class="n">mod</span><span class="p">)</span>         <span class="c1"># 运行 LowerTIRx，转换抽象线程编号</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">mod</span><span class="o">.</span><span class="n">script</span><span class="p">())</span>               <span class="c1"># 查看 LowerTIRx 之后的 IR</span>
@@ -575,7 +576,7 @@ backend 最后生成 CUDA 源码。</p>
 <p>要查看最终 CUDA，可以运行完整 pipeline。这里的 host module 只导入了一个
 device module，因此 <code class="docutils literal notranslate"><span class="pre">imports[0]</span></code> 就是生成的 CUDA module；
 <code class="docutils literal notranslate"><span class="pre">inspect_source()</span></code> 返回它的源码：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">exe</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">&quot;main&quot;</span><span class="p">:</span> <span class="n">scale</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">&quot;tirx&quot;</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">exe</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">"main"</span><span class="p">:</span> <span class="n">scale</span><span class="p">}),</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">"tirx"</span><span class="p">)</span>
 <span class="n">cuda_mod</span> <span class="o">=</span> <span class="n">exe</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">cuda_mod</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">())</span>
 </pre></div>

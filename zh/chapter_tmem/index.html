@@ -186,7 +186,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../appendix/index.html">概览</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -197,6 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
 </ul>
@@ -364,7 +365,7 @@
 <p>TMEM 采用动态分配。<code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> 沿 Column 维申请空间，可用的 <code class="docutils literal notranslate"><span class="pre">n_cols</span></code> 为 32、64、128、256 或 512；每次申请一个 column 时，该 column 中全部 128 个 Lane 位置会一起分配。</p>
 <p>下面是后续 TIRx kernel 中常见的写法：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>
-<span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>
+<span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"uint32"</span><span class="p">)</span>
 <span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
 
 <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
@@ -378,8 +379,8 @@
 <p>拿到 base address 后，TIRx 会在这段已分配的空间上声明一个 TMEM buffer：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tmem</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
     <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">),</span>
-    <span class="s2">&quot;float32&quot;</span><span class="p">,</span>
-    <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span>
+    <span class="s2">"float32"</span><span class="p">,</span>
+    <span class="n">scope</span><span class="o">=</span><span class="s2">"tmem"</span><span class="p">,</span>
     <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
     <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span>
         <span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]</span>

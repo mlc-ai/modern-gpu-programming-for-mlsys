@@ -187,7 +187,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="appendix/index.html">概览</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -198,6 +198,7 @@
 <li class="toctree-l2"><a class="reference internal" href="tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="tirx_guide/arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
 </ul>
@@ -350,7 +351,7 @@
 <li><p><strong>第二部分：TIRx 概览。</strong> 这一部分介绍 TIRx 的核心组成部分，为理解后续章节中的代码示例做准备。</p></li>
 <li><p><strong>第三部分：GEMM：从 Tiled 到 SOTA。</strong> 这一部分完整讲解如何优化一个 tiled GEMM，并逐步加入 TMA pipelining、persistent scheduling、warp specialization 和 2-CTA cluster。</p></li>
 <li><p><strong>第四部分：Flash Attention 4。</strong> 这一部分基于第三部分的技术构建完整的 attention kernel：两个 MMA，中间插入 softmax，并包含 online-softmax rescaling、causal mask 和 GQA。</p></li>
-<li><p><strong>参考资料。</strong> TIRx 语言参考、编译器内部机制，以及异步 kernel 调试指南。</p></li>
+<li><p><strong>附录。</strong> TIRx 语言参考、可复现的 GPU 性能测量与分析流程、编译器内部机制，以及异步 kernel 调试指南。</p></li>
 </ul>
 <div class="toctree-wrapper compound">
 <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
@@ -425,10 +426,11 @@
 </ul>
 </div>
 <div class="toctree-wrapper compound">
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
 <ul>
 <li class="toctree-l1"><a class="reference internal" href="appendix/index.html">概览</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tirx_guide/language_reference/index.html">TIRx 语言参考</a></li>
+<li class="toctree-l1"><a class="reference internal" href="appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1"><a class="reference internal" href="tirx_guide/arch/index.html">编译器内部机制</a></li>
 <li class="toctree-l1"><a class="reference internal" href="appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
 </ul>

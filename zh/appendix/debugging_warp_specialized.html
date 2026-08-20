@@ -185,7 +185,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="index.html">概览</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -196,6 +196,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
 </ul>
@@ -358,8 +359,8 @@ correction 也使用类似的交接方式。调试这类 kernel 时，可以先�
 <section id="id1">
 <h2>调试前先检查环境<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
 <p>先排除运行环境的问题：</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import tvm, tvm.tirx; print(tvm.__file__, tvm.__version__)&quot;</span>
-python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import torch; print(torch.cuda.get_device_name(), torch.cuda.get_device_capability())&quot;</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import tvm, tvm.tirx; print(tvm.__file__, tvm.__version__)"</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import torch; print(torch.cuda.get_device_name(), torch.cuda.get_device_capability())"</span>
 </pre></div>
 </div>
 <p>这些 kernel 面向 Blackwell（<code class="docutils literal notranslate"><span class="pre">sm_100a</span></code>）。如果 Python 导入了旧的 TVM
@@ -451,9 +452,9 @@ Flash Attention 中 QKᵀ MMA、softmax、PV MMA 和 correction 之间的交接�
 <p>对于任意已编译的 kernel，都可以保存 CUDA 源码，便于搜索和比较：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
-<span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
-<span class="n">Path</span><span class="p">(</span><span class="s2">&quot;artifacts&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<span class="n">Path</span><span class="p">(</span><span class="s2">&quot;artifacts/my_kernel.cu&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+<span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">"cuda"</span><span class="p">)</span>
+<span class="n">Path</span><span class="p">(</span><span class="s2">"artifacts"</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">Path</span><span class="p">(</span><span class="s2">"artifacts/my_kernel.cu"</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">)</span>
 </pre></div>
 </div>

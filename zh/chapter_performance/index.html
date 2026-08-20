@@ -188,7 +188,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../appendix/index.html">概览</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -199,6 +199,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
 </ul>
@@ -548,6 +549,8 @@ store tile k - 1
 <li><p>检查实际实现离对应上限还有多远，并优化真正处于瓶颈的资源。</p></li>
 </ol>
 <p>对于 memory-bound kernel，重点是减少数据搬运，并让传输速度尽可能接近带宽上限；对于 compute-bound kernel，重点是减少计算单元的等待时间。Roofline 模型不能直接给出最终实现，但可以避免在不构成瓶颈的部分反复调参。</p>
+<p>Roofline 分析需要从可靠的测量结果出发。怎样测量 kernel 时间、怎样用 Proton 找到主要耗时的
+launch，以及怎样用 Nsight Compute 检验硬件层面的判断，统一整理在 <a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html#chap-benchmarking"><span class="std std-ref">GPU Kernel 性能测量与分析</span></a> 中。</p>
 </section>
 </section>
 

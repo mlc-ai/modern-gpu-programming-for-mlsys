@@ -338,3 +338,7 @@ For a memory-bound kernel, focus on reducing data movement and making transfers 
 bandwidth ceiling. For a compute-bound kernel, focus on reducing idle time in the compute units. The roofline model does not
 produce the final implementation, but it prevents effort from being spent on resources that are not
 the bottleneck.
+
+Roofline interpretation starts from a trustworthy measurement. The practical workflow for timing a
+kernel, locating its expensive launches with Proton, and testing a hardware hypothesis with Nsight
+Compute is collected in {ref}`chap_benchmarking`.

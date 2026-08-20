@@ -184,7 +184,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Appendices</span></p>
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../appendix/index.html">Overview</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx Language Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -195,6 +195,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -428,7 +429,7 @@
 <p>TMEM is allocated dynamically. <code class="docutils literal notranslate"><span class="pre">tcgen05.alloc</span></code> reserves space along the Column dimension, with legal <code class="docutils literal notranslate"><span class="pre">n_cols</span></code> values of 32, 64, 128, 256, or 512. Allocating one column reserves all 128 Lane positions in that column.</p>
 <p>The following pattern appears in later TIRx kernels:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">pool</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">SMEMPool</span><span class="p">()</span>
-<span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint32&quot;</span><span class="p">)</span>
+<span class="n">tmem_addr</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"uint32"</span><span class="p">)</span>
 <span class="n">pool</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
 
 <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
@@ -442,8 +443,8 @@
 <p>Once the base address is available, TIRx can declare a TMEM buffer over the allocated region:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tmem</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
     <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">),</span>
-    <span class="s2">&quot;float32&quot;</span><span class="p">,</span>
-    <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;tmem&quot;</span><span class="p">,</span>
+    <span class="s2">"float32"</span><span class="p">,</span>
+    <span class="n">scope</span><span class="o">=</span><span class="s2">"tmem"</span><span class="p">,</span>
     <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
     <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span>
         <span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]</span>

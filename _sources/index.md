@@ -39,8 +39,8 @@ This book is open source. Contributions, corrections, and examples are welcome t
   TMA pipelining, persistent scheduling, warp specialization, and 2-CTA clusters.
 - **Part IV, Flash Attention 4.** A complete attention kernel built from the Part III techniques:
   two MMAs with softmax between them, online-softmax rescaling, causal masking, and GQA.
-- **Reference.** TIRx language reference, compiler internals, and a guide to debugging asynchronous
-  kernels.
+- **Appendices.** TIRx language reference, a reproducible GPU benchmarking and profiling workflow,
+  compiler internals, and a guide to debugging asynchronous kernels.
 
 ```{toctree}
 :caption: Part I, Understanding the GPU
@@ -82,11 +82,12 @@ chapter_flash_attention/index
 ```
 
 ```{toctree}
-:caption: Reference
+:caption: Appendices
 :maxdepth: 1
 
 appendix/index
 tirx_guide/language_reference/index
+appendix/benchmarking_gpu_kernels
 tirx_guide/arch/index
 appendix/debugging_warp_specialized
 ```

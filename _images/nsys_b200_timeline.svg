@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="500" viewBox="0 0 1500 500">
+<rect width="100%" height="100%" fill="#ffffff" rx="14"/>
+<style>text { font-family: Inter, Arial, "Noto Sans CJK SC", sans-serif; }</style>
+<text x="235" y="35" font-size="24" font-weight="700">One Real Nsight Systems Capture on B200</text>
+<text x="235" y="61" font-size="15" fill="#58677c">4096×4096 BF16: GEMM → ReLU</text>
+<line x1="235" y1="88" x2="1440" y2="88" stroke="#9aa7b8" stroke-width="1"/>
+<line x1="235.00" y1="83" x2="235.00" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="235.00" y="80" font-size="12" text-anchor="middle" fill="#64748b">0 μs</text>
+<line x1="385.62" y1="83" x2="385.62" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="385.62" y="80" font-size="12" text-anchor="middle" fill="#64748b">50 μs</text>
+<line x1="536.25" y1="83" x2="536.25" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="536.25" y="80" font-size="12" text-anchor="middle" fill="#64748b">100 μs</text>
+<line x1="686.88" y1="83" x2="686.88" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="686.88" y="80" font-size="12" text-anchor="middle" fill="#64748b">150 μs</text>
+<line x1="837.50" y1="83" x2="837.50" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="837.50" y="80" font-size="12" text-anchor="middle" fill="#64748b">200 μs</text>
+<line x1="988.12" y1="83" x2="988.12" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="988.12" y="80" font-size="12" text-anchor="middle" fill="#64748b">250 μs</text>
+<line x1="1138.75" y1="83" x2="1138.75" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="1138.75" y="80" font-size="12" text-anchor="middle" fill="#64748b">300 μs</text>
+<line x1="1289.38" y1="83" x2="1289.38" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="1289.38" y="80" font-size="12" text-anchor="middle" fill="#64748b">350 μs</text>
+<line x1="1440.00" y1="83" x2="1440.00" y2="430" stroke="#e5e9ef" stroke-width="1"/>
+<text x="1440.00" y="80" font-size="12" text-anchor="middle" fill="#64748b">400 μs</text>
+<text x="217" y="147" font-size="15" font-weight="600" text-anchor="end">Outer NVTX</text>
+<line x1="235" y1="170" x2="1440" y2="170" stroke="#eef1f5"/>
+<text x="217" y="232" font-size="15" font-weight="600" text-anchor="end">Child NVTX ranges</text>
+<line x1="235" y1="255" x2="1440" y2="255" stroke="#eef1f5"/>
+<text x="217" y="317" font-size="15" font-weight="600" text-anchor="end">CUDA APIs</text>
+<line x1="235" y1="340" x2="1440" y2="340" stroke="#eef1f5"/>
+<text x="217" y="402" font-size="15" font-weight="600" text-anchor="end">GPU stream 7</text>
+<line x1="235" y1="425" x2="1440" y2="425" stroke="#eef1f5"/>
+<rect x="235.00" y="125" width="1132.68" height="34" rx="6" fill="#365f9d" stroke="#243247" stroke-width="0.8"/>
+<text x="801.34" y="147" font-size="13" font-weight="600" text-anchor="middle" style="fill:#ffffff">target operation · host NVTX 376.0 μs</text>
+<rect x="252.86" y="210" width="587.69" height="34" rx="6" fill="#598bc2" stroke="#243247" stroke-width="0.8"/>
+<text x="546.70" y="232" font-size="13" font-weight="600" text-anchor="middle" style="fill:#ffffff">BF16 GEMM</text>
+<rect x="877.29" y="210" width="180.06" height="34" rx="6" fill="#86b6df" stroke="#243247" stroke-width="0.8"/>
+<text x="967.32" y="232" font-size="13" font-weight="600" text-anchor="middle" style="fill:#243247">ReLU</text>
+<rect x="643.74" y="295" width="152.78" height="34" rx="6" fill="#d7832f" stroke="#243247" stroke-width="0.8"/>
+<rect x="1003.40" y="295" width="40.59" height="34" rx="6" fill="#c76d25" stroke="#243247" stroke-width="0.8"/>
+<rect x="1295.99" y="295" width="62.39" height="34" rx="6" fill="#b85f46" stroke="#243247" stroke-width="0.8"/>
+<line x1="720.14" y1="295" x2="720.14" y2="279" stroke="#8a4c23"/>
+<text x="720.14" y="274" font-size="12" text-anchor="middle" fill="#7a4222">GEMM launch · 50.7 μs</text>
+<line x1="1023.69" y1="295" x2="1023.69" y2="279" stroke="#8a4c23"/>
+<text x="1023.69" y="274" font-size="12" text-anchor="middle" fill="#7a4222">ReLU launch · 13.5 μs</text>
+<line x1="1327.18" y1="295" x2="1315.18" y2="279" stroke="#8a4c23"/>
+<text x="1315.18" y="274" font-size="12" text-anchor="end" fill="#7a4222">sync · 20.7 μs</text>
+<rect x="779.62" y="380" width="278.98" height="34" rx="6" fill="#6f55b5" stroke="#243247" stroke-width="0.8"/>
+<text x="919.11" y="402" font-size="13" font-weight="600" text-anchor="middle" style="fill:#ffffff">GEMM · 92.6 μs</text>
+<rect x="1059.27" y="380" width="32.97" height="34" rx="6" fill="#a574d1" stroke="#243247" stroke-width="0.8"/>
+<line x1="1075.76" y1="380" x2="1060.76" y2="362" stroke="#6f4b8d"/>
+<text x="1057.76" y="357" font-size="12" text-anchor="end" fill="#6f4b8d">ReLU · 10.9 μs</text>
+<text x="235" y="475" font-size="13" fill="#58677c">Time is relative to the outer NVTX-range start; horizontal lengths come from the measured capture.</text>
+</svg>

@@ -186,7 +186,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">参考资料</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/index.html">概览</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="../index.html">TIRx 语言参考</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
@@ -197,6 +197,7 @@
 <li class="toctree-l2"><a class="reference internal" href="threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
 </ul>
@@ -375,8 +376,8 @@ values。对象字段可以保存 buffers 和 scalars，因此可以把相关的
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">meta_class</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">State</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">smem</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">buf</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">([</span><span class="mi">64</span><span class="p">],</span> <span class="s2">&quot;float16&quot;</span><span class="p">,</span> <span class="n">smem</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;shared.dyn&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">"float32"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buf</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">([</span><span class="mi">64</span><span class="p">],</span> <span class="s2">"float16"</span><span class="p">,</span> <span class="n">smem</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"shared.dyn"</span><span class="p">)</span>
 
 <span class="n">s</span> <span class="o">=</span> <span class="n">State</span><span class="p">(</span><span class="n">smem</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
 <span class="n">s</span><span class="o">.</span><span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>     <span class="c1"># use its fields like ordinary buffers</span>

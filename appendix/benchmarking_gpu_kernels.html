@@ -1,0 +1,2065 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Measuring and Analyzing GPU Kernel Performance &#8212; Modern GPU Programming For MLSys</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../_static/demo-embed.css?v=654c0d46" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../_static/documentation_options.js?v=e645c8fa"></script>
+    <script src="../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=f281be69"></script>
+    <script src="../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+    <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'appendix/benchmarking_gpu_kernels';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../_static/demo-embed.js?v=2d63667d"></script>
+    <link rel="icon" href="../_static/mlc-favicon.ico"/>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Compiler Internals" href="../tirx_guide/arch/index.html" />
+    <link rel="prev" title="CUDA C++/PTX intrinsics" href="../tirx_guide/language_reference/cuda/threads_sync.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../_static/searchtools.js"></script>
+    <script src="../_static/language_data.js"></script>
+    <script src="../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="Modern GPU Programming For MLSys - Home"/>
+    <img src="../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="Modern GPU Programming For MLSys - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">Part I, Understanding the GPU</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_background/index.html">GPU Execution Model</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_performance/index.html">What Makes a Kernel Fast</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_data_layout/index.html">Data Layout and Its Notation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_layout_generations/index.html">The Evolution of Tensor Core Data Layouts</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tma/index.html">Async Data Movement: TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tensor_cores/index.html">Blackwell Tensor Core: <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tmem/index.html">Tensor Memory (TMEM)</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_async_barriers/index.html">Async Coordination: mbarrier</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_clc/index.html">Advanced Scheduling: Cluster Launch Control</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part II, TIRx Overview</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_intro_tirx/index.html">Introduction to TIRx</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part III, GEMM: Tiled to SOTA</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_basics/index.html">Building a Tiled GEMM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_async/index.html">Pipelining GEMM with TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../chapter_gemm_advanced/index.html">Scaling GEMM with Warp Specialization and Clusters</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Part IV, Flash Attention 4</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Appendices</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="index.html">Overview</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx Language Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/parser_utils.html">Parser utilities</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/data_types.html">Data types and expressions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/buffers.html">Buffers and memory</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/control_flow.html">Control flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Measuring and Analyzing GPU Kernel Performance</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+
+
+
+<div class="dropdown dropdown-source-buttons">
+  <button class="btn dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Source repositories">
+    <i class="fab fa-github"></i>
+  </button>
+  <ul class="dropdown-menu">
+      
+      
+      
+      <li><a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button dropdown-item"
+   title="Source repository"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+<span class="btn__text-container">Repository</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys/blob/main/./appendix/benchmarking_gpu_kernels.md?plain=1" target="_blank"
+   class="btn btn-sm btn-source-file-button dropdown-item"
+   title="Show source"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-code"></i>
+  </span>
+<span class="btn__text-container">Show source</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys/edit/main/./appendix/benchmarking_gpu_kernels.md" target="_blank"
+   class="btn btn-sm btn-source-edit-button dropdown-item"
+   title="Suggest edit"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-pencil-alt"></i>
+  </span>
+<span class="btn__text-container">Suggest edit</span>
+</a>
+</li>
+      
+      
+      
+      
+      <li><a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys/issues/new?title=Issue%20on%20page%20%2Fappendix/benchmarking_gpu_kernels.html&body=Your%20issue%20content%20here." target="_blank"
+   class="btn btn-sm btn-source-issues-button dropdown-item"
+   title="Open an issue"
+   data-bs-placement="left" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-lightbulb"></i>
+  </span>
+<span class="btn__text-container">Open issue</span>
+</a>
+</li>
+      
+  </ul>
+</div>
+
+
+
+
+<button onclick="window.location.href='../zh/appendix/benchmarking_gpu_kernels.html'"
+  class="btn btn-sm btn-language-switch-button pst-navbar-icon"
+  title="切换到中文版"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-language"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Measuring and Analyzing GPU Kernel Performance</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> Contents </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#separate-measurement-from-diagnosis">Separate Measurement from Diagnosis</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#verify-correctness-before-timing">Verify Correctness Before Timing</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#define-the-timing-boundary">Define the Timing Boundary</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#measure-gpu-time-and-single-call-latency">Measure GPU Time and Single-Call Latency</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#measure-gpu-stream-time-with-cuda-events">Measure GPU Stream Time with CUDA Events</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#measure-end-to-end-time-for-one-call">Measure End-to-End Time for One Call</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#advanced-timing-a-multi-stream-operation">Advanced: Timing a Multi-Stream Operation</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#pdl-within-one-stream">PDL Within One Stream</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#keep-benchmark-conditions-consistent">Keep Benchmark Conditions Consistent</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#convert-latency-to-throughput">Convert Latency to Throughput</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#find-the-most-expensive-kernel-with-proton">Find the Most Expensive Kernel with Proton</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#establish-an-unprofiled-baseline">Establish an Unprofiled Baseline</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#use-proton-to-compare-the-kernels-in-the-operation">Use Proton to Compare the Kernels in the Operation</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#analyze-an-application-timeline-with-nsight-systems">Analyze an Application Timeline with Nsight Systems</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#capture-a-timeline-for-the-target-operation">Capture a Timeline for the Target Operation</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#locate-the-most-expensive-kernel-in-the-timeline">Locate the Most Expensive Kernel in the Timeline</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-nsight-compute-to-analyze-a-single-kernel">Use Nsight Compute to Analyze a Single Kernel</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-read-an-ncu-report">How to Read an NCU Report</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#worked-example-a-b200-bf16-gemm">Worked Example: A B200 BF16 GEMM</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collect-the-first-basic-report">1. Collect the First <code class="docutils literal notranslate"><span class="pre">basic</span></code> Report</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#use-the-basic-report-to-choose-what-to-investigate">2. Use the <code class="docutils literal notranslate"><span class="pre">basic</span></code> Report to Choose What to Investigate</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collect-follow-up-metrics-along-the-compute-path">3. Collect Follow-Up Metrics Along the Compute Path</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#read-the-three-sections-in-order">4. Read the Three Sections in Order</a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#metric-calculations-units-and-boundaries">Metric Calculations, Units, and Boundaries</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#launchstats-and-occupancy"><code class="docutils literal notranslate"><span class="pre">LaunchStats</span></code> and <code class="docutils literal notranslate"><span class="pre">Occupancy</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#speedoflight-denominators-and-duration"><code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code> Denominators and <code class="docutils literal notranslate"><span class="pre">Duration</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#compute-pipelines-the-scheduler-and-warp-states">Compute Pipelines, the Scheduler, and Warp States</a><ul class="nav section-nav flex-column">
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#compute-throughput-breakdown-fields"><code class="docutils literal notranslate"><span class="pre">Compute</span> <span class="pre">Throughput</span> <span class="pre">Breakdown</span></code> Fields</a></li>
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#the-two-pipe-utilization-denominators">The Two <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span></code> Denominators</a></li>
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#complete-schedulerstats-fields">Complete <code class="docutils literal notranslate"><span class="pre">SchedulerStats</span></code> Fields</a></li>
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#warpstatestats-normalization"><code class="docutils literal notranslate"><span class="pre">WarpStateStats</span></code> Normalization</a></li>
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#other-common-warp-states">Other Common Warp States</a></li>
+</ul>
+</li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#correlate-metrics-with-sass-and-source-code-using-sourcecounters">Correlate Metrics with SASS and Source Code Using <code class="docutils literal notranslate"><span class="pre">SourceCounters</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#test-the-hypothesis-with-a-code-change">Test the Hypothesis with a Code Change</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-iket-to-inspect-phases-inside-a-dsl-kernel">Use IKET to Inspect Phases Inside a DSL Kernel</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#run-a-complete-example">Run a Complete Example</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#add-iket-annotations-to-your-own-kernel">Add IKET Annotations to Your Own Kernel</a></li>
+</ul>
+</li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section class="tex2jax_ignore mathjax_ignore" id="measuring-and-analyzing-gpu-kernel-performance">
+<span id="chap-benchmarking"></span><h1>Measuring and Analyzing GPU Kernel Performance<a class="headerlink" href="#measuring-and-analyzing-gpu-kernel-performance" title="Link to this heading">#</a></h1>
+<p>GPU kernel optimization involves two separate questions: how fast the operation is, and where its
+time goes. A benchmark answers the first question; a profile helps answer the second.</p>
+<p>One Python call does not necessarily correspond to one GPU kernel. It may launch several kernels,
+enqueue memory copies, or wait for GPU work to finish. Before timing, define which of those steps
+belong to the operation and use the same boundary for every implementation.</p>
+<p>The performance chapter (<a class="reference internal" href="../chapter_performance/index.html#chap-performance"><span class="std std-ref">What Makes a Kernel Fast</span></a>) uses roofline analysis to reason about compute and
+memory limits. Here the focus shifts to experiments: defining the timing boundary, choosing warm-up
+and repeat budgets, and reading profiler reports.</p>
+<section id="separate-measurement-from-diagnosis">
+<h2>Separate Measurement from Diagnosis<a class="headerlink" href="#separate-measurement-from-diagnosis" title="Link to this heading">#</a></h2>
+<p>The tools used in this workflow have different jobs:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Tool</p></th>
+<th class="head"><p>Primary question</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>CUDA events</p></td>
+<td><p>How much GPU-stream time elapsed across the measured region? A stream is an ordered queue of GPU work.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Synchronized wall-clock timer</p></td>
+<td><p>How much wall-clock time elapsed between starting a host call and completing all GPU work required by it?</p></td>
+</tr>
+<tr class="row-even"><td><p>Proton (provided by Triton)</p></td>
+<td><p>Which GPU kernels were launched, how often, and which kernels account for most of the time?</p></td>
+</tr>
+<tr class="row-odd"><td><p>Nsight Systems</p></td>
+<td><p>How do host work, streams, copies, kernels, and communication overlap on a timeline?</p></td>
+</tr>
+<tr class="row-even"><td><p>Nsight Compute (<code class="docutils literal notranslate"><span class="pre">ncu</span></code>)</p></td>
+<td><p>What is the selected kernel doing internally, and which resource or stall should be investigated next?</p></td>
+</tr>
+<tr class="row-odd"><td><p>IKET (optional)</p></td>
+<td><p>After adding in-kernel markers, when do marked phases run, and where do warp roles wait or overlap?</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="verify-correctness-before-timing">
+<h2>Verify Correctness Before Timing<a class="headerlink" href="#verify-correctness-before-timing" title="Link to this heading">#</a></h2>
+<p>Verify correctness before measuring performance:</p>
+<ol class="arabic simple">
+<li><p>Construct representative inputs, including relevant boundary cases.</p></li>
+<li><p>Run the implementation and synchronize so that GPU work has completed.</p></li>
+<li><p>Compare the output with a reference under a stated tolerance.</p></li>
+<li><p>If the kernel accumulates into an existing output or modifies an input in place, restore the same
+initial state before each correctness check.</p></li>
+</ol>
+<p>For a custom GEMM, let <code class="docutils literal notranslate"><span class="pre">actual</span></code> be the implementation’s output. One possible reference is a PyTorch
+GEMM computed in FP32 and then converted to the target output type:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+
+<span class="n">torch</span><span class="o">.</span><span class="n">set_float32_matmul_precision</span><span class="p">(</span><span class="s2">"highest"</span><span class="p">)</span>
+<span class="n">actual</span> <span class="o">=</span> <span class="n">my_gemm</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>  <span class="c1"># replace with your implementation</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+<span class="n">expected</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">mm</span><span class="p">(</span><span class="n">a</span><span class="o">.</span><span class="n">float</span><span class="p">(),</span> <span class="n">b</span><span class="o">.</span><span class="n">float</span><span class="p">())</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">actual</span><span class="o">.</span><span class="n">dtype</span><span class="p">)</span>
+<span class="n">rtol</span> <span class="o">=</span> <span class="mf">1e-2</span>  <span class="c1"># example only; adjust for the output dtype, accumulation, and shape</span>
+<span class="n">atol</span> <span class="o">=</span> <span class="mf">1e-2</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">actual</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">rtol</span><span class="o">=</span><span class="n">rtol</span><span class="p">,</span> <span class="n">atol</span><span class="o">=</span><span class="n">atol</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">torch.set_float32_matmul_precision(&quot;highest&quot;)</span></code> prevents PyTorch from using reduced-precision
+internal computation for this CUDA FP32 reference. The example <code class="docutils literal notranslate"><span class="pre">rtol</span></code> and <code class="docutils literal notranslate"><span class="pre">atol</span></code> specify the relative
+and absolute error tolerances. The value <code class="docutils literal notranslate"><span class="pre">1e-2</span></code> is only a practical starting point; adjust it for the
+output dtype, accumulation method, shape, and operator contract. Use the same reference and
+tolerances throughout one comparison.</p>
+<p>Keep the reference computation and result comparison outside the timed region. Whether state reset
+is timed depends on the operation boundary defined in the next section.</p>
+</section>
+<section id="define-the-timing-boundary">
+<h2>Define the Timing Boundary<a class="headerlink" href="#define-the-timing-boundary" title="Link to this heading">#</a></h2>
+<p>Before timing, define the work that constitutes one measured operation. It may contain only one
+kernel, or it may include every kernel, memory copy, and state reset required to produce the complete
+result. State explicitly whether compilation, input construction, allocation, or data conversion is
+part of that operation. Implementations are directly comparable only when they perform the same work
+inside the measured boundary.</p>
+<p>The GEMM-plus-ReLU example later in this chapter can use three different boundaries. CUDA events
+around <code class="docutils literal notranslate"><span class="pre">torch.mm</span></code> measure GEMM GPU-stream time. Events around the complete <code class="docutils literal notranslate"><span class="pre">run()</span></code> measure
+GEMM-plus-ReLU GPU-stream time. A CPU timer started before <code class="docutils literal notranslate"><span class="pre">run()</span></code> and stopped after synchronizing
+measures end-to-end latency for one Python call. Matrix allocation and warm-up remain outside all
+three boundaries by default.</p>
+<p>Once the scope is defined, choose the timer:</p>
+<ul class="simple">
+<li><p><strong>CUDA events</strong> record timestamps when a GPU stream reaches two points. They can measure an
+interval on the device timeline around one kernel or a complete operator. Kernels, memory copies,
+and idle stream gaps inside that interval all count. For a multi-stream operation, work on every
+participating stream must be ordered after the start event and complete before the end event is
+recorded.</p></li>
+<li><p>A <strong>synchronized wall-clock timer</strong> starts before the host call and stops after all GPU work required
+by that call has completed. It also includes Python dispatch, CUDA launch, and the wait for GPU
+completion, so it is appropriate for end-to-end call latency.</p></li>
+</ul>
+<p>For example, if the stream reaches the start event before the host submits the next launch, that idle
+stream time remains inside the CUDA event interval. A CUDA event interval is therefore not necessarily
+the same as a kernel’s start-to-finish execution interval in a profiler.</p>
+</section>
+<section id="measure-gpu-time-and-single-call-latency">
+<h2>Measure GPU Time and Single-Call Latency<a class="headerlink" href="#measure-gpu-time-and-single-call-latency" title="Link to this heading">#</a></h2>
+<section id="measure-gpu-stream-time-with-cuda-events">
+<h3>Measure GPU Stream Time with CUDA Events<a class="headerlink" href="#measure-gpu-stream-time-with-cuda-events" title="Link to this heading">#</a></h3>
+<p>CUDA launches are normally asynchronous, so an unsynchronized CPU timer can stop before the GPU
+finishes and mostly reflect host submission time. The
+<a class="reference external" href="https://docs.pytorch.org/docs/stable/notes/cuda.html#asynchronous-execution">PyTorch CUDA semantics documentation</a>
+describes this behavior. The following benchmark uses CUDA events to measure elapsed time on the
+current stream.</p>
+<p>This runnable CUDA event benchmark allocates its matrices, runs a warm-up, measures an FP16
+GEMM over five rounds, and reports the median round result:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">statistics</span><span class="w"> </span><span class="kn">import</span> <span class="n">median</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+
+<span class="n">a</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">((</span><span class="mi">2048</span><span class="p">,</span> <span class="mi">2048</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">((</span><span class="mi">2048</span><span class="p">,</span> <span class="mi">2048</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="mi">2048</span><span class="p">,</span> <span class="mi">2048</span><span class="p">),</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float16</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">gemm</span><span class="p">():</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">mm</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="n">c</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">measure_batch_ms</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">calls</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""Return mean CUDA event time per call for one batch of back-to-back calls, in ms."""</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">start</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">calls</span><span class="p">):</span>
+        <span class="n">fn</span><span class="p">()</span>
+    <span class="n">end</span><span class="o">.</span><span class="n">record</span><span class="p">()</span>
+    <span class="n">end</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">end</span><span class="p">)</span> <span class="o">/</span> <span class="n">calls</span>
+
+
+<span class="n">warmup_calls</span> <span class="o">=</span> <span class="mi">500</span>
+<span class="n">repeat</span> <span class="o">=</span> <span class="mi">100</span>
+<span class="n">rounds</span> <span class="o">=</span> <span class="mi">5</span>
+
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">warmup_calls</span><span class="p">):</span>
+    <span class="n">gemm</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+
+<span class="n">samples_ms</span> <span class="o">=</span> <span class="p">[</span><span class="n">measure_batch_ms</span><span class="p">(</span><span class="n">gemm</span><span class="p">,</span> <span class="n">repeat</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">rounds</span><span class="p">)]</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"device: </span><span class="si">{</span><span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">get_device_name</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"calls per round: </span><span class="si">{</span><span class="n">repeat</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"round samples (ms):"</span><span class="p">,</span> <span class="p">[</span><span class="nb">round</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">samples_ms</span><span class="p">])</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"median CUDA event time: </span><span class="si">{</span><span class="n">median</span><span class="p">(</span><span class="n">samples_ms</span><span class="p">)</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> ms"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">measure_batch_ms</span></code> records start and end events on the current CUDA stream and divides their elapsed
+time by the number of calls. The result is the average GPU-stream time per GEMM across back-to-back
+calls. <code class="docutils literal notranslate"><span class="pre">end.synchronize()</span></code> makes the CPU wait for that round of GPU work so that the event timing
+result can be read.</p>
+<p><code class="docutils literal notranslate"><span class="pre">warmup_calls=500</span></code> and <code class="docutils literal notranslate"><span class="pre">repeat=100</span></code> are invocation counts; <code class="docutils literal notranslate"><span class="pre">rounds=5</span></code> requests five independent
+measurement batches. These values came from stability testing on the B200: results were still falling
+after 50 warm-up calls but stabilized by 500, and <code class="docutils literal notranslate"><span class="pre">repeat=100</span></code> was more stable than <code class="docutils literal notranslate"><span class="pre">repeat=10</span></code>. For
+another workload, first increase <code class="docutils literal notranslate"><span class="pre">warmup_calls</span></code> until the early rounds stop drifting; if variation
+remains large, increase <code class="docutils literal notranslate"><span class="pre">repeat</span></code> or
+<code class="docutils literal notranslate"><span class="pre">rounds</span></code>. If timings shift systematically as the run gets longer, inspect temperature, power, and
+clock behavior.</p>
+<p>This code always reuses the same matrices, so it represents a warm-cache workload with repeated
+inputs. Whether the accesses actually hit in cache still depends on the total amount of data revisited
+by this computation and the hardware cache capacity.</p>
+<p>This book uses TVM’s
+<a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/bench.py"><code class="docutils literal notranslate"><span class="pre">tvm.tirx.bench.bench</span></code></a>
+to handle warm-up, repeated timing, and statistics. The supplied function only launches a prepared
+implementation; inputs, outputs, and workspace remain outside the timed interval. Unlike the manual
+warm-cache example, <code class="docutils literal notranslate"><span class="pre">bench</span></code> writes a 256 MiB buffer before each measured invocation to reduce reuse
+of data left in L2 by the previous invocation, then records an independent CUDA event interval:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.bench</span><span class="w"> </span><span class="kn">import</span> <span class="n">bench</span>
+
+
+<span class="c1"># Reuse gemm from above. For a custom TIRx kernel, substitute its no-argument callable.</span>
+<span class="n">run</span> <span class="o">=</span> <span class="n">gemm</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">bench</span><span class="p">(</span>
+    <span class="p">{</span><span class="s2">"gemm"</span><span class="p">:</span> <span class="n">run</span><span class="p">},</span>
+    <span class="n">timer</span><span class="o">=</span><span class="s2">"event"</span><span class="p">,</span>
+    <span class="n">warmup</span><span class="o">=</span><span class="mi">25</span><span class="p">,</span>
+    <span class="n">repeat</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span>
+    <span class="n">rounds</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="n">cooldown_s</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">"impls"</span><span class="p">][</span><span class="s2">"gemm"</span><span class="p">])</span>           <span class="c1"># five-round mean, in us</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">[</span><span class="s2">"round_samples"</span><span class="p">][</span><span class="s2">"gemm"</span><span class="p">])</span>  <span class="c1"># result from each round</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">warmup=25</span></code> and <code class="docutils literal notranslate"><span class="pre">repeat=100</span></code> are millisecond budgets. The event timer uses a short calibration run to
+convert them into invocation counts. The reported event intervals cover only the measured calls; the
+256 MiB write used to reduce L2 reuse occurs before each start event. <code class="docutils literal notranslate"><span class="pre">rounds=5</span></code> runs five rounds,
+and <code class="docutils literal notranslate"><span class="pre">cooldown_s=1.0</span></code> pauses before each one. <code class="docutils literal notranslate"><span class="pre">impls</span></code> stores the five-round mean, while
+<code class="docutils literal notranslate"><span class="pre">round_samples</span></code> stores the individual results. Adjust budgets
+and rounds by the same stability criteria used above, and use the same settings for every
+implementation.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">run_bench</span></code> entry points in TIRx-kernels also use this helper. Outside distributed mode, omitting
+<code class="docutils literal notranslate"><span class="pre">timer</span></code> selects Proton by default; specify <code class="docutils literal notranslate"><span class="pre">timer=&quot;event&quot;</span></code> for a CUDA event interval. A repeatedly
+invoked in-place kernel must still follow the reset rule above. If reset occurs inside the measured
+function, its cost belongs to the operation.</p>
+</section>
+<section id="measure-end-to-end-time-for-one-call">
+<h3>Measure End-to-End Time for One Call<a class="headerlink" href="#measure-end-to-end-time-for-one-call" title="Link to this heading">#</a></h3>
+<p>Use a synchronized wall-clock timer to measure the interval from the start of a Python call until its
+GPU work finishes. The following code continues with the <code class="docutils literal notranslate"><span class="pre">gemm()</span></code> defined and warmed up above:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">statistics</span><span class="w"> </span><span class="kn">import</span> <span class="n">median</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">measure_single_call_ms</span><span class="p">(</span><span class="n">fn</span><span class="p">,</span> <span class="n">samples</span><span class="o">=</span><span class="mi">20</span><span class="p">):</span>
+    <span class="n">values</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">samples</span><span class="p">):</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>  <span class="c1"># exclude unfinished work from earlier calls</span>
+        <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="n">fn</span><span class="p">()</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>  <span class="c1"># wait for this call's GPU work</span>
+        <span class="n">values</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mf">1e3</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">values</span>
+
+
+<span class="n">host_samples_ms</span> <span class="o">=</span> <span class="n">measure_single_call_ms</span><span class="p">(</span><span class="n">gemm</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"single-call samples (ms):"</span><span class="p">,</span> <span class="p">[</span><span class="nb">round</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">host_samples_ms</span><span class="p">])</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"median end-to-end time: </span><span class="si">{</span><span class="n">median</span><span class="p">(</span><span class="n">host_samples_ms</span><span class="p">)</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> ms"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The first synchronization keeps unfinished earlier work outside the measurement. The second ensures
+that this GEMM finishes before the timer stops. Each sample contains exactly one call, so the result
+includes the Python call, CUDA launch, GPU execution, and the wait for completion. By comparison, the
+CUDA event benchmark above reports average GPU-stream time per GEMM across back-to-back calls.</p>
+<p>Every implementation in a comparison must use the same timer and boundary. If both results are
+reported, name them separately as <em>CUDA event GPU time</em> and <em>single-call end-to-end time</em> so that
+their different boundaries remain visible.</p>
+</section>
+<section id="advanced-timing-a-multi-stream-operation">
+<h3>Advanced: Timing a Multi-Stream Operation<a class="headerlink" href="#advanced-timing-a-multi-stream-operation" title="Link to this heading">#</a></h3>
+<p>When one operation submits work to several CUDA streams, the event dependencies must ensure that
+every branch starts after the start event and finishes before the end event is recorded. In this
+example, <code class="docutils literal notranslate"><span class="pre">sin</span></code> and <code class="docutils literal notranslate"><span class="pre">cos</span></code> run on separate streams. The timing stream waits for both branches before
+adding their results:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+
+<span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="s2">"cuda"</span><span class="p">)</span>
+<span class="n">left</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">right</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+<span class="n">output</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">empty_like</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+<span class="n">stream_left</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Stream</span><span class="p">()</span>
+<span class="n">stream_right</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Stream</span><span class="p">()</span>
+<span class="n">timing_stream</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">current_stream</span><span class="p">()</span>
+
+<span class="n">start</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">left_done</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
+<span class="n">right_done</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
+<span class="n">end</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span><span class="n">enable_timing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">measure_operation_ms</span><span class="p">():</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">start</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">timing_stream</span><span class="p">)</span>
+
+    <span class="n">stream_left</span><span class="o">.</span><span class="n">wait_event</span><span class="p">(</span><span class="n">start</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">stream_left</span><span class="p">):</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="n">left</span><span class="p">)</span>
+    <span class="n">left_done</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">stream_left</span><span class="p">)</span>
+
+    <span class="n">stream_right</span><span class="o">.</span><span class="n">wait_event</span><span class="p">(</span><span class="n">start</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">stream</span><span class="p">(</span><span class="n">stream_right</span><span class="p">):</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="n">right</span><span class="p">)</span>
+    <span class="n">right_done</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">stream_right</span><span class="p">)</span>
+
+    <span class="n">timing_stream</span><span class="o">.</span><span class="n">wait_event</span><span class="p">(</span><span class="n">left_done</span><span class="p">)</span>
+    <span class="n">timing_stream</span><span class="o">.</span><span class="n">wait_event</span><span class="p">(</span><span class="n">right_done</span><span class="p">)</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">left</span><span class="p">,</span> <span class="n">right</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="n">output</span><span class="p">)</span>
+
+    <span class="n">end</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="n">timing_stream</span><span class="p">)</span>
+    <span class="n">end</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">start</span><span class="o">.</span><span class="n">elapsed_time</span><span class="p">(</span><span class="n">end</span><span class="p">)</span>
+
+
+<span class="n">elapsed_ms</span> <span class="o">=</span> <span class="n">measure_operation_ms</span><span class="p">()</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">output</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">+</span> <span class="n">torch</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"multi-stream operation: </span><span class="si">{</span><span class="n">elapsed_ms</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> ms"</span><span class="p">)</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">start</span></code> is the common starting signal. <code class="docutils literal notranslate"><span class="pre">left_done</span></code> and <code class="docutils literal notranslate"><span class="pre">right_done</span></code> mark the ends of the two
+branches. The timing stream waits for both completion events, performs the final addition, and then
+records <code class="docutils literal notranslate"><span class="pre">end</span></code>. Each <code class="docutils literal notranslate"><span class="pre">wait_event</span></code> creates a GPU-side dependency while the CPU continues submitting
+work; only <code class="docutils literal notranslate"><span class="pre">end.synchronize()</span></code> waits on the CPU.</p>
+<p>The event graph is:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>timing stream: start ──────────── wait(left_done, right_done) ─ add ─ end
+left stream:          wait(start) ─ sin ─ left_done
+right stream:         wait(start) ─ cos ─ right_done
+</pre></div>
+</div>
+<p>This dependency structure allows the two branches to execute concurrently; actual overlap depends on
+their GPU resource usage. Confirm the actual execution schedule in a Nsight Systems timeline. For
+reported measurements, call <code class="docutils literal notranslate"><span class="pre">measure_operation_ms()</span></code> several times for warm-up, then call it
+repeatedly to collect single-call samples and report their median and variation.</p>
+<section id="pdl-within-one-stream">
+<h4>PDL Within One Stream<a class="headerlink" href="#pdl-within-one-stream" title="Link to this heading">#</a></h4>
+<p>Programmatic Dependent Launch (PDL) is available to custom CUDA and DSL launch paths that explicitly
+enable it. The primary and secondary kernels are submitted to the same stream. After the primary
+emits a trigger, the secondary may begin preparation that does not depend on the primary’s result.
+Before consuming that result, the secondary waits on the PDL dependency.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>primary:   initial work ─ trigger ─ remaining work
+secondary:                    preamble ─ wait ─ dependent work
+</pre></div>
+</div>
+<p>Record <code class="docutils literal notranslate"><span class="pre">start</span></code> before launching the primary and <code class="docutils literal notranslate"><span class="pre">end</span></code> after launching the secondary. The resulting
+CUDA event interval measures GPU-stream elapsed time for the complete launch sequence. The two
+kernels may overlap, so the sum of their profiler durations can exceed the complete operation
+latency. Use a Nsight Systems timeline to confirm the observed overlap.</p>
+<p>PDL creates an opportunity for concurrent execution, while the runtime may still serialize the
+kernels. Validate correctness both when the kernels overlap and when the runtime serializes them. The
+<code class="docutils literal notranslate"><span class="pre">torch.cuda.Stream</span></code> interface above does not expose PDL launch attributes; a custom CUDA or DSL
+implementation supplies them. See the
+<a class="reference external" href="https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/programmatic-dependent-launch.html">CUDA Programming Guide</a>
+for the enablement details.</p>
+</section>
+</section>
+</section>
+<section id="keep-benchmark-conditions-consistent">
+<h2>Keep Benchmark Conditions Consistent<a class="headerlink" href="#keep-benchmark-conditions-consistent" title="Link to this heading">#</a></h2>
+<p>The examples above measure repeated calls after allocation and warm-up. If first-call latency or a
+complete application path is the target, include the relevant CUDA initialization, JIT compilation,
+and autotuning in the timing boundary and report that result separately.</p>
+<p>Keep every per-round result and state whether the summary is a median or mean. If results continue to
+trend across rounds, check warm-up, temperature, and clock state before summarizing the full set of
+measurements. When comparing implementations, alternate their measurement order so that no
+implementation is consistently measured on a colder or hotter device.</p>
+<p>Use one cache policy throughout the comparison. The manual example repeatedly reuses the same
+matrices and therefore models a warm-cache workload, although the actual hit rate still depends
+on the total amount of data revisited and the cache capacity. The TVM 0.26 CUDA event and Proton timers
+instead write a 256 MiB buffer before each measured invocation to reduce L2 reuse; this write is
+outside the timed interval. Choose the policy that represents the target application.
+<code class="docutils literal notranslate"><span class="pre">torch.cuda.empty_cache()</span></code> only releases unused blocks from PyTorch’s allocator; GPU L2 contents
+remain managed by the hardware cache policy.</p>
+<p>Also align the following conditions across implementations:</p>
+<ul class="simple">
+<li><p><strong>Numerical semantics:</strong> input and output dtype, layout, transpose convention, alignment,
+accumulation precision, scale, mask, epilogue, output definition, and accuracy tolerance;</p></li>
+<li><p><strong>Measured scope:</strong> inclusion or exclusion of allocation, conversion, state reset, auxiliary
+kernels, communication, and synchronization;</p></li>
+<li><p><strong>Tuning conditions:</strong> workspace limits, whether per-shape autotuning is allowed, and the search
+budget available to each implementation.</p></li>
+</ul>
+<p>Record the GPU, driver, CUDA, framework, and compiler versions, along with dtype, shape, clock, and
+power settings. For a library baseline, also record the library version, selected algorithm, and
+workspace. Autotuning may run outside the timed interval, but its search budget and final
+configuration are still part of the experimental setup.</p>
+</section>
+<section id="convert-latency-to-throughput">
+<h2>Convert Latency to Throughput<a class="headerlink" href="#convert-latency-to-throughput" title="Link to this heading">#</a></h2>
+<p>Compute throughput by dividing a clearly defined amount of work by the measured latency. For a
+multiplication of an <span class="math notranslate nohighlight">\(M\times K\)</span> matrix by a <span class="math notranslate nohighlight">\(K\times N\)</span> matrix with latency <code class="docutils literal notranslate"><span class="pre">t_us</span></code> in
+microseconds:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TFLOP/s = 2 × M × N × K / t_us / 10^6
+</pre></div>
+</div>
+<p>The numerator and timing boundary must describe the same work. The complete GEMM-plus-ReLU operation
+below takes 105.152 μs. Dividing <span class="math notranslate nohighlight">\(2\times4096^3\)</span> by that duration gives about 1307 TFLOP/s, but this
+is only <em>effective throughput</em>: GEMM work divided by the complete operation time. The denominator is
+the full operation time and therefore includes ReLU. To report the GEMM kernel’s own TFLOP/s, the
+timed interval must cover only GEMM.</p>
+<p>A table that reports TFLOP/s, GB/s, or tokens/s should include the underlying latency measurement and
+explain how the work was counted. For attention and fused kernels, also state whether the numerator
+represents the full dense problem, the elements actually selected, or the work executed by the
+kernel. See <a class="reference internal" href="../chapter_performance/index.html#chap-performance"><span class="std std-ref">What Makes a Kernel Fast</span></a> for the corresponding formulas and roofline analysis.</p>
+</section>
+<section id="find-the-most-expensive-kernel-with-proton">
+<h2>Find the Most Expensive Kernel with Proton<a class="headerlink" href="#find-the-most-expensive-kernel-with-proton" title="Link to this heading">#</a></h2>
+<p>From this point onward, the baseline, Proton, Nsight Systems, and Nsight Compute all run the same
+operation from <code class="docutils literal notranslate"><span class="pre">appendix/nsys_example.py</span></code>: multiply two <span class="math notranslate nohighlight">\(4096\times4096\)</span> BF16 matrices and then apply
+ReLU to the result. The inputs, intermediate result, and output are allocated before timing or
+collection. The operation in the script is:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">():</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">nvtx</span><span class="o">.</span><span class="n">range</span><span class="p">(</span><span class="s2">"BF16 GEMM"</span><span class="p">):</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">mm</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="n">c</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">nvtx</span><span class="o">.</span><span class="n">range</span><span class="p">(</span><span class="s2">"ReLU"</span><span class="p">):</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">clamp_min</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="n">out</span><span class="o">=</span><span class="n">output</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Before any timed or profiled run, the script runs one operation and synchronizes. It then computes an
+FP32 <code class="docutils literal notranslate"><span class="pre">torch.mm</span></code> reference, applies ReLU, converts the result to BF16, and compares it
+with the output using <code class="docutils literal notranslate"><span class="pre">rtol=2e-2</span></code> and <code class="docutils literal notranslate"><span class="pre">atol=1e-2</span></code>. A mismatch stops the command before the benchmark
+or profiler begins. This preflight check is outside both the baseline timing interval and the
+collection range used below.</p>
+<p>The earlier <span class="math notranslate nohighlight">\(2048\times2048\)</span> FP16 example was a standalone demonstration of the timing APIs. The
+results below all use this BF16 operation and do not mix the two workloads.</p>
+<section id="establish-an-unprofiled-baseline">
+<h3>Establish an Unprofiled Baseline<a class="headerlink" href="#establish-an-unprofiled-baseline" title="Link to this heading">#</a></h3>
+<p>Before asking where time is spent, measure the complete operation under normal execution:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>appendix/nsys_example.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--size<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--warmup-calls<span class="w"> </span><span class="m">500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--event-samples<span class="w"> </span><span class="m">20</span>
+</pre></div>
+</div>
+<p>The 500 warm-up calls complete before measurement begins. Each sample then uses one pair of CUDA
+events around one GEMM-plus-ReLU operation. A representative run on a B200 produced:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>median=105.152 us, min=103.136 us, max=131.200 us
+</pre></div>
+</div>
+<p>Use the median as the reference point when evaluating subsequent code changes. The minimum and
+maximum show the sample variation. This baseline covers the complete GEMM-plus-ReLU operation; the
+profiler tables below report individual kernels from separate captures.</p>
+</section>
+<section id="use-proton-to-compare-the-kernels-in-the-operation">
+<h3>Use Proton to Compare the Kernels in the Operation<a class="headerlink" href="#use-proton-to-compare-the-kernels-in-the-operation" title="Link to this heading">#</a></h3>
+<p>Proton reports each kernel’s call count, average time, and cumulative time. Before running it,
+confirm that the environment has a Triton installation compatible with TVM;
+Proton and <code class="docutils literal notranslate"><span class="pre">proton-viewer</span></code> are provided with Triton. The viewer also requires two Python packages:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>pandas<span class="w"> </span>llnl-hatchet
+</pre></div>
+</div>
+<p>The script’s <code class="docutils literal notranslate"><span class="pre">--proton-calls</span></code> mode reuses the same <code class="docutils literal notranslate"><span class="pre">run()</span></code>, runs the warm-up, profiles 100 calls to
+the operation, and writes <code class="docutils literal notranslate"><span class="pre">operator.hatchet</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>appendix/nsys_example.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--size<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--warmup-calls<span class="w"> </span><span class="m">500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--proton-calls<span class="w"> </span><span class="m">100</span>
+</pre></div>
+</div>
+<p>Here <code class="docutils literal notranslate"><span class="pre">warmup-calls</span></code> and <code class="docutils literal notranslate"><span class="pre">proton-calls</span></code> are invocation counts, while the similarly named warm-up and
+repeat arguments to <code class="docutils literal notranslate"><span class="pre">bench</span></code> are millisecond budgets. After generating the report, run:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>proton-viewer<span class="w"> </span>--list<span class="w"> </span>operator.hatchet
+proton-viewer<span class="w"> </span>--metrics<span class="w"> </span>time/ms,count<span class="w"> </span>--print-sorted<span class="w"> </span>operator.hatchet
+proton-viewer<span class="w"> </span>--metrics<span class="w"> </span>avg_time/us,time/ms<span class="w"> </span>--print-sorted<span class="w"> </span>operator.hatchet
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">proton-viewer</span></code> prints two separate tables. First use the full kernel name to confirm the call count
+and cumulative time in the <code class="docutils literal notranslate"><span class="pre">count,time/ms</span></code> output. Then find the same row in the
+<code class="docutils literal notranslate"><span class="pre">avg_time/us,time/ms</span></code> output to read the average time. Select the
+target primarily by <code class="docutils literal notranslate"><span class="pre">time/ms</span></code>, which is the time accumulated by that kernel across 100 operations;
+<code class="docutils literal notranslate"><span class="pre">avg_time/us</span></code> reports its per-call average. The display below joins the two tables and shortens the
+kernel names for readability:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>target_operation               calls    avg/us    total/ms
+├── GEMM kernel                  100      87.00        8.700
+└── ReLU kernel                  100      11.71        1.171
+</pre></div>
+</div>
+<p>First confirm that both expected kernels appear and that each was called 100 times, then compare
+cumulative time. GEMM accounts for much more time, so it becomes the target for deeper analysis.
+Before profiling it with NCU, use Nsight Systems to confirm the kernel order and gaps, then correlate
+each kernel with its host launch API for one operation.</p>
+<p>This manual Proton session preserves the normal cache state, unlike <code class="docutils literal notranslate"><span class="pre">bench(timer=&quot;proton&quot;)</span></code>, which
+writes a 256 MiB buffer before each measured call. Use values from the same Proton report to rank
+kernels. Compare implementations with the CUDA event baseline above, using a timing interval that
+covers the full operation.</p>
+</section>
+</section>
+<section id="analyze-an-application-timeline-with-nsight-systems">
+<h2>Analyze an Application Timeline with Nsight Systems<a class="headerlink" href="#analyze-an-application-timeline-with-nsight-systems" title="Link to this heading">#</a></h2>
+<p>Proton provides an aggregate ranking, but it does not show kernel ordering, gaps, copies, or host
+waits. Nsight Systems answers those questions with a timeline.</p>
+<section id="capture-a-timeline-for-the-target-operation">
+<h3>Capture a Timeline for the Target Operation<a class="headerlink" href="#capture-a-timeline-for-the-target-operation" title="Link to this heading">#</a></h3>
+<p>The script’s <code class="docutils literal notranslate"><span class="pre">--profile-once</span></code> mode runs the warm-up while the profiler is still inactive and waits
+for that work to finish. It then submits exactly one GEMM-plus-ReLU operation between
+<code class="docutils literal notranslate"><span class="pre">cudaProfilerStart()</span></code> and <code class="docutils literal notranslate"><span class="pre">cudaProfilerStop()</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">run_once_for_profiler</span><span class="p">(</span><span class="n">run</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">warmup_calls</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">warmup_calls</span><span class="p">):</span>
+        <span class="n">run</span><span class="p">()</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+
+    <span class="n">cudart</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cudart</span><span class="p">()</span>
+    <span class="n">cudart</span><span class="o">.</span><span class="n">cudaProfilerStart</span><span class="p">()</span>
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">nvtx</span><span class="o">.</span><span class="n">range</span><span class="p">(</span><span class="s2">"target operation"</span><span class="p">):</span>
+        <span class="n">run</span><span class="p">()</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">synchronize</span><span class="p">()</span>
+    <span class="n">cudart</span><span class="o">.</span><span class="n">cudaProfilerStop</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>The NVTX range makes the target operation easy to locate in the timeline. Synchronization inside the
+range ensures that both kernels finish before collection stops. <code class="docutils literal notranslate"><span class="pre">cudaProfilerStart()</span></code> and
+<code class="docutils literal notranslate"><span class="pre">cudaProfilerStop()</span></code> only delimit the collection range; they do not measure time.</p>
+<p>The following command runs the script and writes <code class="docutils literal notranslate"><span class="pre">reports/target-timeline.nsys-rep</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir<span class="w"> </span>-p<span class="w"> </span>reports
+nsys<span class="w"> </span>profile<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trace<span class="o">=</span>cuda,nvtx<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--sample<span class="o">=</span>none<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--cpuctxsw<span class="o">=</span>none<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--capture-range<span class="o">=</span>cudaProfilerApi<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--capture-range-end<span class="o">=</span>stop<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="o">=</span>reports/target-timeline<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--force-overwrite<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>python<span class="w"> </span>appendix/nsys_example.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--size<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--warmup-calls<span class="w"> </span><span class="m">500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--profile-once
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">--capture-range=cudaProfilerApi</span></code> restricts collection to the interval between
+<code class="docutils literal notranslate"><span class="pre">cudaProfilerStart()</span></code> and <code class="docutils literal notranslate"><span class="pre">cudaProfilerStop()</span></code>. <code class="docutils literal notranslate"><span class="pre">--trace=cuda,nvtx</span></code> records CUDA APIs, GPU activity,
+and NVTX ranges. CPU sampling and context-switch tracing are disabled here to keep the report focused
+on the CUDA timeline. If that timeline contains a long GPU gap, collect a separate report with the
+relevant host-scheduling or OS runtime tracing enabled.</p>
+<p>Once the report has been generated, open its timeline in the Nsight Systems GUI:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>nsys-ui<span class="w"> </span>reports/target-timeline.nsys-rep
+</pre></div>
+</div>
+</section>
+<section id="locate-the-most-expensive-kernel-in-the-timeline">
+<h3>Locate the Most Expensive Kernel in the Timeline<a class="headerlink" href="#locate-the-most-expensive-kernel-in-the-timeline" title="Link to this heading">#</a></h3>
+<p>The following report was collected on an NVIDIA B200 with NVIDIA driver 595.58.03, CUDA 13.0,
+PyTorch 2.12.0+cu130, and Nsight Systems 2025.6.3.</p>
+<p><img alt="A measured Nsight Systems timeline: CPU NVTX ranges and CUDA APIs appear above GEMM and ReLU on one GPU stream" src="../_images/nsys_b200_timeline.svg" /></p>
+<p>The <code class="docutils literal notranslate"><span class="pre">7</span></code> in <code class="docutils literal notranslate"><span class="pre">GPU</span> <span class="pre">stream</span> <span class="pre">7</span></code> is the stream identifier in this report. Both kernels are in the same
+stream and therefore execute in submission order. The times used below can also be extracted from
+the command line:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>nsys<span class="w"> </span>stats<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--force-export<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--format<span class="o">=</span>column<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--timeunit<span class="o">=</span>us<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--report<span class="w"> </span>cuda_gpu_sum<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--report<span class="w"> </span>cuda_kern_exec_trace<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--report<span class="w"> </span>cuda_api_trace<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--report<span class="w"> </span>nvtx_gpu_proj_sum<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--report<span class="w"> </span>nvtx_pushpop_trace<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--report<span class="w"> </span>cuda_api_sum<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>reports/target-timeline.nsys-rep
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">--force-export=true</span></code> regenerates the SQLite data from the current <code class="docutils literal notranslate"><span class="pre">.nsys-rep</span></code>, preventing stale
+SQLite data with the same name from being reused. <code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> summarizes GPU activities;
+<code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code> correlates each host launch API with its GPU kernel and gives the kernel start
+and duration; <code class="docutils literal notranslate"><span class="pre">cuda_api_trace</span></code> gives the start and duration of every CUDA API call. The two NVTX
+reports provide the range’s GPU projection and host-side record, while <code class="docutils literal notranslate"><span class="pre">cuda_api_sum</span></code> summarizes
+host CUDA APIs. Run
+<code class="docutils literal notranslate"><span class="pre">nsys</span> <span class="pre">stats</span> <span class="pre">--help-reports</span></code> for the complete definitions in the installed version.</p>
+<p>The command prints several tables in sequence. Extract values in this order:</p>
+<ol class="arabic simple">
+<li><p>Compare cumulative durations in <code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> to find the most expensive GPU kernel.</p></li>
+<li><p>In <code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code>, read each kernel’s start and duration and identify its host launch API.
+Compute its end as <code class="docutils literal notranslate"><span class="pre">end</span> <span class="pre">=</span> <span class="pre">start</span> <span class="pre">+</span> <span class="pre">duration</span></code>; use the same calculation for CUDA APIs.</p></li>
+<li><p>Compute the inter-kernel gap as <code class="docutils literal notranslate"><span class="pre">ReLU</span> <span class="pre">start</span> <span class="pre">-</span> <span class="pre">(GEMM</span> <span class="pre">start</span> <span class="pre">+</span> <span class="pre">GEMM</span> <span class="pre">duration)</span></code>. This uses the trace
+timestamp and duration columns.</p></li>
+<li><p>Finally, use the <code class="docutils literal notranslate"><span class="pre">nvtx_*</span></code> reports, <code class="docutils literal notranslate"><span class="pre">cuda_api_trace</span></code>, and <code class="docutils literal notranslate"><span class="pre">cuda_api_sum</span></code> to interpret the host
+range and synchronization APIs. To determine whether a synchronization call actually waited for
+the GPU, compare its start time in <code class="docutils literal notranslate"><span class="pre">cuda_api_trace</span></code> with the end of the final kernel.</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> reports the execution time of both kernels:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>GPU activity</p></th>
+<th class="head text-right"><p>Count</p></th>
+<th class="head text-right"><p>GPU duration</p></th>
+<th class="head text-right"><p>Share of listed GPU time</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>BF16 GEMM</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>92.608 μs</p></td>
+<td class="text-right"><p>89.4%</p></td>
+</tr>
+<tr class="row-odd"><td><p>ReLU</p></td>
+<td class="text-right"><p>1</p></td>
+<td class="text-right"><p>10.944 μs</p></td>
+<td class="text-right"><p>10.6%</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code> correlates each kernel with its launch API and reports API time, positive queue
+time, and GPU execution time separately. Positive queue time is the interval from API return to a later
+kernel start. If the kernel starts before the API returns, the report shows no positive queue time.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Kernel</p></th>
+<th class="head text-right"><p>API time</p></th>
+<th class="head text-right"><p>Positive queue time</p></th>
+<th class="head text-right"><p>GPU execution</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>BF16 GEMM</p></td>
+<td class="text-right"><p>50.717 μs</p></td>
+<td class="text-right"><p>—</p></td>
+<td class="text-right"><p>92.608 μs</p></td>
+</tr>
+<tr class="row-odd"><td><p>ReLU</p></td>
+<td class="text-right"><p>13.474 μs</p></td>
+<td class="text-right"><p>5.074 μs</p></td>
+<td class="text-right"><p>10.944 μs</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Read the results in this order:</p>
+<ol class="arabic simple">
+<li><p><strong>Select the target first.</strong> GEMM accounts for 89.4% of the two kernels’ total execution time, so
+GEMM becomes the NCU analysis target.</p></li>
+<li><p><strong>Distinguish API time from GPU time.</strong> The GEMM launch API took 50.717 μs on the host, while the
+GPU executed GEMM for 92.608 μs; these are different intervals. ReLU’s 5.074 μs positive queue
+time means that it waited briefly after the launch API returned before starting on the GPU.</p></li>
+<li><p><strong>Check the gap between kernels.</strong> Their durations sum to 103.552 μs. The GPU span from the start
+of GEMM through the end of ReLU is 103.776 μs, leaving only a 0.224 μs gap.</p></li>
+<li><p><strong>Interpret the host range according to its timing boundary.</strong> The <code class="docutils literal notranslate"><span class="pre">target</span> <span class="pre">operation</span></code> host range
+in the figure covers Python/PyTorch dispatch, both launches, and the synchronization API.
+Because <code class="docutils literal notranslate"><span class="pre">cudaDeviceSynchronize</span></code> begins after ReLU ends, its measured duration mostly reflects
+host-side API overhead; GPU execution was already complete.</p></li>
+</ol>
+<p>When inspecting another Nsight Systems timeline, follow the same order: confirm the capture range,
+inspect GPU kernels, copies, gaps, and overlap, and then correlate them with host launch or
+synchronization APIs. See the
+<a class="reference external" href="https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html">Nsight Systems Analysis Guide</a> for
+the interval definitions and additional UI details.</p>
+</section>
+</section>
+<section id="use-nsight-compute-to-analyze-a-single-kernel">
+<h2>Use Nsight Compute to Analyze a Single Kernel<a class="headerlink" href="#use-nsight-compute-to-analyze-a-single-kernel" title="Link to this heading">#</a></h2>
+<p>Use Nsight Systems to select the target kernel and NCU to explain its hardware behavior. This section
+begins with a reusable workflow, applies it to a BF16 GEMM on a B200, and then explains the supporting
+metrics and calculations.</p>
+<section id="how-to-read-an-ncu-report">
+<h3>How to Read an NCU Report<a class="headerlink" href="#how-to-read-an-ncu-report" title="Link to this heading">#</a></h3>
+<p>An SM (streaming multiprocessor) is a GPU compute unit that hosts thread blocks and executes their
+instructions. A warp contains 32 threads and is the basic group that a scheduler selects when issuing
+an instruction. A block or warp is resident from the time it is assigned to an SM until it finishes.</p>
+<p>Analyze a new NCU report in this order:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Current question</p></th>
+<th class="head"><p>Where to look first</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Which kernel does this report describe?</p></td>
+<td><p>Kernel, device, and grid/block in the report header, plus Warnings/Errors</p></td>
+<td><p>Confirm the filter and collection result</p></td>
+</tr>
+<tr class="row-odd"><td><p>Does the launch expose enough device-wide parallelism?</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Grid</span> <span class="pre">Size</span></code> and <code class="docutils literal notranslate"><span class="pre">Waves</span> <span class="pre">Per</span> <span class="pre">SM</span></code> in <code class="docutils literal notranslate"><span class="pre">LaunchStats</span></code></p></td>
+<td><p>Determine whether the grid provides enough device-wide parallelism</p></td>
+</tr>
+<tr class="row-even"><td><p>How much work can reside on each SM at once?</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span></code> fields and theoretical/achieved occupancy in <code class="docutils literal notranslate"><span class="pre">Occupancy</span></code></p></td>
+<td><p>Quantify theoretical and achieved residency, and identify which resources set the theoretical limit</p></td>
+</tr>
+<tr class="row-odd"><td><p>Which part of the hardware should be investigated first?</p></td>
+<td><p>Compute, Memory, and DRAM throughput in <code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code></p></td>
+<td><p>Choose the compute, memory, or scheduling path</p></td>
+</tr>
+<tr class="row-even"><td><p>Can the scheduler consistently find an instruction to issue?</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Scheduler</span> <span class="pre">Statistics</span></code> → <code class="docutils literal notranslate"><span class="pre">Warps</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code>; when few warps are ready to issue an instruction, continue to <code class="docutils literal notranslate"><span class="pre">Warp</span> <span class="pre">State</span> <span class="pre">Statistics</span></code> → <code class="docutils literal notranslate"><span class="pre">Warp</span> <span class="pre">State</span> <span class="pre">(All</span> <span class="pre">Cycles)</span></code></p></td>
+<td><p>Compare resident, ready, and issued warps; inspect the main wait states when ready work is scarce</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">Grid</span> <span class="pre">Size</span></code> is the number of blocks submitted by the launch. <code class="docutils literal notranslate"><span class="pre">Waves</span> <span class="pre">Per</span> <span class="pre">SM</span></code> is the grid size divided
+by the number of blocks that could theoretically reside across the whole GPU at once. A value of 1
+means the two counts are equal; 3.46 means that the grid contains 3.46 times the device-wide theoretical
+resident-block capacity. This ratio helps determine whether the grid contains enough blocks to cover
+the GPU. It does not record the actual block-scheduling order.</p>
+<p>Each <code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span></code> reports how many blocks one SM could host if registers, shared memory, threads, or
+another listed resource were the only constraint. The smallest value sets the theoretical block
+limit. Theoretical occupancy is the maximum resident-warp count allowed by those limits, expressed as
+a fraction of the hardware capacity. Achieved occupancy is the average active-warp count observed
+during collection, expressed as a fraction of the same capacity. These metrics describe resident
+concurrency; scheduler metrics show whether that concurrency affects instruction issue.</p>
+<p>In <code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code>, Compute represents the busiest SM compute path, while Memory represents the
+busiest memory-side path. DRAM specifically measures the external-memory interface. Each uses its own
+sustainable peak as the denominator. On a B200, HBM provides external device memory, L2 is shared
+across the GPU, and L1TEX is the SM-side path that handles memory requests. A high Memory value means
+that some memory-side path is busy; DRAM shows whether the external HBM interface is near saturation.
+In <code class="docutils literal notranslate"><span class="pre">ComputeWorkloadAnalysis</span></code>, active cycles show when a pipeline still has work in flight, while
+<code class="docutils literal notranslate"><span class="pre">Issue</span> <span class="pre">Slots</span> <span class="pre">Busy</span></code> reports how many scheduler issue opportunities were used.</p>
+<p><code class="docutils literal notranslate"><span class="pre">SchedulerStats</span></code> distinguishes several warp states. An active warp is resident and unfinished. An
+eligible warp has a decoded next instruction whose dependencies are ready and whose required
+execution unit is available. An issued warp has issued an instruction in the current cycle.
+After confirming the target launch and examining the grid, residency, and <code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code>, select the
+next metrics:</p>
+<ul class="simple">
+<li><p><strong>Compute is closer to its peak:</strong> In <code class="docutils literal notranslate"><span class="pre">ComputeWorkloadAnalysis</span></code>, open
+<code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span> <span class="pre">(Elapsed</span> <span class="pre">Cycles)</span></code> → <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span> <span class="pre">(%</span> <span class="pre">of</span> <span class="pre">elapsed</span> <span class="pre">cycles)</span></code> and find the compute
+path with the most active cycles. Then inspect <code class="docutils literal notranslate"><span class="pre">Issue</span> <span class="pre">Slots</span> <span class="pre">Busy</span></code> in the same section’s summary.
+If one path keeps processing work while most issue slots remain empty, continue to
+<code class="docutils literal notranslate"><span class="pre">Scheduler</span> <span class="pre">Statistics</span></code> → <code class="docutils literal notranslate"><span class="pre">Warps</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code> to explain the low instruction-issue rate.</p></li>
+<li><p><strong>Memory is closer to its peak:</strong> Collect <code class="docutils literal notranslate"><span class="pre">MemoryWorkloadAnalysis</span></code>,
+<code class="docutils literal notranslate"><span class="pre">MemoryWorkloadAnalysis_Chart</span></code>, and <code class="docutils literal notranslate"><span class="pre">MemoryWorkloadAnalysis_Tables</span></code>. First follow the data path
+through DRAM, L2, and L1/TEX under <code class="docutils literal notranslate"><span class="pre">Memory</span> <span class="pre">Workload</span> <span class="pre">Analysis</span> <span class="pre">Chart</span></code> → <code class="docutils literal notranslate"><span class="pre">Memory</span> <span class="pre">Chart</span></code>. Then read
+throughput, read/write bytes, hit rate, and the shared- and local-memory fields under
+<code class="docutils literal notranslate"><span class="pre">Memory</span> <span class="pre">Workload</span> <span class="pre">Analysis</span> <span class="pre">Tables</span></code> → <code class="docutils literal notranslate"><span class="pre">Memory</span> <span class="pre">Tables</span></code>. If DRAM is also near its peak, investigate
+external HBM traffic first. If DRAM is low, shift attention to L2, L1/TEX, shared memory, or local
+memory. Local memory is a per-thread private address space; its physical traffic traverses the
+L1/L2 caches and external device memory.</p></li>
+<li><p><strong>Compute and Memory are both low:</strong> Use the grid size and waves to determine whether the launch
+provides enough blocks to cover the GPU. If it does not, inspect the grid, block, and cluster
+configuration or divide the work into more blocks. If it does, inspect <code class="docutils literal notranslate"><span class="pre">SchedulerStats</span></code>. If active
+warps exist but eligible warps are scarce, use <code class="docutils literal notranslate"><span class="pre">WarpStateStats</span></code> to see whether they are waiting on
+data, synchronization, or another dependency.</p></li>
+<li><p><strong>Compute and Memory are both high:</strong> Expand both sides, identify one specific bottleneck candidate
+on each side, and change one factor at a time to determine which candidate affects kernel time.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">MemoryWorkloadAnalysis</span></code> summarizes traffic and cache behavior for the whole kernel across DRAM, L2,
+L1TEX, and other memory paths. <code class="docutils literal notranslate"><span class="pre">SourceCounters</span></code> then maps sampled stalls and instruction activity to
+SASS (GPU machine instructions) or source locations to help trace a specific load dependency.</p>
+<p>Interpret “high” and “low” in the context of the current GPU and workload, and compare values from the
+same report. Once the evidence points to a specific code change and supports a prediction about how
+the relevant metrics and latency should respond, the current pass has produced a testable hypothesis.
+If the scope is still too broad, collect the next section along the relevant path above.</p>
+</section>
+<section id="worked-example-a-b200-bf16-gemm">
+<h3>Worked Example: A B200 BF16 GEMM<a class="headerlink" href="#worked-example-a-b200-bf16-gemm" title="Link to this heading">#</a></h3>
+<section id="collect-the-first-basic-report">
+<h4>1. Collect the First <code class="docutils literal notranslate"><span class="pre">basic</span></code> Report<a class="headerlink" href="#collect-the-first-basic-report" title="Link to this heading">#</a></h4>
+<p>Continue using the script’s <code class="docutils literal notranslate"><span class="pre">--profile-once</span></code> mode. The application submits one GEMM and then one ReLU
+inside the collection range; NCU waits for the range to begin and profiles only the GEMM:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir<span class="w"> </span>-p<span class="w"> </span>reports
+ncu<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--config-file<span class="w"> </span>off<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--profile-from-start<span class="w"> </span>off<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kernel-name<span class="w"> </span><span class="s1">'regex:.*nvjet_sm100.*'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--launch-count<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--set<span class="w"> </span>basic<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--replay-mode<span class="w"> </span>kernel<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--cache-control<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--clock-control<span class="w"> </span>boost<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pipeline-boost-state<span class="w"> </span>stable<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--export<span class="w"> </span>reports/bf16-gemm-basic<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--force-overwrite<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>python<span class="w"> </span>appendix/nsys_example.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--size<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--warmup-calls<span class="w"> </span><span class="m">500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--profile-once
+</pre></div>
+</div>
+<p>The key options control the capture range, target, metrics, and collection conditions:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">--profile-from-start</span> <span class="pre">off</span></code> makes NCU wait until the script calls <code class="docutils literal notranslate"><span class="pre">cudaProfilerStart()</span></code>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--kernel-name</span></code> selects kernels in that range whose names contain <code class="docutils literal notranslate"><span class="pre">nvjet_sm100</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">--launch-count</span> <span class="pre">1</span></code> produces a report for the first matching launch. The expression comes from the
+preceding timeline; replace it with the name from your own program.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--set</span> <span class="pre">basic</span></code> collects the launch, occupancy, and high-level throughput sections needed for this
+first pass.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">--replay-mode</span> <span class="pre">kernel</span></code> allows NCU to replay the selected GEMM while collecting hardware counters.
+<code class="docutils literal notranslate"><span class="pre">--cache-control</span> <span class="pre">all</span></code> flushes controllable caches before replay, while the remaining options control
+clocks and pipeline boost state during collection. Kernel replay is appropriate here because this
+GEMM can be replayed independently. Workloads with cross-kernel dependencies or concurrency need a
+replay mode that preserves the required application or range state.</p></li>
+</ul>
+<p>Here, “one GEMM” means one launch submitted by the application. NCU can still replay that GEMM
+internally to collect all requested hardware counters. The 500 warm-up calls stay outside the
+collection range, avoiding initialization and lazy-loading work. NCU’s cache control then changes the
+normal warm-cache conditions.</p>
+<p>Open the report in the GUI:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ncu-ui<span class="w"> </span>reports/bf16-gemm-basic.ncu-rep
+</pre></div>
+</div>
+<p>Without a GUI, print the Details page in the terminal:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ncu<span class="w"> </span>--import<span class="w"> </span>reports/bf16-gemm-basic.ncu-rep<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--page<span class="w"> </span>details<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--print-details<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--print-metric-name<span class="w"> </span>label-name
+</pre></div>
+</div>
+<p>See the <a class="reference external" href="https://docs.nvidia.com/nsight-compute/NsightComputeCli/">Nsight Compute CLI documentation</a>
+for other filters and collection options. If NCU reports <code class="docutils literal notranslate"><span class="pre">ERR_NVGPUCTRPERM</span></code>, follow NVIDIA’s
+<a class="reference external" href="https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-nsightcompute">counter-permission guidance</a>
+or ask the system administrator to enable access.</p>
+</section>
+<section id="use-the-basic-report-to-choose-what-to-investigate">
+<h4>2. Use the <code class="docutils literal notranslate"><span class="pre">basic</span></code> Report to Choose What to Investigate<a class="headerlink" href="#use-the-basic-report-to-choose-what-to-investigate" title="Link to this heading">#</a></h4>
+<p>First confirm the device, kernel name, grid and block dimensions, and warnings in the report header.
+Once they match the intended launch, use these three observations to choose what to inspect next:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Observation in <code class="docutils literal notranslate"><span class="pre">basic</span></code></p></th>
+<th class="head"><p>Next step in this example</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Grid</span> <span class="pre">Size</span> <span class="pre">=</span> <span class="pre">512</span> <span class="pre">blocks</span></code>; <code class="docutils literal notranslate"><span class="pre">Waves</span> <span class="pre">Per</span> <span class="pre">SM</span> <span class="pre">=</span> <span class="pre">3.46</span></code></p></td>
+<td><p>The grid supplies enough blocks to cover all SMs; next check how much work can reside on each SM</p></td>
+</tr>
+<tr class="row-odd"><td><p>The register and shared-memory <code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span></code> values are both 1; theoretical/achieved occupancy is 12.50%/8.97%</p></td>
+<td><p>Each SM can theoretically host at most eight resident warps, while the observed average is lower; use scheduler metrics to inspect instruction readiness</p></td>
+</tr>
+<tr class="row-even"><td><p>Compute 77.74%, Memory 38.71%, DRAM 12.88%</p></td>
+<td><p>Compute is closest to its own peak, so expand the compute side first; aggregate HBM throughput across the device still has ample headroom</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Start with <code class="docutils literal notranslate"><span class="pre">Waves</span> <span class="pre">Per</span> <span class="pre">SM</span></code>. The current resource limits allow one resident block per SM, and this B200
+has 148 SMs, so the theoretical device-wide residency capacity is 148 blocks. The grid contains 512
+blocks, and <span class="math notranslate nohighlight">\(512 / 148 = 3.46\)</span>: its block count is 3.46 times that theoretical capacity.
+This calculation only explains the capacity ratio reported by NCU. Because this example uses
+thread-block clusters, use the reported <code class="docutils literal notranslate"><span class="pre">Waves</span> <span class="pre">Per</span> <span class="pre">SM</span> <span class="pre">=</span> <span class="pre">3.46</span></code> as the authoritative value. The ratio
+confirms that the grid contains enough blocks to cover the device.</p>
+<p>Next consider occupancy. A B200 SM can hold at most 2,048 threads. At 32 threads per warp, that is a
+hardware limit of 64 warps. This launch configuration permits at most one 256-thread block per SM, or
+eight resident warps, so its theoretical occupancy is <span class="math notranslate nohighlight">\(8 / 64 = 12.50\%\)</span>. The launch can therefore
+use at most 12.50% of the hardware’s warp-residency capacity. <code class="docutils literal notranslate"><span class="pre">Achieved</span> <span class="pre">Occupancy</span> <span class="pre">=</span> <span class="pre">8.97%</span></code> is the
+observed average active-warp count expressed as a fraction of that same capacity, below the 12.50%
+theoretical maximum. The theoretical value establishes that all schedulers on one SM
+have at most eight resident warps in total; <code class="docutils literal notranslate"><span class="pre">SchedulerStats</span></code> then reports how many warps assigned to
+each scheduler are ready on average.</p>
+<p>Finally, compare throughput. Compute is closer to its peak than Memory, so investigate the compute
+side first. The term <code class="docutils literal notranslate"><span class="pre">compute-bound</span></code> makes a stronger claim: further speedup is ultimately constrained
+by the throughput limit of the compute units. The <code class="docutils literal notranslate"><span class="pre">basic</span></code> report only identifies where to begin the
+investigation. The follow-up report shows that issue opportunities are rarely used and most scheduler
+cycles have no eligible (ready) warp; calling the kernel <code class="docutils literal notranslate"><span class="pre">compute-bound</span></code> at this point would hide that
+key clue.</p>
+<p>The grid is large enough to cover the whole device, but each SM can host at most eight resident
+warps, and the compute side is closest to its peak. The next report expands the compute pipelines and
+collects scheduler metrics.</p>
+</section>
+<section id="collect-follow-up-metrics-along-the-compute-path">
+<h4>3. Collect Follow-Up Metrics Along the Compute Path<a class="headerlink" href="#collect-follow-up-metrics-along-the-compute-path" title="Link to this heading">#</a></h4>
+<p>The next command collects all three sections in a single run. Read them in the order
+<code class="docutils literal notranslate"><span class="pre">ComputeWorkloadAnalysis</span></code> → <code class="docutils literal notranslate"><span class="pre">SchedulerStats</span></code> → <code class="docutils literal notranslate"><span class="pre">WarpStateStats</span></code>. For a new kernel, decide whether to
+add each section after reading the preceding one.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ncu<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--config-file<span class="w"> </span>off<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--profile-from-start<span class="w"> </span>off<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kernel-name<span class="w"> </span><span class="s1">'regex:.*nvjet_sm100.*'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--launch-count<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--section<span class="w"> </span>ComputeWorkloadAnalysis<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--section<span class="w"> </span>SchedulerStats<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--section<span class="w"> </span>WarpStateStats<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--replay-mode<span class="w"> </span>kernel<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--cache-control<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--clock-control<span class="w"> </span>boost<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pipeline-boost-state<span class="w"> </span>stable<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--export<span class="w"> </span>reports/bf16-gemm-followup<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--force-overwrite<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>python<span class="w"> </span>appendix/nsys_example.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--size<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--warmup-calls<span class="w"> </span><span class="m">500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--profile-once
+</pre></div>
+</div>
+<p>This is an independent NCU run. Percentages can vary slightly between the reports—for example,
+77.74% becomes 78.39%—without indicating a performance change. The earlier <code class="docutils literal notranslate"><span class="pre">basic</span></code> report selected
+the investigation path; the follow-up report uses compute, scheduler, and warp-state metrics from
+one collection to narrow the investigation.</p>
+</section>
+<section id="read-the-three-sections-in-order">
+<h4>4. Read the Three Sections in Order<a class="headerlink" href="#read-the-three-sections-in-order" title="Link to this heading">#</a></h4>
+<p>Start with <code class="docutils literal notranslate"><span class="pre">ComputeWorkloadAnalysis</span></code> → <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span> <span class="pre">(Elapsed</span> <span class="pre">Cycles)</span></code> →
+<code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span> <span class="pre">(%</span> <span class="pre">of</span> <span class="pre">elapsed</span> <span class="pre">cycles)</span></code>. This is the active-cycle view. <code class="docutils literal notranslate"><span class="pre">Tensor</span> <span class="pre">(FP)</span></code> is the
+floating-point tensor-compute path. <code class="docutils literal notranslate"><span class="pre">TMEM</span> <span class="pre">(Tensor</span> <span class="pre">Memory)</span></code> is an on-chip memory path that serves
+tensor operations; it is distinct from external HBM/DRAM and from TMA, the asynchronous data-movement
+engine. These paths are active for about 78% of clock cycles, while the same section’s summary reports
+<code class="docutils literal notranslate"><span class="pre">Issue</span> <span class="pre">Slots</span> <span class="pre">Busy</span> <span class="pre">=</span> <span class="pre">3.20%</span></code>. A multi-cycle operation can issue once and keep a pipeline active, so
+high active-cycle utilization can coexist with a low instruction issue rate.</p>
+<p>Next, open <code class="docutils literal notranslate"><span class="pre">Scheduler</span> <span class="pre">Statistics</span></code> → <code class="docutils literal notranslate"><span class="pre">Warps</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code> to see why the scheduler issues new
+instructions so infrequently. Each scheduler has an average of 1.44 active warps that have not
+finished, but only 0.04 eligible (ready) warps; 0.04 is an average warp count, not 4%. The denominator
+for <code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">Eligible</span></code> includes only cycles in which the scheduler’s SM subpartition has at least one warp
+in flight. A value of 96.11% means that no eligible warp is available in 96.11% of those cycles. This
+explains the low 3.20% issue rate. The SM has resident work, but most of the time no warp is ready to
+continue.</p>
+<p>Finally, open <code class="docutils literal notranslate"><span class="pre">Warp</span> <span class="pre">State</span> <span class="pre">Statistics</span></code> → <code class="docutils literal notranslate"><span class="pre">Warp</span> <span class="pre">State</span> <span class="pre">(All</span> <span class="pre">Cycles)</span></code> to see what those warps are waiting
+for. One warp spending one clock cycle in a state contributes one warp-cycle. Each issued warp
+instruction corresponds to 37.00 warp-cycles, of which 32.11—about 87%—are attributed to
+<code class="docutils literal notranslate"><span class="pre">Long</span> <span class="pre">Scoreboard</span></code>. This 87% is the share of warp-state cycles after normalization by issued warp
+instructions, not a share of kernel execution time. A scoreboard is the hardware
+dependency table that records whether results of earlier operations are ready. <code class="docutils literal notranslate"><span class="pre">Long</span> <span class="pre">Scoreboard</span></code>
+means that the next instruction is still waiting for a memory operation handled by L1TEX. L1TEX is
+the SM-side path for global, local, surface, and texture memory requests; the requested data may
+ultimately come from L1, L2, or DRAM, so this field alone cannot identify which memory level served
+the request. <code class="docutils literal notranslate"><span class="pre">MemoryWorkloadAnalysis</span></code> characterizes aggregate L1, L2, and DRAM behavior for the whole
+kernel; use the SASS/source view in <code class="docutils literal notranslate"><span class="pre">SourceCounters</span></code> to narrow the investigation to specific load
+instructions.</p>
+<p>Together, the three sections tell this story:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Tensor/TMEM paths are often active
+→ the scheduler issues few new instructions
+→ most cycles have no eligible (ready) warp
+→ Long Scoreboard is the largest wait category
+</pre></div>
+</div>
+<p>Start with the L1TEX-related data dependency. Each SM can host at most eight resident warps, leaving
+fewer independent warps available to run while another warp waits for data. In the earlier <code class="docutils literal notranslate"><span class="pre">basic</span></code>
+report, <code class="docutils literal notranslate"><span class="pre">DRAM</span> <span class="pre">Throughput</span> <span class="pre">=</span> <span class="pre">12.88%</span></code> shows that aggregate HBM bandwidth is far from saturation; individual
+requests can still reach DRAM and incur long latency. Investigate the data dependency first, then see
+whether Tensor Core throughput becomes the next limit. The <code class="docutils literal notranslate"><span class="pre">nvjet</span></code> GEMM in this example is a library
+implementation, so the next report can collect <code class="docutils literal notranslate"><span class="pre">MemoryWorkloadAnalysis</span></code> and compare aggregate L1,
+L2, and DRAM traffic, throughput, and cache behavior for the whole kernel.</p>
+<p>For a kernel you control, the report suggests two directions that can be tested separately:</p>
+<ul class="simple">
+<li><p><strong>Increase resident warps:</strong> Adjust the tile, block, or resource usage so that more work can reside
+on each SM.</p></li>
+<li><p><strong>Shorten the data-dependency wait:</strong> Hold residency constant and move the load or prefetch
+earlier, or shorten the dependency chain.</p></li>
+</ul>
+<p>The later section “Test the Hypothesis with a Code Change” gives the concrete modifications and
+validation steps.</p>
+</section>
+</section>
+<section id="metric-calculations-units-and-boundaries">
+<h3>Metric Calculations, Units, and Boundaries<a class="headerlink" href="#metric-calculations-units-and-boundaries" title="Link to this heading">#</a></h3>
+<p>The main walkthrough already established the reading order and the conclusion for this kernel. The
+following sections serve as a reference for complete field lists, calculations, units, and boundaries
+that are easy to misread; consult them as needed for another kernel.</p>
+<section id="launchstats-and-occupancy">
+<h4><code class="docutils literal notranslate"><span class="pre">LaunchStats</span></code> and <code class="docutils literal notranslate"><span class="pre">Occupancy</span></code><a class="headerlink" href="#launchstats-and-occupancy" title="Link to this heading">#</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">LaunchStats</span></code> fields used in this example are:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head text-right"><p>Value in this report</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Grid</span> <span class="pre">Size</span></code></p></td>
+<td class="text-right"><p>512 blocks</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Size</span></code></p></td>
+<td class="text-right"><p>256 threads</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Cluster</span> <span class="pre">Size</span></code></p></td>
+<td class="text-right"><p>4 blocks</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Waves</span> <span class="pre">Per</span> <span class="pre">SM</span></code></p></td>
+<td class="text-right"><p>3.46</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Size</span> <span class="pre">=</span> <span class="pre">256</span></code> means that each block has 256 threads, or eight warps. This value enters the
+occupancy calculation below.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Cluster</span> <span class="pre">Size</span> <span class="pre">=</span> <span class="pre">4</span></code> groups every four blocks into one thread-block cluster, giving 128 clusters in
+the grid. The cluster’s blocks are scheduled together according to a layout supported by the
+hardware.</p></li>
+<li><p>For cluster launches, including this one, use the <code class="docutils literal notranslate"><span class="pre">Waves</span> <span class="pre">Per</span> <span class="pre">SM</span></code> value reported by NCU; use
+<code class="docutils literal notranslate"><span class="pre">cudaOccupancyMaxActiveClusters</span></code> to calculate resident clusters programmatically.</p></li>
+</ul>
+<p>Per-block resource usage appears in <code class="docutils literal notranslate"><span class="pre">LaunchStats</span></code>:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head text-right"><p>Value in this report</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Registers</span> <span class="pre">Per</span> <span class="pre">Thread</span></code></p></td>
+<td class="text-right"><p>255</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Dynamic</span> <span class="pre">Shared</span> <span class="pre">Memory</span> <span class="pre">Per</span> <span class="pre">Block</span></code></p></td>
+<td class="text-right"><p>213.28 KB</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">Occupancy</span></code> section shows the residency permitted by those resources:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head text-right"><p>Value in this report</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span> <span class="pre">Registers</span></code></p></td>
+<td class="text-right"><p>1 block / SM</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span> <span class="pre">Shared</span> <span class="pre">Mem</span></code></p></td>
+<td class="text-right"><p>1 block / SM</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Theoretical</span> <span class="pre">Occupancy</span></code></p></td>
+<td class="text-right"><p>12.50%</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Achieved</span> <span class="pre">Occupancy</span></code></p></td>
+<td class="text-right"><p>8.97%</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>When a block becomes resident, the SM reserves its registers and shared memory. The
+<a class="reference external" href="https://docs.nvidia.com/cuda/blackwell-tuning-guide/index.html#occupancy">NVIDIA Blackwell Tuning Guide</a>
+specifies 65,536 32-bit registers, 228 KB of shared memory, and at most 2,048 resident threads per
+B200 SM.</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Registers</span> <span class="pre">Per</span> <span class="pre">Thread</span> <span class="pre">=</span> <span class="pre">255</span></code>. With 256 threads, one block needs about
+<span class="math notranslate nohighlight">\(255 \times 256 = 65{,}280\)</span> registers, nearly the entire register file. Two blocks would need
+130,560 registers, exceeding 65,536.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Dynamic</span> <span class="pre">Shared</span> <span class="pre">Memory</span> <span class="pre">Per</span> <span class="pre">Block</span> <span class="pre">=</span> <span class="pre">213.28</span> <span class="pre">KB</span></code>. One block already uses most of the 228 KB available;
+two blocks would need at least 426.56 KB and cannot reside together.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span> <span class="pre">Registers</span> <span class="pre">=</span> <span class="pre">1</span></code> and <code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span> <span class="pre">Shared</span> <span class="pre">Mem</span> <span class="pre">=</span> <span class="pre">1</span></code> are the result of those two resource
+calculations. Either resource alone permits only one resident block per SM. NCU’s exact calculation
+also accounts for allocation granularity and driver-reserved shared memory.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Achieved</span> <span class="pre">Occupancy</span> <span class="pre">=</span> <span class="pre">8.97%</span></code> is the average active-warp ratio observed during collection, not
+“percent of peak kernel performance.” It is below 12.50%, so execution did not sustain the
+theoretical residency limit throughout the launch. The two percentages measure residency, not
+closeness to peak performance.</p></li>
+</ul>
+</section>
+<section id="speedoflight-denominators-and-duration">
+<h4><code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code> Denominators and <code class="docutils literal notranslate"><span class="pre">Duration</span></code><a class="headerlink" href="#speedoflight-denominators-and-duration" title="Link to this heading">#</a></h4>
+<p>The <code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code> section reports these four fields:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head text-right"><p>Value in this report</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Duration</span></code></p></td>
+<td class="text-right"><p>95.30 μs</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Compute</span> <span class="pre">(SM)</span> <span class="pre">Throughput</span></code></p></td>
+<td class="text-right"><p>77.74%</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Memory</span> <span class="pre">Throughput</span></code></p></td>
+<td class="text-right"><p>38.71%</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">DRAM</span> <span class="pre">Throughput</span></code></p></td>
+<td class="text-right"><p>12.88%</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Interpret <code class="docutils literal notranslate"><span class="pre">Duration</span></code> only within the profiling run that produced it. This NCU capture reports
+95.30 μs, while a separate Nsight Systems capture reports 92.608 μs. Compare implementations with the
+unprofiled CUDA event baseline. NCU also controls clocks, flushes caches, and may replay or serialize
+kernels; see
+<a class="reference external" href="https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#workload-durations">Nsight Compute’s workload-duration guidance</a>.</p>
+<p>The three throughput percentages use separate hardware peaks as their denominators. They cannot be
+added and do not represent fractions of execution time. The
+<a class="reference external" href="https://docs.nvidia.com/nsight-compute/ProfilingGuide/index.html#metrics-structure">Nsight Compute Profiling Guide</a>
+defines throughput metrics and their constituents.</p>
+</section>
+<section id="compute-pipelines-the-scheduler-and-warp-states">
+<h4>Compute Pipelines, the Scheduler, and Warp States<a class="headerlink" href="#compute-pipelines-the-scheduler-and-warp-states" title="Link to this heading">#</a></h4>
+<section id="compute-throughput-breakdown-fields">
+<h5><code class="docutils literal notranslate"><span class="pre">Compute</span> <span class="pre">Throughput</span> <span class="pre">Breakdown</span></code> Fields<a class="headerlink" href="#compute-throughput-breakdown-fields" title="Link to this heading">#</a></h5>
+<p>The report location is <code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code> → <code class="docutils literal notranslate"><span class="pre">GPU</span> <span class="pre">Throughput</span> <span class="pre">Breakdown</span></code> →
+<code class="docutils literal notranslate"><span class="pre">Compute</span> <span class="pre">Throughput</span> <span class="pre">Breakdown</span></code>:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head text-right"><p>Value in this report</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SM:</span> <span class="pre">Mem</span> <span class="pre">Tensor</span> <span class="pre">Cycles</span> <span class="pre">Active</span></code></p></td>
+<td class="text-right"><p>77.74%</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">SM:</span> <span class="pre">Pipe</span> <span class="pre">Tc</span> <span class="pre">Cycles</span> <span class="pre">Active</span></code></p></td>
+<td class="text-right"><p>77.48%</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SM:</span> <span class="pre">Pipe</span> <span class="pre">Tensor</span> <span class="pre">Cycles</span> <span class="pre">Active</span></code></p></td>
+<td class="text-right"><p>77.42%</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">SM:</span> <span class="pre">Pipe</span> <span class="pre">Alu</span> <span class="pre">Cycles</span> <span class="pre">Active</span></code></p></td>
+<td class="text-right"><p>1.36%</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">SM:</span> <span class="pre">Pipe</span> <span class="pre">Tma</span> <span class="pre">Cycles</span> <span class="pre">Active</span></code></p></td>
+<td class="text-right"><p>1.10%</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">SM:</span> <span class="pre">Pipe</span> <span class="pre">Fma</span> <span class="pre">Cycles</span> <span class="pre">Active</span></code></p></td>
+<td class="text-right"><p>0.61%</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">Mem</span> <span class="pre">Tensor</span></code> is an on-chip path related to Blackwell tensor memory. External data is stored in
+DRAM/HBM, while TMA handles asynchronous multidimensional transfers; these three names refer to
+distinct hardware paths. At 77.74%, <code class="docutils literal notranslate"><span class="pre">Mem</span> <span class="pre">Tensor</span></code> is the most heavily utilized compute-side path in
+this report.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Tc</span></code> and <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Tensor</span></code> are two distinct pipeline counters in NCU. Both are near 77%,
+consistent with a BF16 GEMM performing substantial tensor-core MMA work. They may cover
+overlapping hardware activity, so read them separately; summing them would double-count activity.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Alu</span></code> primarily corresponds to general integer and logic operations, while <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Fma</span></code> covers
+ordinary FP32 arithmetic and some integer multiply-add operations. At 1.36% and 0.61%, respectively,
+this GEMM does not approach the peak of either path.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Tma</span></code> corresponds to Tensor Memory Accelerator’s asynchronous data-movement path. Its 1.10%
+value shows that TMA is far from its own peak. Data supply also involves TMEM, caches, shared
+memory, and dependency latency, each described by other metrics.</p></li>
+</ul>
+</section>
+<section id="the-two-pipe-utilization-denominators">
+<h5>The Two <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span></code> Denominators<a class="headerlink" href="#the-two-pipe-utilization-denominators" title="Link to this heading">#</a></h5>
+<p>The <code class="docutils literal notranslate"><span class="pre">ComputeWorkloadAnalysis</span></code> summary reports <code class="docutils literal notranslate"><span class="pre">Issue</span> <span class="pre">Slots</span> <span class="pre">Busy</span> <span class="pre">=</span> <span class="pre">3.20%</span></code>. The report labels the two
+views <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span> <span class="pre">(%</span> <span class="pre">of</span> <span class="pre">elapsed</span> <span class="pre">cycles)</span></code> and
+<code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span> <span class="pre">(%</span> <span class="pre">of</span> <span class="pre">peak</span> <span class="pre">instructions</span> <span class="pre">executed</span> <span class="pre">over</span> <span class="pre">elapsed</span> <span class="pre">cycles)</span></code>.</p>
+<p>Putting each pipeline on one row makes the contrast easier to see:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Pipeline field</p></th>
+<th class="head text-right"><p>Active-cycle view</p></th>
+<th class="head text-right"><p>Instruction-rate view</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TMEM</span> <span class="pre">(Tensor</span> <span class="pre">Memory)</span></code></p></td>
+<td class="text-right"><p>78.39%</p></td>
+<td class="text-right"><p>0.04%</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TC</span></code></p></td>
+<td class="text-right"><p>78.12%</p></td>
+<td class="text-right"><p>0.38%</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Tensor</span> <span class="pre">(FP)</span></code></p></td>
+<td class="text-right"><p>78.07%</p></td>
+<td class="text-right"><p>0.61%</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The two views use different denominators: one reports active pipeline cycles, while the other reports
+instruction execution rate relative to peak. Their values cannot be added or subtracted.</p>
+</section>
+<section id="complete-schedulerstats-fields">
+<h5>Complete <code class="docutils literal notranslate"><span class="pre">SchedulerStats</span></code> Fields<a class="headerlink" href="#complete-schedulerstats-fields" title="Link to this heading">#</a></h5>
+<p>The report location is <code class="docutils literal notranslate"><span class="pre">Scheduler</span> <span class="pre">Statistics</span></code> → <code class="docutils literal notranslate"><span class="pre">Warps</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code>:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head text-right"><p>Value in this report</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">GPU</span> <span class="pre">Maximum</span> <span class="pre">Warps</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code></p></td>
+<td class="text-right"><p>16</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Theoretical</span> <span class="pre">Warps</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code></p></td>
+<td class="text-right"><p>2.00</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Active</span> <span class="pre">Warps</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code></p></td>
+<td class="text-right"><p>1.44</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Eligible</span> <span class="pre">Warps</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code></p></td>
+<td class="text-right"><p>0.04</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Issued</span> <span class="pre">Warp</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code></p></td>
+<td class="text-right"><p>0.04</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The summary in the same section also reports <code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">Eligible</span> <span class="pre">=</span> <span class="pre">96.11%</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">GPU</span> <span class="pre">Maximum</span> <span class="pre">=</span> <span class="pre">16</span></code> is the hardware capacity of one scheduler. <code class="docutils literal notranslate"><span class="pre">Theoretical</span> <span class="pre">=</span> <span class="pre">2.00</span></code> comes from this
+kernel’s theoretical maximum of eight resident warps per SM divided among four schedulers.</p>
+</section>
+<section id="warpstatestats-normalization">
+<h5><code class="docutils literal notranslate"><span class="pre">WarpStateStats</span></code> Normalization<a class="headerlink" href="#warpstatestats-normalization" title="Link to this heading">#</a></h5>
+<p>One warp spending one cycle in a state contributes one warp-cycle; four warps spending the same cycle
+in a state contribute four warp-cycles. NCU then normalizes those cycles by the number of issued warp
+instructions. The report summary gives the first field below, and <code class="docutils literal notranslate"><span class="pre">Warp</span> <span class="pre">State</span> <span class="pre">(All</span> <span class="pre">Cycles)</span></code> gives the
+second:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head text-right"><p>Value in this report</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Warp</span> <span class="pre">Cycles</span> <span class="pre">Per</span> <span class="pre">Issued</span> <span class="pre">Instruction</span></code></p></td>
+<td class="text-right"><p>37.00 warp-cycles / issued instruction</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Stall</span> <span class="pre">Long</span> <span class="pre">Scoreboard</span></code></p></td>
+<td class="text-right"><p>32.11 warp-cycles / issued instruction</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The report shows an average of 37.00 warp-cycles per issued warp instruction. Of those, 32.11, or
+about 86.8%, are assigned to <code class="docutils literal notranslate"><span class="pre">Long</span> <span class="pre">Scoreboard</span></code>. These values are normalized across all warps and use
+warp-cycles / issued instruction, a different unit from the scheduler’s average issue rate.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">Est.</span> <span class="pre">Speedup</span></code> shown next to an NCU rule is a model-based estimate of the potential reduction in
+workload time for that rule. Use it to prioritize the investigation; only a benchmark of the modified
+kernel can establish the actual speedup.</p>
+</section>
+<section id="other-common-warp-states">
+<h5>Other Common Warp States<a class="headerlink" href="#other-common-warp-states" title="Link to this heading">#</a></h5>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Warp state</p></th>
+<th class="head"><p>Direct meaning</p></th>
+<th class="head"><p>What to inspect next</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Short</span> <span class="pre">Scoreboard</span></code></p></td>
+<td><p>Usually waiting for shared memory or another on-chip unit to produce a result</p></td>
+<td><p>Inspect shared-memory accesses and the corresponding source</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">Barrier</span></code></p></td>
+<td><p>Waiting for other warps to reach a synchronization point</p></td>
+<td><p>Compare the work assigned to different warps and when they arrive</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">Not</span> <span class="pre">Selected</span></code></p></td>
+<td><p>The warp is ready, but another warp was selected in this cycle</p></td>
+<td><p>Check whether many ready warps are competing for issue opportunities</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+<section id="correlate-metrics-with-sass-and-source-code-using-sourcecounters">
+<h4>Correlate Metrics with SASS and Source Code Using <code class="docutils literal notranslate"><span class="pre">SourceCounters</span></code><a class="headerlink" href="#correlate-metrics-with-sass-and-source-code-using-sourcecounters" title="Link to this heading">#</a></h4>
+<p><code class="docutils literal notranslate"><span class="pre">WarpStateStats</span></code> summarizes wait states across the entire kernel. <code class="docutils literal notranslate"><span class="pre">SourceCounters</span></code> narrows them down
+by placing stall samples and execution counts beside individual SASS instructions. The Source page
+then reveals where those waits are concentrated. If the binary contains line information and NCU can
+find the source file, the instructions are also correlated with CUDA source lines. The data comes from
+periodic sampling of warp stall reasons together with instruction counts and selected memory-access
+metrics.</p>
+<p>Because the <code class="docutils literal notranslate"><span class="pre">nvjet</span></code> GEMM is a library implementation, this tutorial does not have access to its CUDA
+source. The SASS view is still available. Reuse the earlier filter and collection conditions:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ncu<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--config-file<span class="w"> </span>off<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--profile-from-start<span class="w"> </span>off<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kernel-name<span class="w"> </span><span class="s1">'regex:.*nvjet_sm100.*'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--launch-count<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--section<span class="w"> </span>SourceCounters<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--replay-mode<span class="w"> </span>kernel<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--cache-control<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--clock-control<span class="w"> </span>boost<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pipeline-boost-state<span class="w"> </span>stable<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--export<span class="w"> </span>reports/bf16-gemm-source<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--force-overwrite<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>python<span class="w"> </span>appendix/nsys_example.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--size<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--warmup-calls<span class="w"> </span><span class="m">500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--profile-once
+</pre></div>
+</div>
+<p>Select SASS on the GUI’s Source page, or print the same view in the terminal:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ncu<span class="w"> </span>--import<span class="w"> </span>reports/bf16-gemm-source.ncu-rep<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--page<span class="w"> </span><span class="nb">source</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--print-source<span class="w"> </span>sass
+</pre></div>
+</div>
+<p>Start with <code class="docutils literal notranslate"><span class="pre">Warp</span> <span class="pre">Stall</span> <span class="pre">Sampling</span> <span class="pre">(Not-issued</span> <span class="pre">Samples)</span></code> and <code class="docutils literal notranslate"><span class="pre">Instructions</span> <span class="pre">Executed</span></code>. The first counts
+sampling observations taken when the warp scheduler issued no instruction; the second counts
+executions of the corresponding SASS instruction per warp. If <code class="docutils literal notranslate"><span class="pre">WarpStateStats</span></code> was dominated by
+<code class="docutils literal notranslate"><span class="pre">Long</span> <span class="pre">Scoreboard</span></code> and the corresponding samples cluster around a particular load, that instruction
+becomes a candidate for closer inspection. These values come from periodic sampling and
+identify hotspot locations. Determining whether the data came from L1, L2, or DRAM still requires
+the kernel-wide evidence in <code class="docutils literal notranslate"><span class="pre">MemoryWorkloadAnalysis</span></code> together with the code’s memory-access pattern.</p>
+<p>For a TIRx kernel that you compile yourself, the SASS can also be correlated with the generated CUDA
+source. First select NVCC, retain the generated source, and enable line information:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">export</span><span class="w"> </span><span class="nv">TVM_CUDA_COMPILE_MODE</span><span class="o">=</span>nvcc
+<span class="nb">export</span><span class="w"> </span><span class="nv">TVM_KERNEL_DUMP</span><span class="o">=</span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/reports/tvm-kernels"</span>
+mkdir<span class="w"> </span>-p<span class="w"> </span><span class="s2">"</span><span class="nv">$TVM_KERNEL_DUMP</span><span class="s2">"</span>
+</pre></div>
+</div>
+<p>After setting the variables, rerun the workload in a fresh process so that the target kernel is
+recompiled with these settings. The following template collects the report; replace
+<code class="docutils literal notranslate"><span class="pre">YOUR_KERNEL_NAME</span></code> and the program path on the final line:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ncu<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--config-file<span class="w"> </span>off<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--kernel-name<span class="w"> </span><span class="s1">'regex:.*YOUR_KERNEL_NAME.*'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--launch-count<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--section<span class="w"> </span>SourceCounters<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--replay-mode<span class="w"> </span>kernel<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--cache-control<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--clock-control<span class="w"> </span>boost<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--pipeline-boost-state<span class="w"> </span>stable<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--import-source<span class="w"> </span>yes<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--source-folders<span class="w"> </span><span class="s2">"</span><span class="nv">$TVM_KERNEL_DUMP</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--export<span class="w"> </span>reports/tirx-source<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--force-overwrite<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>python<span class="w"> </span>path/to/your_workload.py
+</pre></div>
+</div>
+<p>Open <code class="docutils literal notranslate"><span class="pre">ncu-ui</span> <span class="pre">reports/tirx-source.ncu-rep</span></code> and use the CUDA/SASS correlation on the Source page. The
+terminal equivalent is
+<code class="docutils literal notranslate"><span class="pre">ncu</span> <span class="pre">--import</span> <span class="pre">reports/tirx-source.ncu-rep</span> <span class="pre">--page</span> <span class="pre">source</span> <span class="pre">--print-source</span> <span class="pre">cuda,sass</span></code>.
+If <code class="docutils literal notranslate"><span class="pre">executable</span></code> is your TIRx compilation result,
+<code class="docutils literal notranslate"><span class="pre">executable.mod.imports[0].inspect_source(&quot;cuda&quot;)</span></code> prints the generated source for manual inspection.
+NCU’s line-by-line correlation depends on line information embedded in the binary during this
+recompilation.</p>
+</section>
+<section id="test-the-hypothesis-with-a-code-change">
+<h4>Test the Hypothesis with a Code Change<a class="headerlink" href="#test-the-hypothesis-with-a-code-change" title="Link to this heading">#</a></h4>
+<p>Because this example calls the library-provided <code class="docutils literal notranslate"><span class="pre">torch.mm</span></code>, we cannot modify the kernel implementation
+here. The following steps give concrete modifications and validation checks for a custom TIRx kernel
+or another DSL kernel.</p>
+<p>To test the hypothesis that the kernel has too few resident warps to hide L1TEX latency, adjust the
+tile, block, or pipeline stages to reduce <code class="docutils literal notranslate"><span class="pre">Registers</span> <span class="pre">Per</span> <span class="pre">Thread</span></code> and
+<code class="docutils literal notranslate"><span class="pre">Dynamic</span> <span class="pre">Shared</span> <span class="pre">Memory</span> <span class="pre">Per</span> <span class="pre">Block</span></code>. Then recheck both block limits. A second block can reside only
+if both <code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span> <span class="pre">Registers</span></code> and <code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span> <span class="pre">Shared</span> <span class="pre">Mem</span></code> rise from one to at least two; improving
+only one is insufficient. Reducing register use can cause spills into local memory, and reducing
+shared-memory use may reduce data reuse. Also confirm that every other block limit is at least two,
+then inspect NCU’s recalculated theoretical active blocks and occupancy. Use the latency measurement
+to determine whether the trade-off helps overall.</p>
+<p>For a separate experiment, hold residency constant while moving a load or prefetch earlier or
+shortening the dependency chain. If <code class="docutils literal notranslate"><span class="pre">Long</span> <span class="pre">Scoreboard</span></code> and latency fall together, that supports the
+explanation that warps now spend less time waiting for data. Because this metric is normalized per
+issued instruction, a decrease in this value alone does not establish a speedup. Change one key
+factor at a time, then check three things:</p>
+<ol class="arabic simple">
+<li><p><strong>Correctness:</strong> Compare both outputs with the same reference on the same inputs and with the same
+tolerance. The current script already performs an FP32 reference check before timing or collection
+begins; use the same reference and tolerance after substituting your own implementation.</p></li>
+<li><p><strong>Predicted metrics:</strong> Collect the same NCU sections again and inspect the metrics relevant to the
+prediction: for a residency experiment, inspect theoretical/active and eligible/issued warps;
+for a dependency-chain experiment, inspect <code class="docutils literal notranslate"><span class="pre">Long</span> <span class="pre">Scoreboard</span></code>. Higher occupancy shows that the
+residency experiment reached its resource target; the next check determines whether that change
+also improves latency.</p></li>
+<li><p><strong>Actual latency:</strong> Disable Proton, Nsight Systems, and NCU. Measure both implementations with
+exactly the same shape, dtype, input policy, warm-up, CUDA event boundary, and sample count used
+at the beginning.</p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>appendix/nsys_example.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--size<span class="w"> </span><span class="m">4096</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--warmup-calls<span class="w"> </span><span class="m">500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--event-samples<span class="w"> </span><span class="m">20</span>
+</pre></div>
+</div>
+<p>Compare the unprofiled medians before and after the change, and inspect sample variation as well. If
+the correctness check passes, the metrics change as predicted, and CUDA event time decreases
+consistently, the hypothesis is supported. If the NCU metrics move as expected but latency does not
+improve, check whether another bottleneck has emerged or the original hypothesis was incomplete.</p>
+</section>
+</section>
+</section>
+<section id="use-iket-to-inspect-phases-inside-a-dsl-kernel">
+<h2>Use IKET to Inspect Phases Inside a DSL Kernel<a class="headerlink" href="#use-iket-to-inspect-phases-inside-a-dsl-kernel" title="Link to this heading">#</a></h2>
+<p>IKET (In-Kernel Event Tracing) adds an internal timeline to a warp-specialized TIRx kernel. Nsight
+Systems shows the beginning and end of the whole kernel, NCU aggregates hardware metrics across the
+launch, and IKET records when each warp role is active in marked regions such as producer, wait, and
+consumer.</p>
+<section id="run-a-complete-example">
+<h3>Run a Complete Example<a class="headerlink" href="#run-a-complete-example" title="Link to this heading">#</a></h3>
+<p>TVM 0.26 uses the <code class="docutils literal notranslate"><span class="pre">cutlass-4.6.0</span></code> IKET profile, which pins the profiling dependencies to specific
+versions. For the CUDA 13 environment used in this chapter, install the matching dependencies and
+confirm that <code class="docutils literal notranslate"><span class="pre">run-iket</span></code> is available:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s1">'nvidia-cutlass-dsl[cu13]==4.6.0'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s1">'nvidia-cuda-nvdisasm==13.3.73'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s1">'nvidia-cuda-nvrtc==13.2.78'</span>
+run-iket<span class="w"> </span>--help
+</pre></div>
+</div>
+<p>The complete script below is available as <code class="docutils literal notranslate"><span class="pre">appendix/iket_example.py</span></code>. One CTA contains two warps.
+Warp 0 moves 256 elements from global to shared memory, both warps meet at a CTA barrier, and warp 1
+reads shared memory, computes the result, and writes it out. Three <code class="docutils literal notranslate"><span class="pre">range_push()</span></code> / <code class="docutils literal notranslate"><span class="pre">range_pop()</span></code>
+pairs mark the producer, wait, and consumer regions:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="sd">"""Minimal TIRx workload with IKET ranges for two warp roles."""</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.cuda</span><span class="w"> </span><span class="kn">import</span> <span class="n">iket</span>
+
+
+<span class="n">N</span> <span class="o">=</span> <span class="mi">256</span>
+<span class="n">ELEMS_PER_LANE</span> <span class="o">=</span> <span class="mi">8</span>
+
+
+<span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">warp_role_example</span><span class="p">(</span><span class="n">inp</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Buffer</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">),</span> <span class="n">out</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Buffer</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)):</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
+    <span class="n">profiler</span> <span class="o">=</span> <span class="n">iket</span><span class="o">.</span><span class="n">IketProfiler</span><span class="p">()</span>
+    <span class="n">warp_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warp_id</span><span class="p">([</span><span class="mi">2</span><span class="p">])</span>
+    <span class="n">lane</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">lane_id</span><span class="p">([</span><span class="mi">32</span><span class="p">])</span>
+    <span class="n">shared</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_buffer</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"shared"</span><span class="p">)</span>
+
+    <span class="n">profiler</span><span class="o">.</span><span class="n">mark</span><span class="p">(</span><span class="s2">"kernel_start"</span><span class="p">,</span> <span class="n">warp_id</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">profiler</span><span class="o">.</span><span class="n">range_push</span><span class="p">(</span><span class="s2">"producer_load"</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">ELEMS_PER_LANE</span><span class="p">,</span> <span class="n">unroll</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+            <span class="n">index</span> <span class="o">=</span> <span class="n">i</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">+</span> <span class="n">lane</span>
+            <span class="n">shared</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">=</span> <span class="n">inp</span><span class="p">[</span><span class="n">index</span><span class="p">]</span>
+        <span class="n">profiler</span><span class="o">.</span><span class="n">range_pop</span><span class="p">()</span>
+
+    <span class="n">profiler</span><span class="o">.</span><span class="n">range_push</span><span class="p">(</span><span class="s2">"wait_for_data"</span><span class="p">)</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>
+    <span class="n">profiler</span><span class="o">.</span><span class="n">range_pop</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">profiler</span><span class="o">.</span><span class="n">range_push</span><span class="p">(</span><span class="s2">"consumer_compute"</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">ELEMS_PER_LANE</span><span class="p">,</span> <span class="n">unroll</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+            <span class="n">index</span> <span class="o">=</span> <span class="n">i</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">+</span> <span class="n">lane</span>
+            <span class="n">out</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">=</span> <span class="n">shared</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">+</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">profiler</span><span class="o">.</span><span class="n">range_pop</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">profile_workload</span><span class="p">():</span>
+    <span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">({</span><span class="s2">"kind"</span><span class="p">:</span> <span class="s2">"cuda"</span><span class="p">,</span> <span class="s2">"arch"</span><span class="p">:</span> <span class="s2">"sm_100a"</span><span class="p">})</span>
+    <span class="n">executable</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">warp_role_example</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">"tirx"</span><span class="p">)</span>
+    <span class="n">module</span> <span class="o">=</span> <span class="n">executable</span><span class="o">.</span><span class="n">jit</span><span class="p">()</span>
+
+    <span class="n">input_numpy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+    <span class="n">inp</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">input_numpy</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">tvm</span><span class="o">.</span><span class="n">cuda</span><span class="p">())</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">tvm</span><span class="o">.</span><span class="n">cuda</span><span class="p">())</span>
+    <span class="n">module</span><span class="o">.</span><span class="n">main</span><span class="p">(</span><span class="n">inp</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
+    <span class="n">tvm</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span><span class="o">.</span><span class="n">sync</span><span class="p">()</span>
+
+    <span class="n">expected</span> <span class="o">=</span> <span class="n">input_numpy</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">np</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_array_equal</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">expected</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">iket</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+        <span class="n">profile_workload</span><span class="p">,</span>
+        <span class="n">output_dir</span><span class="o">=</span><span class="n">Path</span><span class="p">(</span><span class="s2">"reports/iket-warp-roles"</span><span class="p">),</span>
+        <span class="n">postprocess</span><span class="o">=</span><span class="s2">"all"</span><span class="p">,</span>
+        <span class="n">clobber</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">timeout</span><span class="o">=</span><span class="mf">600.0</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"IKET output directory: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">output_dir</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="p">(</span><span class="o">*</span><span class="n">result</span><span class="o">.</span><span class="n">json_traces</span><span class="p">,</span> <span class="o">*</span><span class="n">result</span><span class="o">.</span><span class="n">perfetto_traces</span><span class="p">,</span> <span class="o">*</span><span class="n">result</span><span class="o">.</span><span class="n">html_reports</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"IKET artifact: </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Run it directly on a B200:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>appendix/iket_example.py
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">iket.run</span></code> restarts the current script inside the IKET collection process and calls
+<code class="docutils literal notranslate"><span class="pre">profile_workload()</span></code>. Keeping <code class="docutils literal notranslate"><span class="pre">tvm.compile()</span></code> and <code class="docutils literal notranslate"><span class="pre">.jit()</span></code> inside that function ensures that the
+kernel is compiled and loaded while IKET recording is active. The script also verifies that the
+output equals <code class="docutils literal notranslate"><span class="pre">input</span> <span class="pre">*</span> <span class="pre">2</span> <span class="pre">+</span> <span class="pre">1</span></code>.</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">postprocess=&quot;all&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">iket.run</span></code> writes JSON, <code class="docutils literal notranslate"><span class="pre">*.pftrace</span></code>, and HTML artifacts to
+<code class="docutils literal notranslate"><span class="pre">reports/iket-warp-roles</span></code>. Load the <code class="docutils literal notranslate"><span class="pre">*.pftrace</span></code> file in Perfetto to inspect <code class="docutils literal notranslate"><span class="pre">producer_load</span></code>,
+<code class="docutils literal notranslate"><span class="pre">wait_for_data</span></code>, and <code class="docutils literal notranslate"><span class="pre">consumer_compute</span></code>. Warp 1 usually reaches the barrier before warp 0, giving it
+a longer <code class="docutils literal notranslate"><span class="pre">wait_for_data</span></code> region. For an H100, change <code class="docutils literal notranslate"><span class="pre">sm_100a</span></code> in the script to <code class="docutils literal notranslate"><span class="pre">sm_90a</span></code>.</p>
+</section>
+<section id="add-iket-annotations-to-your-own-kernel">
+<h3>Add IKET Annotations to Your Own Kernel<a class="headerlink" href="#add-iket-annotations-to-your-own-kernel" title="Link to this heading">#</a></h3>
+<p>Create an <code class="docutils literal notranslate"><span class="pre">IketProfiler</span></code> inside the <code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code>. Use <code class="docutils literal notranslate"><span class="pre">mark()</span></code> for an instantaneous event, and use
+matched <code class="docutils literal notranslate"><span class="pre">range_push()</span></code> / <code class="docutils literal notranslate"><span class="pre">range_pop()</span></code> or <code class="docutils literal notranslate"><span class="pre">range_start()</span></code> / <code class="docutils literal notranslate"><span class="pre">range_end()</span></code> calls around a phase. Keep
+IKET ranges balanced along every control-flow path that a warp may take. Mark waiting explicitly, as
+the example does with <code class="docutils literal notranslate"><span class="pre">wait_for_data</span></code>.</p>
+<p>Keep compilation and the first JIT load inside the function passed to <code class="docutils literal notranslate"><span class="pre">iket.run</span></code>. IKET supports
+Hopper and newer architectures and validates the CUTLASS DSL packages, NVRTC, <code class="docutils literal notranslate"><span class="pre">nvdisasm</span></code>, and related
+binaries against the pinned profile. The recording code inserted by IKET changes the generated
+kernel and adds overhead, so use the IKET trace to study phases and warp roles. For reported latency,
+use the uninstrumented CUDA event benchmark. See
+<a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/backend/cuda/iket.py"><code class="docutils literal notranslate"><span class="pre">python/tvm/backend/cuda/iket.py</span></code></a>
+and the
+<a class="reference external" href="https://github.com/NVIDIA/cutlass/blob/v4.6.0/media/docs/pythonDSL/cute_dsl_general/iket_profiling.rst">NVIDIA IKET guide</a>
+for the complete API and trace options.</p>
+</section>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="../tirx_guide/language_reference/cuda/threads_sync.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">CUDA C++/PTX intrinsics</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../tirx_guide/arch/index.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Compiler Internals</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> Contents
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#separate-measurement-from-diagnosis">Separate Measurement from Diagnosis</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#verify-correctness-before-timing">Verify Correctness Before Timing</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#define-the-timing-boundary">Define the Timing Boundary</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#measure-gpu-time-and-single-call-latency">Measure GPU Time and Single-Call Latency</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#measure-gpu-stream-time-with-cuda-events">Measure GPU Stream Time with CUDA Events</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#measure-end-to-end-time-for-one-call">Measure End-to-End Time for One Call</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#advanced-timing-a-multi-stream-operation">Advanced: Timing a Multi-Stream Operation</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#pdl-within-one-stream">PDL Within One Stream</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#keep-benchmark-conditions-consistent">Keep Benchmark Conditions Consistent</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#convert-latency-to-throughput">Convert Latency to Throughput</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#find-the-most-expensive-kernel-with-proton">Find the Most Expensive Kernel with Proton</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#establish-an-unprofiled-baseline">Establish an Unprofiled Baseline</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#use-proton-to-compare-the-kernels-in-the-operation">Use Proton to Compare the Kernels in the Operation</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#analyze-an-application-timeline-with-nsight-systems">Analyze an Application Timeline with Nsight Systems</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#capture-a-timeline-for-the-target-operation">Capture a Timeline for the Target Operation</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#locate-the-most-expensive-kernel-in-the-timeline">Locate the Most Expensive Kernel in the Timeline</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-nsight-compute-to-analyze-a-single-kernel">Use Nsight Compute to Analyze a Single Kernel</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#how-to-read-an-ncu-report">How to Read an NCU Report</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#worked-example-a-b200-bf16-gemm">Worked Example: A B200 BF16 GEMM</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collect-the-first-basic-report">1. Collect the First <code class="docutils literal notranslate"><span class="pre">basic</span></code> Report</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#use-the-basic-report-to-choose-what-to-investigate">2. Use the <code class="docutils literal notranslate"><span class="pre">basic</span></code> Report to Choose What to Investigate</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#collect-follow-up-metrics-along-the-compute-path">3. Collect Follow-Up Metrics Along the Compute Path</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#read-the-three-sections-in-order">4. Read the Three Sections in Order</a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#metric-calculations-units-and-boundaries">Metric Calculations, Units, and Boundaries</a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#launchstats-and-occupancy"><code class="docutils literal notranslate"><span class="pre">LaunchStats</span></code> and <code class="docutils literal notranslate"><span class="pre">Occupancy</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#speedoflight-denominators-and-duration"><code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code> Denominators and <code class="docutils literal notranslate"><span class="pre">Duration</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#compute-pipelines-the-scheduler-and-warp-states">Compute Pipelines, the Scheduler, and Warp States</a><ul class="nav section-nav flex-column">
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#compute-throughput-breakdown-fields"><code class="docutils literal notranslate"><span class="pre">Compute</span> <span class="pre">Throughput</span> <span class="pre">Breakdown</span></code> Fields</a></li>
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#the-two-pipe-utilization-denominators">The Two <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span></code> Denominators</a></li>
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#complete-schedulerstats-fields">Complete <code class="docutils literal notranslate"><span class="pre">SchedulerStats</span></code> Fields</a></li>
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#warpstatestats-normalization"><code class="docutils literal notranslate"><span class="pre">WarpStateStats</span></code> Normalization</a></li>
+<li class="toc-h5 nav-item toc-entry"><a class="reference internal nav-link" href="#other-common-warp-states">Other Common Warp States</a></li>
+</ul>
+</li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#correlate-metrics-with-sass-and-source-code-using-sourcecounters">Correlate Metrics with SASS and Source Code Using <code class="docutils literal notranslate"><span class="pre">SourceCounters</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#test-the-hypothesis-with-a-code-change">Test the Hypothesis with a Code Change</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-iket-to-inspect-phases-inside-a-dsl-kernel">Use IKET to Inspect Phases Inside a DSL Kernel</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#run-a-complete-example">Run a Complete Example</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#add-iket-annotations-to-your-own-kernel">Add IKET Annotations to Your Own Kernel</a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+By MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

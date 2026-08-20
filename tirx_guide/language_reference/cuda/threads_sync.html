@@ -54,7 +54,7 @@
     <link rel="icon" href="../../../_static/mlc-favicon.ico"/>
     <link rel="index" title="Index" href="../../../genindex.html" />
     <link rel="search" title="Search" href="../../../search.html" />
-    <link rel="next" title="Compiler Internals" href="../../arch/index.html" />
+    <link rel="next" title="Measuring and Analyzing GPU Kernel Performance" href="../../../appendix/benchmarking_gpu_kernels.html" />
     <link rel="prev" title="Control flow" href="control_flow.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
@@ -184,7 +184,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Appendices</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/index.html">Overview</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="../index.html">TIRx Language Reference</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
@@ -195,6 +195,7 @@
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../appendix/benchmarking_gpu_kernels.html">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -413,7 +414,7 @@ synchronization, mbarriers, reductions, and the PTX data-movement / MMA families
 <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">warpgroup_sync</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>             <span class="c1"># warpgroup barrier</span>
 <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sum</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">num_warps</span><span class="p">,</span> <span class="n">scratch</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]))</span>   <span class="c1"># block-level reduction</span>
 
-<span class="n">bar</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_shared</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;uint64&quot;</span><span class="p">)</span>
+<span class="n">bar</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_shared</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"uint64"</span><span class="p">)</span>
 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>     <span class="c1"># mbarrier for async completion</span>
 <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">phase</span><span class="p">)</span>
 </pre></div>
@@ -421,10 +422,10 @@ synchronization, mbarriers, reductions, and the PTX data-movement / MMA families
 <p>A complete, runnable example — a warp all-reduce via <code class="docutils literal notranslate"><span class="pre">T.tvm_warp_shuffle_xor</span></code>:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">warp_reduce</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
-    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">32</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">32</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>
     <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
     <span class="n">cta_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">1</span><span class="p">]);</span> <span class="n">warp_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warp_id</span><span class="p">([</span><span class="mi">1</span><span class="p">]);</span> <span class="n">lane_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">lane_id</span><span class="p">([</span><span class="mi">32</span><span class="p">])</span>
-    <span class="n">v</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">);</span> <span class="n">i</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">&quot;int32&quot;</span><span class="p">)</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">);</span> <span class="n">i</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"int32"</span><span class="p">)</span>
     <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mi">31</span> <span class="o">-</span> <span class="n">lane_id</span><span class="p">)</span>
     <span class="n">i</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">16</span>
     <span class="k">while</span> <span class="n">i</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">:</span>
@@ -499,16 +500,16 @@ asynchronous engine) reads them:</p>
 <h2>Inlining raw CUDA<a class="headerlink" href="#inlining-raw-cuda" title="Link to this heading">#</a></h2>
 <p>For something with no intrinsic at all, inject a <code class="docutils literal notranslate"><span class="pre">__device__</span></code> function from a
 source string with <code class="docutils literal notranslate"><span class="pre">T.cuda.func_call(name,</span> <span class="pre">*args,</span> <span class="pre">source_code=...,</span> <span class="pre">return_type=...)</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">SRC</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">&quot;&quot;&quot;</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">SRC</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">"""</span>
 <span class="s2">__device__ __forceinline__ float my_relu(float x) { return x &gt; 0.f ? x : 0.f; }</span>
-<span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">"""</span>
 
 <span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">k</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">,</span> <span class="n">B_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
-    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
-    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
+    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
     <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">();</span> <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">1</span><span class="p">]);</span> <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">thread_id</span><span class="p">([</span><span class="mi">256</span><span class="p">])</span>
-    <span class="n">B</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">func_call</span><span class="p">(</span><span class="s2">&quot;my_relu&quot;</span><span class="p">,</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">],</span> <span class="n">source_code</span><span class="o">=</span><span class="n">SRC</span><span class="p">,</span> <span class="n">return_type</span><span class="o">=</span><span class="s2">&quot;float32&quot;</span><span class="p">)</span>
+    <span class="n">B</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">func_call</span><span class="p">(</span><span class="s2">"my_relu"</span><span class="p">,</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">],</span> <span class="n">source_code</span><span class="o">=</span><span class="n">SRC</span><span class="p">,</span> <span class="n">return_type</span><span class="o">=</span><span class="s2">"float32"</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>The source is emitted verbatim and the call is wired in:</p>
@@ -541,11 +542,11 @@ source string with <code class="docutils literal notranslate"><span class="pre">
       </div>
     </a>
     <a class="right-next"
-       href="../../arch/index.html"
+       href="../../../appendix/benchmarking_gpu_kernels.html"
        title="next page">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">next</p>
-        <p class="prev-next-title">Compiler Internals</p>
+        <p class="prev-next-title">Measuring and Analyzing GPU Kernel Performance</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

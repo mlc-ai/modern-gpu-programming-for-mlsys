@@ -183,7 +183,7 @@
 <ul class="nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="../chapter_flash_attention/index.html">Flash Attention 4</a></li>
 </ul>
-<p aria-level="2" class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">Appendices</span></p>
 <ul class="current nav bd-sidenav">
 <li class="toctree-l1"><a class="reference internal" href="index.html">Overview</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx Language Reference</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
@@ -194,6 +194,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
+<li class="toctree-l1"><a class="reference internal" href="benchmarking_gpu_kernels.html">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
@@ -415,8 +416,8 @@
 <section id="before-debugging-the-kernel">
 <h2>Before Debugging the Kernel<a class="headerlink" href="#before-debugging-the-kernel" title="Link to this heading">#</a></h2>
 <p>Rule out the runtime context first:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import tvm, tvm.tirx; print(tvm.__file__, tvm.__version__)&quot;</span>
-python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import torch; print(torch.cuda.get_device_name(), torch.cuda.get_device_capability())&quot;</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import tvm, tvm.tirx; print(tvm.__file__, tvm.__version__)"</span>
+python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import torch; print(torch.cuda.get_device_name(), torch.cuda.get_device_capability())"</span>
 </pre></div>
 </div>
 <p>These kernels target Blackwell (<code class="docutils literal notranslate"><span class="pre">sm_100a</span></code>). If Python imports a stale TVM checkout, or the GPU is not Blackwell-class, fix that before changing the kernel. Then run the kernel’s smallest correctness check, such as <code class="docutils literal notranslate"><span class="pre">run_correctness()</span></code>, before looking at performance.</p>
@@ -505,9 +506,9 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;i
 <p>For any compiled kernel, save the CUDA so you can search and diff it:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 
-<span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">&quot;cuda&quot;</span><span class="p">)</span>
-<span class="n">Path</span><span class="p">(</span><span class="s2">&quot;artifacts&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
-<span class="n">Path</span><span class="p">(</span><span class="s2">&quot;artifacts/my_kernel.cu&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+<span class="n">cuda_source</span> <span class="o">=</span> <span class="n">ex</span><span class="o">.</span><span class="n">mod</span><span class="o">.</span><span class="n">imports</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">inspect_source</span><span class="p">(</span><span class="s2">"cuda"</span><span class="p">)</span>
+<span class="n">Path</span><span class="p">(</span><span class="s2">"artifacts"</span><span class="p">)</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">Path</span><span class="p">(</span><span class="s2">"artifacts/my_kernel.cu"</span><span class="p">)</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span>
 <span class="nb">print</span><span class="p">(</span><span class="n">cuda_source</span><span class="p">)</span>
 </pre></div>
 </div>
