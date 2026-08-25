@@ -234,10 +234,8 @@ def hgemm_v1(M, N, K):
         phase_mma: T.int32 = 0
 
         # --- Load：所有 threads 同步完成 global -> shared copy ---
-        # M=BLK_M、N=BLK_N 时，下面的 slices 覆盖完整矩阵；保留 slice 写法，
-        # 便于与第 3 步的 multi-tile 版本比较。
-        Tx.cta.copy(Asmem[:, :], A[m_st:m_st + BLK_M, :])
-        Tx.cta.copy(Bsmem[:, :], B[n_st:n_st + BLK_N, :])
+        Tx.cta.copy(Asmem[:, :], A[:, :])
+        Tx.cta.copy(Bsmem[:, :], B[:, :])
         T.cuda.cta_sync()
 
         # --- Compute：由一个 elected thread 发起 MMA ---
