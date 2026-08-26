@@ -235,11 +235,9 @@ def hgemm_v1(M, N, K):
         n_st = T.meta_var(by * BLK_N)
         phase_mma: T.int32 = 0
 
-        # --- Load: all threads copy global -> shared (synchronous).
-        # With M=BLK_M and N=BLK_N the slices below cover the full matrices;
-        # the slice form is kept so the diff to Step 3 (multi-tile) is minimal.
-        Tx.cta.copy(Asmem[:, :], A[m_st:m_st + BLK_M, :])
-        Tx.cta.copy(Bsmem[:, :], B[n_st:n_st + BLK_N, :])
+        # --- Load: all threads copy global -> shared (synchronous) ---
+        Tx.cta.copy(Asmem[:, :], A[:, :])
+        Tx.cta.copy(Bsmem[:, :], B[:, :])
         T.cuda.cta_sync()
 
         # --- Compute: single elected thread issues MMA ---
