@@ -1420,7 +1420,7 @@
 <ol class="arabic simple">
 <li><p>What happens if you set the initial <code class="docutils literal notranslate"><span class="pre">phase</span></code> to <code class="docutils literal notranslate"><span class="pre">0</span></code> for both the TMA and MMA <code class="docutils literal notranslate"><span class="pre">PipelineState</span></code> in Step 7? Draw the deadlock scenario.</p></li>
 <li><p>With <code class="docutils literal notranslate"><span class="pre">cta_group=2</span></code> in Step 8, the TMA arrive byte count is <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span> <span class="pre">*</span> <span class="pre">(BLK_M*BLK_K</span> <span class="pre">+</span> <span class="pre">BLK_N*BLK_K)</span> <span class="pre">*</span> <span class="pre">F16_SIZE</span></code>. Why multiply by <code class="docutils literal notranslate"><span class="pre">CTA_GROUP</span></code> when each CTA loads its own data?</p></li>
-<li><p>In Step 9, each consumer handles different M rows but the same B tile. Why is sharing B (not A) the right choice?</p></li>
+<li><p>In Step 9, the two consumers extend the output tile along M: they handle different M rows but cover the same N columns. Why can they reuse B in this mapping? If they instead extended along N, which operand could be reused?</p></li>
 </ol>
 </section>
 </section>

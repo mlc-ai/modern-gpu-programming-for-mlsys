@@ -906,4 +906,4 @@ def hgemm_v9(M, N, K):
 
 1. 第 7 步中，如果 TMA 和 MMA 的 `PipelineState` 都将初始 `phase` 设为 `0`，会发生什么？画出 deadlock 过程。
 2. 第 8 步使用 `cta_group=2` 时，TMA arrival byte count 为 `CTA_GROUP * (BLK_M*BLK_K + BLK_N*BLK_K) * F16_SIZE`。既然每个 CTA 分别加载自己的数据，为什么还要乘以 `CTA_GROUP`？
-3. 第 9 步中，每个 consumer 处理不同的 M rows，但使用相同的 B tile。为什么应该共享 B，而不是 A？
+3. 第 9 步让两个 consumers 沿 M 维扩展输出：它们处理不同的 M rows，但覆盖相同的 N columns。为什么这种映射可以复用 B？如果改为沿 N 维扩展，哪个操作数可以被复用？
