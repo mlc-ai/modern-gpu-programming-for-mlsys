@@ -906,4 +906,4 @@ In this B200 run, combining TMA, software pipelining, persistent scheduling, war
 
 1. What happens if you set the initial `phase` to `0` for both the TMA and MMA `PipelineState` in Step 7? Draw the deadlock scenario.
 2. With `cta_group=2` in Step 8, the TMA arrive byte count is `CTA_GROUP * (BLK_M*BLK_K + BLK_N*BLK_K) * F16_SIZE`. Why multiply by `CTA_GROUP` when each CTA loads its own data?
-3. In Step 9, each consumer handles different M rows but the same B tile. Why is sharing B (not A) the right choice?
+3. In Step 9, the two consumers extend the output tile along M: they handle different M rows but cover the same N columns. Why can they reuse B in this mapping? If they instead extended along N, which operand could be reused?
