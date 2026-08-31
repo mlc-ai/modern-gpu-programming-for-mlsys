@@ -573,11 +573,12 @@ nsys stats \
 
 `--force-export=true` regenerates the SQLite data from the current `.nsys-rep`, preventing stale
 SQLite data with the same name from being reused. `cuda_gpu_sum` summarizes GPU activities;
-`cuda_kern_exec_trace` correlates each host launch API with its GPU kernel and gives the kernel start
-and duration; `cuda_api_trace` gives the start and duration of every CUDA API call. The two NVTX
-reports provide the range's GPU projection and host-side record, while `cuda_api_sum` summarizes
-host CUDA APIs. Run
-`nsys stats --help-reports` for the complete definitions in the installed version.
+`cuda_kern_exec_trace` correlates each host launch API with its GPU kernel and reports `API Start`,
+`API Dur`, `Queue Dur`, `Kernel Start`, and `Kernel Dur`; `cuda_api_trace` gives the start and
+duration of every CUDA API call. The two NVTX reports provide the range's GPU projection and
+host-side record, while `cuda_api_sum` summarizes host CUDA APIs. Run
+`nsys stats --help-reports` to list the reports available in the installed version, then use a
+command such as `nsys stats --help-reports cuda_gpu_sum` to inspect a report's field definitions.
 
 The command prints several tables in sequence. Extract values in this order:
 
@@ -600,6 +601,8 @@ The command prints several tables in sequence. Extract values in this order:
 `cuda_kern_exec_trace` correlates each kernel with its launch API and reports API time, positive queue
 time, and GPU execution time separately. Positive queue time is the interval from API return to a later
 kernel start. If the kernel starts before the API returns, the report shows no positive queue time.
+Queue time is not inherently a problem: it is normal for a newly submitted kernel to wait while the
+GPU is executing other work, and this field alone does not identify a particular dependency.
 
 | Kernel | API time | Positive queue time | GPU execution |
 |---|---:|---:|---:|
@@ -620,11 +623,141 @@ Read the results in this order:
    Because `cudaDeviceSynchronize` begins after ReLU ends, its measured duration mostly reflects
    host-side API overhead; GPU execution was already complete.
 
-When inspecting another Nsight Systems timeline, follow the same order: confirm the capture range,
-inspect GPU kernels, copies, gaps, and overlap, and then correlate them with host launch or
-synchronization APIs. See the
+### Distinguish Aggregate Time from the Slowest Invocation
+
+"Most expensive" can refer to the activity with the largest aggregate duration, the slowest
+invocation within a group, or a specific invocation on the timeline. Each question uses a different
+field:
+
+| Question | Report or field | Interpretation |
+|---|---|---|
+| Which GPU activity consumes the most time in aggregate? | `Total Time` in `cuda_gpu_sum` | The sum of the durations for every instance in that summary row. Use it to shortlist optimization targets; use `cuda_gpu_kern_sum` when comparing kernels only. |
+| How long was the slowest instance in one summary row? | `Max` in `cuda_gpu_sum` or `cuda_gpu_kern_sum` | The largest duration among the instances in that row. It gives the duration, but does not identify the corresponding invocation. |
+| Which individual kernel invocation was the slowest? | `Kernel Dur` in `cuda_kern_exec_trace` | Each row represents one launch. Use `Kernel Start`, PID/TID, and the launch API to locate it. In the GUI, first zoom to the full target interval, right-click the relevant GPU row, select `Show in Events View`, sort by `Duration`, and double-click an event to return to its position on the timeline. |
+
+The `Time` field in `cuda_gpu_sum` is the row's `Total Time` expressed as a percentage of the sum of
+`Total Time` over all listed rows. It is neither a percentage of application wall-clock time nor GPU
+utilization.
+Activities on concurrent streams can overlap, so their summed durations need not equal elapsed time,
+and the activity with the largest aggregate cost need not lie on the end-to-end critical path. Use the
+summary to select candidates, the timeline to identify critical-path work, and the unprofiled baseline
+to verify that an optimization reduces operation latency. In this example, each kernel runs once, so
+`Total Time`, `Max`, and that invocation's `Kernel Dur` are equal. These fields can diverge when the
+capture contains repeated launches.
+
+### Diagnose Long Gaps in the GPU Timeline
+
+A blank interval on one stream does not prove that the whole GPU was idle. For example:
+
+```text
+Stream 7:  Kernel A █████                         Kernel B ████
+Stream 8:             Kernel C ██████████████████
+```
+
+Stream 7 has no work between the two kernels, but Kernel C is running on another stream. Expand every
+relevant stream and engine under the target GPU, and inspect kernels, memcpy/memset operations,
+communication, and activity from other captured contexts and processes. If any activity overlaps the
+interval, the device was not idle, although the gap on Stream 7 may still lie on the critical path and
+remain worth investigating. Only call an interval with no captured GPU activity a device-wide gap,
+and limit that claim to the captured trace; an uncaptured process or context may still be using the
+GPU. If another CUDA context may be contending for the device, collect a separate diagnostic report
+with `--gpuctxsw=true`.
+
+The complete decision tree is below. The final three spans are not mutually exclusive; one gap can
+contain more than one of them in sequence:
+
+```text
+A gap appears on one stream
+└─ Does any other captured GPU activity overlap it?
+   ├─ Yes: not device-wide idle; determine whether this stream is on the critical path
+   │       and whether the overlap is useful
+   └─ No: a device-wide gap within the report's visible scope
+      └─ Correlate the following operation B, then split the gap using its timestamps
+         ├─ A end → B API Start (if positive): host has not entered B's launch API
+         ├─ gap ∩ [B API Start, B API end]: the launch API overlaps the gap
+         └─ max(A end, B API end) → B start (if positive): the part of the queue interval
+            that lies inside the gap
+```
+
+After confirming a device-wide gap in the captured trace, find the first GPU operation after it and
+follow its correlation back to the host thread that submitted it. For a concrete example, suppose the
+trace contains these timestamps:
+
+```text
+A end = 20 us
+B API Start = 95 us, API Dur = 3 us, B API end = 98 us
+B Kernel Start = 100 us
+```
+
+The GPU gap is $100-20=80$ μs. Of that interval, 75 μs elapses before B's launch API begins, 3 μs
+overlaps the launch API, and 2 μs remains between API return and the start of B. The dominant delay
+therefore precedes the launch, so first investigate why the host did not reach B's launch API sooner:
+
+```text
+A end ─────────── API Start ─────────── API end ─────────── B start
+       pre-launch host delay    launch API       reported queue interval
+```
+
+1. If `API Start > A end`, inspect the interval from `A end` to `API Start`. Look for Python or
+   framework work, CPU synchronization, whether the launch thread was running on a CPU or had been
+   descheduled, and whether a different thread is responsible for submission.
+2. If the launch API overlaps the gap, combine `API Dur`, thread state, and call stacks to distinguish
+   work inside the API from CPU scheduling delay, runtime blocking, or profiler overhead.
+3. If `API end < B start`, only the interval from `max(A end, API end)` to `B start` belongs to both
+   the GPU gap and the reported queue interval. Check earlier work in the same stream, CUDA event or
+   stream dependencies such as `cudaStreamWaitEvent`, uncaptured contexts, and GPU scheduling or
+   resource contention.
+
+`Queue Dur` measures only a positive interval from the end of the launch API to the kernel start.
+Because the kernel is enqueued at some point during the API call, `Queue Dur` does not cover the full
+queueing interval. It neither proves a dependency nor equals the GPU gap. In this report, ReLU has a
+`Queue Dur` of 5.074 μs, but the GPU gap between GEMM and ReLU is only 0.224 μs; most of the queue
+interval overlaps GEMM execution.
+
+The lightweight collection above deliberately disables CPU sampling and context-switch tracing. It
+is a good first pass for locating GPU gaps, but this example's 0.224 μs gap and single short
+`--profile-once` capture are too brief for meaningful periodic CPU sampling. For a workload that
+reliably reproduces a long gap, capture enough repetitions or a sufficiently long target interval.
+On Linux, the following second-pass template adds OS runtime tracing, thread scheduling, and native
+CPU backtraces:
+
+```bash
+nsys profile \
+  --trace=cuda,nvtx,osrt \
+  --sample=process-tree \
+  --osrt-threshold=1000 \
+  --capture-range=cudaProfilerApi \
+  --capture-range-end=stop \
+  --output=reports/gap-diagnosis \
+  --force-overwrite=true \
+  python path/to/gap_reproducer.py
+```
+
+This template assumes that the reproducer brackets its target interval with `cudaProfilerStart()`
+and `cudaProfilerStop()`. Otherwise, remove the two capture-range options or configure capture around
+an existing NVTX range. `--sample=process-tree` collects native CPU instruction-pointer samples and
+backtraces, and implicitly sets `--cpuctxsw=process-tree` to record thread scheduling. The `osrt`
+trace records selected libc and POSIX runtime calls that may run for a long time or put a thread to sleep;
+`--osrt-threshold=1000` drops ordinary OS runtime calls shorter than 1000 ns (1 μs). Sampling is
+periodic, so a short gap may contain no samples. With Python 3.9 or later, add
+`--python-sampling=true` for Python call stacks, or use NVTX/PyTorch function ranges to mark
+framework work explicitly.
+
+If only thread scheduling is needed, use `--sample=none --cpuctxsw=process-tree` to reduce collection
+overhead. If a CUDA event dependency is suspected, enable `--cuda-event-trace=true` in a separate
+diagnostic report to correlate `cudaEventRecord` with `cudaStreamWaitEvent`. That option requires
+CUDA user-mode driver 12.8 or later and can introduce false dependencies between otherwise
+unrelated streams; disable it if the application's behavior changes.
+
+CPU sampling and context-switch tracing depend on platform support and permissions. Additional
+tracing can also perturb short intervals, so use the second report to diagnose the cause and judge
+final performance against the unprofiled baseline. When inspecting another timeline, first confirm
+the capture range, then examine all GPU kernels, copies, gaps, and overlap before correlating them
+with host launch or synchronization APIs. See the
+[Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html) for the
+collection options and the
 [Nsight Systems Analysis Guide](https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html) for
-the interval definitions and additional UI details.
+the report fields.
 
 ## Use Nsight Compute to Analyze a Single Kernel
 
