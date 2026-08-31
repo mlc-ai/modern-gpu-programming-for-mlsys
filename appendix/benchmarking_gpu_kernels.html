@@ -410,6 +410,8 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#analyze-an-application-timeline-with-nsight-systems">Analyze an Application Timeline with Nsight Systems</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#capture-a-timeline-for-the-target-operation">Capture a Timeline for the Target Operation</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#locate-the-most-expensive-kernel-in-the-timeline">Locate the Most Expensive Kernel in the Timeline</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#distinguish-aggregate-time-from-the-slowest-invocation">Distinguish Aggregate Time from the Slowest Invocation</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#diagnose-long-gaps-in-the-gpu-timeline">Diagnose Long Gaps in the GPU Timeline</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-nsight-compute-to-analyze-a-single-kernel">Use Nsight Compute to Analyze a Single Kernel</a><ul class="pst-show_toc_level nav section-nav flex-column">
@@ -986,11 +988,12 @@ the command line:</p>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">--force-export=true</span></code> regenerates the SQLite data from the current <code class="docutils literal notranslate"><span class="pre">.nsys-rep</span></code>, preventing stale
 SQLite data with the same name from being reused. <code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> summarizes GPU activities;
-<code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code> correlates each host launch API with its GPU kernel and gives the kernel start
-and duration; <code class="docutils literal notranslate"><span class="pre">cuda_api_trace</span></code> gives the start and duration of every CUDA API call. The two NVTX
-reports provide the range’s GPU projection and host-side record, while <code class="docutils literal notranslate"><span class="pre">cuda_api_sum</span></code> summarizes
-host CUDA APIs. Run
-<code class="docutils literal notranslate"><span class="pre">nsys</span> <span class="pre">stats</span> <span class="pre">--help-reports</span></code> for the complete definitions in the installed version.</p>
+<code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code> correlates each host launch API with its GPU kernel and reports <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Start</span></code>,
+<code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Dur</span></code>, <code class="docutils literal notranslate"><span class="pre">Queue</span> <span class="pre">Dur</span></code>, <code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Start</span></code>, and <code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Dur</span></code>; <code class="docutils literal notranslate"><span class="pre">cuda_api_trace</span></code> gives the start and
+duration of every CUDA API call. The two NVTX reports provide the range’s GPU projection and
+host-side record, while <code class="docutils literal notranslate"><span class="pre">cuda_api_sum</span></code> summarizes host CUDA APIs. Run
+<code class="docutils literal notranslate"><span class="pre">nsys</span> <span class="pre">stats</span> <span class="pre">--help-reports</span></code> to list the reports available in the installed version, then use a
+command such as <code class="docutils literal notranslate"><span class="pre">nsys</span> <span class="pre">stats</span> <span class="pre">--help-reports</span> <span class="pre">cuda_gpu_sum</span></code> to inspect a report’s field definitions.</p>
 <p>The command prints several tables in sequence. Extract values in this order:</p>
 <ol class="arabic simple">
 <li><p>Compare cumulative durations in <code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> to find the most expensive GPU kernel.</p></li>
@@ -1027,7 +1030,9 @@ the GPU, compare its start time in <code class="docutils literal notranslate"><s
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code> correlates each kernel with its launch API and reports API time, positive queue
 time, and GPU execution time separately. Positive queue time is the interval from API return to a later
-kernel start. If the kernel starts before the API returns, the report shows no positive queue time.</p>
+kernel start. If the kernel starts before the API returns, the report shows no positive queue time.
+Queue time is not inherently a problem: it is normal for a newly submitted kernel to wait while the
+GPU is executing other work, and this field alone does not identify a particular dependency.</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Kernel</p></th>
@@ -1064,11 +1069,145 @@ in the figure covers Python/PyTorch dispatch, both launches, and the synchroniza
 Because <code class="docutils literal notranslate"><span class="pre">cudaDeviceSynchronize</span></code> begins after ReLU ends, its measured duration mostly reflects
 host-side API overhead; GPU execution was already complete.</p></li>
 </ol>
-<p>When inspecting another Nsight Systems timeline, follow the same order: confirm the capture range,
-inspect GPU kernels, copies, gaps, and overlap, and then correlate them with host launch or
-synchronization APIs. See the
+</section>
+<section id="distinguish-aggregate-time-from-the-slowest-invocation">
+<h3>Distinguish Aggregate Time from the Slowest Invocation<a class="headerlink" href="#distinguish-aggregate-time-from-the-slowest-invocation" title="Link to this heading">#</a></h3>
+<p>“Most expensive” can refer to the activity with the largest aggregate duration, the slowest
+invocation within a group, or a specific invocation on the timeline. Each question uses a different
+field:</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Question</p></th>
+<th class="head"><p>Report or field</p></th>
+<th class="head"><p>Interpretation</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Which GPU activity consumes the most time in aggregate?</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Total</span> <span class="pre">Time</span></code> in <code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code></p></td>
+<td><p>The sum of the durations for every instance in that summary row. Use it to shortlist optimization targets; use <code class="docutils literal notranslate"><span class="pre">cuda_gpu_kern_sum</span></code> when comparing kernels only.</p></td>
+</tr>
+<tr class="row-odd"><td><p>How long was the slowest instance in one summary row?</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Max</span></code> in <code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> or <code class="docutils literal notranslate"><span class="pre">cuda_gpu_kern_sum</span></code></p></td>
+<td><p>The largest duration among the instances in that row. It gives the duration, but does not identify the corresponding invocation.</p></td>
+</tr>
+<tr class="row-even"><td><p>Which individual kernel invocation was the slowest?</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Dur</span></code> in <code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code></p></td>
+<td><p>Each row represents one launch. Use <code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Start</span></code>, PID/TID, and the launch API to locate it. In the GUI, first zoom to the full target interval, right-click the relevant GPU row, select <code class="docutils literal notranslate"><span class="pre">Show</span> <span class="pre">in</span> <span class="pre">Events</span> <span class="pre">View</span></code>, sort by <code class="docutils literal notranslate"><span class="pre">Duration</span></code>, and double-click an event to return to its position on the timeline.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">Time</span></code> field in <code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> is the row’s <code class="docutils literal notranslate"><span class="pre">Total</span> <span class="pre">Time</span></code> expressed as a percentage of the sum of
+<code class="docutils literal notranslate"><span class="pre">Total</span> <span class="pre">Time</span></code> over all listed rows. It is neither a percentage of application wall-clock time nor GPU
+utilization.
+Activities on concurrent streams can overlap, so their summed durations need not equal elapsed time,
+and the activity with the largest aggregate cost need not lie on the end-to-end critical path. Use the
+summary to select candidates, the timeline to identify critical-path work, and the unprofiled baseline
+to verify that an optimization reduces operation latency. In this example, each kernel runs once, so
+<code class="docutils literal notranslate"><span class="pre">Total</span> <span class="pre">Time</span></code>, <code class="docutils literal notranslate"><span class="pre">Max</span></code>, and that invocation’s <code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Dur</span></code> are equal. These fields can diverge when the
+capture contains repeated launches.</p>
+</section>
+<section id="diagnose-long-gaps-in-the-gpu-timeline">
+<h3>Diagnose Long Gaps in the GPU Timeline<a class="headerlink" href="#diagnose-long-gaps-in-the-gpu-timeline" title="Link to this heading">#</a></h3>
+<p>A blank interval on one stream does not prove that the whole GPU was idle. For example:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Stream 7:  Kernel A █████                         Kernel B ████
+Stream 8:             Kernel C ██████████████████
+</pre></div>
+</div>
+<p>Stream 7 has no work between the two kernels, but Kernel C is running on another stream. Expand every
+relevant stream and engine under the target GPU, and inspect kernels, memcpy/memset operations,
+communication, and activity from other captured contexts and processes. If any activity overlaps the
+interval, the device was not idle, although the gap on Stream 7 may still lie on the critical path and
+remain worth investigating. Only call an interval with no captured GPU activity a device-wide gap,
+and limit that claim to the captured trace; an uncaptured process or context may still be using the
+GPU. If another CUDA context may be contending for the device, collect a separate diagnostic report
+with <code class="docutils literal notranslate"><span class="pre">--gpuctxsw=true</span></code>.</p>
+<p>The complete decision tree is below. The final three spans are not mutually exclusive; one gap can
+contain more than one of them in sequence:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A gap appears on one stream
+└─ Does any other captured GPU activity overlap it?
+   ├─ Yes: not device-wide idle; determine whether this stream is on the critical path
+   │       and whether the overlap is useful
+   └─ No: a device-wide gap within the report's visible scope
+      └─ Correlate the following operation B, then split the gap using its timestamps
+         ├─ A end → B API Start (if positive): host has not entered B's launch API
+         ├─ gap ∩ [B API Start, B API end]: the launch API overlaps the gap
+         └─ max(A end, B API end) → B start (if positive): the part of the queue interval
+            that lies inside the gap
+</pre></div>
+</div>
+<p>After confirming a device-wide gap in the captured trace, find the first GPU operation after it and
+follow its correlation back to the host thread that submitted it. For a concrete example, suppose the
+trace contains these timestamps:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A end = 20 us
+B API Start = 95 us, API Dur = 3 us, B API end = 98 us
+B Kernel Start = 100 us
+</pre></div>
+</div>
+<p>The GPU gap is <span class="math notranslate nohighlight">\(100-20=80\)</span> μs. Of that interval, 75 μs elapses before B’s launch API begins, 3 μs
+overlaps the launch API, and 2 μs remains between API return and the start of B. The dominant delay
+therefore precedes the launch, so first investigate why the host did not reach B’s launch API sooner:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A end ─────────── API Start ─────────── API end ─────────── B start
+       pre-launch host delay    launch API       reported queue interval
+</pre></div>
+</div>
+<ol class="arabic simple">
+<li><p>If <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Start</span> <span class="pre">&gt;</span> <span class="pre">A</span> <span class="pre">end</span></code>, inspect the interval from <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">end</span></code> to <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Start</span></code>. Look for Python or
+framework work, CPU synchronization, whether the launch thread was running on a CPU or had been
+descheduled, and whether a different thread is responsible for submission.</p></li>
+<li><p>If the launch API overlaps the gap, combine <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Dur</span></code>, thread state, and call stacks to distinguish
+work inside the API from CPU scheduling delay, runtime blocking, or profiler overhead.</p></li>
+<li><p>If <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">end</span> <span class="pre">&lt;</span> <span class="pre">B</span> <span class="pre">start</span></code>, only the interval from <code class="docutils literal notranslate"><span class="pre">max(A</span> <span class="pre">end,</span> <span class="pre">API</span> <span class="pre">end)</span></code> to <code class="docutils literal notranslate"><span class="pre">B</span> <span class="pre">start</span></code> belongs to both
+the GPU gap and the reported queue interval. Check earlier work in the same stream, CUDA event or
+stream dependencies such as <code class="docutils literal notranslate"><span class="pre">cudaStreamWaitEvent</span></code>, uncaptured contexts, and GPU scheduling or
+resource contention.</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">Queue</span> <span class="pre">Dur</span></code> measures only a positive interval from the end of the launch API to the kernel start.
+Because the kernel is enqueued at some point during the API call, <code class="docutils literal notranslate"><span class="pre">Queue</span> <span class="pre">Dur</span></code> does not cover the full
+queueing interval. It neither proves a dependency nor equals the GPU gap. In this report, ReLU has a
+<code class="docutils literal notranslate"><span class="pre">Queue</span> <span class="pre">Dur</span></code> of 5.074 μs, but the GPU gap between GEMM and ReLU is only 0.224 μs; most of the queue
+interval overlaps GEMM execution.</p>
+<p>The lightweight collection above deliberately disables CPU sampling and context-switch tracing. It
+is a good first pass for locating GPU gaps, but this example’s 0.224 μs gap and single short
+<code class="docutils literal notranslate"><span class="pre">--profile-once</span></code> capture are too brief for meaningful periodic CPU sampling. For a workload that
+reliably reproduces a long gap, capture enough repetitions or a sufficiently long target interval.
+On Linux, the following second-pass template adds OS runtime tracing, thread scheduling, and native
+CPU backtraces:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>nsys<span class="w"> </span>profile<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trace<span class="o">=</span>cuda,nvtx,osrt<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--sample<span class="o">=</span>process-tree<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--osrt-threshold<span class="o">=</span><span class="m">1000</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--capture-range<span class="o">=</span>cudaProfilerApi<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--capture-range-end<span class="o">=</span>stop<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="o">=</span>reports/gap-diagnosis<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--force-overwrite<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>python<span class="w"> </span>path/to/gap_reproducer.py
+</pre></div>
+</div>
+<p>This template assumes that the reproducer brackets its target interval with <code class="docutils literal notranslate"><span class="pre">cudaProfilerStart()</span></code>
+and <code class="docutils literal notranslate"><span class="pre">cudaProfilerStop()</span></code>. Otherwise, remove the two capture-range options or configure capture around
+an existing NVTX range. <code class="docutils literal notranslate"><span class="pre">--sample=process-tree</span></code> collects native CPU instruction-pointer samples and
+backtraces, and implicitly sets <code class="docutils literal notranslate"><span class="pre">--cpuctxsw=process-tree</span></code> to record thread scheduling. The <code class="docutils literal notranslate"><span class="pre">osrt</span></code>
+trace records selected libc and POSIX runtime calls that may run for a long time or put a thread to sleep;
+<code class="docutils literal notranslate"><span class="pre">--osrt-threshold=1000</span></code> drops ordinary OS runtime calls shorter than 1000 ns (1 μs). Sampling is
+periodic, so a short gap may contain no samples. With Python 3.9 or later, add
+<code class="docutils literal notranslate"><span class="pre">--python-sampling=true</span></code> for Python call stacks, or use NVTX/PyTorch function ranges to mark
+framework work explicitly.</p>
+<p>If only thread scheduling is needed, use <code class="docutils literal notranslate"><span class="pre">--sample=none</span> <span class="pre">--cpuctxsw=process-tree</span></code> to reduce collection
+overhead. If a CUDA event dependency is suspected, enable <code class="docutils literal notranslate"><span class="pre">--cuda-event-trace=true</span></code> in a separate
+diagnostic report to correlate <code class="docutils literal notranslate"><span class="pre">cudaEventRecord</span></code> with <code class="docutils literal notranslate"><span class="pre">cudaStreamWaitEvent</span></code>. That option requires
+CUDA user-mode driver 12.8 or later and can introduce false dependencies between otherwise
+unrelated streams; disable it if the application’s behavior changes.</p>
+<p>CPU sampling and context-switch tracing depend on platform support and permissions. Additional
+tracing can also perturb short intervals, so use the second report to diagnose the cause and judge
+final performance against the unprofiled baseline. When inspecting another timeline, first confirm
+the capture range, then examine all GPU kernels, copies, gaps, and overlap before correlating them
+with host launch or synchronization APIs. See the
+<a class="reference external" href="https://docs.nvidia.com/nsight-systems/UserGuide/index.html">Nsight Systems User Guide</a> for the
+collection options and the
 <a class="reference external" href="https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html">Nsight Systems Analysis Guide</a> for
-the interval definitions and additional UI details.</p>
+the report fields.</p>
 </section>
 </section>
 <section id="use-nsight-compute-to-analyze-a-single-kernel">
@@ -1975,6 +2114,8 @@ for the complete API and trace options.</p>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#analyze-an-application-timeline-with-nsight-systems">Analyze an Application Timeline with Nsight Systems</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#capture-a-timeline-for-the-target-operation">Capture a Timeline for the Target Operation</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#locate-the-most-expensive-kernel-in-the-timeline">Locate the Most Expensive Kernel in the Timeline</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#distinguish-aggregate-time-from-the-slowest-invocation">Distinguish Aggregate Time from the Slowest Invocation</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#diagnose-long-gaps-in-the-gpu-timeline">Diagnose Long Gaps in the GPU Timeline</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#use-nsight-compute-to-analyze-a-single-kernel">Use Nsight Compute to Analyze a Single Kernel</a><ul class="pst-show_toc_level nav section-nav flex-column">

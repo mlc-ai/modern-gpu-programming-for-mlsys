@@ -423,7 +423,7 @@ nsys stats \
   reports/target-timeline.nsys-rep
 ```
 
-`--force-export=true` 会从当前 `.nsys-rep` 重新生成 SQLite 数据，避免误读同名旧文件。`cuda_gpu_sum` 汇总 GPU activities；`cuda_kern_exec_trace` 把 host launch API 与对应的 GPU kernel 关联起来，并给出 kernel 的 start 和 duration；`cuda_api_trace` 给出每次 CUDA API 的 start 和 duration。两个 NVTX reports 分别给出 range 在 GPU 上覆盖的区间和 host 端记录；`cuda_api_sum` 汇总 host CUDA API。运行 `nsys stats --help-reports` 可以查看当前版本的完整定义。
+`--force-export=true` 会从当前 `.nsys-rep` 重新生成 SQLite 数据，避免误读同名旧文件。`cuda_gpu_sum` 汇总 GPU activities；`cuda_kern_exec_trace` 把 host launch API 与对应的 GPU kernel 关联起来，并给出 `API Start`、`API Dur`、`Queue Dur`、`Kernel Start` 和 `Kernel Dur`；`cuda_api_trace` 给出每次 CUDA API 的 start 和 duration。两个 NVTX reports 分别给出 range 在 GPU 上覆盖的区间和 host 端记录；`cuda_api_sum` 汇总 host CUDA API。`nsys stats --help-reports` 会列出当前版本的 reports；再运行 `nsys stats --help-reports cuda_gpu_sum` 等命令可以查看具体字段定义。
 
 这条命令会依次打印多张表，按下面的顺序取数：
 
@@ -439,7 +439,7 @@ nsys stats \
 | BF16 GEMM | 1 | 92.608 μs | 89.4% |
 | ReLU | 1 | 10.944 μs | 10.6% |
 
-再把 GPU execution 与 host 上的 launch API 对应起来。Positive queue time 指 launch API 返回后，到 kernel 稍后才开始之间的时间；kernel 在 API 返回前已经开始时，该字段为空。
+再把 GPU execution 与 host 上的 launch API 对应起来。Positive queue time 指 launch API 返回后，到 kernel 稍后才开始之间的时间；kernel 在 API 返回前已经开始时，该字段为空。Queue time 本身并不表示异常：GPU 正在执行其他工作时，新提交的 kernel 出现 queue time 很正常，不能只凭这一列把原因归结为某个 dependency。
 
 | Kernel | API time | Positive queue time | GPU execution |
 |---|---:|---:|---:|
@@ -453,7 +453,84 @@ nsys stats \
 3. **检查 kernels 之间的空隙。** 两个 duration 相加为 103.552 μs；从 GEMM 开始到 ReLU 结束的 GPU span 为 103.776 μs，因此中间只有 0.224 μs 空隙。
 4. **按计时边界解释 host range。** 图中的 `target operation` NVTX range 覆盖 Python/PyTorch dispatch、两次 launch 和同步 API。`cudaDeviceSynchronize` 开始时 ReLU 已经结束，因此它的 duration 主要来自 host 侧的 API 开销；此时 GPU 执行已经完成。
 
-分析其他报告时，也先确认采集范围，再看 GPU kernels、copies、空隙和重叠，最后关联到 host launch 或同步 API。更多定义见 [Nsight Systems Analysis Guide](https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html)。
+### 区分累计耗时与最慢的单次执行
+
+“最耗时”可能指累计占时最大的 activity、同类调用中最慢的一次，或者时间线上的某个具体执行实例（invocation）。三种问题要看不同的列：
+
+| 问题 | 查看位置 | 含义 |
+|---|---|---|
+| 哪类 GPU activity 累计最耗时？ | `cuda_gpu_sum` 的 `Total Time` | 同一汇总行内所有执行实例的 duration 之和，用于筛选累计占时最大的优化候选；只比较 kernels 时也可以使用 `cuda_gpu_kern_sum`。 |
+| 同一汇总行中最慢的一次有多长？ | `cuda_gpu_sum` 或 `cuda_gpu_kern_sum` 的 `Max` | 这一组执行实例中最大的 duration；它给出数值，但不定位具体是哪一次。 |
+| 时间线上最慢的具体 kernel 执行是哪一次？ | `cuda_kern_exec_trace` 的 `Kernel Dur` | 每一行对应一次 launch；结合 `Kernel Start`、PID/TID 和 launch API 定位该次执行。在 GUI 中先 zoom 到完整目标区间，再把目标 GPU row 显示到 Events View，按 `Duration` 排序并双击回到时间线。 |
+
+`cuda_gpu_sum` 的 `Time` 是该行 `Total Time` 占表中所有行 `Total Time` 之和的比例，不是 application wall-clock time 的占比，也不是 GPU utilization。并发 streams 的 activity 可能重叠，所以这些 duration 的和不一定等于采集区间经过的时间，累计占时最大的 activity 也不一定在端到端 critical path 上。先用汇总筛选候选，再用时间线识别 critical path 上的工作，最后用未启用 profiler 的 baseline 验证优化是否降低了 operation latency。本例每个 kernel 只执行一次，因此 `Total Time`、`Max` 和对应执行的 `Kernel Dur` 相同；多次执行时才需要按上表区分。
+
+### 排查时间线中较长的 GPU 空隙
+
+一条 stream 上有空白，不等于整个 GPU 都处于 idle。例如：
+
+```text
+Stream 7:  Kernel A █████                         Kernel B ████
+Stream 8:             Kernel C ██████████████████
+```
+
+`Stream 7` 在两个 kernels 之间没有工作，但 `Kernel C` 正在另一条 stream 上执行。先展开目标 GPU 的所有相关 streams 和 engines，并检查 kernels、memcpy/memset、通信以及其他已采集 context/process 的活动。只要有其他 activity 与该空隙重叠，这就不是 device-wide idle；但 `Stream 7` 仍可能位于 critical path，仍需判断这种重叠是否有效。只有当前采集可见的 GPU activities 在同一时段都为空，才能称为“这份报告可见范围内的 device-wide gap”；没有采集到的其他 process 或 context 仍可能在使用 GPU。若怀疑其他 CUDA context 正在与当前 workload 竞争 GPU，可以在单独的诊断报告中加入 `--gpuctxsw=true` 查看 GPU context switches。
+
+完整判断树如下。最后三个时间段不是互斥分支，同一个 gap 中可能依次出现多个阶段：
+
+```text
+某条 stream 上出现 gap
+└─ 同一时段还有其他已采集的 GPU activity？
+   ├─ 有：不是 device-wide idle；检查该 stream 是否在 critical path，重叠是否有效
+   └─ 没有：这是报告可见范围内的 device-wide gap
+      └─ 关联 gap 后的操作 B，并按时间戳分段
+         ├─ A end → B API Start（若为正）：host 尚未进入 B 的 launch API
+         ├─ gap ∩ [B API Start, B API end]：launch API 与 gap 重叠
+         └─ max(A end, B API end) → B start（若为正）：queue interval 位于 gap 内的部分
+```
+
+确认存在可见的 device-wide gap 后，找到 gap 后第一个 GPU 操作 B，并沿 correlation 回到实际提交它的 host thread。假设 trace 给出：
+
+```text
+A end = 20 us
+B API Start = 95 us, API Dur = 3 us, API end = 98 us
+B Kernel Start = 100 us
+```
+
+这里的 GPU gap 是 $100-20=80$ μs。其中 75 μs 发生在 B 的 launch API 开始之前，3 μs 与 launch API 重叠，API 返回后还有 2 μs 才开始执行 B；主要问题首先指向 host 没有及时提交 B。这个例子的时间线是：
+
+```text
+A end ─────────── API Start ─────────── API end ─────────── B start
+       launch 前的 host 延迟   API interval         reported queue interval
+```
+
+1. 如果 `API Start > A end`，先调查 `A end` 到 `API Start`：查看 Python/framework 工作、CPU 同步、实际 launch thread 是否在 CPU 上运行，以及工作是否由另一个 thread 提交。
+2. 如果 launch API 与 gap 重叠，结合 `API Dur`、thread state 和调用栈，区分 API 内工作、CPU 调度延迟、runtime 阻塞或 profiler 开销。
+3. 如果 `API end < B start`，只有 `max(A end, API end)` 到 `B start` 这一段同时属于 GPU gap 和报告的 queue interval。再检查同 stream 前序工作、event/stream dependency、`cudaStreamWaitEvent`、未采集 context，以及 GPU 调度或资源竞争。
+
+`Queue Dur` 只测量 launch API 结束到 kernel 开始之间的正间隔；kernel 实际入队发生在 API 调用内部，所以它不是完整的排队时间，也不能单独证明某种 dependency，更不能直接等同于 GPU gap。本页 ReLU 的 `Queue Dur` 是 5.074 μs，而 GEMM 与 ReLU 之间的 GPU gap 只有 0.224 μs；大部分 queue interval 与 GEMM 执行重叠。
+
+前面的轻量命令关闭了 CPU sampling 和 context-switch tracing，适合先寻找 GPU gap。本页 `nsys_example.py --profile-once` 只有 0.224 μs gap，采集区间也太短，不适合演示周期性的 CPU sampling。对能够稳定复现长 gap 的 workload，应覆盖足够多次重复或足够长的目标区间；在 Linux 上可以用下面的二次采集模板加入 OS runtime、thread scheduling 和 CPU backtrace：
+
+```bash
+nsys profile \
+  --trace=cuda,nvtx,osrt \
+  --sample=process-tree \
+  --osrt-threshold=1000 \
+  --capture-range=cudaProfilerApi \
+  --capture-range-end=stop \
+  --output=reports/gap-diagnosis \
+  --force-overwrite=true \
+  python path/to/gap_reproducer.py
+```
+
+这个模板假设 reproducer 用 `cudaProfilerStart()` 和 `cudaProfilerStop()` 标记目标区间；否则应移除两个 `--capture-range` 选项，或改用应用已有的 NVTX range。`--sample=process-tree` 收集 native CPU IP/backtrace samples，并同时把 `--cpuctxsw` 设为 `process-tree` 来记录 thread scheduling；`osrt` trace 记录可能长时间执行或让 thread 等待的 libc/POSIX runtime calls，`--osrt-threshold=1000` 会忽略短于 1000 ns（1 μs）的普通 OS runtime calls。Sampling 是周期性的，短 gap 可能没有任何 sample。对 Python 3.9 或更高版本，可另加 `--python-sampling=true` 查看 Python backtrace，或者用 NVTX/PyTorch function ranges 标出 framework 工作。
+
+若只需确认 thread 何时在 CPU 上运行、何时被切走，并希望减少采集开销，可以改用 `--sample=none --cpuctxsw=process-tree`。若怀疑 `cudaEventRecord` 或 `cudaStreamWaitEvent` 形成依赖，可在单独的诊断报告中加入 `--cuda-event-trace=true`；这个选项需要 CUDA user-mode driver 12.8 或更高版本，而且可能在看似无关的 streams 间引入假依赖，发现 application behavior 改变时应关闭它。
+
+CPU sampling 和 context-switch tracing 的支持范围与权限取决于平台；额外 tracing 也可能扰动很短的间隔，因此第二份报告用于诊断原因，最终性能仍以无 profiler baseline 为准。具体选项见 [Nsight Systems User Guide](https://docs.nvidia.com/nsight-systems/UserGuide/index.html)，各 report 字段定义见 [Nsight Systems Analysis Guide](https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html)。
+
+分析其他报告时，也先确认采集范围，再看所有 GPU kernels、copies、空隙和重叠，最后关联到 host launch 或同步 API。
 
 ## 使用 Nsight Compute 分析单个 kernel
 

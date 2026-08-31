@@ -346,18 +346,20 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#nsight-systems">使用 Nsight Systems 分析应用时间线</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#operation">采集目标 operation 的时间线</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#kernel">从时间线定位最耗时的 kernel</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">区分累计耗时与最慢的单次执行</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">排查时间线中较长的 GPU 空隙</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#nsight-compute-kernel">使用 Nsight Compute 分析单个 kernel</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ncu">如何阅读一份 NCU 报告</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#b200-bf16-gemm">完整示例：分析 B200 BF16 GEMM</a><ul class="nav section-nav flex-column">
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#basic">1. 采集第一份 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 报告</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">2. 用 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 报告确定下一步查什么</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">3. 沿计算分支采集后续指标</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">4. 按顺序读取三组指标</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">2. 用 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 报告确定下一步查什么</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">3. 沿计算分支采集后续指标</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id11">4. 按顺序读取三组指标</a></li>
 </ul>
 </li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">字段计算、单位与边界</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id12">字段计算、单位与边界</a><ul class="nav section-nav flex-column">
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#launchstats-occupancy"><code class="docutils literal notranslate"><span class="pre">LaunchStats</span></code> 与 <code class="docutils literal notranslate"><span class="pre">Occupancy</span></code></a></li>
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#speedoflight-duration"><code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code> 的分母与 <code class="docutils literal notranslate"><span class="pre">Duration</span></code></a></li>
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#scheduler-warp">计算流水线、scheduler 与 warp 状态</a><ul class="nav section-nav flex-column">
@@ -369,14 +371,14 @@
 </ul>
 </li>
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#sourcecounters-sass">用 <code class="docutils literal notranslate"><span class="pre">SourceCounters</span></code> 定位 SASS 或源码</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id11">用代码修改检验假设</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id13">用代码修改检验假设</a></li>
 </ul>
 </li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#iket-dsl-kernel">用 IKET 查看 DSL kernel 内部阶段</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id12">运行一个完整示例</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id13">把标记迁移到自己的 kernel</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id14">运行一个完整示例</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id15">把标记迁移到自己的 kernel</a></li>
 </ul>
 </li>
 </ul>
@@ -772,7 +774,7 @@ nsys<span class="w"> </span>profile<span class="w"> </span><span class="se">\</s
 <span class="w">  </span>reports/target-timeline.nsys-rep
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">--force-export=true</span></code> 会从当前 <code class="docutils literal notranslate"><span class="pre">.nsys-rep</span></code> 重新生成 SQLite 数据，避免误读同名旧文件。<code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> 汇总 GPU activities；<code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code> 把 host launch API 与对应的 GPU kernel 关联起来，并给出 kernel 的 start 和 duration；<code class="docutils literal notranslate"><span class="pre">cuda_api_trace</span></code> 给出每次 CUDA API 的 start 和 duration。两个 NVTX reports 分别给出 range 在 GPU 上覆盖的区间和 host 端记录；<code class="docutils literal notranslate"><span class="pre">cuda_api_sum</span></code> 汇总 host CUDA API。运行 <code class="docutils literal notranslate"><span class="pre">nsys</span> <span class="pre">stats</span> <span class="pre">--help-reports</span></code> 可以查看当前版本的完整定义。</p>
+<p><code class="docutils literal notranslate"><span class="pre">--force-export=true</span></code> 会从当前 <code class="docutils literal notranslate"><span class="pre">.nsys-rep</span></code> 重新生成 SQLite 数据，避免误读同名旧文件。<code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> 汇总 GPU activities；<code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code> 把 host launch API 与对应的 GPU kernel 关联起来，并给出 <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Start</span></code>、<code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Dur</span></code>、<code class="docutils literal notranslate"><span class="pre">Queue</span> <span class="pre">Dur</span></code>、<code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Start</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Dur</span></code>；<code class="docutils literal notranslate"><span class="pre">cuda_api_trace</span></code> 给出每次 CUDA API 的 start 和 duration。两个 NVTX reports 分别给出 range 在 GPU 上覆盖的区间和 host 端记录；<code class="docutils literal notranslate"><span class="pre">cuda_api_sum</span></code> 汇总 host CUDA API。<code class="docutils literal notranslate"><span class="pre">nsys</span> <span class="pre">stats</span> <span class="pre">--help-reports</span></code> 会列出当前版本的 reports；再运行 <code class="docutils literal notranslate"><span class="pre">nsys</span> <span class="pre">stats</span> <span class="pre">--help-reports</span> <span class="pre">cuda_gpu_sum</span></code> 等命令可以查看具体字段定义。</p>
 <p>这条命令会依次打印多张表，按下面的顺序取数：</p>
 <ol class="arabic simple">
 <li><p>在 <code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> 中比较各 GPU activity 的累计 duration，找出最耗时的 kernel。</p></li>
@@ -803,7 +805,7 @@ nsys<span class="w"> </span>profile<span class="w"> </span><span class="se">\</s
 </tbody>
 </table>
 </div>
-<p>再把 GPU execution 与 host 上的 launch API 对应起来。Positive queue time 指 launch API 返回后，到 kernel 稍后才开始之间的时间；kernel 在 API 返回前已经开始时，该字段为空。</p>
+<p>再把 GPU execution 与 host 上的 launch API 对应起来。Positive queue time 指 launch API 返回后，到 kernel 稍后才开始之间的时间；kernel 在 API 返回前已经开始时，该字段为空。Queue time 本身并不表示异常：GPU 正在执行其他工作时，新提交的 kernel 出现 queue time 很正常，不能只凭这一列把原因归结为某个 dependency。</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>Kernel</p></th>
@@ -833,7 +835,87 @@ nsys<span class="w"> </span>profile<span class="w"> </span><span class="se">\</s
 <li><p><strong>检查 kernels 之间的空隙。</strong> 两个 duration 相加为 103.552 μs；从 GEMM 开始到 ReLU 结束的 GPU span 为 103.776 μs，因此中间只有 0.224 μs 空隙。</p></li>
 <li><p><strong>按计时边界解释 host range。</strong> 图中的 <code class="docutils literal notranslate"><span class="pre">target</span> <span class="pre">operation</span></code> NVTX range 覆盖 Python/PyTorch dispatch、两次 launch 和同步 API。<code class="docutils literal notranslate"><span class="pre">cudaDeviceSynchronize</span></code> 开始时 ReLU 已经结束，因此它的 duration 主要来自 host 侧的 API 开销；此时 GPU 执行已经完成。</p></li>
 </ol>
-<p>分析其他报告时，也先确认采集范围，再看 GPU kernels、copies、空隙和重叠，最后关联到 host launch 或同步 API。更多定义见 <a class="reference external" href="https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html">Nsight Systems Analysis Guide</a>。</p>
+</section>
+<section id="id7">
+<h3>区分累计耗时与最慢的单次执行<a class="headerlink" href="#id7" title="Link to this heading">#</a></h3>
+<p>“最耗时”可能指累计占时最大的 activity、同类调用中最慢的一次，或者时间线上的某个具体执行实例（invocation）。三种问题要看不同的列：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>问题</p></th>
+<th class="head"><p>查看位置</p></th>
+<th class="head"><p>含义</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>哪类 GPU activity 累计最耗时？</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> 的 <code class="docutils literal notranslate"><span class="pre">Total</span> <span class="pre">Time</span></code></p></td>
+<td><p>同一汇总行内所有执行实例的 duration 之和，用于筛选累计占时最大的优化候选；只比较 kernels 时也可以使用 <code class="docutils literal notranslate"><span class="pre">cuda_gpu_kern_sum</span></code>。</p></td>
+</tr>
+<tr class="row-odd"><td><p>同一汇总行中最慢的一次有多长？</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> 或 <code class="docutils literal notranslate"><span class="pre">cuda_gpu_kern_sum</span></code> 的 <code class="docutils literal notranslate"><span class="pre">Max</span></code></p></td>
+<td><p>这一组执行实例中最大的 duration；它给出数值，但不定位具体是哪一次。</p></td>
+</tr>
+<tr class="row-even"><td><p>时间线上最慢的具体 kernel 执行是哪一次？</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">cuda_kern_exec_trace</span></code> 的 <code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Dur</span></code></p></td>
+<td><p>每一行对应一次 launch；结合 <code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Start</span></code>、PID/TID 和 launch API 定位该次执行。在 GUI 中先 zoom 到完整目标区间，再把目标 GPU row 显示到 Events View，按 <code class="docutils literal notranslate"><span class="pre">Duration</span></code> 排序并双击回到时间线。</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">cuda_gpu_sum</span></code> 的 <code class="docutils literal notranslate"><span class="pre">Time</span></code> 是该行 <code class="docutils literal notranslate"><span class="pre">Total</span> <span class="pre">Time</span></code> 占表中所有行 <code class="docutils literal notranslate"><span class="pre">Total</span> <span class="pre">Time</span></code> 之和的比例，不是 application wall-clock time 的占比，也不是 GPU utilization。并发 streams 的 activity 可能重叠，所以这些 duration 的和不一定等于采集区间经过的时间，累计占时最大的 activity 也不一定在端到端 critical path 上。先用汇总筛选候选，再用时间线识别 critical path 上的工作，最后用未启用 profiler 的 baseline 验证优化是否降低了 operation latency。本例每个 kernel 只执行一次，因此 <code class="docutils literal notranslate"><span class="pre">Total</span> <span class="pre">Time</span></code>、<code class="docutils literal notranslate"><span class="pre">Max</span></code> 和对应执行的 <code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">Dur</span></code> 相同；多次执行时才需要按上表区分。</p>
+</section>
+<section id="id8">
+<h3>排查时间线中较长的 GPU 空隙<a class="headerlink" href="#id8" title="Link to this heading">#</a></h3>
+<p>一条 stream 上有空白，不等于整个 GPU 都处于 idle。例如：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Stream 7:  Kernel A █████                         Kernel B ████
+Stream 8:             Kernel C ██████████████████
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">Stream</span> <span class="pre">7</span></code> 在两个 kernels 之间没有工作，但 <code class="docutils literal notranslate"><span class="pre">Kernel</span> <span class="pre">C</span></code> 正在另一条 stream 上执行。先展开目标 GPU 的所有相关 streams 和 engines，并检查 kernels、memcpy/memset、通信以及其他已采集 context/process 的活动。只要有其他 activity 与该空隙重叠，这就不是 device-wide idle；但 <code class="docutils literal notranslate"><span class="pre">Stream</span> <span class="pre">7</span></code> 仍可能位于 critical path，仍需判断这种重叠是否有效。只有当前采集可见的 GPU activities 在同一时段都为空，才能称为“这份报告可见范围内的 device-wide gap”；没有采集到的其他 process 或 context 仍可能在使用 GPU。若怀疑其他 CUDA context 正在与当前 workload 竞争 GPU，可以在单独的诊断报告中加入 <code class="docutils literal notranslate"><span class="pre">--gpuctxsw=true</span></code> 查看 GPU context switches。</p>
+<p>完整判断树如下。最后三个时间段不是互斥分支，同一个 gap 中可能依次出现多个阶段：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>某条 stream 上出现 gap
+└─ 同一时段还有其他已采集的 GPU activity？
+   ├─ 有：不是 device-wide idle；检查该 stream 是否在 critical path，重叠是否有效
+   └─ 没有：这是报告可见范围内的 device-wide gap
+      └─ 关联 gap 后的操作 B，并按时间戳分段
+         ├─ A end → B API Start（若为正）：host 尚未进入 B 的 launch API
+         ├─ gap ∩ [B API Start, B API end]：launch API 与 gap 重叠
+         └─ max(A end, B API end) → B start（若为正）：queue interval 位于 gap 内的部分
+</pre></div>
+</div>
+<p>确认存在可见的 device-wide gap 后，找到 gap 后第一个 GPU 操作 B，并沿 correlation 回到实际提交它的 host thread。假设 trace 给出：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A end = 20 us
+B API Start = 95 us, API Dur = 3 us, API end = 98 us
+B Kernel Start = 100 us
+</pre></div>
+</div>
+<p>这里的 GPU gap 是 <span class="math notranslate nohighlight">\(100-20=80\)</span> μs。其中 75 μs 发生在 B 的 launch API 开始之前，3 μs 与 launch API 重叠，API 返回后还有 2 μs 才开始执行 B；主要问题首先指向 host 没有及时提交 B。这个例子的时间线是：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>A end ─────────── API Start ─────────── API end ─────────── B start
+       launch 前的 host 延迟   API interval         reported queue interval
+</pre></div>
+</div>
+<ol class="arabic simple">
+<li><p>如果 <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Start</span> <span class="pre">&gt;</span> <span class="pre">A</span> <span class="pre">end</span></code>，先调查 <code class="docutils literal notranslate"><span class="pre">A</span> <span class="pre">end</span></code> 到 <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Start</span></code>：查看 Python/framework 工作、CPU 同步、实际 launch thread 是否在 CPU 上运行，以及工作是否由另一个 thread 提交。</p></li>
+<li><p>如果 launch API 与 gap 重叠，结合 <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">Dur</span></code>、thread state 和调用栈，区分 API 内工作、CPU 调度延迟、runtime 阻塞或 profiler 开销。</p></li>
+<li><p>如果 <code class="docutils literal notranslate"><span class="pre">API</span> <span class="pre">end</span> <span class="pre">&lt;</span> <span class="pre">B</span> <span class="pre">start</span></code>，只有 <code class="docutils literal notranslate"><span class="pre">max(A</span> <span class="pre">end,</span> <span class="pre">API</span> <span class="pre">end)</span></code> 到 <code class="docutils literal notranslate"><span class="pre">B</span> <span class="pre">start</span></code> 这一段同时属于 GPU gap 和报告的 queue interval。再检查同 stream 前序工作、event/stream dependency、<code class="docutils literal notranslate"><span class="pre">cudaStreamWaitEvent</span></code>、未采集 context，以及 GPU 调度或资源竞争。</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">Queue</span> <span class="pre">Dur</span></code> 只测量 launch API 结束到 kernel 开始之间的正间隔；kernel 实际入队发生在 API 调用内部，所以它不是完整的排队时间，也不能单独证明某种 dependency，更不能直接等同于 GPU gap。本页 ReLU 的 <code class="docutils literal notranslate"><span class="pre">Queue</span> <span class="pre">Dur</span></code> 是 5.074 μs，而 GEMM 与 ReLU 之间的 GPU gap 只有 0.224 μs；大部分 queue interval 与 GEMM 执行重叠。</p>
+<p>前面的轻量命令关闭了 CPU sampling 和 context-switch tracing，适合先寻找 GPU gap。本页 <code class="docutils literal notranslate"><span class="pre">nsys_example.py</span> <span class="pre">--profile-once</span></code> 只有 0.224 μs gap，采集区间也太短，不适合演示周期性的 CPU sampling。对能够稳定复现长 gap 的 workload，应覆盖足够多次重复或足够长的目标区间；在 Linux 上可以用下面的二次采集模板加入 OS runtime、thread scheduling 和 CPU backtrace：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>nsys<span class="w"> </span>profile<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--trace<span class="o">=</span>cuda,nvtx,osrt<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--sample<span class="o">=</span>process-tree<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--osrt-threshold<span class="o">=</span><span class="m">1000</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--capture-range<span class="o">=</span>cudaProfilerApi<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--capture-range-end<span class="o">=</span>stop<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--output<span class="o">=</span>reports/gap-diagnosis<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--force-overwrite<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>python<span class="w"> </span>path/to/gap_reproducer.py
+</pre></div>
+</div>
+<p>这个模板假设 reproducer 用 <code class="docutils literal notranslate"><span class="pre">cudaProfilerStart()</span></code> 和 <code class="docutils literal notranslate"><span class="pre">cudaProfilerStop()</span></code> 标记目标区间；否则应移除两个 <code class="docutils literal notranslate"><span class="pre">--capture-range</span></code> 选项，或改用应用已有的 NVTX range。<code class="docutils literal notranslate"><span class="pre">--sample=process-tree</span></code> 收集 native CPU IP/backtrace samples，并同时把 <code class="docutils literal notranslate"><span class="pre">--cpuctxsw</span></code> 设为 <code class="docutils literal notranslate"><span class="pre">process-tree</span></code> 来记录 thread scheduling；<code class="docutils literal notranslate"><span class="pre">osrt</span></code> trace 记录可能长时间执行或让 thread 等待的 libc/POSIX runtime calls，<code class="docutils literal notranslate"><span class="pre">--osrt-threshold=1000</span></code> 会忽略短于 1000 ns（1 μs）的普通 OS runtime calls。Sampling 是周期性的，短 gap 可能没有任何 sample。对 Python 3.9 或更高版本，可另加 <code class="docutils literal notranslate"><span class="pre">--python-sampling=true</span></code> 查看 Python backtrace，或者用 NVTX/PyTorch function ranges 标出 framework 工作。</p>
+<p>若只需确认 thread 何时在 CPU 上运行、何时被切走，并希望减少采集开销，可以改用 <code class="docutils literal notranslate"><span class="pre">--sample=none</span> <span class="pre">--cpuctxsw=process-tree</span></code>。若怀疑 <code class="docutils literal notranslate"><span class="pre">cudaEventRecord</span></code> 或 <code class="docutils literal notranslate"><span class="pre">cudaStreamWaitEvent</span></code> 形成依赖，可在单独的诊断报告中加入 <code class="docutils literal notranslate"><span class="pre">--cuda-event-trace=true</span></code>；这个选项需要 CUDA user-mode driver 12.8 或更高版本，而且可能在看似无关的 streams 间引入假依赖，发现 application behavior 改变时应关闭它。</p>
+<p>CPU sampling 和 context-switch tracing 的支持范围与权限取决于平台；额外 tracing 也可能扰动很短的间隔，因此第二份报告用于诊断原因，最终性能仍以无 profiler baseline 为准。具体选项见 <a class="reference external" href="https://docs.nvidia.com/nsight-systems/UserGuide/index.html">Nsight Systems User Guide</a>，各 report 字段定义见 <a class="reference external" href="https://docs.nvidia.com/nsight-systems/AnalysisGuide/index.html">Nsight Systems Analysis Guide</a>。</p>
+<p>分析其他报告时，也先确认采集范围，再看所有 GPU kernels、copies、空隙和重叠，最后关联到 host launch 或同步 API。</p>
 </section>
 </section>
 <section id="nsight-compute-kernel">
@@ -932,8 +1014,8 @@ ncu<span class="w"> </span><span class="se">\</span>
 </div>
 <p>其他筛选条件和采集选项见 <a class="reference external" href="https://docs.nvidia.com/nsight-compute/NsightComputeCli/">Nsight Compute CLI 文档</a>。如果命令报告 <code class="docutils literal notranslate"><span class="pre">ERR_NVGPUCTRPERM</span></code>，请按照 NVIDIA 的 <a class="reference external" href="https://developer.nvidia.com/nvidia-development-tools-solutions-err-nvgpuctrperm-nsightcompute">counter permission 指南</a> 配置权限，或请系统管理员开放访问。</p>
 </section>
-<section id="id7">
-<h4>2. 用 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 报告确定下一步查什么<a class="headerlink" href="#id7" title="Link to this heading">#</a></h4>
+<section id="id9">
+<h4>2. 用 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 报告确定下一步查什么<a class="headerlink" href="#id9" title="Link to this heading">#</a></h4>
 <p>先确认报告头中的设备、kernel 名称、grid/block 和 warnings。它们与目标 launch 一致后，再看下面三组字段：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
@@ -959,8 +1041,8 @@ ncu<span class="w"> </span><span class="se">\</span>
 <p>最后看吞吐率。Compute 比 Memory 更接近各自峰值，所以先进入计算分支。<code class="docutils literal notranslate"><span class="pre">compute-bound</span></code> 的含义更强：继续提速最终受到计算单元吞吐上限约束。<code class="docutils literal notranslate"><span class="pre">basic</span></code> 在这里给出初始方向；后续报告显示指令发射机会很少，而且绝大多数调度周期没有 eligible（已就绪）warp，因此此时直接贴上 <code class="docutils literal notranslate"><span class="pre">compute-bound</span></code> 标签会漏掉关键线索。</p>
 <p>综合三组字段，本例的 grid 足以覆盖全卡，每个 SM 理论上可供调度的 warps 较少，计算侧又最接近自身峰值。下一份报告同时展开计算流水线并采集 scheduler 指标。</p>
 </section>
-<section id="id8">
-<h4>3. 沿计算分支采集后续指标<a class="headerlink" href="#id8" title="Link to this heading">#</a></h4>
+<section id="id10">
+<h4>3. 沿计算分支采集后续指标<a class="headerlink" href="#id10" title="Link to this heading">#</a></h4>
 <p>下面在一次 run 中同时采集三个 sections；阅读顺序是 <code class="docutils literal notranslate"><span class="pre">ComputeWorkloadAnalysis</span></code> → <code class="docutils literal notranslate"><span class="pre">SchedulerStats</span></code> → <code class="docutils literal notranslate"><span class="pre">WarpStateStats</span></code>。分析新的 kernel 时，可以根据前一组结果决定是否追加下一组。</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>ncu<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>--config-file<span class="w"> </span>off<span class="w"> </span><span class="se">\</span>
@@ -984,8 +1066,8 @@ ncu<span class="w"> </span><span class="se">\</span>
 </div>
 <p>这是一次独立的 NCU run。两份报告中的百分比可能有小幅波动，例如 77.74% 变成 78.39%，这个差值不表示性能发生了变化。前一份 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 报告用于选择调查入口，下面的 follow-up 报告则用同一次采集中的计算、scheduler 和 warp-state 指标收窄原因。</p>
 </section>
-<section id="id9">
-<h4>4. 按顺序读取三组指标<a class="headerlink" href="#id9" title="Link to this heading">#</a></h4>
+<section id="id11">
+<h4>4. 按顺序读取三组指标<a class="headerlink" href="#id11" title="Link to this heading">#</a></h4>
 <p>先在 <code class="docutils literal notranslate"><span class="pre">ComputeWorkloadAnalysis</span></code> → <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span> <span class="pre">(Elapsed</span> <span class="pre">Cycles)</span></code> → <code class="docutils literal notranslate"><span class="pre">Pipe</span> <span class="pre">Utilization</span> <span class="pre">(%</span> <span class="pre">of</span> <span class="pre">elapsed</span> <span class="pre">cycles)</span></code> 中看 active-cycle 视图。<code class="docutils literal notranslate"><span class="pre">Tensor</span> <span class="pre">(FP)</span></code> 对应浮点 tensor 运算路径，<code class="docutils literal notranslate"><span class="pre">TMEM</span> <span class="pre">(Tensor</span> <span class="pre">Memory)</span></code> 是为 tensor 运算服务的片上内存路径；TMEM 与外部 HBM/DRAM、负责异步搬运的 TMA 都是不同硬件。它们在约 78% 的时钟周期里处于 active 状态，而同一 section 摘要中的 <code class="docutils literal notranslate"><span class="pre">Issue</span> <span class="pre">Slots</span> <span class="pre">Busy</span></code> 只有 3.20%。多周期操作发射后可以让流水线持续 active，因此计算路径经常被占用和新指令发得很少可以同时出现。</p>
 <p>接着打开 <code class="docutils literal notranslate"><span class="pre">Scheduler</span> <span class="pre">Statistics</span></code> → <code class="docutils literal notranslate"><span class="pre">Warps</span> <span class="pre">Per</span> <span class="pre">Scheduler</span></code>，找出新指令为什么发得少。每个 scheduler 平均有 1.44 个尚未结束的 active warps，其中只有 0.04 个 eligible（已就绪）warp；这里的 0.04 是平均 warp 数。<code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">Eligible</span></code> 的分母只包括这个 scheduler 所属 SM subpartition 中至少有一个 warp 尚未结束的周期；<code class="docutils literal notranslate"><span class="pre">No</span> <span class="pre">Eligible</span> <span class="pre">=</span> <span class="pre">96.11%</span></code> 表示在这些周期中，96.11% 的周期找不到 eligible warp。到这一步，3.20% 的低发射率已经有了解释：工作虽然驻留在 SM 上，大部分时间却没有可以继续执行的 warp。</p>
 <p>最后打开 <code class="docutils literal notranslate"><span class="pre">Warp</span> <span class="pre">State</span> <span class="pre">Statistics</span></code> → <code class="docutils literal notranslate"><span class="pre">Warp</span> <span class="pre">State</span> <span class="pre">(All</span> <span class="pre">Cycles)</span></code>，查看这些 warps 在等什么。一个 warp 在某种状态停留一个时钟周期，记作 1 个 warp-cycle。本例每条 issued warp instruction 对应 37.00 个 warp-cycles，其中 32.11、约 87%，归入 <code class="docutils literal notranslate"><span class="pre">Long</span> <span class="pre">Scoreboard</span></code>。这个 87% 是按已发射 warp 指令归一化后的 warp-state 周期占比，并非 kernel 执行时间占比。Scoreboard 是硬件记录前序操作结果是否就绪的依赖表；<code class="docutils literal notranslate"><span class="pre">Long</span> <span class="pre">Scoreboard</span></code> 表示下一条指令仍在等待由 L1TEX 处理的某项内存操作完成。L1TEX 位于 SM 一侧，负责处理 global、local、surface 和 texture memory 请求；请求最终可能由 L1、L2 或 DRAM 提供数据，因此这个字段无法单独确定等待发生在哪一级存储。<code class="docutils literal notranslate"><span class="pre">MemoryWorkloadAnalysis</span></code> 用于查看整条 kernel 的 L1、L2 和 DRAM 聚合行为；具体 load 则在 <code class="docutils literal notranslate"><span class="pre">SourceCounters</span></code> 的 SASS/源码视图中继续定位。</p>
@@ -1005,8 +1087,8 @@ ncu<span class="w"> </span><span class="se">\</span>
 <p>具体修改方法和验证步骤放在后面的“用代码修改检验假设”中。</p>
 </section>
 </section>
-<section id="id10">
-<h3>字段计算、单位与边界<a class="headerlink" href="#id10" title="Link to this heading">#</a></h3>
+<section id="id12">
+<h3>字段计算、单位与边界<a class="headerlink" href="#id12" title="Link to this heading">#</a></h3>
 <p>主线已经给出了阅读顺序和本例结论。下面只保留完整字段、计算过程、指标单位和容易误读的边界，分析其他 kernel 时可以按需查阅。</p>
 <section id="launchstats-occupancy">
 <h4><code class="docutils literal notranslate"><span class="pre">LaunchStats</span></code> 与 <code class="docutils literal notranslate"><span class="pre">Occupancy</span></code><a class="headerlink" href="#launchstats-occupancy" title="Link to this heading">#</a></h4>
@@ -1317,8 +1399,8 @@ mkdir<span class="w"> </span>-p<span class="w"> </span><span class="s2">"</span>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">ncu-ui</span> <span class="pre">reports/tirx-source.ncu-rep</span></code> 的 Source 页可以在 CUDA/SASS 关联视图中逐行查看指标。终端对应命令是 <code class="docutils literal notranslate"><span class="pre">ncu</span> <span class="pre">--import</span> <span class="pre">reports/tirx-source.ncu-rep</span> <span class="pre">--page</span> <span class="pre">source</span> <span class="pre">--print-source</span> <span class="pre">cuda,sass</span></code>。如果 <code class="docutils literal notranslate"><span class="pre">executable</span></code> 是自己的 TIRx 编译结果，<code class="docutils literal notranslate"><span class="pre">executable.mod.imports[0].inspect_source(&quot;cuda&quot;)</span></code> 可以直接打印生成代码；NCU 的逐行关联则依赖这次重新编译写入 binary 的 line information。</p>
 </section>
-<section id="id11">
-<h4>用代码修改检验假设<a class="headerlink" href="#id11" title="Link to this heading">#</a></h4>
+<section id="id13">
+<h4>用代码修改检验假设<a class="headerlink" href="#id13" title="Link to this heading">#</a></h4>
 <p>本例调用库提供的 <code class="docutils literal notranslate"><span class="pre">torch.mm</span></code>，无法直接修改 kernel 实现。下面补充自写 TIRx 或其他 DSL kernel 的具体修改和验证步骤。</p>
 <p>例如，要检验“驻留 warps 太少，难以隐藏 L1TEX 等待”，可以调整 tile、block 或 pipeline stages，减少 <code class="docutils literal notranslate"><span class="pre">Registers</span> <span class="pre">Per</span> <span class="pre">Thread</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Dynamic</span> <span class="pre">Shared</span> <span class="pre">Memory</span> <span class="pre">Per</span> <span class="pre">Block</span></code>。修改后重新看两项 block limit：<code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span> <span class="pre">Registers</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Block</span> <span class="pre">Limit</span> <span class="pre">Shared</span> <span class="pre">Mem</span></code> 都从 1 提高到至少 2 时，第二个 block 才具备同时驻留的资源条件。随后确认其他 block limits 也不低于 2，并查看 NCU 重新计算的 theoretical active blocks 和 occupancy。减少 registers 可能造成 register spill（寄存器不足时溢出到 local memory），减少 shared memory 也可能损失数据复用，所以还要用 latency 判断总体收益。</p>
 <p>另一种实验保持驻留数量不变，只把 load 或预取提前，或者缩短依赖链。若 <code class="docutils literal notranslate"><span class="pre">Long</span> <span class="pre">Scoreboard</span></code> 和 latency 一起下降，就支持“warps 等待数据的时间减少了”这个判断。这个值按已发射指令归一化，因此还要结合 latency 判断是否产生实际提速。一次只改变一个关键因素，然后检查三个对象：</p>
@@ -1340,8 +1422,8 @@ mkdir<span class="w"> </span>-p<span class="w"> </span><span class="s2">"</span>
 <section id="iket-dsl-kernel">
 <h2>用 IKET 查看 DSL kernel 内部阶段<a class="headerlink" href="#iket-dsl-kernel" title="Link to this heading">#</a></h2>
 <p>编写 warp-specialized TIRx kernel 时，IKET（In-Kernel Event Tracing）可以把 kernel 内部的阶段画成时间线。Nsight Systems 显示整个 kernel 的起止区间，NCU 汇总整个 launch 的硬件指标，IKET 则记录各个 warp role 何时执行 producer、等待、consumer 等代码段。</p>
-<section id="id12">
-<h3>运行一个完整示例<a class="headerlink" href="#id12" title="Link to this heading">#</a></h3>
+<section id="id14">
+<h3>运行一个完整示例<a class="headerlink" href="#id14" title="Link to this heading">#</a></h3>
 <p>TVM 0.26 使用版本锁定的 <code class="docutils literal notranslate"><span class="pre">cutlass-4.6.0</span></code> profiling profile。本章的 CUDA 13 环境可以安装对应依赖，并先确认 <code class="docutils literal notranslate"><span class="pre">run-iket</span></code> 命令可用：</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s1">'nvidia-cutlass-dsl[cu13]==4.6.0'</span><span class="w"> </span><span class="se">\</span>
@@ -1433,8 +1515,8 @@ run-iket<span class="w"> </span>--help
 <p><code class="docutils literal notranslate"><span class="pre">iket.run</span></code> 会在 IKET 采集进程中重新启动当前脚本，并调用 <code class="docutils literal notranslate"><span class="pre">profile_workload()</span></code>。把 <code class="docutils literal notranslate"><span class="pre">tvm.compile()</span></code> 和 <code class="docutils literal notranslate"><span class="pre">.jit()</span></code> 写在这个函数里，可以保证 kernel 在 IKET 已启用时重新编译和加载。脚本还会检查输出是否等于 <code class="docutils literal notranslate"><span class="pre">input</span> <span class="pre">*</span> <span class="pre">2</span> <span class="pre">+</span> <span class="pre">1</span></code>。</p>
 <p><code class="docutils literal notranslate"><span class="pre">postprocess=&quot;all&quot;</span></code> 在 <code class="docutils literal notranslate"><span class="pre">reports/iket-warp-roles</span></code> 下生成 JSON、<code class="docutils literal notranslate"><span class="pre">*.pftrace</span></code> 和 HTML。把 <code class="docutils literal notranslate"><span class="pre">*.pftrace</span></code> 加载到 Perfetto 后，可以分别查看 <code class="docutils literal notranslate"><span class="pre">producer_load</span></code>、<code class="docutils literal notranslate"><span class="pre">wait_for_data</span></code> 和 <code class="docutils literal notranslate"><span class="pre">consumer_compute</span></code>；warp 1 会比 warp 0 更早到达 barrier，因此它的 <code class="docutils literal notranslate"><span class="pre">wait_for_data</span></code> 区间通常更长。目标为 H100 时，把脚本中的 <code class="docutils literal notranslate"><span class="pre">sm_100a</span></code> 改成 <code class="docutils literal notranslate"><span class="pre">sm_90a</span></code>。</p>
 </section>
-<section id="id13">
-<h3>把标记迁移到自己的 kernel<a class="headerlink" href="#id13" title="Link to this heading">#</a></h3>
+<section id="id15">
+<h3>把标记迁移到自己的 kernel<a class="headerlink" href="#id15" title="Link to this heading">#</a></h3>
 <p>在自己的 <code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code> 中创建 <code class="docutils literal notranslate"><span class="pre">IketProfiler</span></code>，用 <code class="docutils literal notranslate"><span class="pre">mark()</span></code> 记录瞬时事件，用成对的 <code class="docutils literal notranslate"><span class="pre">range_push()</span></code> / <code class="docutils literal notranslate"><span class="pre">range_pop()</span></code> 或 <code class="docutils literal notranslate"><span class="pre">range_start()</span></code> / <code class="docutils literal notranslate"><span class="pre">range_end()</span></code> 包住阶段。每个 warp 实际经过的控制流都要保持 range 成对；等待时间也需要像示例中的 <code class="docutils literal notranslate"><span class="pre">wait_for_data</span></code> 一样显式包住。</p>
 <p>编译和第一次 JIT load 继续放在 <code class="docutils literal notranslate"><span class="pre">iket.run</span></code> 调用的函数内。IKET 支持 Hopper 或更新架构，并会检查 CUTLASS DSL packages、NVRTC、<code class="docutils literal notranslate"><span class="pre">nvdisasm</span></code> 和相关 binary 是否与锁定 profile 一致。IKET 插入的记录代码会改变生成的 kernel 并带来额外开销，因此 trace 用于解释阶段和 warp roles；正式 latency 仍由未插桩版本的 CUDA Event benchmark 给出。完整 API 和 trace 选项见 <a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/backend/cuda/iket.py"><code class="docutils literal notranslate"><span class="pre">python/tvm/backend/cuda/iket.py</span></code></a> 和 <a class="reference external" href="https://github.com/NVIDIA/cutlass/blob/v4.6.0/media/docs/pythonDSL/cute_dsl_general/iket_profiling.rst">NVIDIA IKET 文档</a>。</p>
 </section>
@@ -1510,18 +1592,20 @@ run-iket<span class="w"> </span>--help
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#nsight-systems">使用 Nsight Systems 分析应用时间线</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#operation">采集目标 operation 的时间线</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#kernel">从时间线定位最耗时的 kernel</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">区分累计耗时与最慢的单次执行</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">排查时间线中较长的 GPU 空隙</a></li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#nsight-compute-kernel">使用 Nsight Compute 分析单个 kernel</a><ul class="pst-show_toc_level nav section-nav flex-column">
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ncu">如何阅读一份 NCU 报告</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#b200-bf16-gemm">完整示例：分析 B200 BF16 GEMM</a><ul class="nav section-nav flex-column">
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#basic">1. 采集第一份 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 报告</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">2. 用 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 报告确定下一步查什么</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id8">3. 沿计算分支采集后续指标</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">4. 按顺序读取三组指标</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id9">2. 用 <code class="docutils literal notranslate"><span class="pre">basic</span></code> 报告确定下一步查什么</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">3. 沿计算分支采集后续指标</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id11">4. 按顺序读取三组指标</a></li>
 </ul>
 </li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id10">字段计算、单位与边界</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id12">字段计算、单位与边界</a><ul class="nav section-nav flex-column">
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#launchstats-occupancy"><code class="docutils literal notranslate"><span class="pre">LaunchStats</span></code> 与 <code class="docutils literal notranslate"><span class="pre">Occupancy</span></code></a></li>
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#speedoflight-duration"><code class="docutils literal notranslate"><span class="pre">SpeedOfLight</span></code> 的分母与 <code class="docutils literal notranslate"><span class="pre">Duration</span></code></a></li>
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#scheduler-warp">计算流水线、scheduler 与 warp 状态</a><ul class="nav section-nav flex-column">
@@ -1533,14 +1617,14 @@ run-iket<span class="w"> </span>--help
 </ul>
 </li>
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#sourcecounters-sass">用 <code class="docutils literal notranslate"><span class="pre">SourceCounters</span></code> 定位 SASS 或源码</a></li>
-<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id11">用代码修改检验假设</a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#id13">用代码修改检验假设</a></li>
 </ul>
 </li>
 </ul>
 </li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#iket-dsl-kernel">用 IKET 查看 DSL kernel 内部阶段</a><ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id12">运行一个完整示例</a></li>
-<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id13">把标记迁移到自己的 kernel</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id14">运行一个完整示例</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id15">把标记迁移到自己的 kernel</a></li>
 </ul>
 </li>
 </ul>
