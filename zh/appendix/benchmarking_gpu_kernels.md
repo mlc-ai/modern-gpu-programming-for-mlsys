@@ -463,7 +463,7 @@ nsys stats \
 | 同一汇总行中最慢的一次有多长？ | `cuda_gpu_sum` 或 `cuda_gpu_kern_sum` 的 `Max` | 这一组执行实例中最大的 duration；它给出数值，但不定位具体是哪一次。 |
 | 时间线上最慢的具体 kernel 执行是哪一次？ | `cuda_kern_exec_trace` 的 `Kernel Dur` | 每一行对应一次 launch；结合 `Kernel Start`、PID/TID 和 launch API 定位该次执行。在 GUI 中先 zoom 到完整目标区间，再把目标 GPU row 显示到 Events View，按 `Duration` 排序并双击回到时间线。 |
 
-`cuda_gpu_sum` 的 `Time` 是该行 `Total Time` 占表中所有行 `Total Time` 之和的比例，不是 application wall-clock time 的占比，也不是 GPU utilization。并发 streams 的 activity 可能重叠，所以这些 duration 的和不一定等于采集区间经过的时间，累计占时最大的 activity 也不一定在端到端 critical path 上。先用汇总筛选候选，再用时间线和无 profiler baseline 验证优化是否降低了 operation latency。本例每个 kernel 只执行一次，因此 `Total Time`、`Max` 和对应执行的 `Kernel Dur` 相同；多次执行时才需要按上表区分。
+`cuda_gpu_sum` 的 `Time` 是该行 `Total Time` 占表中所有行 `Total Time` 之和的比例，不是 application wall-clock time 的占比，也不是 GPU utilization。并发 streams 的 activity 可能重叠，所以这些 duration 的和不一定等于采集区间经过的时间，累计占时最大的 activity 也不一定在端到端 critical path 上。先用汇总筛选候选，再用时间线识别 critical path 上的工作，最后用未启用 profiler 的 baseline 验证优化是否降低了 operation latency。本例每个 kernel 只执行一次，因此 `Total Time`、`Max` 和对应执行的 `Kernel Dur` 相同；多次执行时才需要按上表区分。
 
 ### 排查时间线中较长的 GPU 空隙
 
@@ -474,7 +474,7 @@ Stream 7:  Kernel A █████                         Kernel B ███�
 Stream 8:             Kernel C ██████████████████
 ```
 
-`Stream 7` 在两个 kernels 之间没有工作，但 `Kernel C` 正在另一条 stream 上执行。先展开目标 GPU 的所有相关 streams 和 engines，并检查 kernels、memcpy/memset、通信以及其他已采集 context/process 的活动。只要有其他 activity，这就不是 device-wide idle；但 `Stream 7` 仍可能位于 critical path，仍需判断它与其他工作的重叠是否有效。只有当前采集可见的 GPU activities 在同一时段都为空，才能称为“这份报告可见范围内的 device-wide gap”；没有采集到的其他 process 或 context 仍可能在使用 GPU。若怀疑其他 CUDA context 抢占了 device，可以在单独的诊断报告中加入 `--gpuctxsw=true` 查看 GPU context switches。
+`Stream 7` 在两个 kernels 之间没有工作，但 `Kernel C` 正在另一条 stream 上执行。先展开目标 GPU 的所有相关 streams 和 engines，并检查 kernels、memcpy/memset、通信以及其他已采集 context/process 的活动。只要有其他 activity 与该空隙重叠，这就不是 device-wide idle；但 `Stream 7` 仍可能位于 critical path，仍需判断这种重叠是否有效。只有当前采集可见的 GPU activities 在同一时段都为空，才能称为“这份报告可见范围内的 device-wide gap”；没有采集到的其他 process 或 context 仍可能在使用 GPU。若怀疑其他 CUDA context 正在与当前 workload 竞争 GPU，可以在单独的诊断报告中加入 `--gpuctxsw=true` 查看 GPU context switches。
 
 完整判断树如下。最后三个时间段不是互斥分支，同一个 gap 中可能依次出现多个阶段：
 
@@ -501,7 +501,7 @@ B Kernel Start = 100 us
 
 ```text
 A end ─────────── API Start ─────────── API end ─────────── B start
-       host submission       API interval         reported queue interval
+       launch 前的 host 延迟   API interval         reported queue interval
 ```
 
 1. 如果 `API Start > A end`，先调查 `A end` 到 `API Start`：查看 Python/framework 工作、CPU 同步、实际 launch thread 是否在 CPU 上运行，以及工作是否由另一个 thread 提交。
