@@ -15,161 +15,134 @@
     specific language governing permissions and limitations
     under the License.
 
+.. _chap_tirx_lowering_pipeline:
+
 TIRx 编译流水线
 ===============
 
-``tvm.compile(mod, target, tir_pipeline="tirx")`` 接收一个 TIRx module，最终生成两部分代码：CPU 端的启动函数负责准备参数并启动 GPU，GPU 端的 kernel 负责执行计算。编译器不是一步完成这项转换，而是依次运行多个编译步骤。每个步骤称为一个 pass，负责对 IR 做一类特定的转换、检查或标注。
+调用 ``tvm.compile(mod, target, tir_pipeline="tirx")`` 时，输入并不是直接从
+Python 翻译成 PTX。编译器先消费 TIRx 特有的 tile primitive、execution scope
+和 layout，再进行通用 TIR 的正规化、局部优化、类型合法化、host/device
+拆分与代码生成。这里的 pass 是对 IR 执行一类转换、检查或标注的编译步骤；
+target 指定设备和代码生成后端。
 
-TIRx 的完整 pass 顺序定义在 Apache TVM 源码中的 `python/tvm/tirx/compilation_pipeline.py
-<https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/compilation_pipeline.py>`_。
+本页回答两个问题：**pipeline 里有哪些 passes，以及优化主要发生在哪里**。
+``Tx.gemm_async`` 如何使用 layout 推导 descriptor、直接 ``T.ptx.*`` 绕过什么，
+单独放在 :ref:`chap_tirx_tile_layout_lowering` 中展开。
 
-整体编译路径
+.. admonition:: 先给结论
+
+   默认 TIRx 编译器可以概括为：**较薄的通用优化流水线，加上较厚的算子级
+   lowering**。Kernel 作者或上层生成器负责 tile sizes、warp roles、同步、
+   pipeline stages 和主要 layout；tile primitive 的实现负责合法性检查、
+   descriptor/地址参数推导和指令分解；通用 passes 主要负责化简、合法化、
+   模块拆分和 ABI。
+
+.. note::
+
+   本书固定使用 Apache TVM ``0.26.0``。下面的 pass 名称和顺序都对应这个版本，
+   并且讨论的是显式指定 ``tir_pipeline="tirx"`` 的路径。开发分支中的 pipeline
+   可能已经变化；名为 ``"default"`` 的 pipeline 也不是 ``"tirx"`` 的别名。
+
+完整编译路径
 ------------
 
-``target`` 指定代码要在哪种硬件和后端上运行。下面的例子在 GPU 端使用 CUDA，在 CPU 端使用 LLVM：``tvm.compile`` 先将 target 信息写入 module，再运行模块级的 **tirx pipeline**。``tirx_pipeline`` 拆出 CPU 端的 host 函数和 GPU 端的 device 函数后，两者分别经过最后一轮面向具体 target 的转换，再交给相应的代码生成器：
+先按职责观察整条路径：
 
 .. code-block:: text
 
-    编写好的 TIRx
-          │ BindTarget
-          ▼
-    tirx_pipeline
-    （SplitHostDevice 在其中拆分两条路径）
-          ├── host PrimFunc   ──host finalization──▶ C/LLVM
-          └── device PrimFunc ─device finalization─▶ CUDA
+    TIRx Python
+        │  script parser
+        ▼
+    TIRx PrimFunc
+      ├─ logical computation
+      ├─ Tx.* TilePrimitiveCall
+      ├─ Buffer + TileLayout
+      └─ device / CTA / warpgroup / warp / thread scopes
+        │
+        │  BindTarget
+        ▼
+    LowerTIRx
+      ├─ TilePrimitiveDispatch：Tx.* → target-specific TIR / T.ptx.*
+      └─ LowerTIRxCleanup：剩余 layout/access → physical buffer access
+        │
+        ▼
+    结构正规化 + 局部程序变换 + dtype 合法化
+        │
+        ▼
+    校验 + SplitHostDevice + launcher ABI
+        ├─ host PrimFunc   → host finalization   → host backend
+        └─ device PrimFunc → device finalization → CUDA C++ / inline PTX
+                                                        │
+                                                        ▼
+                                                PTX / cubin / runtime module
 
-``PrimFunc`` 是 TIR 中的函数表示。上图中的 host PrimFunc 就是 CPU 端的启动函数，device PrimFunc 则是 GPU 上执行的 kernel；``finalization`` 表示代码生成之前针对具体 target 所做的最后几步转换。
+``PrimFunc`` 是 TIR 中的函数表示，finalization 是代码生成前面向具体 target
+的最后一组转换。``BindTarget`` 在 ``tirx_pipeline`` 之前运行。Target 不只是决定最后使用哪个
+code generator；``TilePrimitiveDispatch`` 在较早阶段就需要 target，才能查找
+对应的算子实现。``SplitHostDevice`` 位于 module-level pipeline 后半段，拆分后
+host 和 device functions 才分别进入各自的 finalization。
 
-``tirx_pipeline`` 的 pass 顺序
--------------------------------
-
-下表按照实际执行顺序列出 ``tirx_pipeline`` 中的 19 个步骤。ABI 是函数之间的调用约定；表中的 ABI passes 负责把普通 TIR 函数改造成 runtime 能够调用的形式。``PassContext`` 是控制编译选项的配置对象：公共子表达式消除可以关闭，向量化和循环展开的行为也可以通过它调整。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 6 24 24 46
-
-   * - #
-     - 类别
-     - Pass
-     - 作用
-   * - 1
-     - TIRx lowering
-     - ``LowerTIRx``
-     - 完成 TIRx 的核心转换，详见下方 `LowerTIRx 的内部组成`_
-   * - 2
-     - TIR 规范化
-     - ``UnifyThreadBinding``
-     - 合并等价的 thread-axis bindings，使每个 ``threadIdx`` / ``blockIdx``
-       axis 只声明一次
-   * - 3
-     - TIR 规范化
-     - ``StmtSimplify``
-     - 简化 IR 中的算术表达式
-   * - 4
-     - TIR 规范化
-     - ``LowerTIRxOpaque``
-     - 转换绑定到线程轴的循环，消除未标注的长度为 1 的循环，并规范化循环 pragma
-   * - 5
-     - TIR 规范化
-     - ``FlattenBuffer``
-     - 将剩余的多维 TIR ``BufferLoad`` / ``BufferStore`` 展平为一维访问
-   * - 6
-     - 计算合法化
-     - ``BF16ComputeLegalize``
-     - target 不原生支持 ``bfloat16`` 计算时，将其提升到 ``float32`` 并改写为合法形式
-   * - 7
-     - TIR 规范化
-     - ``NarrowDataType(32)``
-     - 在能够证明安全时，将索引表达式和循环变量缩窄至 32 位
-   * - 8
-     - 循环转换
-     - ``VectorizeLoop``
-     - 将 ``T.vectorized`` 循环转换为向量操作；设置 ``tir.disable_vectorize`` 时，则改写为普通标量循环
-   * - 9
-     - 循环转换
-     - ``UnrollLoop``
-     - 展开标记为 ``T.unroll`` 的循环；普通常量循环只有在相应配置或
-       pragma 启用时才会自动展开
-   * - 10
-     - TIR 规范化
-     - ``StmtSimplify``
-     - 向量化和循环展开后会出现更多可简化的常量，再次执行简化
-   * - 11
-     - TIR 规范化
-     - ``CommonSubexprElim``
-     - 将重复的子表达式提取为临时变量；设置 ``tir.disable_cse_tir`` 时跳过
-   * - 12
-     - 计算合法化
-     - ``FP8ComputeLegalize``
-     - target 不原生支持 ``float8`` 计算时，将其提升为受支持的类型
-       （默认为 ``float32``）
-   * - 13
-     - 校验与 ABI
-     - ``VerifyMemory``
-     - 确保 host 代码不会直接解引用 device memory
-   * - 14
-     - 校验与 ABI
-     - ``AnnotateEntryFunc``
-     - 只有一个 PrimFunc 时直接将其标记为入口；有多个 PrimFunc 时，则标记其中唯一对外可见的函数
-   * - 15
-     - 校验与 ABI
-     - ``SplitHostDevice``
-     - 识别 device regions，拆分 host 与 device PrimFuncs，并将 host 侧调用转换为 kernel-launch ABI
-   * - 16
-     - 校验与 ABI
-     - ``LowerIket``
-     - 普通 build 中移除 NVIDIA IKET annotations；启用 IKET 时则将其转换为 tracing 所需的形式
-   * - 17
-     - 校验与 ABI
-     - ``MakePackedAPI``
-     - 将 host function 改写为 TVM runtime 通过 packed-function ABI 调用的形式
-   * - 18
-     - 存储合法化
-     - ``FP8StorageLegalize``
-     - target 不原生支持 ``float8`` storage 时，改用 ``uint8`` container 保存
-   * - 19
-     - 存储合法化
-     - ``BF16StorageLegalize``
-     - target 不原生支持 ``bfloat16`` storage 时，改用 ``uint16`` container 保存
-
-Host 与 Device 的后续处理
--------------------------
-
-上面列出的 19 个步骤组成 ``tirx_pipeline``。这条模块级 pipeline
-结束后，``tvm.compile`` 会根据函数类型分别执行 finalization：
-
-- **host**：``LowerTVMBuiltin`` 处理 ``tvm_*`` builtins，``LowerIntrin``
-  处理面向具体 target 的 intrinsics。
-- **device**：``LowerWarpMemory`` 将 warp-scoped buffers 转换为
-  shuffles，随后执行 ``StmtSimplify`` 和 ``LowerIntrin``。
-
-``LowerTIRx`` 的内部组成
-------------------------
-
-``LowerTIRx`` 主要完成两个任务：为 tile-level 操作选择具体实现，以及把逻辑数据布局转换成实际的内存索引。它的核心转换由下面两个 passes 组成，定义在 Apache TVM 源码中的
-`src/tirx/transform/lower_tirx.cc
-<https://github.com/apache/tvm/blob/v0.26.0/src/tirx/transform/lower_tirx.cc>`_：
+高层 tile primitive 和直接 PTX 从不同位置进入这条路径：
 
 .. code-block:: text
 
-    LowerTIRx = Sequential([ TilePrimitiveDispatch, LowerTIRxCleanup ])
+    Tx.gemm_async ── TilePrimitiveDispatch ──▶ T.ptx.tcgen05.mma ──┐
+                                                                    ├─▶ 后续通用 passes
+    直接 T.ptx.tcgen05.mma ────────────────────────────────────────┘
 
-- **``TilePrimitiveDispatch``** 为 tile 操作选择具体实现。TIRx 中的 ``copy``、
-  ``gemm``、``reduction`` 等操作以 ``TilePrimitiveCall`` 表示；这个 pass 根据
-  backend 选择对应实现。它还会把 ``T.cta_id``、``T.thread_id`` 等抽象的执行范围编号转换成 kernel launch 参数和线程绑定。
-- **``LowerTIRxCleanup``** 将逻辑坐标转换为物理索引。它把支持的逻辑 layout 应用到 buffer access 上，使后续 passes 可以直接处理具体的索引表达式。
+因此，直接 PTX 绕过的是对应 tile primitive 的算子级选择、检查和参数推导，
+不是整个 TIRx pipeline。两条路径的详细比较见
+:ref:`chap_tirx_tile_layout_lowering`。
 
-完成 ``LowerTIRx`` 后，tile 操作已经换成选定的底层实现，逻辑 layout 也已经落实为物理索引，``T.cta_id`` 和 ``T.thread_id`` 等抽象编号则变成了线程绑定。此时仍可能保留 thread-binding loops 和 TIRx 特有的 loop annotations；后续的
-``LowerTIRxOpaque`` 会规范化这些结构，再由 ``tirx.transform.FlattenBuffer``
-展平普通 TIR 中的 buffer access。
+``LowerTIRx`` 的边界
+------------------------------
 
-一个简单 Kernel 的编译过程
---------------------------
+默认情况下，``LowerTIRx`` 包含两个 transformation passes：
 
-下面用一个 scale kernel 观察两件事：``T.cta_id`` 和 ``T.thread_id`` 怎样落实为具体的线程编号，以及一个 TIRx 函数如何拆成 CPU 端的启动函数与 GPU 上执行的 kernel。这个 kernel 处理 1,024 个元素，使用 4 个 CUDA thread blocks（CTA），每个 CTA 包含 256 个线程。
+.. code-block:: text
 
-**1. TIRx 源码使用抽象的线程编号。**
+    LowerTIRx = Sequential([
+        TilePrimitiveDispatch,
+        LowerTIRxCleanup,
+    ])
+
+若设置 ``TVM_PRINT_AFTER_TIRX_DISPATCH_OPS``，两者之间还会临时插入一个
+``PrintIR``，但它只是调试 instrumentation，不是固定 transformation。
+
+``TilePrimitiveDispatch`` 首先选择已注册的 target-specific 实现，把
+``Tx.copy``、``Tx.gemm_async``、``Tx.reduce`` 等 ``TilePrimitiveCall`` 替换为
+lower-level TIR 或 ``T.ptx.*``，并解析 device entry 内的 scope IDs。例如：
+
+.. code-block:: text
+
+    bx = T.cta_id([grid_x])       →  bx = blockIdx.x
+    tx = T.thread_id([block_x])   →  tx = threadIdx.x
+
+``LowerTIRxCleanup`` 随后对仍然存在的直接 ``BufferLoad`` / ``BufferStore`` 应用
+memory layout，展平相应 buffers，清除已消费的 layout metadata，并移除
+``tirx.buffer_offset`` wrappers。必须先 dispatch 后 cleanup：算子实现需要在
+metadata 消失前读取完整的 region、shape、dtype、scope 和 layout。
+
+``LowerTIRx`` 成功结束后：
+
+- ``TilePrimitiveCall`` 已被具体实现替换；
+- 抽象 scope IDs 已变成 launch parameters、``Bind`` 和 thread bindings；
+- layout 已被算子 lowering 消费，或被 cleanup 物化为后端能处理的地址；
+- ``T.ptx.*`` 等 target intrinsics 仍可存在；
+- thread-binding loops 和 TIRx-specific loop annotations 仍可能存在，随后由
+  ``LowerTIRxOpaque`` 规范化；
+- host/device split、ABI lowering 和最终 code generation 尚未完成。
+
+因此，这个阶段只能说 **TIRx 的核心高层语义已经消解**，不能说已经得到最终
+PTX，也不宜把它描述成编译流程的终点。算子 dispatch 和 layout cleanup 的内部
+过程见 :ref:`chap_tirx_tile_layout_lowering`。
+
+最小示例：从 scope IDs 到 host/device
+---------------------------------------
+
+下面用一个不依赖 Tensor Core 的 scale kernel 串起这些阶段。它启动 4 个 CTAs，
+每个 CTA 有 256 个 threads：
 
 .. code-block:: python
 
@@ -183,37 +156,32 @@ Host 与 Device 的后续处理
         T.device_entry()
         bx = T.cta_id([4])
         tx = T.thread_id([256])
-        B[bx * 256 + tx] = A[bx * 256 + tx] * T.float32(2.0)
+        i = bx * 256 + tx
+        B[i] = A[i] * T.float32(2.0)
 
-``T.device_entry()`` 标记 GPU 代码的入口。``LowerTIRx`` 根据这个标记建立线程绑定；后面的 ``SplitHostDevice`` 再从所得设备代码区域（device region）中拆出单独的 device kernel。``T.cta_id([4])`` 表示 x 方向有 4 个 CTA，
-``T.thread_id([256])`` 表示每个 CTA 有 256 个线程。这里的 ``bx`` 和 ``tx``
-仍是 TIRx 提供的抽象编号。
-
-**2. ``LowerTIRx`` 将抽象编号转换为 TIR 线程绑定。** 它把 ``bx`` 和 ``tx``
-分别绑定到 ``blockIdx.x`` 与 ``threadIdx.x``。省略 buffer declarations 后，核心计算等价于：
+``T.device_entry()`` 标出 device region。``LowerTIRx`` 将抽象 IDs 解析成
+``blockIdx.x`` 和 ``threadIdx.x``；省略 buffer declarations 后，核心结构可写成：
 
 .. code-block:: python
 
     with T.launch_thread("blockIdx.x", 4) as bx:
         tx = T.launch_thread("threadIdx.x", 256)
-        B[bx * 256 + tx] = A[bx * 256 + tx] * T.float32(2.0)
+        i = bx * 256 + tx
+        B[i] = A[i] * T.float32(2.0)
 
-这里仍然是 TIR，还不是 CUDA 源码。这段代码只保留了关键映射，不是编译器输出的完整 IR；下一节会给出打印完整结果的命令。
-
-**3. 后续 passes 拆分 host/device，并生成 CUDA。** 编译开始时只有一个 TIRx
-函数。``LowerTIRx`` 生成线程绑定和 device region 后，``SplitHostDevice`` 将其拆成两个 TIR 函数（PrimFunc）：
+这仍是 TIR 的结构摘要，不是 CUDA 源码，也不是完整的 printer output。
+``SplitHostDevice`` 随后把原来的一个 ``PrimFunc`` 拆成两部分：
 
 .. code-block:: text
 
-    host launcher（由 scale 生成）
-      └── 启动 scale_kernel，gridDim.x = 4，blockDim.x = 256
+    host launcher
+      └─ 启动 scale_kernel，gridDim.x = 4，blockDim.x = 256
 
     device scale_kernel
-      └── 每个 GPU 线程将一个输入元素乘以 2
+      └─ 每个 GPU thread 将一个元素乘以 2
 
-host 函数保存 kernel 的启动逻辑；device 函数保存真正的逐元素计算。
-``MakePackedAPI`` 随后将 host 函数转换为 TVM runtime 使用的统一调用形式。Device 函数则交给 CUDA backend，生成与下面代码等价的 CUDA
-kernel：
+``MakePackedAPI`` 把 host entry 降低为 runtime 使用的统一 ABI（函数调用约定）。
+Device function 则交给 CUDA backend，最终生成与下面代码等价的 kernel：
 
 .. code-block:: cuda
 
@@ -222,41 +190,238 @@ kernel：
         B[i] = A[i] * 2.0f;
     }
 
-整个过程可以概括为：TIRx 描述线程组织和计算，``LowerTIRx`` 将抽象编号落实为
-TIR 线程绑定，``SplitHostDevice`` 分开 CPU 端的启动逻辑与 GPU 端的计算，CUDA
-backend 最后生成 CUDA 源码。
+后续 passes：按职责理解
+------------------------
 
-这里不需要边界判断，因为 ``4 * 256`` 恰好等于 1,024。处理一般长度 ``N``
-时，需要向上取整得到 CTA 数量，并在 kernel 中判断 ``i < N``。
+``LowerTIRx`` 后的 passes 可以先分成四组；组内项目仍按源码定义的实际顺序
+执行，不能因为教学上分组就任意交换。``PassContext`` 是控制 pass 行为的
+编译配置对象。
 
-检查中间 IR 与生成代码
-----------------------
+.. list-table::
+   :header-rows: 1
+   :widths: 21 35 44
 
-为了查看中间 IR，可以只运行完整 pipeline 最前面的几步，然后停下来打印结果。下面先把 ``scale`` 以全局名 ``main`` 放入 ``IRModule``。CUDA target 指定 GPU
-端生成 CUDA，``with_host("llvm")`` 则指定 CPU 端生成 LLVM 代码。
-``BindTarget`` 将这组 target 信息写入 module，随后只运行 ``LowerTIRx``：
+   * - 职责
+     - 主要 passes
+     - 做什么、不做什么
+   * - 结构正规化
+     - ``UnifyThreadBinding``、``StmtSimplify``、``LowerTIRxOpaque``、
+       ``FlattenBuffer``
+     - 统一 thread bindings，化简地址和条件，处理 thread-binding loops、
+       unit loops 与 pragmas，并展平剩余 ``BufferLoad`` / ``BufferStore``
+   * - 局部程序变换
+     - ``NarrowDataType``、``VectorizeLoop``、``UnrollLoop``、第二次
+       ``StmtSimplify``、``CommonSubexprElim``
+     - 缩窄安全的 index；兑现已有 vectorize/unroll 标记或配置；执行局部代数
+       与公共子表达式化简，而不是自动发现完整 schedule
+   * - 类型合法化
+     - BF16/FP8 compute legalization、BF16/FP8 storage legalization、
+       final ``LowerIntrin``
+     - 将当前 target/backend 不能直接表示的 compute、storage 和 intrinsic
+       改写为受支持形式；部分 pass 可能因 target 能力而成为 no-op
+   * - 校验、模块和 ABI lowering
+     - ``VerifyMemory``、``AnnotateEntryFunc``、``SplitHostDevice``、
+       ``LowerIket``、``MakePackedAPI``
+     - 验证设备计算处于 thread environment，抽取 device kernel，降低
+       kernel launch，并生成 runtime 可调用的 packed ABI
+
+``VectorizeLoop`` 主要降低已经写成 ``T.vectorized`` 的 loops；它不会自己搜索
+应该向量化哪一层；禁用 vectorization 时，相应循环按标量循环处理。
+``UnrollLoop`` 默认主要处理显式 ``T.unroll``，也可以通过
+``PassContext`` 或 pragma 设置自动展开阈值。两者都不等于自动 tiling 或
+software-pipeline synthesis。
+
+Host/device split 与最终 codegen
+--------------------------------
+
+在 Apache TVM 0.26.0 中，``SplitHostDevice`` 是一个组合 pass：它识别 device
+regions，将其抽取为 device ``PrimFunc``，并把 host 侧调用降低为 kernel-launch
+约定。随后 ``MakePackedAPI`` 将公开的 host entry 改写为 TVM runtime 使用的
+packed-function ABI。
+
+.. code-block:: text
+
+    一个包含 device region 的 PrimFunc
+        │
+        │  SplitHostDevice
+        ▼
+    host launcher                         device PrimFunc
+      ├─ 准备调用参数                      ├─ thread_extent
+      ├─ grid/block launch parameters      ├─ physical buffer accesses
+      └─ 调用 device kernel                └─ T.ptx.* / target intrinsics
+        │                                         │
+        │ host finalization                       │ device finalization
+        ▼                                         ▼
+    host target backend                    CUDA code generator
+                                                  │
+                                                  ▼
+                                       CUDA C++ source + inline PTX/helpers
+                                                  │
+                                                  ▼
+                                        CUDA frontend / assembler / runtime
+
+Module-level pipeline 结束后，finalization 分别运行：
+
+- **host**：``LowerTVMBuiltin``、``LowerIntrin``；
+- **device**：``LowerWarpMemory``、``StmtSimplify``、``LowerIntrin``。
+
+``LowerTVMBuiltin`` 处理 ``tvm_*`` builtins，``LowerIntrin`` 处理
+target-specific intrinsics。
+``LowerWarpMemory`` 将 warp-scoped buffers 降成 local storage 和 shuffle 等
+形式。CUDA code generator 随后生成 CUDA C++；部分 ``T.ptx.*`` intrinsic 会被
+打印为 inline PTX 或 helper code。之后 NVRTC/NVCC/ptxas 等 CUDA toolchain
+组件才继续产生可加载的 PTX 或 binary。``LowerIntrin`` 本身并不等于“输出 PTX”。
+
+编译器优化什么、不优化什么
+----------------------------
+
+默认 TIRx pipeline 的责任边界如下：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 27 73
+
+   * - 层次
+     - 主要责任
+   * - Kernel 作者或生成 kernel 的 agent
+     - 选择 tile sizes、pipeline stages、warp roles、execution scope、同步、
+       主要 layout 和跨 tile 的整体 schedule
+   * - Layout helpers 与 tile dispatcher
+     - 根据显式 dtype/shape/mode 构造已知 layout；静态选择实现，检查合法性，
+       推导 descriptor/物理参数，并将单个 tile operation 分解为硬件指令
+   * - 通用 TIR passes
+     - 局部化简、index narrowing、显式或配置驱动的 vectorize/unroll，以及
+       dtype、module 和 ABI 合法化
+   * - CUDA backend 与 toolchain
+     - 生成 target code，进行更底层的 peephole、register allocation 和组装
+
+所以，默认 pipeline 中确实有局部优化，但通常没有通用的自动 tiling、跨算子
+fusion、software-pipeline synthesis、warp-specialization synthesis、全局
+layout search、cost-model selection 或 autotuning。一个 dispatcher 根据 shape
+将 tile operation 拆成多条硬件指令，是算子实现的一部分，不能与全程序
+schedule search 混为一谈。
+
+检查完整流水线
+--------------
+
+前面的 ``scale`` 例子也可以直接用于检查中间 IR。先绑定 CUDA device 与 LLVM
+host target，再观察 ``LowerTIRx`` 前后的结果：
 
 .. code-block:: python
 
+    import tvm
     from tvm.tirx import transform as TT
 
     target = tvm.target.Target("cuda").with_host("llvm")
     mod = tvm.IRModule({"main": scale})
-    mod = TT.BindTarget(target)(mod)
-    mod = TT.LowerTIRx()(mod)         # 运行 LowerTIRx，转换抽象线程编号
-    print(mod.script())               # 查看 LowerTIRx 之后的 IR
+    bound = TT.BindTarget(target)(mod)
 
-输出中应该能看到 ``blockIdx.x`` 和 ``threadIdx.x`` 对应的线程绑定，而原来的
-``T.cta_id`` 与 ``T.thread_id`` 已经消失。
+    print("=== authored TIRx ===")
+    print(bound.script())
 
-要查看最终 CUDA，可以运行完整 pipeline。这里的 host module 只导入了一个
-device module，因此 ``imports[0]`` 就是生成的 CUDA module；
-``inspect_source()`` 返回它的源码：
+    print("=== after LowerTIRx ===")
+    lowered = TT.LowerTIRx()(bound)
+    print(lowered.script())
+
+要检查完整 pipeline 生成的 CUDA source：
 
 .. code-block:: python
 
-    exe = tvm.compile(tvm.IRModule({"main": scale}), target=target, tir_pipeline="tirx")
-    cuda_mod = exe.mod.imports[0]
-    print(cuda_mod.inspect_source())
+    exe = tvm.compile(
+        tvm.IRModule({"main": scale}),
+        target=target,
+        tir_pipeline="tirx",
+    )
+    print(exe.mod.imports[0].inspect_source())
 
-生成的代码中应该能找到 ``blockIdx.x``、``threadIdx.x``，以及将每个输入元素乘以 2 的计算。
+这个例子的 host module 只导入一个 device module，因此 ``imports[0]`` 就是
+CUDA module。如果问题发生在 ``Tx.*`` 到 ``T.ptx.*`` 之间，应进一步单独观察
+``TilePrimitiveDispatch``；Blackwell target 的设置和具体方法见
+:ref:`chap_tirx_tile_layout_lowering`。
+
+Pass 顺序参考
+-------------
+
+Apache TVM 0.26.0 的 ``tirx_pipeline`` 在 **默认配置且 CSE 开启** 时按下面
+顺序执行，共 19 步。若设置 ``tir.disable_cse_tir=True``，第 11 步会被省略，
+后续 passes 依次前移。
+
+.. list-table::
+   :header-rows: 1
+   :widths: 6 29 65
+
+   * - #
+     - Pass
+     - 作用
+   * - 1
+     - ``LowerTIRx``
+     - Dispatch tile primitives、解析 execution scope，并物化 layout
+   * - 2
+     - ``UnifyThreadBinding``
+     - 合并等价的 thread-axis bindings
+   * - 3
+     - ``StmtSimplify``
+     - 使用 arithmetic analyzer 化简 statements 和索引表达式
+   * - 4
+     - ``LowerTIRxOpaque``
+     - 转换 thread-binding loops、消除无 annotation 的 unit loops，并规范化
+       loop pragmas
+   * - 5
+     - ``FlattenBuffer``
+     - 展平剩余 ``BufferLoad`` / ``BufferStore``
+   * - 6
+     - ``BF16ComputeLegalize``
+     - target 不支持时将 BF16 compute 提升至 ``float32`` 并改写
+   * - 7
+     - ``NarrowDataType(32)``
+     - 能够证明安全时，将 index/loop expressions 缩窄到 32 bits
+   * - 8
+     - ``VectorizeLoop``
+     - Lower 已标记的 vectorized loops；禁用时将其作为标量 loops 处理
+   * - 9
+     - ``UnrollLoop``
+     - 展开显式 ``T.unroll``，并执行配置或 pragma 允许的自动展开
+   * - 10
+     - ``StmtSimplify``
+     - 在 vectorize/unroll 暴露常量后再次化简
+   * - 11
+     - ``CommonSubexprElim``
+     - 执行可配置关闭的公共子表达式消除
+   * - 12
+     - ``FP8ComputeLegalize``
+     - target 不支持时将 FP8 compute 提升至默认的 ``float32`` 并改写
+   * - 13
+     - ``VerifyMemory``
+     - 检查 GPU target/default calling-convention function 中，参数 buffer 的
+       load/store 是否处于 ``thread_extent`` 环境
+   * - 14
+     - ``AnnotateEntryFunc``
+     - 单一 PrimFunc 时直接标记；多函数 module 中标记唯一的公开 PrimFunc
+   * - 15
+     - ``SplitHostDevice``
+     - 标注/抽取 device functions，并 lowering host-to-device kernel calls
+   * - 16
+     - ``LowerIket``
+     - IKET 未启用时移除相关 annotations；启用时生成所需 tracing 形式
+   * - 17
+     - ``MakePackedAPI``
+     - 将 host entry 改写为 runtime packed-function ABI
+   * - 18
+     - ``FP8StorageLegalize``
+     - target 需要 fallback 时，将 FP8 storage 改写为等宽 ``uint8`` 表示
+   * - 19
+     - ``BF16StorageLegalize``
+     - target 需要 fallback 时，将 BF16 storage 改写为等宽 ``uint16`` 表示
+
+不要仅凭 pass 名称推断默认会进行 aggressive auto-vectorization 或
+auto-unrolling；还需要检查 loop annotations 和当前 ``PassContext`` 配置。
+
+版本与核心源码
+--------------
+
+- `compilation_pipeline.py`_：module-level pipeline 与 host/device finalization；
+- `lower_tirx.cc`_：``LowerTIRx`` 的两个 transformation passes 和调试
+  ``PrintIR`` 插入点。
+
+.. _compilation_pipeline.py: https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/compilation_pipeline.py
+.. _lower_tirx.cc: https://github.com/apache/tvm/blob/v0.26.0/src/tirx/transform/lower_tirx.cc

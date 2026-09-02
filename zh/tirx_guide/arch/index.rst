@@ -26,3 +26,4 @@
    :maxdepth: 1
 
    lowering_pipeline
+   tile_primitive_layout_lowering
