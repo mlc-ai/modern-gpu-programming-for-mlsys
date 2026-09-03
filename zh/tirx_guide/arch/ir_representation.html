@@ -1,0 +1,691 @@
+
+<!DOCTYPE html>
+
+
+<html lang="zh-CN" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>TIRx IR 的组织方式 &#8212; 面向 MLSys 的现代 GPU 编程</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/demo-embed.css?v=654c0d46" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../_static/documentation_options.js?v=eb1cd0b9"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../../_static/translations.js?v=beaddf03"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'tirx_guide/arch/ir_representation';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <script src="../../_static/chinese-search.js?v=6dcb01bb"></script>
+    <link rel="icon" href="../../_static/mlc-favicon.ico"/>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="搜索" href="../../search.html" />
+    <link rel="next" title="TIRx 编译流水线" href="lowering_pipeline.html" />
+    <link rel="prev" title="编译器内部机制" href="index.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="zh-CN"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">跳转至主要内容</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>回到顶部</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="版本警告"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tma/index.html">异步数据搬运：TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tmem/index.html">Tensor Memory（TMEM）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_async_barriers/index.html">异步协作：mbarrier</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_clc/index.html">进阶调度：Cluster Launch Control</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第二部分：TIRx 概览</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_intro_tirx/index.html">TIRx 入门</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第三部分：GEMM：从 Tiled 到 SOTA</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_gemm_basics/index.html">构建 Tiled GEMM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_gemm_async/index.html">使用 TMA 为 GEMM 建立 Pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_gemm_advanced/index.html">使用 Warp Specialization 和 Cluster 扩展 GEMM</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第四部分：Flash Attention 4</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_flash_attention/index.html">Flash Attention 4</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/index.html">概览</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/parser_utils.html">Parser 工具</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/data_types.html">数据类型与表达式</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/buffers.html">Buffer 与内存</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/control_flow.html">控制流</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">编译器内部机制</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">TIRx IR 的组织方式</a></li>
+<li class="toctree-l2"><a class="reference internal" href="lowering_pipeline.html">TIRx 编译流水线</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tile_primitive_layout_lowering.html">Tile Primitive 与 Layout Lowering</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+<a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button"
+   title="源码库"
+   data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+
+</a>
+
+
+
+
+<button onclick="window.location.href='../../../index.html'"
+  class="btn btn-sm btn-language-switch-button pst-navbar-icon"
+  title="Switch to English"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-language"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="亮色"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="暗色"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>亮色</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>暗色</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>TIRx IR 的组织方式</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> 目录 </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tirx">通用基础设施与 TIRx 方言</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-primitive">沿一条 tile primitive 看对象关系</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#primfunc"><code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code> 给出函数边界</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#seqstmt">声明节点为何平铺在 <code class="docutils literal notranslate"><span class="pre">SeqStmt</span></code> 中</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">分配与视图共享底层存储</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bufferregion-tile"><code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code> 连接 tile 与数据布局</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">执行层级保存在三个位置</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tileprimitivecall-dispatch"><code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 保留 dispatch 所需信息</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">从打印结果验证这些关系</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">核心源码导航</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="tirx-ir">
+<span id="chap-tirx-ir-representation"></span><h1>TIRx IR 的组织方式<a class="headerlink" href="#tirx-ir" title="Link to this heading">#</a></h1>
+<p><a class="reference internal" href="../../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">TIRx 入门</span></a> 已经展示了 scope、layout 和 dispatch 在 kernel 中的写法。本页选取其中一条 tile primitive，展开 parser 生成的对象，观察每类信息落在哪个节点、节点之间如何引用，以及这些节点为什么需要分开表示。</p>
+<p><code class="docutils literal notranslate"><span class="pre">&#64;Tx.prim_func</span></code> 解析后返回 <code class="docutils literal notranslate"><span class="pre">tvm.tirx.PrimFunc</span></code>。它以 <code class="docutils literal notranslate"><span class="pre">Stmt</span></code> 树保存程序结构，以 <code class="docutils literal notranslate"><span class="pre">PrimExpr</span></code> 保存索引和标量计算；<code class="docutils literal notranslate"><span class="pre">Buffer</span></code>、<code class="docutils literal notranslate"><span class="pre">Layout</span></code> 与 <code class="docutils literal notranslate"><span class="pre">ExecScope</span></code> 等对象由树中的节点引用。进入模块级 pass 前，一个或多个 <code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code> 会作为全局函数放入 <code class="docutils literal notranslate"><span class="pre">IRModule</span></code>。</p>
+<section id="tirx">
+<h2>通用基础设施与 TIRx 方言<a class="headerlink" href="#tirx" title="Link to this heading">#</a></h2>
+<p>TIRx 使用 TVM 的 <code class="docutils literal notranslate"><span class="pre">IRModule</span></code>、<code class="docutils literal notranslate"><span class="pre">BaseFunc</span></code>、表达式基类、类型系统、<code class="docutils literal notranslate"><span class="pre">Op</span></code> 注册表和 pass 管理机制。函数和语句结构采用 TIRx 方言节点，<code class="docutils literal notranslate"><span class="pre">IntImm</span></code>、<code class="docutils literal notranslate"><span class="pre">FloatImm</span></code> 与 <code class="docutils literal notranslate"><span class="pre">Range</span></code> 等叶子对象来自通用 IR：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TVM 通用基础设施
+├─ IRModule
+├─ BaseFunc
+├─ ir.PrimExpr / IntImm / FloatImm / Range
+├─ Op / Type / Target
+└─ PassContext 与 pass manager
+         │
+         ▼
+TIRx 方言
+├─ tirx.PrimFunc
+├─ tirx.Stmt
+├─ tirx.Var / tirx.Call / tirx.BufferLoad
+├─ tirx.Buffer / tirx.BufferRegion
+├─ tirx.ScopeIdDefStmt / tirx.ExecScope
+└─ tirx.TilePrimitiveCall
+</pre></div>
+</div>
+<p>模块基础设施通过 <code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code> 的运行时类型区分 TIRx 函数，函数体则由 TIRx 的 visitor 或 mutator 遍历。TIRx 由此接入 TVM 的通用模块，同时为 tile、layout 和执行层级保留专门的节点类型。</p>
+</section>
+<section id="tile-primitive">
+<h2>沿一条 tile primitive 看对象关系<a class="headerlink" href="#tile-primitive" title="Link to this heading">#</a></h2>
+<p>以入门章计算阶段的 <code class="docutils literal notranslate"><span class="pre">gemm_async</span></code> tile primitive 和紧随其后的 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> intrinsic 为观察点。第一条调用在 parser 之后成为 <code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code>；第二条已经确定为 PTX 操作，保存为 <code class="docutils literal notranslate"><span class="pre">Evaluate(Call)</span></code>。省略外围条件和其他语句后，局部对象关系如下：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>tirx.PrimFunc.body
+└─ ...
+   ├─ TilePrimitiveCall
+   │  ├─ op = Op("tirx.tile.gemm_async")
+   │  ├─ args[0:3]
+   │  │  ├─ BufferRegion(tmem)
+   │  │  ├─ BufferRegion(Asmem)
+   │  │  └─ BufferRegion(Bsmem)
+   │  ├─ args[3:6] = transpose_A, transpose_B, accum
+   │  ├─ config = {"cta_group": 1}
+   │  ├─ dispatch = "tcgen05"
+   │  └─ scope = ExecScope("thread")
+   └─ Evaluate
+      └─ Call(op=tirx.ptx.*)
+</pre></div>
+</div>
+<p>这张局部对象图包含两种关系。<code class="docutils literal notranslate"><span class="pre">Stmt</span></code> 节点之间的包含关系确定执行顺序和控制流；同一个 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 则可以被声明节点、<code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code> 和访问节点共同引用。图中的箭头表示共享同一个 <code class="docutils literal notranslate"><span class="pre">ObjectRef</span></code>，pass 根据对象身份连接定义与使用，再沿这些引用读取 layout 和 scope 等信息。</p>
+</section>
+<section id="primfunc">
+<h2><code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code> 给出函数边界<a class="headerlink" href="#primfunc" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">tirx.PrimFunc</span></code> 的核心字段是 <code class="docutils literal notranslate"><span class="pre">params</span></code>、<code class="docutils literal notranslate"><span class="pre">buffer_map</span></code>、<code class="docutils literal notranslate"><span class="pre">body</span></code> 和 <code class="docutils literal notranslate"><span class="pre">ret_type</span></code>，函数级 <code class="docutils literal notranslate"><span class="pre">attrs</span></code> 来自 <code class="docutils literal notranslate"><span class="pre">BaseFunc</span></code>。其中 <code class="docutils literal notranslate"><span class="pre">params</span></code> 保存 handle 与标量参数，<code class="docutils literal notranslate"><span class="pre">body</span></code> 保存一条 <code class="docutils literal notranslate"><span class="pre">Stmt</span></code>；多条顶层语句由 <code class="docutils literal notranslate"><span class="pre">SeqStmt</span></code> 组织。</p>
+<p>Buffer 参数在函数边界上分成两部分。参数注解 <code class="docutils literal notranslate"><span class="pre">A:</span> <span class="pre">Tx.Buffer((M,</span> <span class="pre">K),</span> <span class="pre">&quot;float16&quot;)</span></code> 会在 <code class="docutils literal notranslate"><span class="pre">params</span></code> 中产生一个 handle 变量，同时由 <code class="docutils literal notranslate"><span class="pre">buffer_map</span></code> 将这个 handle 映射到包含 shape、dtype 和存储域的 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 对象。分析 pass 可以直接从 <code class="docutils literal notranslate"><span class="pre">buffer_map</span></code> 读取参数约束，无需从函数体中的声明重新恢复。</p>
+<p><code class="docutils literal notranslate"><span class="pre">Tx.device_entry()</span></code> 在 <code class="docutils literal notranslate"><span class="pre">body</span></code> 中形成 <code class="docutils literal notranslate"><span class="pre">AttrStmt(attr_key=&quot;tirx.device_entry&quot;,</span> <span class="pre">value=True,</span> <span class="pre">body=...)</span></code>。它以一段语句区域为边界，因此保存在函数体内。</p>
+</section>
+<section id="seqstmt">
+<h2>声明节点为何平铺在 <code class="docutils literal notranslate"><span class="pre">SeqStmt</span></code> 中<a class="headerlink" href="#seqstmt" title="Link to this heading">#</a></h2>
+<p>在各自所在的词法作用域内，变量绑定、buffer 声明和执行 ID 声明采用平铺形式，直接成为 <code class="docutils literal notranslate"><span class="pre">SeqStmt</span></code> 的成员：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>SeqStmt
+├─ ScopeIdDefStmt(tx = cta→thread, extent=128)
+├─ AllocBuffer(S)
+├─ Bind(i, ...)
+├─ TilePrimitiveCall(... S ...)
+└─ BufferStore(... i ...)
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">Bind</span></code>、<code class="docutils literal notranslate"><span class="pre">AllocBuffer</span></code>、<code class="docutils literal notranslate"><span class="pre">DeclBuffer</span></code> 和 <code class="docutils literal notranslate"><span class="pre">ScopeIdDefStmt</span></code> 都是独立的 <code class="docutils literal notranslate"><span class="pre">Stmt</span></code>。这些节点分别保存绑定、分配或声明信息，外围 <code class="docutils literal notranslate"><span class="pre">SeqStmt</span></code> 负责承载后续程序。声明产生的变量或 buffer 对该 <code class="docutils literal notranslate"><span class="pre">SeqStmt</span></code> 中的后续语句可见，pass 按顺序遍历时便能维护当前可用的变量、buffer 和执行上下文。</p>
+<p>控制流本身仍按词法作用域嵌套，索引、条件和标量计算以 <code class="docutils literal notranslate"><span class="pre">PrimExpr</span></code> 嵌入各个语句。这样的主干兼顾了控制流结构与声明的源码顺序，普通循环、表达式和 buffer 访问也能继续使用统一的 visitor 与 mutator。</p>
+</section>
+<section id="id1">
+<h2>分配与视图共享底层存储<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">AllocBuffer</span></code> 用一个 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 描述新分配的存储，<code class="docutils literal notranslate"><span class="pre">DeclBuffer</span></code> 则可以在已有数据指针上声明新的视图。入门 GEMM 中的 <code class="docutils literal notranslate"><span class="pre">Dreg</span> <span class="pre">=</span> <span class="pre">Tx.alloc_local(...)</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Dreg_wg</span> <span class="pre">=</span> <span class="pre">Dreg.view(...)</span></code> 在 IR 中形成下面的关系：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>AllocBuffer
+└─ buffer = Dreg
+   ├─ data ──────────────┐
+   ├─ shape = [BLK_N]    │  同一个 data Var
+   └─ layout = ...       │
+                         │
+DeclBuffer               │
+└─ buffer = Dreg_wg      │
+   ├─ data ──────────────┘
+   ├─ shape = [128, BLK_N]
+   └─ layout = distributed layout
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">AllocBuffer(Dreg)</span></code> 记录每个 thread 的局部存储。<code class="docutils literal notranslate"><span class="pre">Dreg_wg</span></code> 是另一个 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 对象，由 <code class="docutils literal notranslate"><span class="pre">DeclBuffer</span></code> 加入语句序列；它保存自己的 shape 和 layout，同时与 <code class="docutils literal notranslate"><span class="pre">Dreg</span></code> 指向同一个 data <code class="docutils literal notranslate"><span class="pre">Var</span></code>，dtype、strides 与 <code class="docutils literal notranslate"><span class="pre">elem_offset</span></code> 等属性从 <code class="docutils literal notranslate"><span class="pre">Dreg</span></code> 延续。入门示例中的 <code class="docutils literal notranslate"><span class="pre">(128,</span> <span class="pre">BLK_N)</span></code> 因而描述 warpgroup 使用的逻辑坐标系；在 parser 生成的 IR 中，实际分配节点仍是形状为 <code class="docutils literal notranslate"><span class="pre">(BLK_N,)</span></code> 的 <code class="docutils literal notranslate"><span class="pre">AllocBuffer(Dreg)</span></code>。</p>
+</section>
+<section id="bufferregion-tile">
+<h2><code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code> 连接 tile 与数据布局<a class="headerlink" href="#bufferregion-tile" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 是一份结构化数据视图，保存数据指针、dtype、shape、strides 和 <code class="docutils literal notranslate"><span class="pre">elem_offset</span></code>，数据指针的类型携带 storage scope。TIRx 还在其中保存可选的 <code class="docutils literal notranslate"><span class="pre">layout</span></code>，以及 TMEM 等专用存储使用的 <code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code>。参数的 <code class="docutils literal notranslate"><span class="pre">buffer_map</span></code>、局部分配、数据访问和 tile 区域可以共同引用同一个 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code>。</p>
+<p>单点访问形成 <code class="docutils literal notranslate"><span class="pre">BufferLoad</span></code> 或 <code class="docutils literal notranslate"><span class="pre">BufferStore</span></code>，切片形成 <code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code>。<code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code> 只保存原 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 和每一维的 <code class="docutils literal notranslate"><span class="pre">Range(min,</span> <span class="pre">extent)</span></code>：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TilePrimitiveCall.args[i]
+            │
+            ▼
+      BufferRegion
+      ├─ region = [Range(...), Range(...)]
+      └─ buffer ────────────────┐
+                                ▼
+                             Buffer
+                             ├─ dtype / shape / storage scope
+                             ├─ layout
+                             └─ allocated_addr
+</pre></div>
+</div>
+<p>一条 tile primitive 因而可以同时引用本次操作覆盖的逻辑范围，以及底层数据视图中的 dtype、存储域、layout 和硬件地址。Layout 保存在 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 上，因此各个 <code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code> 都能访问同一份映射。</p>
+<p><code class="docutils literal notranslate"><span class="pre">layout</span></code> 字段保存一个可选的 <code class="docutils literal notranslate"><span class="pre">Layout</span></code> 对象。<code class="docutils literal notranslate"><span class="pre">Layout</span></code> 是统一的映射接口，当前有三种具体节点：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Buffer.layout: Optional&lt;Layout&gt;
+                │
+                ▼
+              Layout
+              ├─ TileLayout
+              │  ├─ shard:   [Iter(extent, stride, Axis), ...]
+              │  ├─ replica: [Iter(extent, stride, Axis), ...]
+              │  └─ offset:  {Axis: PrimExpr}
+              ├─ SwizzleLayout
+              │  ├─ per_element
+              │  ├─ swizzle_len / atom_len
+              │  └─ swizzle_inner
+              └─ ComposeLayout
+                 ├─ swizzle: SwizzleLayout
+                 └─ tile_layout: TileLayout
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 用一组 <code class="docutils literal notranslate"><span class="pre">Iter</span></code> 表示普通存储或线程映射，每个 <code class="docutils literal notranslate"><span class="pre">Iter</span></code> 保存 extent、stride 和物理 <code class="docutils literal notranslate"><span class="pre">Axis</span></code>；<code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code> 保存 XOR swizzle 的参数；<code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> 同时持有一项 swizzle 和一项 tile mapping。三者通过 <code class="docutils literal notranslate"><span class="pre">Layout</span></code> 接口提供 <code class="docutils literal notranslate"><span class="pre">Apply</span></code>、<code class="docutils literal notranslate"><span class="pre">Slice</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Canonicalize</span></code> 等操作。</p>
+<p>入门 GEMM 的 <code class="docutils literal notranslate"><span class="pre">128×64</span></code> A/B shared-memory layout 在 canonicalize 后是 <code class="docutils literal notranslate"><span class="pre">SwizzleLayout</span></code>，TMEM accumulator 使用 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>；带有额外外层 tile mapping 的 swizzle 会保留为 <code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code>。Layout 中的 thread axis 表示元素归属于哪个执行成员，<code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall.scope</span></code> 则记录整项操作的协作层级。这些映射的具体含义与 lowering 过程见 <a class="reference internal" href="tile_primitive_layout_lowering.html#chap-tirx-tile-layout-lowering"><span class="std std-ref">Tile Primitive 与 Layout Lowering</span></a>。</p>
+<p>这里需要区分两类 scope：<code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 数据指针上的 storage scope 描述数据位于 global、shared、local 或 TMEM；下一节的 execution scope 描述一项操作由哪一级线程集合执行。</p>
+</section>
+<section id="id2">
+<h2>执行层级保存在三个位置<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
+<p>执行层级在 IR 中分成区域边界、ID 声明和逐调用协作粒度：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 28.0%" />
+<col style="width: 32.0%" />
+<col style="width: 40.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>保存位置</p></th>
+<th class="head"><p>对应的 Python 写法</p></th>
+<th class="head"><p>节点中的信息</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>device-entry <code class="docutils literal notranslate"><span class="pre">AttrStmt</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Tx.device_entry()</span></code></p></td>
+<td><p>device region 的范围</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ScopeIdDefStmt.def</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tx</span> <span class="pre">=</span> <span class="pre">Tx.thread_id([128])</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">def_ids</span></code>、<code class="docutils literal notranslate"><span class="pre">extents</span></code>、<code class="docutils literal notranslate"><span class="pre">scope</span></code> 和可选的 <code class="docutils literal notranslate"><span class="pre">preferred_extents</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall.scope</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Tx.tile.cta.copy(...)</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ExecScope.kind</span></code>，也就是这一条调用的协作层级</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">ScopeIdDefStmt</span></code> 记录当前区域可用的执行坐标及其范围，<code class="docutils literal notranslate"><span class="pre">ExecScope</span></code> 记录当前调用的协作层级。同一组执行 ID 可以服务于多条具有不同 <code class="docutils literal notranslate"><span class="pre">ExecScope</span></code> 的 tile primitive，因此两部分信息各自保存。</p>
+</section>
+<section id="tileprimitivecall-dispatch">
+<h2><code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 保留 dispatch 所需信息<a class="headerlink" href="#tileprimitivecall-dispatch" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 自身是一条 <code class="docutils literal notranslate"><span class="pre">Stmt</span></code>，包含六个字段：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 22.0%" />
+<col style="width: 78.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>字段</p></th>
+<th class="head"><p>保存的内容</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">op</span></code></p></td>
+<td><p>tile operator 在 <code class="docutils literal notranslate"><span class="pre">Op</span></code> 注册表中的标识</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">args</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Array&lt;Any&gt;</span></code>，可容纳 <code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code>、标量表达式和其他算子参数</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">workspace</span></code></p></td>
+<td><p>算子使用的预分配 buffer</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">config</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">cta_group</span></code> 等算子选项</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">dispatch</span></code></p></td>
+<td><p>可选的显式实现名称</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">scope</span></code></p></td>
+<td><p>保存协作粒度的 <code class="docutils literal notranslate"><span class="pre">ExecScope</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Tile primitive 可能读取或改写多个 <code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code>，其结果和副作用通过这些区域传递，因此作为一条语句占据明确的执行位置。各操作按照自己的参数约定识别输入与输出；<code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 构造时还会检查 <code class="docutils literal notranslate"><span class="pre">op</span></code> 是否注册为 tile primitive，TIRx 的 visitor 也为它提供独立的分派入口。</p>
+<p><code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code> 的运行时类型保持为独立的引用对象；进入 <code class="docutils literal notranslate"><span class="pre">PrimExpr</span></code> 上下文时，可转换的定长区域会成为 <code class="docutils literal notranslate"><span class="pre">BufferLoad</span></code>。<code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall.args</span></code> 使用 <code class="docutils literal notranslate"><span class="pre">Array&lt;Any&gt;</span></code>，可以原样保留每一维的 <code class="docutils literal notranslate"><span class="pre">Range(min,</span> <span class="pre">extent)</span></code>、底层 <code class="docutils literal notranslate"><span class="pre">Buffer</span></code> 引用及其 layout。</p>
+<p><code class="docutils literal notranslate"><span class="pre">tirx.Call</span></code> 是 <code class="docutils literal notranslate"><span class="pre">PrimExpr</span></code>，参数类型为 <code class="docutils literal notranslate"><span class="pre">Array&lt;PrimExpr&gt;</span></code>，主要字段为 <code class="docutils literal notranslate"><span class="pre">op</span></code>、<code class="docutils literal notranslate"><span class="pre">args</span></code> 和 <code class="docutils literal notranslate"><span class="pre">attrs</span></code>。<code class="docutils literal notranslate"><span class="pre">Tx.ptx.*</span></code> 与 <code class="docutils literal notranslate"><span class="pre">Tx.cuda.*</span></code> 已经给出目标相关操作，parser 会用这种节点保存它们。返回标量的 <code class="docutils literal notranslate"><span class="pre">Tx.ptx.elect_sync()</span></code> 可以直接参与表达式；以副作用为主的调用则位于 <code class="docutils literal notranslate"><span class="pre">Evaluate(Call)</span></code> 中。</p>
+</section>
+<section id="id3">
+<h2>从打印结果验证这些关系<a class="headerlink" href="#id3" title="Link to this heading">#</a></h2>
+<p>取得入门示例返回的 <code class="docutils literal notranslate"><span class="pre">kernel</span></code> 后，可以直接检查函数边界与语句树：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">kernel</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">params</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">buffer_map</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">body</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">next</span><span class="p">(</span><span class="nb">iter</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">buffer_map</span><span class="o">.</span><span class="n">values</span><span class="p">()))</span><span class="o">.</span><span class="n">layout</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">script</span><span class="p">(</span>
+    <span class="n">syntax_sugar</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">extra_config</span><span class="o">=</span><span class="p">{</span><span class="s2">"tirx.prefix"</span><span class="p">:</span> <span class="s2">"Tx"</span><span class="p">},</span>
+<span class="p">))</span>
+</pre></div>
+</div>
+<p>关闭 syntax sugar 后，printer 会展开参数 handle 与 buffer 绑定，并从 <code class="docutils literal notranslate"><span class="pre">kernel.body</span></code> 进入 visitor。默认 layout 在 script 输出中仍会省略，因此上面的 <code class="docutils literal notranslate"><span class="pre">buffer.layout</span></code> 可用于区分默认 layout 与空值。编写分析或变换 pass 时，可以使用 <code class="docutils literal notranslate"><span class="pre">tvm.tirx.stmt_functor</span></code> 中的 visitor 和 mutator。</p>
+<p><code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 将 tile 级语义保留为一条完整语句，<code class="docutils literal notranslate"><span class="pre">tirx.Call</span></code> 则记录已经明确的调用及其返回类型。这些节点随后的转换顺序见 <a class="reference internal" href="lowering_pipeline.html#chap-tirx-lowering-pipeline"><span class="std std-ref">TIRx 编译流水线</span></a>，tile primitive 与 layout 的具体展开见 <a class="reference internal" href="tile_primitive_layout_lowering.html#chap-tirx-tile-layout-lowering"><span class="std std-ref">Tile Primitive 与 Layout Lowering</span></a>。</p>
+</section>
+<section id="id4">
+<h2>核心源码导航<a class="headerlink" href="#id4" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/include/tvm/tirx/function.h">function.h</a>：<code class="docutils literal notranslate"><span class="pre">tirx.PrimFunc</span></code> 的字段；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/include/tvm/tirx/buffer.h">buffer.h</a>：<code class="docutils literal notranslate"><span class="pre">Buffer</span></code>、layout 和 <code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code>；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/buffer.py">buffer.py</a>：<code class="docutils literal notranslate"><span class="pre">Buffer.view</span></code> 如何构造共享 data pointer 的新视图；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/include/tvm/tirx/layout.h">layout.h</a>：<code class="docutils literal notranslate"><span class="pre">Layout</span></code> 层级、<code class="docutils literal notranslate"><span class="pre">Iter</span></code> 与 <code class="docutils literal notranslate"><span class="pre">Axis</span></code>；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/include/tvm/tirx/stmt.h">stmt.h</a>：平铺声明、<code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code> 与 <code class="docutils literal notranslate"><span class="pre">ScopeIdDefStmt</span></code>；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/include/tvm/tirx/tirx_stmt.h">tirx_stmt.h</a>：<code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 的六个字段；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/include/tvm/tirx/expr.h">expr.h</a>：<code class="docutils literal notranslate"><span class="pre">tirx.Call</span></code>、<code class="docutils literal notranslate"><span class="pre">tirx.Var</span></code> 与 <code class="docutils literal notranslate"><span class="pre">tirx.BufferLoad</span></code> 等具体表达式节点；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/include/tvm/ir/expr.h">ir_expr.h</a>：通用 <code class="docutils literal notranslate"><span class="pre">PrimExpr</span></code> 基类与常量节点；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/include/tvm/tirx/exec_scope.h">exec_scope.h</a>：<code class="docutils literal notranslate"><span class="pre">ExecScope</span></code>、<code class="docutils literal notranslate"><span class="pre">ScopeIdDef</span></code> 与 <code class="docutils literal notranslate"><span class="pre">ScopeBinding</span></code>；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/src/tirx/ir/transform.cc">transform.cc</a>：TIRx <code class="docutils literal notranslate"><span class="pre">PrimFuncPass</span></code> 的模块遍历边界；</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="index.html"
+       title="上一页">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">编译器内部机制</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="lowering_pipeline.html"
+       title="下一页">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">下一页</p>
+        <p class="prev-next-title">TIRx 编译流水线</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> 目录
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tirx">通用基础设施与 TIRx 方言</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-primitive">沿一条 tile primitive 看对象关系</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#primfunc"><code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code> 给出函数边界</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#seqstmt">声明节点为何平铺在 <code class="docutils literal notranslate"><span class="pre">SeqStmt</span></code> 中</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">分配与视图共享底层存储</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#bufferregion-tile"><code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code> 连接 tile 与数据布局</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">执行层级保存在三个位置</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tileprimitivecall-dispatch"><code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 保留 dispatch 所需信息</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">从打印结果验证这些关系</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">核心源码导航</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+作者： MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>

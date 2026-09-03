@@ -56,7 +56,7 @@
     <link rel="icon" href="../../_static/mlc-favicon.ico"/>
     <link rel="index" title="索引" href="../../genindex.html" />
     <link rel="search" title="搜索" href="../../search.html" />
-    <link rel="next" title="TIRx 编译流水线" href="lowering_pipeline.html" />
+    <link rel="next" title="TIRx IR 的组织方式" href="ir_representation.html" />
     <link rel="prev" title="GPU Kernel 性能测量与分析" href="../../appendix/benchmarking_gpu_kernels.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="zh-CN"/>
@@ -199,7 +199,9 @@
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 current active has-children"><a class="current reference internal" href="#">编译器内部机制</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="ir_representation.html">TIRx IR 的组织方式</a></li>
 <li class="toctree-l2"><a class="reference internal" href="lowering_pipeline.html">TIRx 编译流水线</a></li>
+<li class="toctree-l2"><a class="reference internal" href="tile_primitive_layout_lowering.html">Tile Primitive 与 Layout Lowering</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
@@ -326,10 +328,12 @@
                   
   <section id="chap-arch">
 <span id="id1"></span><h1>编译器内部机制<a class="headerlink" href="#chap-arch" title="Link to this heading">#</a></h1>
-<p>本节介绍 TIRx 编译器如何将编写好的 module 转换成 CPU 端的启动函数和 GPU 端的 device code，并沿着编译流水线说明 TIRx 高层结构、host/device 拆分以及 CUDA 代码生成之间的关系。</p>
+<p>本节先说明 TIRx IR 怎样组织函数体、buffer、layout 和执行层级，再沿编译流水线观察这些信息怎样变成 CPU 端的启动函数和 GPU 端的 device code。</p>
 <div class="toctree-wrapper compound">
 <ul>
+<li class="toctree-l1"><a class="reference internal" href="ir_representation.html">TIRx IR 的组织方式</a></li>
 <li class="toctree-l1"><a class="reference internal" href="lowering_pipeline.html">TIRx 编译流水线</a></li>
+<li class="toctree-l1"><a class="reference internal" href="tile_primitive_layout_lowering.html">Tile Primitive 与 Layout Lowering</a></li>
 </ul>
 </div>
 </section>
@@ -355,11 +359,11 @@
       </div>
     </a>
     <a class="right-next"
-       href="lowering_pipeline.html"
+       href="ir_representation.html"
        title="下一页">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">下一页</p>
-        <p class="prev-next-title">TIRx 编译流水线</p>
+        <p class="prev-next-title">TIRx IR 的组织方式</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

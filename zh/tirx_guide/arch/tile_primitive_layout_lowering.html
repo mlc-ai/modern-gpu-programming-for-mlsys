@@ -1,0 +1,900 @@
+
+<!DOCTYPE html>
+
+
+<html lang="zh-CN" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Tile Primitive 与 Layout Lowering &#8212; 面向 MLSys 的现代 GPU 编程</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/sphinx-book-theme.css?v=4418a689" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=5a4e551b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/demo-embed.css?v=654c0d46" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="../../_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+    <script src="../../_static/documentation_options.js?v=eb1cd0b9"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=f281be69"></script>
+    <script src="../../_static/scripts/sphinx-book-theme.js?v=fab101a9"></script>
+    <script src="../../_static/translations.js?v=beaddf03"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'tirx_guide/arch/tile_primitive_layout_lowering';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+    <script src="../../_static/demo-embed-zh-20260627.js?v=3a4a2ec8"></script>
+    <script src="../../_static/chinese-search.js?v=6dcb01bb"></script>
+    <link rel="icon" href="../../_static/mlc-favicon.ico"/>
+    <link rel="index" title="索引" href="../../genindex.html" />
+    <link rel="search" title="搜索" href="../../search.html" />
+    <link rel="next" title="调试 Warp-Specialized Kernels" href="../../appendix/debugging_warp_specialized.html" />
+    <link rel="prev" title="TIRx 编译流水线" href="lowering_pipeline.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="zh-CN"/>
+  <meta name="docsearch:version" content="" />
+  
+    
+    <script src="../../_static/searchtools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../searchindex.js"></script>
+  
+  </head>
+  <body data-default-mode="">
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">跳转至主要内容</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>回到顶部</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search..."
+         aria-label="Search..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="版本警告"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="../../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-light" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+    <img src="../../_static/mlc-logo-with-text-landscape.svg" class="logo__image only-dark pst-js-only" alt="面向 MLSys 的现代 GPU 编程 - Home"/>
+  
+  
+</a></div>
+        <div class="sidebar-primary-item">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">搜索</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button></div>
+        <div class="sidebar-primary-item"><nav class="bd-links bd-docs-nav" aria-label="Main">
+    <div class="bd-toc-item navbar-nav active">
+        <p aria-level="2" class="caption" role="heading"><span class="caption-text">第一部分：理解 GPU</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_background/index.html">GPU 执行模型</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_performance/index.html">Kernel 性能从何而来</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_data_layout/index.html">数据布局及其记号</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_layout_generations/index.html">Tensor Core 数据布局的演进</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tma/index.html">异步数据搬运：TMA</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tensor_cores/index.html">Blackwell Tensor Core：<code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code></a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tmem/index.html">Tensor Memory（TMEM）</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_async_barriers/index.html">异步协作：mbarrier</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_clc/index.html">进阶调度：Cluster Launch Control</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第二部分：TIRx 概览</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_intro_tirx/index.html">TIRx 入门</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_tirx_layout_api/index.html">TIRx Layout API</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第三部分：GEMM：从 Tiled 到 SOTA</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_gemm_basics/index.html">构建 Tiled GEMM</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_gemm_async/index.html">使用 TMA 为 GEMM 建立 Pipeline</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_gemm_advanced/index.html">使用 Warp Specialization 和 Cluster 扩展 GEMM</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">第四部分：Flash Attention 4</span></p>
+<ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../chapter_flash_attention/index.html">Flash Attention 4</a></li>
+</ul>
+<p aria-level="2" class="caption" role="heading"><span class="caption-text">附录</span></p>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/index.html">概览</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/parser_utils.html">Parser 工具</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/data_types.html">数据类型与表达式</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/buffers.html">Buffer 与内存</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/control_flow.html">控制流</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="index.html">编译器内部机制</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="ir_representation.html">TIRx IR 的组织方式</a></li>
+<li class="toctree-l2"><a class="reference internal" href="lowering_pipeline.html">TIRx 编译流水线</a></li>
+<li class="toctree-l2 current active"><a class="current reference internal" href="#">Tile Primitive 与 Layout Lowering</a></li>
+</ul>
+</details></li>
+<li class="toctree-l1"><a class="reference internal" href="../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
+</ul>
+
+    </div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+
+<div class="sbt-scroll-pixel-helper"></div>
+
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item"><button class="sidebar-toggle primary-toggle btn btn-sm" title="Toggle primary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <span class="fa-solid fa-bars"></span>
+</button></div>
+      
+    </div>
+  
+  
+    <div class="header-article-items__end">
+      
+        <div class="header-article-item">
+
+<div class="article-header-buttons">
+
+
+<a href="https://github.com/mlc-ai/modern-gpu-programming-for-mlsys" target="_blank"
+   class="btn btn-sm btn-source-repository-button"
+   title="源码库"
+   data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fab fa-github"></i>
+  </span>
+
+</a>
+
+
+
+
+<button onclick="window.location.href='../../../index.html'"
+  class="btn btn-sm btn-language-switch-button pst-navbar-icon"
+  title="Switch to English"
+  data-bs-placement="bottom" data-bs-toggle="tooltip"
+>
+  
+
+<span class="btn__icon-container">
+  <i class="fas fa-language"></i>
+  </span>
+
+</button>
+
+
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="亮色"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="暗色"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>亮色</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>暗色</button></li>
+  </ul>
+</div>
+
+
+<button class="btn btn-sm pst-navbar-icon search-button search-button__button pst-js-only" title="搜索" aria-label="搜索" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <i class="fa-solid fa-magnifying-glass fa-lg"></i>
+</button>
+<button class="sidebar-toggle secondary-toggle btn btn-sm pst-navbar-icon" title="Toggle secondary sidebar" data-bs-placement="bottom" data-bs-toggle="tooltip">
+    <span class="fa-solid fa-list"></span>
+</button>
+</div></div>
+      
+    </div>
+  
+</div>
+</div>
+              
+              
+
+<div id="jb-print-docs-body" class="onlyprint">
+    <h1>Tile Primitive 与 Layout Lowering</h1>
+    <!-- Table of contents -->
+    <div id="print-main-content">
+        <div id="jb-print-toc">
+            
+            <div>
+                <h2> 目录 </h2>
+            </div>
+            <nav aria-label="Page">
+                <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#layout">先读懂 Layout</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">普通内存：逻辑下标映射到地址</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">每线程局部存储：逻辑下标映射到持有者和局部位置</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#tmem">TMEM：逻辑下标映射到两个硬件坐标</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">Layout 从哪里来</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tx-tile-gemm-async-lowering">沿一条 <code class="docutils literal notranslate"><span class="pre">Tx.tile.gemm_async</span></code> 看 lowering</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">选择实现</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">切出本次调用的 Layout</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#a-b-layout-matrix-descriptor">A/B Layout 推导 matrix descriptor</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c-layout-tmem">C Layout 推导 TMEM 地址</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shape-dtype">Shape 与 dtype 决定指令分解</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#readback-layout">Readback 使用另一组 Layout</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lowertirxcleanup-layout"><code class="docutils literal notranslate"><span class="pre">LowerTIRxCleanup</span></code> 处理剩余 Layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-primitive-ptx">高层 Tile Primitive 与直接 PTX</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">Layout 约束怎样产生诊断</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#dispatch-layout-lowering">检查 Dispatch 与 Layout Lowering</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">核心源码导航</a></li>
+</ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="tile-primitive-layout-lowering">
+<span id="chap-tirx-tile-layout-lowering"></span><h1>Tile Primitive 与 Layout Lowering<a class="headerlink" href="#tile-primitive-layout-lowering" title="Link to this heading">#</a></h1>
+<p>上一页 <a class="reference internal" href="lowering_pipeline.html#chap-tirx-lowering-pipeline"><span class="std std-ref">TIRx 编译流水线</span></a> 给出了完整的编译流水线。本页进入 <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 内部，沿一条 Blackwell <code class="docutils literal notranslate"><span class="pre">Tx.tile.gemm_async</span></code> 说明 tile primitive 和 layout 怎样逐步变成 target intrinsic 与物理地址。</p>
+<p><code class="docutils literal notranslate"><span class="pre">Tx.tile.gemm_async(C,</span> <span class="pre">A,</span> <span class="pre">B)</span></code> 记录一次逻辑 tile GEMM。它给出操作数、区域和配置，具体使用哪些硬件指令、每个操作数怎样编码，则由 <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 结合 target 与 layout 确定。这里的 layout 是一张从 <strong>逻辑坐标</strong> 到 <strong>物理坐标</strong> 的映射：生产者用它摆放数据，消费者用它找到同一份数据。</p>
+<p><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 由两个顺序执行的 pass 组成：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TilePrimitiveCall + Buffer layouts + target
+                     │
+                     ▼
+          TilePrimitiveDispatch
+   选择实现，生成 Tx.ptx.* 与地址表达式
+                     │
+                     ▼
+            LowerTIRxCleanup
+   物化剩余普通访问，清除 layout metadata
+                     │
+                     ▼
+包含 Tx.ptx.* 与物理 Buffer 访问的 PrimFunc
+</pre></div>
+</div>
+<p>前一个 pass 读取算子级语义，后一个 pass 处理仍留在普通 <code class="docutils literal notranslate"><span class="pre">BufferLoad</span></code>、<code class="docutils literal notranslate"><span class="pre">BufferStore</span></code> 和指针访问中的 layout。同一个 buffer 的 layout 可以依次服务于这两个阶段。</p>
+<section id="layout">
+<h2>先读懂 Layout<a class="headerlink" href="#layout" title="Link to this heading">#</a></h2>
+<p>一个逻辑 tile 可以落在普通内存、多个线程的局部存储或 TMEM 中。三类位置需要三种物理坐标：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 22.0%" />
+<col style="width: 35.0%" />
+<col style="width: 43.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>存储位置</p></th>
+<th class="head"><p>Layout 映射</p></th>
+<th class="head"><p>物理坐标的含义</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>GMEM / SMEM</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">j)</span> <span class="pre">→</span> <span class="pre">m</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">m</span></code> 是一个线性存储位置，也可以包含 padding 或 swizzle</p></td>
+</tr>
+<tr class="row-odd"><td><p>每线程局部存储</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">j)</span> <span class="pre">→</span> <span class="pre">(thread</span> <span class="pre">axis,</span> <span class="pre">m)</span></code></p></td>
+<td><p>thread axis 指定持有元素的线程，<code class="docutils literal notranslate"><span class="pre">m</span></code> 指定该线程内的局部位置</p></td>
+</tr>
+<tr class="row-even"><td><p>Blackwell TMEM</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">(i,</span> <span class="pre">j)</span> <span class="pre">→</span> <span class="pre">(TLane,</span> <span class="pre">TCol)</span></code></p></td>
+<td><p>两个坐标共同指定 TMEM 中的硬件位置</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>这些映射都由 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 表达。完整的 layout 代数、<code class="docutils literal notranslate"><span class="pre">S[...]</span></code> 语法与组合规则见 <a class="reference internal" href="../../chapter_tirx_layout_api/index.html#chap-tirx-layout-api"><span class="std std-ref">TIRx Layout API</span></a>；这里关注它们在 lowering 中提供的信息。</p>
+<section id="id1">
+<h3>普通内存：逻辑下标映射到地址<a class="headerlink" href="#id1" title="Link to this heading">#</a></h3>
+<p>省略 <code class="docutils literal notranslate"><span class="pre">layout=</span></code> 时，buffer API 默认创建连续行优先（row-major）layout。例如 shape 为 <code class="docutils literal notranslate"><span class="pre">(4,</span> <span class="pre">8)</span></code> 的 buffer 使用：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TileLayout(S[(4, 8)])
+
+B[i, j] → B_flat[i * 8 + j]
+</pre></div>
+</div>
+<p>这个公式与普通二维连续数组一致。layout metadata 会在编译前半程保留，因此 dispatcher 仍可对它执行 slice、匹配与检查。显式 <code class="docutils literal notranslate"><span class="pre">layout=None</span></code> 会让该字段保持为空，普通访问随后沿 shape/stride 规则展开。</p>
+<p>物理排列也可以带 padding 或 swizzle。例如：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TileLayout(S[(4, 8) : (16, 1)])
+
+B[i, j] → B_flat[i * 16 + j]
+</pre></div>
+</div>
+<p>这里每一行占 16 个元素，逻辑 shape 仍是 <code class="docutils literal notranslate"><span class="pre">4×8</span></code>。对应的 backing allocation 需要覆盖 <code class="docutils literal notranslate"><span class="pre">layout.span()</span> <span class="pre">=</span> <span class="pre">56</span></code> 个元素。<code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> 还可以把 XOR、shift 和 mask 组成 shared-memory swizzle。</p>
+</section>
+<section id="id2">
+<h3>每线程局部存储：逻辑下标映射到持有者和局部位置<a class="headerlink" href="#id2" title="Link to this heading">#</a></h3>
+<p>下面的 distributed layout 把第 <code class="docutils literal notranslate"><span class="pre">m</span></code> 行交给 workgroup 中的第 <code class="docutils literal notranslate"><span class="pre">m</span></code> 个线程，并把 <code class="docutils literal notranslate"><span class="pre">n</span></code> 作为该线程的局部位置：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Dreg_wg</span> <span class="o">=</span> <span class="n">Dreg</span><span class="o">.</span><span class="n">view</span><span class="p">(</span>
+    <span class="mi">128</span><span class="p">,</span>
+    <span class="n">N</span><span class="p">,</span>
+    <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="n">N</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@tid_in_wg</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]),</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Dreg_wg[m, n] → { tid_in_wg: m, local slot: n }
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">tid_in_wg</span></code> 表达元素归属，默认 memory axis 记录该线程内的局部位置。CUDA toolchain 随后为这些局部值分配具体物理寄存器。</p>
+</section>
+<section id="tmem">
+<h3>TMEM：逻辑下标映射到两个硬件坐标<a class="headerlink" href="#tmem" title="Link to this heading">#</a></h3>
+<p>Blackwell TMEM 使用 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code>：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>TileLayout(S[(128, N) : (1@TLane, 1@TCol)])
+
+C[m, n] → { TLane: m, TCol: n }
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">TLane</span></code> 表示 TMEM lane row，<code class="docutils literal notranslate"><span class="pre">TCol</span></code> 表示 TMEM column。二者共同组成 tcgen05 指令使用的 TMEM 地址。这里的 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 属于存储坐标；CUDA <code class="docutils literal notranslate"><span class="pre">lane_id</span></code> 表示当前执行线程，两者含义不同。</p>
+</section>
+<section id="id3">
+<h3>Layout 从哪里来<a class="headerlink" href="#id3" title="Link to this heading">#</a></h3>
+<p>TIRx kernel 中的 layout 通常来自三处：</p>
+<ol class="arabic simple">
+<li><p><strong>默认构造。</strong> 省略 <code class="docutils literal notranslate"><span class="pre">layout=</span></code> 或写 <code class="docutils literal notranslate"><span class="pre">layout=&quot;default&quot;</span></code> 时，parser 根据 shape 构造连续行优先 layout。</p></li>
+<li><p><strong>Helper 构造。</strong> <code class="docutils literal notranslate"><span class="pre">mma_shared_layout</span></code>、<code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code> 等 helper 根据 dtype、shape 与 mode 生成已知的硬件 layout。</p></li>
+<li><p><strong>显式声明。</strong> 作者或上层生成器直接使用 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>、<code class="docutils literal notranslate"><span class="pre">ComposeLayout</span></code> 等接口写出目标映射。</p></li>
+</ol>
+<p>这里的自动化包含默认 layout 的构造，以及 lowering 根据既有 layout 推导指令参数。tile size、swizzle mode、线程分工和性能 layout 的选择通常由 kernel 作者、上层生成器或搜索系统完成。<code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 接收这些已经确定的映射，再完成局部推导与合法性检查。</p>
+</section>
+</section>
+<section id="tx-tile-gemm-async-lowering">
+<h2>沿一条 <code class="docutils literal notranslate"><span class="pre">Tx.tile.gemm_async</span></code> 看 lowering<a class="headerlink" href="#tx-tile-gemm-async-lowering" title="Link to this heading">#</a></h2>
+<p>下面抽取 <a class="reference internal" href="../../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">TIRx 入门</span></a> 中单-tile GEMM 的核心语句。SMEM/TMEM allocation、barrier 和等待代码在这里省略：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">,</span> <span class="n">BLK_K</span> <span class="o">=</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">128</span><span class="p">,</span> <span class="mi">64</span>
+
+<span class="n">A_layout</span> <span class="o">=</span> <span class="n">mma_shared_layout</span><span class="p">(</span>
+    <span class="s2">"float16"</span><span class="p">,</span> <span class="n">SwizzleMode</span><span class="o">.</span><span class="n">SWIZZLE_128B_ATOM</span><span class="p">,</span> <span class="p">(</span><span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">B_layout</span> <span class="o">=</span> <span class="n">mma_shared_layout</span><span class="p">(</span>
+    <span class="s2">"float16"</span><span class="p">,</span> <span class="n">SwizzleMode</span><span class="o">.</span><span class="n">SWIZZLE_128B_ATOM</span><span class="p">,</span> <span class="p">(</span><span class="n">BLK_N</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="n">Asmem</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BLK_M</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">),</span> <span class="s2">"float16"</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">A_layout</span><span class="p">)</span>
+<span class="n">Bsmem</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,</span> <span class="n">BLK_K</span><span class="p">),</span> <span class="s2">"float16"</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">B_layout</span><span class="p">)</span>
+
+<span class="n">C</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span>
+    <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span>
+    <span class="s2">"float32"</span><span class="p">,</span>
+    <span class="n">scope</span><span class="o">=</span><span class="s2">"tmem"</span><span class="p">,</span>
+    <span class="n">allocated_addr</span><span class="o">=</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+    <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">512</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)]),</span>
+<span class="p">)</span>
+
+<span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">Tx</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
+        <span class="n">Tx</span><span class="o">.</span><span class="n">tile</span><span class="o">.</span><span class="n">gemm_async</span><span class="p">(</span>
+            <span class="n">C</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">],</span>
+            <span class="n">Asmem</span><span class="p">[:,</span> <span class="p">:],</span>
+            <span class="n">Bsmem</span><span class="p">[:,</span> <span class="p">:],</span>
+            <span class="n">accum</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">dispatch</span><span class="o">=</span><span class="s2">"tcgen05"</span><span class="p">,</span>
+            <span class="n">cta_group</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="p">)</span>
+</pre></div>
+</div>
+<p>这一条调用向 dispatcher 提供了四组信息：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 30.0%" />
+<col style="width: 70.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>输入</p></th>
+<th class="head"><p>Lowering 中的用途</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>C/A/B 的 <code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code></p></td>
+<td><p>确定本次调用的逻辑 <code class="docutils literal notranslate"><span class="pre">M</span></code>、<code class="docutils literal notranslate"><span class="pre">N</span></code>、<code class="docutils literal notranslate"><span class="pre">K</span></code> 范围及各 region 的起点</p></td>
+</tr>
+<tr class="row-odd"><td><p>A/B 的 SMEM layouts</p></td>
+<td><p>确定 shared-memory 排列、swizzle、matrix descriptor 参数和每个指令 tile 的偏移</p></td>
+</tr>
+<tr class="row-even"><td><p>C 的 TMEM layout</p></td>
+<td><p>验证 accumulator datapath，并取得 region 的 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> 与 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 偏移</p></td>
+</tr>
+<tr class="row-odd"><td><p>dtype、<code class="docutils literal notranslate"><span class="pre">cta_group</span></code> 与 <code class="docutils literal notranslate"><span class="pre">dispatch</span></code></p></td>
+<td><p>约束候选实现、指令 shape 和 tcgen05 variant</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<section id="id4">
+<h3>选择实现<a class="headerlink" href="#id4" title="Link to this heading">#</a></h3>
+<p>Python 前端把 <code class="docutils literal notranslate"><span class="pre">Tx.tile.gemm_async</span></code> 保存为 <code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code>。候选实现以 <code class="docutils literal notranslate"><span class="pre">(operator,</span> <span class="pre">target</span> <span class="pre">kind)</span></code> 为键注册，并带有 variant 名称、优先级和适用条件。</p>
+<p>显式 <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tcgen05&quot;</span></code> 会筛选出对应 variant；省略 <code class="docutils literal notranslate"><span class="pre">dispatch=</span></code> 时，dispatcher 按优先级检查各候选的适用条件。选中的实现返回一个 <code class="docutils literal notranslate"><span class="pre">PrimFunc</span></code>，其函数体替换原来的 <code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code>。整个过程发生在编译期，依据 target、操作数 region、layout、dtype 和 config 做规则匹配。</p>
+<p>其他 copy、reduce 和同步类 tile primitive 也经过同一套选择流程。每个实现自行定义要读取哪些 layout 坐标、接受哪些 shape，以及最终生成哪些 target intrinsics。</p>
+</section>
+<section id="id5">
+<h3>切出本次调用的 Layout<a class="headerlink" href="#id5" title="Link to this heading">#</a></h3>
+<p>调用参数是 <code class="docutils literal notranslate"><span class="pre">C[:,</span> <span class="pre">:BLK_N]</span></code>、<code class="docutils literal notranslate"><span class="pre">Asmem[:,</span> <span class="pre">:]</span></code> 和 <code class="docutils literal notranslate"><span class="pre">Bsmem[:,</span> <span class="pre">:]</span></code> 这样的 <code class="docutils literal notranslate"><span class="pre">BufferRegion</span></code>。Dispatcher 先对各 buffer layout 执行 <code class="docutils literal notranslate"><span class="pre">slice</span></code>，把 region 起点折入 layout offset，再通过 <code class="docutils literal notranslate"><span class="pre">canonicalize</span></code> 得到便于匹配的等价形式。</p>
+<p>tcgen05 实现随后检查：</p>
+<ul class="simple">
+<li><p>C 的 scope、dtype、shape 与 <code class="docutils literal notranslate"><span class="pre">TLane/TCol</span></code> 映射；</p></li>
+<li><p>A/B 的 scope、dtype、alignment 与 shared-memory atom；</p></li>
+<li><p>A/B 的 major mode 和 swizzle 是否落在该指令支持的组合中；</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">M/N/K</span></code> 与 <code class="docutils literal notranslate"><span class="pre">cta_group</span></code> 是否可以分解成合法的 tcgen05 指令 shape。</p></li>
+</ul>
+<p>这些检查把 layout 当作调用约束。layout 与候选实现的硬件约定一致后，lowering 才继续生成 descriptor 和指令。</p>
+</section>
+<section id="a-b-layout-matrix-descriptor">
+<h3>A/B Layout 推导 matrix descriptor<a class="headerlink" href="#a-b-layout-matrix-descriptor" title="Link to this heading">#</a></h3>
+<p>tcgen05 从 SMEM 读取 A/B 时，硬件通过 matrix descriptor 解释 shared-memory 地址。Dispatcher 将 sliced layout 与受支持的 K-major 或 MN-major swizzle atom 匹配，并得到：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>major mode
+swizzle mode
+leading-dimension offset (ldo)
+stride-dimension offset (sdo)
+当前指令 tile 相对 region 原点的 16-byte offset
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">ldo</span></code>、<code class="docutils literal notranslate"><span class="pre">sdo</span></code> 和 swizzle 等字段可在 dispatch 时确定；SMEM base address 属于运行时值。生成的 TIR 会调用 <code class="docutils literal notranslate"><span class="pre">Tx.ptx.tcgen05.encode_matrix_descriptor</span></code>，把运行时地址与这些字段编码到一个局部 <code class="docutils literal notranslate"><span class="pre">uint64</span></code> descriptor 中。后续各个 MMA iteration 再加入以 16 bytes 为单位的 tile offset。</p>
+<p>这也解释了 producer 与 consumer 为何要共享 layout。前面的 copy 按 A/B layout 把元素写入 swizzled SMEM，GEMM dispatcher 从同一份 layout 生成 descriptor，tcgen05 因而按照相同的字节排列读回元素。</p>
+</section>
+<section id="c-layout-tmem">
+<h3>C Layout 推导 TMEM 地址<a class="headerlink" href="#c-layout-tmem" title="Link to this heading">#</a></h3>
+<p>示例中 C region 的映射为：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>C[m, n] → { TLane: m, TCol: n }
+</pre></div>
+</div>
+<p>对 layout 做 slice 后，dispatcher 分别取得 <code class="docutils literal notranslate"><span class="pre">TLane</span></code> offset 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> offset。它们与 <code class="docutils literal notranslate"><span class="pre">allocated_addr</span></code> 一起传给 <code class="docutils literal notranslate"><span class="pre">Tx.cuda.get_tmem_addr</span></code>，形成 tcgen05 使用的 TMEM 目标地址：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>get_tmem_addr(allocated_addr, TLane offset, TCol offset)
+</pre></div>
+</div>
+<p>当 C region 从非零行或非零列开始时，对应偏移会进入这两个坐标。Dispatcher 同时验证 sliced layout 与所选 accumulator datapath 一致。</p>
+</section>
+<section id="shape-dtype">
+<h3>Shape 与 dtype 决定指令分解<a class="headerlink" href="#shape-dtype" title="Link to this heading">#</a></h3>
+<p>示例表示一次 fp16 <code class="docutils literal notranslate"><span class="pre">128×128×64</span></code> GEMM。tcgen05 的这个 dense 路径每个 K step 处理 16 个 fp16 元素，因此 K 方向被分成 4 次 MMA。省略具体 TIR 语法后，dispatch 结果的结构如下：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span># 结构示意；尖括号中的内容代表生成的 TIR expression
+desc_a = encode_matrix_descriptor(
+    &lt;Asmem runtime base&gt;, &lt;A ldo&gt;, &lt;A sdo&gt;, &lt;A swizzle&gt;
+)
+desc_b = encode_matrix_descriptor(
+    &lt;Bsmem runtime base&gt;, &lt;B ldo&gt;, &lt;B sdo&gt;, &lt;B swizzle&gt;
+)
+desc_i = Tx.uint32(&lt;dispatch 时生成的 dense instruction descriptor&gt;)
+
+for ki in Tx.unroll(4):
+    Tx.ptx.tcgen05.mma(
+        get_tmem_addr(&lt;C base&gt;, &lt;TLane offset&gt;, &lt;TCol offset&gt;),
+        add_16B_offset(desc_a, &lt;A offset for ki&gt;),
+        add_16B_offset(desc_b, &lt;B offset for ki&gt;),
+        desc_i,
+        enable_input_d=(ki != 0),
+        ...
+    )
+</pre></div>
+</div>
+<p>这里的 <code class="docutils literal notranslate"><span class="pre">desc_a</span></code> 和 <code class="docutils literal notranslate"><span class="pre">desc_b</span></code> 需要运行时 SMEM 地址，所以 descriptor encoding 保留在生成的 TIR 中。dense <code class="docutils literal notranslate"><span class="pre">desc_i</span></code> 只依赖指令 shape、dtype、major mode 与 <code class="docutils literal notranslate"><span class="pre">cta_group</span></code>，dispatcher 会把它折叠为编译期 <code class="docutils literal notranslate"><span class="pre">uint32</span></code> 常量。</p>
+<p><code class="docutils literal notranslate"><span class="pre">Tx.unroll(4)</span></code> 会由后续 <code class="docutils literal notranslate"><span class="pre">UnrollLoop</span></code> 展开，<code class="docutils literal notranslate"><span class="pre">StmtSimplify</span></code> 再化简每次迭代中的常量表达式。指令数量与操作数分块来自 tile primitive 实现，循环展开和局部化简由流水线后段完成。</p>
+</section>
+<section id="readback-layout">
+<h3>Readback 使用另一组 Layout<a class="headerlink" href="#readback-layout" title="Link to this heading">#</a></h3>
+<p>GEMM 将结果写入 TMEM 后，readback 是另一条独立的 tile primitive：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">Dreg</span> <span class="o">=</span> <span class="n">Tx</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="n">BLK_N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
+<span class="n">Dreg_wg</span> <span class="o">=</span> <span class="n">Dreg</span><span class="o">.</span><span class="n">view</span><span class="p">(</span>
+    <span class="mi">128</span><span class="p">,</span>
+    <span class="n">BLK_N</span><span class="p">,</span>
+    <span class="n">layout</span><span class="o">=</span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="n">BLK_N</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@tid_in_wg</span><span class="p">,</span> <span class="mi">1</span><span class="p">)]),</span>
+<span class="p">)</span>
+<span class="n">Tx</span><span class="o">.</span><span class="n">tile</span><span class="o">.</span><span class="n">wg</span><span class="o">.</span><span class="n">copy_async</span><span class="p">(</span><span class="n">Dreg_wg</span><span class="p">[:,</span> <span class="p">:],</span> <span class="n">C</span><span class="p">[:,</span> <span class="p">:</span><span class="n">BLK_N</span><span class="p">])</span>
+</pre></div>
+</div>
+<p>它同时读取 C 的 <code class="docutils literal notranslate"><span class="pre">TLane/TCol</span></code> layout 和 <code class="docutils literal notranslate"><span class="pre">Dreg_wg</span></code> 的 distributed layout，选择相应的 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> form，并把 TMEM 元素送到指定线程的局部位置。整个数据流为：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>GMEM
+  │  copy primitive 按 A/B layout 写入
+  ▼
+swizzled SMEM
+  │  gemm_async 按同一 layout 生成 descriptor 并读取
+  ▼
+TMEM (TLane, TCol)
+  │  wg.copy_async 同时解释 TMEM 与 distributed layouts
+  ▼
+per-thread local slots (tid_in_wg, m)
+</pre></div>
+</div>
+<p>Layout 在这里充当 producer 与 consumer 之间的物理映射契约；tile primitive 负责把这份契约翻译成具体硬件操作。</p>
+</section>
+</section>
+<section id="lowertirxcleanup-layout">
+<h2><code class="docutils literal notranslate"><span class="pre">LowerTIRxCleanup</span></code> 处理剩余 Layout<a class="headerlink" href="#lowertirxcleanup-layout" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">TilePrimitiveDispatch</span></code> 已将全部 <code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 展开。普通 <code class="docutils literal notranslate"><span class="pre">BufferLoad</span></code>、<code class="docutils literal notranslate"><span class="pre">BufferStore</span></code> 和指针访问仍可能引用带 layout 的 buffer，<code class="docutils literal notranslate"><span class="pre">LowerTIRxCleanup</span></code> 随后处理这些访问：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>创建或附着 Layout
+       │
+       ▼
+Buffer view / region slice
+       │
+       ▼
+TilePrimitiveDispatch 读取并展开算子
+       │
+       ▼
+LowerTIRxCleanup 映射剩余普通访问
+       │
+       ▼
+重建物理 Buffer，清除 layout metadata
+       │
+       ▼
+后续 TIR passes 与 target codegen
+</pre></div>
+</div>
+<p>对普通 memory layout，<code class="docutils literal notranslate"><span class="pre">LayoutApplier</span></code> 的核心过程可以写成：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>logical indices
+      │
+      ▼
+layout.canonicalize().apply(indices, shape)
+      │
+      ▼
+一个 symbolic memory coordinate
+      │
+      ▼
+physical buffer access
+</pre></div>
+</div>
+<p>这里的 symbolic coordinate 可以包含运行时循环变量、<code class="docutils literal notranslate"><span class="pre">threadIdx</span></code> 或函数参数。后续 <code class="docutils literal notranslate"><span class="pre">FlattenBuffer</span></code> 会把 buffer 的 <code class="docutils literal notranslate"><span class="pre">elem_offset</span></code> 合入线性 index，形成最终地址语义。<code class="docutils literal notranslate"><span class="pre">BufferOffsetRemover</span></code> 则消除 <code class="docutils literal notranslate"><span class="pre">tirx.buffer_offset(BufferLoad)</span></code> wrapper，使其中的 offset 与物理访问保持一致。</p>
+<p>普通指针访问需要 layout 最终产生一个 memory coordinate，通常命名为 <code class="docutils literal notranslate"><span class="pre">m</span></code>。带有 <code class="docutils literal notranslate"><span class="pre">laneid</span></code>、<code class="docutils literal notranslate"><span class="pre">tid_in_wg</span></code>、<code class="docutils literal notranslate"><span class="pre">TLane</span></code> 或 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 的映射表达额外的硬件坐标；它们应先由理解这些坐标的 tile primitive 消费，或通过 <code class="docutils literal notranslate"><span class="pre">.view()</span></code> 与 <code class="docutils literal notranslate"><span class="pre">.local()</span></code> 转成当前线程的存储视图。若这类坐标以普通 <code class="docutils literal notranslate"><span class="pre">BufferLoad</span></code> 留到 cleanup，编译器会给出诊断。</p>
+<p><code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 完成后，所有 <code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code> 都已展开，layout metadata 已被 dispatcher 读取或由 cleanup 物化，<code class="docutils literal notranslate"><span class="pre">Tx.ptx.*</span></code> 等 target intrinsics 则继续进入后续 TIR passes 与 CUDA codegen。</p>
+</section>
+<section id="tile-primitive-ptx">
+<h2>高层 Tile Primitive 与直接 PTX<a class="headerlink" href="#tile-primitive-ptx" title="Link to this heading">#</a></h2>
+<p>直接写 <code class="docutils literal notranslate"><span class="pre">Tx.ptx.tcgen05.mma</span></code> 时，这个 target intrinsic <code class="docutils literal notranslate"><span class="pre">Call</span></code> 从一开始就在输入 IR 中。<code class="docutils literal notranslate"><span class="pre">TilePrimitiveDispatch</span></code> 的算子分派针对 <code class="docutils literal notranslate"><span class="pre">TilePrimitiveCall</span></code>，作者写下的 PTX intrinsic 会原样保留。高层写法生成的 PTX intrinsic 与直接写入的 PTX intrinsic，随后都经过 cleanup 和流水线后段：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Tx.tile.gemm_async
+        │
+        ▼
+TilePrimitiveDispatch
+        │
+        ▼
+Tx.ptx.tcgen05.mma
+        │
+        ▼
+cleanup → 后续 TIR passes → CUDA codegen
+
+直接 Tx.ptx.tcgen05.mma
+        │
+        ▼
+TilePrimitiveDispatch 保留该 intrinsic
+        │
+        ▼
+cleanup → 后续 TIR passes → CUDA codegen
+</pre></div>
+</div>
+<p>两种写法的差别集中在 PTX intrinsic 生成之前：</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<colgroup>
+<col style="width: 27.0%" />
+<col style="width: 37.0%" />
+<col style="width: 36.0%" />
+</colgroup>
+<thead>
+<tr class="row-odd"><th class="head"><p>编程责任</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">Tx.tile.gemm_async</span></code></p></th>
+<th class="head"><p>直接 <code class="docutils literal notranslate"><span class="pre">Tx.ptx.tcgen05.mma</span></code></p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>实现选择</p></td>
+<td><p>Dispatcher 根据 target 选择或验证 <code class="docutils literal notranslate"><span class="pre">dispatch=</span></code></p></td>
+<td><p>作者已经选定具体 intrinsic</p></td>
+</tr>
+<tr class="row-odd"><td><p>逻辑 tile 分解</p></td>
+<td><p>根据 shape、dtype 和 config 生成指令 tiles</p></td>
+<td><p>作者逐条写出指令</p></td>
+</tr>
+<tr class="row-even"><td><p>操作数 layout 检查</p></td>
+<td><p>Dispatcher 执行算子专用的匹配与验证</p></td>
+<td><p>作者按照 PTX 约定组织操作数</p></td>
+</tr>
+<tr class="row-odd"><td><p>Descriptor 与 TMEM 地址</p></td>
+<td><p>从 layout、region 和 config 推导</p></td>
+<td><p>作者调用低级编码与地址接口</p></td>
+</tr>
+<tr class="row-even"><td><p>Lane 与局部值顺序</p></td>
+<td><p>Distributed layout 表达归属和局部位置</p></td>
+<td><p>作者用 lane 公式、局部数组和 intrinsic 参数表达</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>直接 PTX 仍可与 layout 共存，具体取决于地址怎样构造：</p>
+<ul class="simple">
+<li><p>PTX 参数来自 layout-backed memory buffer 的 <code class="docutils literal notranslate"><span class="pre">ptr_to(logical_indices)</span></code> 时，cleanup 可以把单一 memory-axis layout 映射成物理地址。</p></li>
+<li><p>使用 <code class="docutils literal notranslate"><span class="pre">Tx.ptr_byte_offset</span></code> 或 <code class="docutils literal notranslate"><span class="pre">Tx.handle_add_byte_offset</span></code> 提供 byte offset 时，地址表达式直接携带作者选定的物理映射。</p></li>
+<li><p>TMEM 地址可以通过 <code class="docutils literal notranslate"><span class="pre">Tx.cuda.get_tmem_addr(base,</span> <span class="pre">tlane,</span> <span class="pre">tcol)</span></code> 明确给出，distributed 数据的 lane 归属与局部顺序也由作者明确组织。</p></li>
+</ul>
+<p>因此，直接 PTX 省去了 tile primitive 提供的算子级推导与检查；layout 仍可负责周围 buffer 的地址映射。作者显式写出的 descriptor、TMEM 坐标、lane 公式和局部顺序承担同一组物理约定。ptxas 等工具继续负责 <code class="docutils literal notranslate"><span class="pre">%r17</span></code> 一类物理寄存器的最终分配。</p>
+</section>
+<section id="id6">
+<h2>Layout 约束怎样产生诊断<a class="headerlink" href="#id6" title="Link to this heading">#</a></h2>
+<p>假设 C 位于 TMEM，却声明为只有 <code class="docutils literal notranslate"><span class="pre">m</span></code> 轴的连续行优先 layout，同时强制 <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tcgen05&quot;</span></code>。tcgen05 variant 期望 C region 映射到受支持的 <code class="docutils literal notranslate"><span class="pre">TLane/TCol</span></code> datapath；两组物理坐标发生冲突，该候选实现会被拒绝。</p>
+<p>这类诊断来自 layout 的契约作用。Dispatcher 从已声明的 layout 推导底层参数并验证硬件约束，kernel 作者或上层生成器负责让 producer、consumer 与 allocation 使用一致的映射。</p>
+</section>
+<section id="dispatch-layout-lowering">
+<h2>检查 Dispatch 与 Layout Lowering<a class="headerlink" href="#dispatch-layout-lowering" title="Link to this heading">#</a></h2>
+<p>需要定位问题时，可以分别打印 authored TIRx、dispatch 结果和完整 <code class="docutils literal notranslate"><span class="pre">LowerTIRx</span></code> 结果：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx</span><span class="w"> </span><span class="kn">import</span> <span class="n">transform</span> <span class="k">as</span> <span class="n">TT</span>
+
+<span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="s2">"cuda -arch=sm_100a"</span><span class="p">)</span><span class="o">.</span><span class="n">with_host</span><span class="p">(</span><span class="s2">"llvm"</span><span class="p">)</span>
+<span class="n">mod</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">IRModule</span><span class="p">({</span><span class="s2">"main"</span><span class="p">:</span> <span class="n">kernel</span><span class="p">})</span>
+<span class="n">bound</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">BindTarget</span><span class="p">(</span><span class="n">target</span><span class="p">)(</span><span class="n">mod</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">"=== authored TIRx ==="</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">bound</span><span class="o">.</span><span class="n">script</span><span class="p">())</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">"=== after TilePrimitiveDispatch ==="</span><span class="p">)</span>
+<span class="n">dispatched</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">TilePrimitiveDispatch</span><span class="p">()(</span><span class="n">bound</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">dispatched</span><span class="o">.</span><span class="n">script</span><span class="p">())</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">"=== after LowerTIRx ==="</span><span class="p">)</span>
+<span class="n">lowered</span> <span class="o">=</span> <span class="n">TT</span><span class="o">.</span><span class="n">LowerTIRx</span><span class="p">()(</span><span class="n">bound</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">lowered</span><span class="o">.</span><span class="n">script</span><span class="p">())</span>
+</pre></div>
+</div>
+<p>示例使用 Blackwell <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>，因此 target 设为 <code class="docutils literal notranslate"><span class="pre">sm_100a</span></code>。检查输出时，可以沿同一条调用依次确认：</p>
+<ol class="arabic simple">
+<li><p>原始 C/A/B regions 与 layouts；</p></li>
+<li><p>dispatch 选中的 variant；</p></li>
+<li><p>A/B descriptor 的 major、swizzle、<code class="docutils literal notranslate"><span class="pre">ldo/sdo</span></code> 和 16-byte offsets；</p></li>
+<li><p>C 的 <code class="docutils literal notranslate"><span class="pre">TLane/TCol</span></code> offsets 与 TMEM 地址；</p></li>
+<li><p>MMA iteration 数量及 <code class="docutils literal notranslate"><span class="pre">enable_input_d</span></code>；</p></li>
+<li><p>cleanup 后生成的普通物理访问。</p></li>
+</ol>
+<p>这样可以把问题定位到输入 schedule、layout 契约、算子 dispatcher 或后端 codegen 的具体阶段。</p>
+</section>
+<section id="id7">
+<h2>核心源码导航<a class="headerlink" href="#id7" title="Link to this heading">#</a></h2>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/operator/tile_primitive/dispatcher.py">dispatcher.py</a>：variant registry、priority、predicate 与失败报告；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/src/tirx/transform/tile_primitive_dispatch.cc">tile_primitive_dispatch.cc</a>：dispatch context、调用替换与 execution scope lowering；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/src/tirx/transform/lower_tirx_cleanup.cc">lower_tirx_cleanup.cc</a>：<code class="docutils literal notranslate"><span class="pre">LayoutApplier</span></code>、<code class="docutils literal notranslate"><span class="pre">BufferOffsetRemover</span></code> 与物理地址物化；</p></li>
+<li><p><a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/backend/cuda/tile_primitive/gemm_async/tcgen05.py">tcgen05 gemm dispatcher</a>：从操作数 regions/layouts 推导 descriptors、TMEM 地址、指令分块和 <code class="docutils literal notranslate"><span class="pre">Tx.ptx.tcgen05.mma</span></code>。</p></li>
+</ul>
+</section>
+</section>
+
+
+                </article>
+              
+
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="lowering_pipeline.html"
+       title="上一页">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">上一页</p>
+        <p class="prev-next-title">TIRx 编译流水线</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="../../appendix/debugging_warp_specialized.html"
+       title="下一页">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">下一页</p>
+        <p class="prev-next-title">调试 Warp-Specialized Kernels</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item"><div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> 目录
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#layout">先读懂 Layout</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id1">普通内存：逻辑下标映射到地址</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id2">每线程局部存储：逻辑下标映射到持有者和局部位置</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#tmem">TMEM：逻辑下标映射到两个硬件坐标</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id3">Layout 从哪里来</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tx-tile-gemm-async-lowering">沿一条 <code class="docutils literal notranslate"><span class="pre">Tx.tile.gemm_async</span></code> 看 lowering</a><ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id4">选择实现</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#id5">切出本次调用的 Layout</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#a-b-layout-matrix-descriptor">A/B Layout 推导 matrix descriptor</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#c-layout-tmem">C Layout 推导 TMEM 地址</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#shape-dtype">Shape 与 dtype 决定指令分解</a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#readback-layout">Readback 使用另一组 Layout</a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#lowertirxcleanup-layout"><code class="docutils literal notranslate"><span class="pre">LowerTIRxCleanup</span></code> 处理剩余 Layout</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#tile-primitive-ptx">高层 Tile Primitive 与直接 PTX</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id6">Layout 约束怎样产生诊断</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#dispatch-layout-lowering">检查 Dispatch 与 Layout Lowering</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#id7">核心源码导航</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+<div class="bd-footer-content__inner container">
+  
+  <div class="footer-item">
+    
+<p class="component-author">
+作者： MLC Community
+</p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+
+  <p class="copyright">
+    
+      © Copyright 2026, MLC Community.
+      <br/>
+    
+  </p>
+
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+  <div class="footer-item">
+    
+  </div>
+  
+</div>
+          </footer>
+        
+
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+  <footer class="bd-footer">
+  </footer>
+  </body>
+</html>
