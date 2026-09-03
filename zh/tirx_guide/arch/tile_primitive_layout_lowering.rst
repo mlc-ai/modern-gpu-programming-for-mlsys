@@ -20,25 +20,123 @@
 Tile Primitive 与 Layout Lowering
 =================================
 
-上一页 :ref:`chap_tirx_lowering_pipeline` 给出了完整 pipeline。本页只深入
-``LowerTIRx``，并沿一条 Blackwell ``Tx.gemm_async`` 解释 layout、算子静态分派
-和直接 PTX 之间的关系。
+上一页 :ref:`chap_tirx_lowering_pipeline` 给出了完整的编译流水线。本页进入 ``LowerTIRx`` 内部，沿一条 Blackwell ``Tx.tile.gemm_async`` 说明 tile primitive 和 layout 怎样逐步变成 target intrinsic 与物理地址。
 
-.. admonition:: 三个最容易混淆的结论
+``Tx.tile.gemm_async(C, A, B)`` 记录一次逻辑 tile GEMM。它给出操作数、区域和配置，具体使用哪些硬件指令、每个操作数怎样编码，则由 ``LowerTIRx`` 结合 target 与 layout 确定。这里的 layout 是一张从 **逻辑坐标** 到 **物理坐标** 的映射：生产者用它摆放数据，消费者用它找到同一份数据。
 
-   1. 默认 row-major layout 的地址可能与传统连续数组完全相同，但 **“映射结果
-      相同”不等于“IR 中没有 layout metadata”**。
-   2. ``Tx.gemm_async`` 不靠 layout 执行矩阵乘法；它读取 layout 以匹配/验证
-      operand 的物理约定，并推导 descriptor、offset 和硬件指令参数。
-   3. 直接 ``T.ptx.*`` 省掉的是对应 ``Tx.*`` 的算子级 lowering。周围的 scope
-      lowering、普通地址展开、合法化、host/device split 和 codegen 仍然存在。
+``LowerTIRx`` 由两个顺序执行的 pass 组成：
 
-贯穿示例：一条 ``Tx.gemm_async``
---------------------------------
+.. code-block:: text
 
-下面抽取 :ref:`chap_tirx_primer` 中单-tile GEMM 的关键部分。完整 kernel 还
-包含 SMEM/TMEM allocation、barrier 初始化、等待和释放；这里仅保留与 lowering
-有关的声明与 tile operations：
+    TilePrimitiveCall + Buffer layouts + target
+                         │
+                         ▼
+              TilePrimitiveDispatch
+       选择实现，生成 Tx.ptx.* 与地址表达式
+                         │
+                         ▼
+                LowerTIRxCleanup
+       物化剩余普通访问，清除 layout metadata
+                         │
+                         ▼
+    包含 Tx.ptx.* 与物理 Buffer 访问的 PrimFunc
+
+前一个 pass 读取算子级语义，后一个 pass 处理仍留在普通 ``BufferLoad``、``BufferStore`` 和指针访问中的 layout。同一个 buffer 的 layout 可以依次服务于这两个阶段。
+
+先读懂 Layout
+-------------
+
+一个逻辑 tile 可以落在普通内存、多个线程的局部存储或 TMEM 中。三类位置需要三种物理坐标：
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 35 43
+
+   * - 存储位置
+     - Layout 映射
+     - 物理坐标的含义
+   * - GMEM / SMEM
+     - ``(i, j) → m``
+     - ``m`` 是一个线性存储位置，也可以包含 padding 或 swizzle
+   * - 每线程局部存储
+     - ``(i, j) → (thread axis, m)``
+     - thread axis 指定持有元素的线程，``m`` 指定该线程内的局部位置
+   * - Blackwell TMEM
+     - ``(i, j) → (TLane, TCol)``
+     - 两个坐标共同指定 TMEM 中的硬件位置
+
+这些映射都由 ``TileLayout`` 表达。完整的 layout 代数、``S[...]`` 语法与组合规则见 :ref:`chap_tirx_layout_api`；这里关注它们在 lowering 中提供的信息。
+
+普通内存：逻辑下标映射到地址
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+省略 ``layout=`` 时，buffer API 默认创建连续行优先（row-major）layout。例如 shape 为 ``(4, 8)`` 的 buffer 使用：
+
+.. code-block:: text
+
+    TileLayout(S[(4, 8)])
+
+    B[i, j] → B_flat[i * 8 + j]
+
+这个公式与普通二维连续数组一致。layout metadata 会在编译前半程保留，因此 dispatcher 仍可对它执行 slice、匹配与检查。显式 ``layout=None`` 会让该字段保持为空，普通访问随后沿 shape/stride 规则展开。
+
+物理排列也可以带 padding 或 swizzle。例如：
+
+.. code-block:: text
+
+    TileLayout(S[(4, 8) : (16, 1)])
+
+    B[i, j] → B_flat[i * 16 + j]
+
+这里每一行占 16 个元素，逻辑 shape 仍是 ``4×8``。对应的 backing allocation 需要覆盖 ``layout.span() = 56`` 个元素。``ComposeLayout`` 还可以把 XOR、shift 和 mask 组成 shared-memory swizzle。
+
+每线程局部存储：逻辑下标映射到持有者和局部位置
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+下面的 distributed layout 把第 ``m`` 行交给 workgroup 中的第 ``m`` 个线程，并把 ``n`` 作为该线程的局部位置：
+
+.. code-block:: python
+
+    Dreg_wg = Dreg.view(
+        128,
+        N,
+        layout=TileLayout(S[(128, N) : (1@tid_in_wg, 1)]),
+    )
+
+.. code-block:: text
+
+    Dreg_wg[m, n] → { tid_in_wg: m, local slot: n }
+
+``tid_in_wg`` 表达元素归属，默认 memory axis 记录该线程内的局部位置。CUDA toolchain 随后为这些局部值分配具体物理寄存器。
+
+TMEM：逻辑下标映射到两个硬件坐标
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Blackwell TMEM 使用 ``TLane`` 和 ``TCol``：
+
+.. code-block:: text
+
+    TileLayout(S[(128, N) : (1@TLane, 1@TCol)])
+
+    C[m, n] → { TLane: m, TCol: n }
+
+``TLane`` 表示 TMEM lane row，``TCol`` 表示 TMEM column。二者共同组成 tcgen05 指令使用的 TMEM 地址。这里的 ``TLane`` 属于存储坐标；CUDA ``lane_id`` 表示当前执行线程，两者含义不同。
+
+Layout 从哪里来
+~~~~~~~~~~~~~~~~
+
+TIRx kernel 中的 layout 通常来自三处：
+
+1. **默认构造。** 省略 ``layout=`` 或写 ``layout="default"`` 时，parser 根据 shape 构造连续行优先 layout。
+2. **Helper 构造。** ``mma_shared_layout``、``tmem_datapath_layout`` 和 ``tcgen05_atom_layout`` 等 helper 根据 dtype、shape 与 mode 生成已知的硬件 layout。
+3. **显式声明。** 作者或上层生成器直接使用 ``TileLayout``、``ComposeLayout`` 等接口写出目标映射。
+
+这里的自动化包含默认 layout 的构造，以及 lowering 根据既有 layout 推导指令参数。tile size、swizzle mode、线程分工和性能 layout 的选择通常由 kernel 作者、上层生成器或搜索系统完成。``LowerTIRx`` 接收这些已经确定的映射，再完成局部推导与合法性检查。
+
+沿一条 ``Tx.tile.gemm_async`` 看 lowering
+-------------------------------------------
+
+下面抽取 :ref:`chap_tirx_primer` 中单-tile GEMM 的核心语句。SMEM/TMEM allocation、barrier 和等待代码在这里省略：
 
 .. code-block:: python
 
@@ -54,7 +152,7 @@ Tile Primitive 与 Layout Lowering
     Asmem = pool.alloc((BLK_M, BLK_K), "float16", layout=A_layout)
     Bsmem = pool.alloc((BLK_N, BLK_K), "float16", layout=B_layout)
 
-    tmem = T.decl_buffer(
+    C = Tx.decl_buffer(
         (128, 512),
         "float32",
         scope="tmem",
@@ -63,369 +161,177 @@ Tile Primitive 与 Layout Lowering
     )
 
     if warp_id == 0:
-        if T.ptx.elect_sync():
-            Tx.gemm_async(
-                tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
-                accum=False, dispatch="tcgen05", cta_group=1,
+        if Tx.ptx.elect_sync():
+            Tx.tile.gemm_async(
+                C[:, :BLK_N],
+                Asmem[:, :],
+                Bsmem[:, :],
+                accum=False,
+                dispatch="tcgen05",
+                cta_group=1,
             )
 
-    Dreg = T.alloc_local((BLK_N,), "float32")
-    Dreg_wg = Dreg.view(
-        128,
-        BLK_N,
-        layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]),
-    )
-    Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
-
-这些语句已经给 lowering 提供了大部分 schedule：
+这一条调用向 dispatcher 提供了四组信息：
 
 .. list-table::
    :header-rows: 1
-   :widths: 29 71
+   :widths: 30 70
 
-   * - 输入信息
-     - 它表达什么
-   * - A/B/C 的 regions
-     - 本次 GEMM 的逻辑 ``M``、``N``、``K`` 范围
+   * - 输入
+     - Lowering 中的用途
+   * - C/A/B 的 ``BufferRegion``
+     - 确定本次调用的逻辑 ``M``、``N``、``K`` 范围及各 region 的起点
    * - A/B 的 SMEM layouts
-     - shared-memory 中的字节排列，以及选定的 128-byte swizzle
+     - 确定 shared-memory 排列、swizzle、matrix descriptor 参数和每个指令 tile 的偏移
    * - C 的 TMEM layout
-     - 声明期望的 accumulator datapath；dispatcher 可从特定 layout 推断
-       ``.ws``，随后验证它与最终 tcgen05 datapath 一致并提取 slice offsets
-   * - ``warp_id`` 和 ``elect_sync``
-     - 将 issuing scope 限定到一个被选中的 thread
-   * - ``dispatch="tcgen05"``
-     - 强制选择 Blackwell tcgen05 variant
-   * - ``Dreg_wg`` layout
-     - 声明 readback 后每个逻辑元素的 thread ownership 和局部 slot
+     - 验证 accumulator datapath，并取得 region 的 ``TLane`` 与 ``TCol`` 偏移
+   * - dtype、``cta_group`` 与 ``dispatch``
+     - 约束候选实现、指令 shape 和 tcgen05 variant
 
-其他 copy、reduce 等 tile primitive 也使用相同的 dispatcher 框架，但各自读取的
-layout 字段、约束和 lowering 结果并不相同。本例不能代表所有算子的具体硬件规则。
+选择实现
+~~~~~~~~
 
-``TilePrimitiveDispatch`` 如何选择实现
-------------------------------------------------
+Python 前端把 ``Tx.tile.gemm_async`` 保存为 ``TilePrimitiveCall``。候选实现以 ``(operator, target kind)`` 为键注册，并带有 variant 名称、优先级和适用条件。
 
-前端把 ``Tx.gemm_async(...)`` 表示为 ``TilePrimitiveCall``。一次 dispatch 的输入
-由两部分合成：
+显式 ``dispatch="tcgen05"`` 会筛选出对应 variant；省略 ``dispatch=`` 时，dispatcher 按优先级检查各候选的适用条件。选中的实现返回一个 ``PrimFunc``，其函数体替换原来的 ``TilePrimitiveCall``。整个过程发生在编译期，依据 target、操作数 region、layout、dtype 和 config 做规则匹配。
 
-- ``TilePrimitiveCall`` 携带 operator、operand ``BufferRegion``、config 和
-  ``dispatch=``；
-- ``DispatchContext`` 提供 target、当前 execution scope、launch parameters、
-  variable ranges 和插入初始化/分配语句所需的 callbacks。
+其他 copy、reduce 和同步类 tile primitive 也经过同一套选择流程。每个实现自行定义要读取哪些 layout 坐标、接受哪些 shape，以及最终生成哪些 target intrinsics。
 
-候选实现按 ``(operator name, target kind)`` 注册，再按固定 priority 和 variant
-名称排序。显式 ``dispatch="tcgen05"`` 只保留该 variant；没有显式指定时，
-dispatcher 依次检查 predicates，并使用第一个成功返回 ``PrimFunc`` 的实现。
-这是 **静态规则选择**，不是 cost model，也不是 autotuning。
+切出本次调用的 Layout
+~~~~~~~~~~~~~~~~~~~~~~
 
-选中的 ``PrimFunc`` body 替换原 ``TilePrimitiveCall``。实现还可以通过 callbacks
-请求 private allocation、device initialization、host initialization，或紧跟
-某个 buffer definition 的语句。因此，一次 lowering 不一定只在调用位置插入
-几条 PTX；它也可能准备 descriptor 或其他依赖资源。
+调用参数是 ``C[:, :BLK_N]``、``Asmem[:, :]`` 和 ``Bsmem[:, :]`` 这样的 ``BufferRegion``。Dispatcher 先对各 buffer layout 执行 ``slice``，把 region 起点折入 layout offset，再通过 ``canonicalize`` 得到便于匹配的等价形式。
 
-这个 pass 还解析 ``T.device_entry()`` 内的抽象 scope IDs，生成 launch parameters、
-``Bind`` 和 ``thread_extent``。例如：
+tcgen05 实现随后检查：
+
+- C 的 scope、dtype、shape 与 ``TLane/TCol`` 映射；
+- A/B 的 scope、dtype、alignment 与 shared-memory atom；
+- A/B 的 major mode 和 swizzle 是否落在该指令支持的组合中；
+- ``M/N/K`` 与 ``cta_group`` 是否可以分解成合法的 tcgen05 指令 shape。
+
+这些检查把 layout 当作调用约束。layout 与候选实现的硬件约定一致后，lowering 才继续生成 descriptor 和指令。
+
+A/B Layout 推导 matrix descriptor
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+tcgen05 从 SMEM 读取 A/B 时，硬件通过 matrix descriptor 解释 shared-memory 地址。Dispatcher 将 sliced layout 与受支持的 K-major 或 MN-major swizzle atom 匹配，并得到：
 
 .. code-block:: text
 
-    T.cta_id([grid_x]) / T.thread_id([block_x])
-                         ↓
-                 blockIdx.x / threadIdx.x
-
-其中 ``grid_x`` 和 ``block_x`` 来自作者声明的 execution hierarchy，dispatcher
-不会替 kernel 搜索 block size。
-
-``Tx.gemm_async`` 的四步 lowering
----------------------------------------------
-
-第一步：slice layout 并验证 operands
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Dispatcher 从三个 ``BufferRegion`` 取得 extents，并对各 buffer layout 执行
-``slice`` 与 ``canonicalize``。随后检查：
-
-- C 是否位于 TMEM，A/B 是否位于该 variant 支持的 memory scope；
-- operand dtype 和逻辑 ``M/N/K`` 是否满足指令约束；
-- A/B 的 sliced layout 是否包含受支持的 SMEM atom、swizzle 和 alignment；
-- C 的 sliced layout 是否匹配受支持的 TMEM datapath。
-
-这里不会把不兼容的 layout 自动“优化正确”。无法证明 layout、shape 或
-alignment 合法时，该 variant 会被拒绝；没有其他候选成功时，dispatch 失败。
-
-第二步：A/B layout 变成 matrix descriptors
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``tcgen05`` 从 SMEM 读取 A/B。Dispatcher 将 sliced layout 与硬件支持的 K-major
-和 MN-major swizzle atoms 匹配，从匹配结果取得：
-
-.. code-block:: text
-
+    major mode
     swizzle mode
     leading-dimension offset (ldo)
     stride-dimension offset (sdo)
-    K-major / MN-major
-    当前 MMA tile 相对 buffer 原点的 16-byte offset
+    当前指令 tile 相对 region 原点的 16-byte offset
 
-这些字段与 shared-memory base address 一起构成 matrix descriptor。前面的
-``Tx.cta.copy`` 或 ``Tx.copy_async`` 与后面的 MMA 因而通过同一个 layout contract
-解释 SMEM 中的字节排列，kernel 作者不必手写 descriptor bit fields。
+``ldo``、``sdo`` 和 swizzle 等字段可在 dispatch 时确定；SMEM base address 属于运行时值。生成的 TIR 会调用 ``Tx.ptx.tcgen05.encode_matrix_descriptor``，把运行时地址与这些字段编码到一个局部 ``uint64`` descriptor 中。后续各个 MMA iteration 再加入以 16 bytes 为单位的 tile offset。
 
-第三步：验证 C datapath 并取得 TMEM 目标
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+这也解释了 producer 与 consumer 为何要共享 layout。前面的 copy 按 A/B layout 把元素写入 swizzled SMEM，GEMM dispatcher 从同一份 layout 生成 descriptor，tcgen05 因而按照相同的字节排列读回元素。
 
-示例 C layout 的正向映射是：
+C Layout 推导 TMEM 地址
+~~~~~~~~~~~~~~~~~~~~~~~
+
+示例中 C region 的映射为：
 
 .. code-block:: text
 
     C[m, n] → { TLane: m, TCol: n }
 
-它声明期望怎样解释 accumulator 的硬件坐标。Dispatcher 确定最终 tcgen05
-instruction datapath，验证 C layout 与它相容，并提取 sliced region 的
-``TLane`` / ``TCol`` offsets；若 region 从非零 column 开始，slice 会产生相应的
-``TCol`` offset。最后再与 ``allocated_addr`` 组合成目标 TMEM address。
-
-这里不能理解为“任意 C layout 都能改变硬件 accumulator 排列”。Layout-E
-等受支持形式可以影响 ``.ws`` 推断，但最终仍必须匹配 tcgen05 能表达的 datapath。
-
-第四步：shape、dtype 和 config 决定指令分解
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-``Tx.gemm_async`` 表示整个逻辑 tile，不等于“一行 DSL 固定对应一条 PTX”。
-Dispatcher 主要根据逻辑 ``M/N/K``、dtype、``cta_group`` 和 operator config 选择
-合法 instruction shape；已有 layout 用来验证 operand 约定并取得每一步的
-descriptor offsets。
-
-对于示例中的 fp16 ``128×128×64`` GEMM，tcgen05 每个 K step 处理 16 个 fp16
-K elements，因此会产生 4 个 MMA iterations。去掉函数签名和大量常量细节后，
-dispatch 后的结构可以概括为：
+对 layout 做 slice 后，dispatcher 分别取得 ``TLane`` offset 和 ``TCol`` offset。它们与 ``allocated_addr`` 一起传给 ``Tx.cuda.get_tmem_addr``，形成 tcgen05 使用的 TMEM 目标地址：
 
 .. code-block:: text
 
-    # lowering sketch：尖括号内容不是可调用的 Python API
-    desc_a = <由 Asmem base、ldo、sdo、swizzle 组成的 TIR expression>
-    desc_b = <由 Bsmem base、ldo、sdo、swizzle 组成的 TIR expression>
-    desc_i = T.uint32(<dispatcher 在 dispatch 时编码出的常量>)
+    get_tmem_addr(allocated_addr, TLane offset, TCol offset)
 
-    for ki in T.unroll(4):
-        T.ptx.tcgen05.mma(
-            <tmem base + TLane/TCol slice offset>,
-            <desc_a + A 的第 ki 个 16-byte offset>,
-            <desc_b + B 的第 ki 个 16-byte offset>,
+当 C region 从非零行或非零列开始时，对应偏移会进入这两个坐标。Dispatcher 同时验证 sliced layout 与所选 accumulator datapath 一致。
+
+Shape 与 dtype 决定指令分解
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+示例表示一次 fp16 ``128×128×64`` GEMM。tcgen05 的这个 dense 路径每个 K step 处理 16 个 fp16 元素，因此 K 方向被分成 4 次 MMA。省略具体 TIR 语法后，dispatch 结果的结构如下：
+
+.. code-block:: text
+
+    # 结构示意；尖括号中的内容代表生成的 TIR expression
+    desc_a = encode_matrix_descriptor(
+        <Asmem runtime base>, <A ldo>, <A sdo>, <A swizzle>
+    )
+    desc_b = encode_matrix_descriptor(
+        <Bsmem runtime base>, <B ldo>, <B sdo>, <B swizzle>
+    )
+    desc_i = Tx.uint32(<dispatch 时生成的 dense instruction descriptor>)
+
+    for ki in Tx.unroll(4):
+        Tx.ptx.tcgen05.mma(
+            get_tmem_addr(<C base>, <TLane offset>, <TCol offset>),
+            add_16B_offset(desc_a, <A offset for ki>),
+            add_16B_offset(desc_b, <B offset for ki>),
             desc_i,
             enable_input_d=(ki != 0),
             ...
         )
 
-``desc_i`` 对 dense tcgen05 路径是 dispatcher 在编译期间算出的 ``uint32``
-常量，不是 runtime 再调用某个 descriptor encoder。``T.unroll(4)`` 则由后面的
-``UnrollLoop`` 展开，随后的 ``StmtSimplify`` 会化简各次迭代的常量。由此可以看出：
-instruction decomposition 来自 tcgen05 operator lowering，而 loop 展开属于
-后续通用 pass。
+这里的 ``desc_a`` 和 ``desc_b`` 需要运行时 SMEM 地址，所以 descriptor encoding 保留在生成的 TIR 中。dense ``desc_i`` 只依赖指令 shape、dtype、major mode 与 ``cta_group``，dispatcher 会把它折叠为编译期 ``uint32`` 常量。
 
-Readback 延续同一个物理约定
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``Tx.unroll(4)`` 会由后续 ``UnrollLoop`` 展开，``StmtSimplify`` 再化简每次迭代中的常量表达式。指令数量与操作数分块来自 tile primitive 实现，循环展开和局部化简由流水线后段完成。
 
-tcgen05 按最终确定的 datapath 把结果写入 TMEM；C layout 用于验证并解释这个
-物理结果。随后的 ``Tx.wg.copy_async`` 同时读取 C layout 和 ``Dreg_wg`` layout，
-选择匹配的 ``tcgen05.ld`` form，并把逻辑 ``(m, n)`` 分配给
-``tid_in_wg=m`` 的 thread 及其局部 slot ``n``：
+Readback 使用另一组 Layout
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+GEMM 将结果写入 TMEM 后，readback 是另一条独立的 tile primitive：
+
+.. code-block:: python
+
+    Dreg = Tx.alloc_local((BLK_N,), "float32")
+    Dreg_wg = Dreg.view(
+        128,
+        BLK_N,
+        layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]),
+    )
+    Tx.tile.wg.copy_async(Dreg_wg[:, :], C[:, :BLK_N])
+
+它同时读取 C 的 ``TLane/TCol`` layout 和 ``Dreg_wg`` 的 distributed layout，选择相应的 ``tcgen05.ld`` form，并把 TMEM 元素送到指定线程的局部位置。整个数据流为：
 
 .. code-block:: text
 
     GMEM
-      │  Tx.cta.copy / Tx.copy_async：按 A/B layout 写入
+      │  copy primitive 按 A/B layout 写入
       ▼
     swizzled SMEM
-      │  Tx.gemm_async：descriptor 按同一 layout 读取
+      │  gemm_async 按同一 layout 生成 descriptor 并读取
       ▼
     TMEM (TLane, TCol)
-      │  Tx.wg.copy_async：按 C 与 register layouts 解释和读取
+      │  wg.copy_async 同时解释 TMEM 与 distributed layouts
       ▼
     per-thread local slots (tid_in_wg, m)
 
-Layout 没有执行 copy 或 MMA；它是 producer 与 consumer 对“同一个逻辑元素
-位于哪里”的共同约定。
+Layout 在这里充当 producer 与 consumer 之间的物理映射契约；tile primitive 负责把这份契约翻译成具体硬件操作。
 
-Layout 的完整生命周期
-----------------------
+``LowerTIRxCleanup`` 处理剩余 Layout
+------------------------------------
 
-同一个 layout 从创建到消失会经过下面几个阶段：
-
-.. code-block:: text
-
-    parser 默认构造 / helper synthesis / 作者显式构造
-                         │
-                         ▼
-                  attach 到 Buffer
-                         │
-                         ▼
-             Buffer view / region slice
-                         │
-                         ▼
-                  canonicalize / match
-                         │
-             ┌───────────┴───────────┐
-             ▼                       ▼
-    operator dispatcher          LowerTIRxCleanup
-    消费硬件语义与 offsets        物化剩余的 memory offset
-             └───────────┬───────────┘
-                         ▼
-               layout metadata 被清除
-                         │
-                         ▼
-             backend 只看到地址和 intrinsics
-
-Dispatcher 和 cleanup 不是互斥的二选一。同一个 shared-memory swizzle 可以被
-GEMM dispatcher 用来构造 descriptor，同时 cleanup 仍会把这个 buffer 上残留的
-普通 ``BufferLoad`` / ``BufferStore`` 展开成物理地址。
-
-.. list-table::
-   :header-rows: 1
-   :widths: 26 37 37
-
-   * - Layout 类型
-     - Operator dispatcher 怎样使用
-     - Cleanup 怎样使用
-   * - 单一 memory axis ``m``，可含 swizzle
-     - 若 buffer 参与 tile primitive，可读取它以推导 descriptor、vector width
-       或 offsets
-     - 将剩余直接 access 物化为一个线性 offset
-   * - ``laneid`` / ``tid_in_wg`` 加局部 ``m``
-     - Register-aware operator 将它解释为 thread ownership 与局部 slot
-     - 不能直接遗留；必须先通过理解它的 operator，或用 ``.view()`` 后再以
-       ``.local()`` 取得当前 thread 的 storage view
-   * - ``TLane`` / ``TCol``
-     - TMEM-aware operator 验证 datapath 并取得硬件地址
-     - 不能被普通 TIR ``BufferLoad`` 压成一个 pointer offset
-
-默认 row-major 不等于“没有 layout”
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-在本章讨论的 CUDA TIRx ``PrimFunc`` 中，``T.match_buffer``、``T.decl_buffer``
-等 buffer APIs 的 ``layout`` 参数默认值就是 ``"default"``。因此作者省略
-``layout=`` 时，parser 会自动构造：
+``TilePrimitiveDispatch`` 已将全部 ``TilePrimitiveCall`` 展开。普通 ``BufferLoad``、``BufferStore`` 和指针访问仍可能引用带 layout 的 buffer，``LowerTIRxCleanup`` 随后处理这些访问：
 
 .. code-block:: text
 
-    TileLayout(S[shape])
+    创建或附着 Layout
+           │
+           ▼
+    Buffer view / region slice
+           │
+           ▼
+    TilePrimitiveDispatch 读取并展开算子
+           │
+           ▼
+    LowerTIRxCleanup 映射剩余普通访问
+           │
+           ▼
+    重建物理 Buffer，清除 layout metadata
+           │
+           ▼
+    后续 TIR passes 与 target codegen
 
-它是 dense row-major layout。三种写法的差别如下：
-
-.. list-table::
-   :header-rows: 1
-   :widths: 24 35 41
-
-   * - 写法
-     - 普通连续 access 的结果
-     - IR 中保留的信息
-   * - 省略 ``layout=``，或写 ``layout="default"``
-     - cleanup 后与传统 row-major 地址相同
-     - 有一个可供 slice、match 和 operator 检查的 ``TileLayout``
-   * - ``layout=None``
-     - 通过普通 shape/stride 规则也可得到相同地址
-     - 明确不附带 layout metadata；operator 无法从它取得专用映射
-   * - 显式硬件 layout
-     - 地址可能包含 padding/swizzle，或映射到 thread/TMEM axes
-     - 携带 operator-specific 的物理约定
-
-所以，对普通连续 buffer 来说，“默认 layout”和“没有 layout”可能产生完全
-相同的最终地址；差别在于编译器前半程有没有一份统一、可检查的映射契约。
-它本身不会凭空带来性能收益，更不等于编译器已经选出了最佳 layout。
-
-Layout 自动到什么程度
-~~~~~~~~~~~~~~~~~~~~~~
-
-“自动 layout”常混用三种含义：
-
-1. **默认构造。** Parser 在省略参数时补 dense row-major layout。这只是默认
-   语义，不是性能搜索。
-2. **Helper synthesis。** ``mma_shared_layout``、``tmem_datapath_layout``、
-   ``tcgen05_atom_layout`` 等 helper 根据显式 dtype、shape 和 mode 构造已知
-   硬件 layout。选择哪个 helper 和 mode 仍由作者或上层生成器决定。
-3. **Lowering-time parameter inference。** Dispatcher 结合既有 layout 与
-   shape、dtype、``cta_group`` 和 config，推导 major mode、descriptor fields、
-   instruction shape 与 offsets。它是从已给定约定推出底层参数，不是反向搜索
-   最优 layout。
-
-默认 TIRx pipeline 没有一个全局 ``InferOptimalLayout`` pass，也不会从任意
-手写 PTX 反推出 lane/register、SMEM swizzle 或 TMEM layout。
-
-三种 layout 怎样变成物理位置
------------------------------
-
-普通 memory layout：逻辑下标变成地址
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-考虑逻辑 shape ``(4, 8)``、row stride 为 16 的 padded layout：
-
-.. code-block:: text
-
-    layout = TileLayout(S[(4, 8) : (16, 1)])
-
-    layout.apply(i, j)["m"] = i * 16 + j
-
-    B[i, j]                  →  B_flat[i * 16 + j]
-
-这是纯映射示例；实际 backing allocation 必须至少容纳
-``layout.span() = 56`` 个 elements，而不是只分配逻辑元素数 ``4 * 8 = 32``。
-若通过函数参数传入 B，caller 也必须满足这个物理容量约定。
-
-``LowerTIRxCleanup`` 会先把 layout 产生的物理坐标写入 access index，并保留
-buffer 的 ``elem_offset`` metadata；后续 ``FlattenBuffer`` 再把
-``elem_offset`` 折入最终线性 index。所以上图表示的是最终 **有效地址语义**，
-不是声称 cleanup 内某一个 AST 节点已经完成所有后续 folding。
-
-如果使用 ``ComposeLayout``，物理 offset 还可能包含 shared-memory swizzle 的
-XOR、shift 和 mask。完整 layout 代数见 :ref:`chap_tirx_layout_api`。
-
-Distributed layout：逻辑元素变成 ownership 与局部 slot
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Register-backed tile 通常需要两个物理坐标：哪个 thread 持有元素，以及它在该
-thread 的第几个局部 slot。例如：
-
-.. code-block:: python
-
-    fragment_layout = TileLayout(
-        S[(8, 4, 2) : (4@laneid, 1@laneid, 1)]
-    )
-
-把它解释成逻辑 ``8×8`` tile 时：
-
-.. code-block:: text
-
-    laneid = 4 * row + col // 2
-    m      = col % 2
-
-``laneid`` 表示 ownership，``m`` 表示 lane-local slot；``m`` 不是最终 PTX 中
-某个固定寄存器编号。真实 register allocation 仍由 CUDA toolchain 完成。
-
-普通 TIR ``BufferLoad`` 无法只凭一个 offset 验证“当前 thread 是否拥有这个
-逻辑元素”。因此，含 thread axis 的 layout 如果直接遗留到 cleanup 会报错。
-``.view()`` 先建立 distributed logical view，随后还必须通过 ``.local()`` 取得
-当前 thread 的 storage view；``.view()`` 单独使用并不能让直接 load 合法。
-
-TMEM layout：逻辑元素变成 ``TLane`` 与 ``TCol``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Blackwell TMEM 使用二维硬件坐标：
-
-.. code-block:: text
-
-    TileLayout(S[(128, N) : (1@TLane, 1@TCol)])
-
-    C[m, n] → { TLane: m, TCol: n }
-
-``TLane`` 是 TMEM 的物理 lane row，不是执行当前代码的 CUDA ``lane_id``。
-``TLane`` 与 ``TCol`` 也不是普通 pointer 的两个 strides；tcgen05-aware operator
-必须先验证并解释它们。若这种二维坐标直接留给普通 ``BufferLoad``，cleanup
-无法把它降成所要求的单一 memory offset。
-
-``LowerTIRxCleanup`` 的准确边界
----------------------------------------------
-
-Dispatcher 完成后，``LowerTIRxCleanup`` 运行 ``LayoutApplier``。对剩余普通
-``BufferLoad`` / ``BufferStore``，其核心工作是：
+对普通 memory layout，``LayoutApplier`` 的核心过程可以写成：
 
 .. code-block:: text
 
@@ -435,100 +341,87 @@ Dispatcher 完成后，``LowerTIRxCleanup`` 运行 ``LayoutApplier``。对剩余
     layout.canonicalize().apply(indices, shape)
           │
           ▼
-    一个 symbolic physical coordinate
+    一个 symbolic memory coordinate
           │
           ▼
-    flattened buffer access
+    physical buffer access
 
-对于 CUDA 的直接 memory access，有 layout 时最终必须只产生一个 physical
-coordinate，通常命名为 ``m``；没有 layout 时则使用普通 shape/stride 规则。
-``LayoutApplier`` 还把 layout-backed buffers 重建为 physical views并清空 layout
-metadata。随后 ``BufferOffsetRemover`` 消除 ``tirx.buffer_offset(BufferLoad)``
-wrapper，使其中的 offset 与已经展平的访问一致。
+这里的 symbolic coordinate 可以包含运行时循环变量、``threadIdx`` 或函数参数。后续 ``FlattenBuffer`` 会把 buffer 的 ``elem_offset`` 合入线性 index，形成最终地址语义。``BufferOffsetRemover`` 则消除 ``tirx.buffer_offset(BufferLoad)`` wrapper，使其中的 offset 与物理访问保持一致。
 
-这里的 ``symbolic`` 表示编译器在 lowering 时构造、化简地址表达式；表达式中仍可
-包含 runtime loop index、``threadIdx`` 或函数参数，并非所有地址都在编译期变成
-常量。
+普通指针访问需要 layout 最终产生一个 memory coordinate，通常命名为 ``m``。带有 ``laneid``、``tid_in_wg``、``TLane`` 或 ``TCol`` 的映射表达额外的硬件坐标；它们应先由理解这些坐标的 tile primitive 消费，或通过 ``.view()`` 与 ``.local()`` 转成当前线程的存储视图。若这类坐标以普通 ``BufferLoad`` 留到 cleanup，编译器会给出诊断。
 
-完整 ``LowerTIRx`` 成功后，可以依赖：
+``LowerTIRx`` 完成后，所有 ``TilePrimitiveCall`` 都已展开，layout metadata 已被 dispatcher 读取或由 cleanup 物化，``Tx.ptx.*`` 等 target intrinsics 则继续进入后续 TIR passes 与 CUDA codegen。
 
-- 所有 ``TilePrimitiveCall`` 已被具体实现替换，否则 pass 会失败；
-- scope IDs 已被解析；
-- layout metadata 已被 operator 消费或由 cleanup 物化并清除；
-- ``T.ptx.*`` 可以继续存在，尚未变成最终 CUDA source/PTX assembly；
-- 类型合法化、host/device split 和 ABI lowering 仍未完成。
-
-高层 tile primitive 与直接 PTX
+高层 Tile Primitive 与直接 PTX
 -------------------------------
 
-``T.ptx.tcgen05.mma`` 是 target intrinsic ``Call``，不是 ``TilePrimitiveCall``。
-它不会进入 ``gemm_async`` 的 registered variants，但 surrounding kernel
-仍会经过 scope lowering、cleanup、通用 passes、host/device split 和 codegen。
+直接写 ``Tx.ptx.tcgen05.mma`` 时，这个 target intrinsic ``Call`` 从一开始就在输入 IR 中。``TilePrimitiveDispatch`` 的算子分派针对 ``TilePrimitiveCall``，作者写下的 PTX intrinsic 会原样保留。高层写法生成的 PTX intrinsic 与直接写入的 PTX intrinsic，随后都经过 cleanup 和流水线后段：
+
+.. code-block:: text
+
+    Tx.tile.gemm_async
+            │
+            ▼
+    TilePrimitiveDispatch
+            │
+            ▼
+    Tx.ptx.tcgen05.mma
+            │
+            ▼
+    cleanup → 后续 TIR passes → CUDA codegen
+
+    直接 Tx.ptx.tcgen05.mma
+            │
+            ▼
+    TilePrimitiveDispatch 保留该 intrinsic
+            │
+            ▼
+    cleanup → 后续 TIR passes → CUDA codegen
+
+两种写法的差别集中在 PTX intrinsic 生成之前：
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 35 35
+   :widths: 27 37 36
 
-   * - 责任
-     - ``Tx.gemm_async``
-     - 直接 ``T.ptx.tcgen05.mma``
-   * - Backend variant
-     - Dispatcher 选择，或验证显式 ``dispatch=``
-     - 作者已经选择
-   * - Logical shape 到 instruction tiles
-     - Dispatcher 根据 shape/dtype/config 分解
-     - 作者手写每条 instruction
-   * - Operand layout 合法性
-     - Dispatcher 做 operator-specific matching 和检查
-     - 主要由作者保证
-   * - SMEM/TMEM descriptor 与 offsets
+   * - 编程责任
+     - ``Tx.tile.gemm_async``
+     - 直接 ``Tx.ptx.tcgen05.mma``
+   * - 实现选择
+     - Dispatcher 根据 target 选择或验证 ``dispatch=``
+     - 作者已经选定具体 intrinsic
+   * - 逻辑 tile 分解
+     - 根据 shape、dtype 和 config 生成指令 tiles
+     - 作者逐条写出指令
+   * - 操作数 layout 检查
+     - Dispatcher 执行算子专用的匹配与验证
+     - 作者按照 PTX 约定组织操作数
+   * - Descriptor 与 TMEM 地址
      - 从 layout、region 和 config 推导
-     - 作者手写或调用低级 encoding intrinsics
-   * - Lane/local-slot/TMEM operand 顺序
-     - Layout 与 dispatcher 共同表达和检查
-     - 作者编码在 lane 公式、地址与 operand 顺序中
-   * - Simplify、legalize、split、codegen
-     - 仍然执行
-     - 仍然执行
+     - 作者调用低级编码与地址接口
+   * - Lane 与局部值顺序
+     - Distributed layout 表达归属和局部位置
+     - 作者用 lane 公式、局部数组和 intrinsic 参数表达
 
-“作者编码寄存器顺序”不是说作者指定 ``%r17`` 这样的最终物理寄存器号；作者
-只是在 local arrays、lane formulas 和 PTX operands 中表达值的相对位置，真正的
-register allocation 仍由 ptxas 等工具完成。区别在于：直接 PTX 的 IR 不再保留
-“这个 operand 对应逻辑 ``C[m,n]``”的完整 tile-op contract，dispatcher 因而无法
-替作者做同等级的结构匹配与 layout mismatch 诊断。
+直接 PTX 仍可与 layout 共存，具体取决于地址怎样构造：
 
-直接 PTX 也不必然绕过所有 memory layout：
+- PTX 参数来自 layout-backed memory buffer 的 ``ptr_to(logical_indices)`` 时，cleanup 可以把单一 memory-axis layout 映射成物理地址。
+- 使用 ``Tx.ptr_byte_offset`` 或 ``Tx.handle_add_byte_offset`` 提供 byte offset 时，地址表达式直接携带作者选定的物理映射。
+- TMEM 地址可以通过 ``Tx.cuda.get_tmem_addr(base, tlane, tcol)`` 明确给出，distributed 数据的 lane 归属与局部顺序也由作者明确组织。
 
-- 若 intrinsic 参数经 ``buf.ptr_to(logical_indices)`` 构造，且 buffer layout
-  能降低为 **单一 memory-axis offset**，cleanup 仍会把逻辑 indices 映射成
-  物理地址。
-- Distributed/thread-axis layout 或 ``TLane/TCol`` layout 不能把 ``ptr_to``
-  当作通用逃生口；若它们仍以直接 ``BufferLoad`` 形式出现，cleanup 会报错。
-- 一旦 intrinsic 只接收 raw base address 和作者已经算好的 offset，layout
-  mapping 就已被绕过。``buf.data + raw_offset`` 是常见写法，但不是唯一方式。
+因此，直接 PTX 省去了 tile primitive 提供的算子级推导与检查；layout 仍可负责周围 buffer 的地址映射。作者显式写出的 descriptor、TMEM 坐标、lane 公式和局部顺序承担同一组物理约定。ptxas 等工具继续负责 ``%r17`` 一类物理寄存器的最终分配。
 
-因此，“直接 PTX 没有消灭 layout”的准确含义是：它只会让 **那个低级
-instruction call** 不再经过 tile-op layout inference；周围 buffers 的普通地址
-访问仍可能需要 layout。反过来，如果所有相关地址、lane mapping 和 operand
-顺序都由作者以 raw expressions 写完，那么 layout 对这条指令当然不会再提供
-额外推导。
+Layout 约束怎样产生诊断
+-----------------------
 
-失败表示检查，而不是自动修复
-------------------------------
+假设 C 位于 TMEM，却声明为只有 ``m`` 轴的连续行优先 layout，同时强制 ``dispatch="tcgen05"``。tcgen05 variant 期望 C region 映射到受支持的 ``TLane/TCol`` datapath；两组物理坐标发生冲突，该候选实现会被拒绝。
 
-假设 C 位于 TMEM，却只给它一个普通 row-major ``m`` layout，然后强制
-``dispatch="tcgen05"``。该 layout 无法证明逻辑 C region 与 ``TLane/TCol``
-datapath 相容，tcgen05 implementation 会拒绝它；如果没有其他候选，编译器
-报告 dispatch failure。
+这类诊断来自 layout 的契约作用。Dispatcher 从已声明的 layout 推导底层参数并验证硬件约束，kernel 作者或上层生成器负责让 producer、consumer 与 allocation 使用一致的映射。
 
-这类错误说明了 TIRx 的责任边界：dispatcher 会从 **已经声明的** layout 推导
-底层参数并验证约束，但不会搜索一个新 layout，再悄悄重写 kernel 的 producer、
-consumer 和 allocation 使它们全部匹配。
-
-检查 dispatch 与 layout lowering
+检查 Dispatch 与 Layout Lowering
 --------------------------------
 
-调试时可以在 cleanup 删除 layout metadata 前，单独查看 dispatch 结果：
+需要定位问题时，可以分别打印 authored TIRx、dispatch 结果和完整 ``LowerTIRx`` 结果：
 
 .. code-block:: python
 
@@ -550,39 +443,24 @@ consumer 和 allocation 使它们全部匹配。
     lowered = TT.LowerTIRx()(bound)
     print(lowered.script())
 
-``TilePrimitiveDispatch`` 运行时必须能解析出 target；显式 ``BindTarget`` 最清晰，
-也可以依赖已有的 PrimFunc target attribute 或 current target context。这里指定
-``sm_100a`` 是因为示例使用 Blackwell ``tcgen05``；生成和运行最终代码还要求相应
-CUDA toolkit 与硬件支持。
+示例使用 Blackwell ``tcgen05``，因此 target 设为 ``sm_100a``。检查输出时，可以沿同一条调用依次确认：
 
-``LowerTIRx`` 也提供一个调试开关，在 dispatch 与 cleanup 之间打印 IR：
+1. 原始 C/A/B regions 与 layouts；
+2. dispatch 选中的 variant；
+3. A/B descriptor 的 major、swizzle、``ldo/sdo`` 和 16-byte offsets；
+4. C 的 ``TLane/TCol`` offsets 与 TMEM 地址；
+5. MMA iteration 数量及 ``enable_input_d``；
+6. cleanup 后生成的普通物理访问。
 
-.. code-block:: bash
-
-    TVM_PRINT_AFTER_TIRX_DISPATCH_OPS=1 python your_kernel.py
-
-检查 ``Tx.gemm_async`` 时，建议依次确认：
-
-1. 原始 C/A/B regions 和 layouts；
-2. dispatch 选择了哪个 variant；
-3. A/B descriptors 的 major、swizzle、``ldo/sdo`` 和 slice offsets；
-4. C datapath 与 TMEM offsets；
-5. 生成的 MMA iteration 数量与 ``enable_input_d``；
-6. cleanup 后还剩哪些直接 physical accesses。
-
-这样可以把问题定位到 kernel schedule、layout contract、operator dispatcher
-或后端 codegen，而不是只比较 TIRx 源码和最终 assembly。
+这样可以把问题定位到输入 schedule、layout 契约、算子 dispatcher 或后端 codegen 的具体阶段。
 
 核心源码导航
 ------------
 
 - `dispatcher.py`_：variant registry、priority、predicate 与失败报告；
-- `tile_primitive_dispatch.cc`_：scope/launch context、body replacement 与
-  callbacks；
-- `lower_tirx_cleanup.cc`_：``LayoutApplier``、``BufferOffsetRemover`` 与
-  physical-offset materialization；
-- `tcgen05 gemm dispatcher`_：从 operand regions/layouts 推导 descriptors、
-  TMEM address、instruction tiling 和 ``T.ptx.tcgen05.mma``。
+- `tile_primitive_dispatch.cc`_：dispatch context、调用替换与 execution scope lowering；
+- `lower_tirx_cleanup.cc`_：``LayoutApplier``、``BufferOffsetRemover`` 与物理地址物化；
+- `tcgen05 gemm dispatcher`_：从操作数 regions/layouts 推导 descriptors、TMEM 地址、指令分块和 ``Tx.ptx.tcgen05.mma``。
 
 .. _dispatcher.py: https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/operator/tile_primitive/dispatcher.py
 .. _tile_primitive_dispatch.cc: https://github.com/apache/tvm/blob/v0.26.0/src/tirx/transform/tile_primitive_dispatch.cc
