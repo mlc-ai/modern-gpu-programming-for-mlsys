@@ -14,9 +14,9 @@ high-performance implementation. This book develops both.
 The book proceeds from hardware to programming model to complete kernels. It first introduces GPU
 organization and execution, then presents the programming model used throughout the book, and
 finally builds high-performance kernels step by step. The main target is NVIDIA Blackwell, and the
-running examples are General Matrix-Matrix Multiplication (GEMM) and FlashAttention. Along the way,
-the book develops the key ideas behind GPU optimization: data layout, asynchronous data movement,
-and asynchronous coordination.
+running examples are General Matrix-Matrix Multiplication (GEMM), FlashAttention, and FlashMLA.
+Along the way, the book develops the key ideas behind GPU optimization: data layout, asynchronous
+data movement, and asynchronous coordination.
 
 The material grows out of the [Machine Learning Systems](https://mlsyscourse.org/) course series at
 Carnegie Mellon University. The examples use the **TIRx** Python DSL so that the ideas can be
@@ -37,8 +37,9 @@ This book is open source. Contributions, corrections, and examples are welcome t
   foundation for the code examples throughout the book.
 - **Part III, GEMM: Tiled to SOTA.** A complete guide to optimizing a tiled GEMM, built up through
   TMA pipelining, persistent scheduling, warp specialization, and 2-CTA clusters.
-- **Part IV, Flash Attention 4.** A complete attention kernel built from the Part III techniques:
-  two MMAs with softmax between them, online-softmax rescaling, causal masking, and GQA.
+- **Part IV, Attention Kernels.** This part first builds Flash Attention 4 from the Part III
+  techniques, then introduces Multi-head Latent Attention and maps a sparse FlashMLA prefill
+  operator to a two-CTA Blackwell kernel.
 - **Appendices.** TIRx language reference, a reproducible GPU benchmarking and profiling workflow,
   compiler internals, and a guide to debugging asynchronous kernels.
 
@@ -75,10 +76,11 @@ chapter_gemm_advanced/index
 ```
 
 ```{toctree}
-:caption: Part IV, Flash Attention 4
+:caption: Part IV, Attention Kernels
 :maxdepth: 2
 
 chapter_flash_attention/index
+chapter_flashmla/index
 ```
 
 ```{toctree}
