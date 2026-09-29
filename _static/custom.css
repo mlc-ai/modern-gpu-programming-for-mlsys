@@ -1,21 +1,3 @@
-.sidebar-book-title {
-    margin: 0;
-    font-family: var(--pst-font-family-heading);
-    font-size: 1.25rem;
-    font-weight: 400;
-    line-height: 1.3;
-    letter-spacing: -0.02em;
-}
-.sidebar-book-title a {
-    color: var(--pst-color-text-base);
-    text-decoration: none;
-}
-.sidebar-book-title a:hover {
-    color: var(--pst-color-link);
-    text-decoration: underline;
-    text-underline-offset: 0.15em;
-}
-
 /* Center table headers */
 table.docutils th {
     text-align: center !important;
