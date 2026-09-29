@@ -46,7 +46,7 @@ html_theme_options = {
     "logo": {"link": "https://mlc.ai/"},
     "show_navbar_depth": 1,
     "show_toc_level": 2,
-    "home_page_in_toc": False,
+    "home_page_in_toc": True,
     "navbar_persistent": [],
     "use_download_button": False,
     "use_fullscreen_button": False,

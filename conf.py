@@ -54,7 +54,7 @@ html_theme_options = {
     "logo": {"link": "https://mlc.ai/"},
     "show_navbar_depth": 1,
     "show_toc_level": 2,
-    "home_page_in_toc": False,
+    "home_page_in_toc": True,
     "navbar_persistent": [],
     "repository_url": "https://github.com/mlc-ai/modern-gpu-programming-for-mlsys",
     "repository_branch": "main",
