@@ -20,7 +20,7 @@
 编译器内部机制
 ==============
 
-本节先说明 TIRx IR 怎样组织函数体、buffer、layout 和执行层级，再沿编译流水线观察这些信息怎样变成 CPU 端的启动函数和 GPU 端的 device code。
+本节先说明 TIRx IR 怎样组织函数体、typed tensor、layout 和执行层级，再沿编译流水线观察这些信息怎样变成 CPU 端的启动函数和 GPU 端的 device code。
 
 .. toctree::
    :maxdepth: 1

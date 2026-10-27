@@ -24,29 +24,19 @@ layout = TileLayout(S[(128, 256) : (1@TLane, 1@TCol)])
 
 pool.alloc(shape, dtype, layout=layout)
 
-T.decl_buffer(shape, dtype, scope=scope, layout=layout)
+T.alloc_tensor(ty_args=[T.Tensor(shape, dtype, scope=scope, layout=layout)])
 ```
 
 Buffer 由此记录自己的物理布局。后续 tile 操作可以直接读取这项信息，不必在每次访问时重新说明元素位于哪些 lanes、registers 或线性存储位置。
 
-本章使用的 layout 对象和命名轴都位于 `tvm.tirx.layout`：
+本章使用的 layout 对象和命名轴都位于 `tvm_tirx.tirx.layout`：
 
 ```python
-from tvm.tirx.layout import (
-    TileLayout,
-    ComposeLayout,
-    S,
-    R,
-    laneid,
-    warpid,
-    tid_in_wg,
-    TLane,
-    TCol,
-    m,
-    tcgen05_atom_layout,
-    tmem_datapath_layout,
-    wg_local_layout,
-)
+from tvm_tirx.tirx.layout import Axis, TileLayout, ComposeLayout, S, R
+from tvm_tirx.backend.cuda.axis import laneid, warpid, tid_in_wg, TLane, TCol
+from tvm_tirx.backend.cuda.layout import tmem_datapath_layout
+
+m = Axis.get("m")
 ```
 
 Layout 的结果不一定是一个线性地址，也可以是 `laneid`、`warpid`、`TLane` 和 `TCol` 等硬件坐标。前面的 TMEM layout 将逻辑 row 映射到 `TLane`，将逻辑 column 映射到 `TCol`。再看一个同时使用 lane 和 warp 轴的 register fragment：
@@ -345,31 +335,21 @@ TCol  = s
 
 Accumulator 和 scale factors 使用的仍是同一个 `TileLayout` 模型：前者通常是 TMEM 中的一组基础坐标，后者则在相同的 `TLane`、`TCol` 空间中加入 replication。
 
-## 常用 Layout 构造函数
+## 常用 Layout 模式
 
-实际 kernel 通常不需要手写每一种硬件 layout。TIRx 为常见模式提供了构造函数。
+CUDA backend 的 `tmem_datapath_layout(datapath, rows, cols)` 提供常见的 TMEM
+accumulator 映射，从 `tvm_tirx.backend.cuda.layout` 导入。例如，`"D"` 表示
+`M=128` 时按 row 直接映射。
 
-```python
-tmem_datapath_layout(datapath, rows, cols)
-```
-
-返回 `tcgen05.mma` 写入的 TMEM accumulator layout。`datapath` 选择行映射方式。例如，`"D"` 对应 `M=128` 时按 row 直接映射的布局，`"F"` 对应 `M=64` 时分散到多个 Lane 区域的布局。
+寄存器布局可以把一行分配给 warpgroup 中的每个 thread：
 
 ```python
-tcgen05_atom_layout(instr_shape, tensor_shape, dtype)
+TileLayout(S[(128, cols) : (1@tid_in_wg, 1)])
 ```
 
-返回与 `tcgen05.ld` 或 `tcgen05.st` data-movement shape 对应的 register tile layout。`instr_shape` 可以是 `"32x32b"`、`"16x64b"`、`"16x128b"` 等字符串；`tensor_shape` 和 `dtype` 共同决定相应的 repeat factor。
-
-这个对象描述一个分布到 warpgroup 各 thread registers 中的 tile。当它用于 TMEM 与 local fragment 之间的 `Tx.wg.copy_async` 时，lowering 可以据此选择匹配的 warp-collective `tcgen05.ld` 或 `tcgen05.st`；每个 warp 处理自己的 32-lane TMEM partition。
-
-```python
-wg_local_layout(cols, rows=128)
-```
-
-返回 warpgroup-local register tile。它把逻辑 row 映射到 `tid_in_wg`，把同一 row 中的 columns 映射到该 thread 的局部 `m` 轴；使用默认的 `rows=128` 时，每个 thread 持有一行。
-
-这些构造函数返回的仍是 `TileLayout`，使用的也是相同的 iter 和命名轴模型；构造函数只是替 kernel 生成了常见的硬件映射。
+在 registers 和 TMEM 之间传输时，先将两侧 view 转换成所选 `tcgen05.ld` 或
+`tcgen05.st` 指令要求的 canonical axes，再把该 opcode 交给 `T.cuda.tile.apply`。
+Tile API 检查显式指定的 layout 和指令，不从通用 copy 自动推断指令。
 
 ## ComposeLayout
 
@@ -538,5 +518,3 @@ bank = floor(64 * i / 2) mod 32 = 0
 8 行都会落到 bank 0。Swizzle 没有改变逻辑 tile，只改变了元素的物理地址，使这个访问模式不再集中到同一个 bank。
 
 上面的推导只说明这种 float16 按列访问会被分散到 8 个 banks。其他访问是否无冲突，还取决于 data type、每次访问的宽度以及硬件指令采用的 access shape。在本章开头的交互图中切换 data type 和 swizzle mode，可以直接比较不同组合的地址映射。
-
-对于构造函数已经覆盖的 `tcgen05` 布局，可以直接使用 `tmem_datapath_layout`、`tcgen05_atom_layout` 等 helper。其他仿射布局仍然使用 `S[...]`、`R[...]` 和 offset 表示。查询 `TileLayout` 时，`apply()` 只计算逻辑元素的基础物理坐标，不会枚举 replica。Shared-memory swizzle 使用 `ComposeLayout(per_element, swizzle_len, atom_len, tile_layout)`，其中 tile layout 只产生线性 `m` 地址。

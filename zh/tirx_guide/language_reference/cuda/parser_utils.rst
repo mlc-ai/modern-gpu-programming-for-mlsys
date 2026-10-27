@@ -37,6 +37,8 @@ value，应直接内联到 IR，而不是作为 script variable 解析。它既�
     for j in T.unroll(n):          # marked for the UnrollLoop lowering pass
         acc[0] = acc[0] + A[tx, j]
 
+``meta_var`` 保存 parser-side handle，不会让已经计算出的运行时值自动重新求值。对可变标量做算术会产生不可变的 value binding。使用 persistent scheduler 时，应在每轮任务循环内，根据当前 cursor 重新计算 tile 坐标。
+
 ``@T.inline``：内联函数
 -----------------------
 
@@ -59,15 +61,19 @@ value，应直接内联到 IR，而不是作为 script variable 解析。它既�
 values。对象字段可以保存 buffers 和 scalars，因此可以把相关的 allocation
 和状态放进同一个对象，再在 kernel body 中使用。
 
+``State`` 定义在 ``@T.function`` 外部；创建 ``s`` 和使用其字段的语句则放在
+kernel 内部，并先分配 ``smem``。
+
 .. code-block:: python
 
     @T.meta_class
     class State:
         def __init__(self, smem):
-            self.acc = T.alloc_local([1], "float32")
-            self.buf = T.decl_buffer([64], "float16", smem, scope="shared.dyn")
+            self.acc = T.bind_(T.alloc_local([1], "float32"))
+            self.buf = T.bind_(T.decl_tensor(smem, ty_args=[
+                T.Tensor((64,), "float16", scope="shared.dyn")]))
 
-    s = State(smem.data)
+    s = State(smem.ptr_to([0]))
     s.acc[0] = T.float32(0.0)     # use its fields like ordinary buffers
     # ... s.buf[i] ...
 
