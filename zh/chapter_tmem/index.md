@@ -26,13 +26,13 @@ TMEM 采用动态分配。`tcgen05.alloc` 沿 Column 维申请空间，可用的
 下面是后续 TIRx kernel 中常见的写法：
 
 ```python
-pool = T.SMEMPool()
+pool = SMEMPool()
 tmem_addr = pool.alloc((1,), "uint32")
 pool.commit()
 
 if warp_id == 0:
-    T.ptx.tcgen05.alloc(
-        T.address_of(tmem_addr), n_cols=256, cta_group=1
+    T.ptx.tcgen05.alloc.cta_group__1.sync.aligned.shared__cta.b32(
+        tmem_addr.ptr_to([0]), 256
     )
 ```
 
@@ -43,18 +43,13 @@ if warp_id == 0:
 拿到 base address 后，TIRx 会在这段已分配的空间上声明一个 TMEM buffer：
 
 ```python
-tmem = T.decl_buffer(
-    (128, 256),
-    "float32",
-    scope="tmem",
-    allocated_addr=tmem_addr[0],
-    layout=TileLayout(
-        S[(128, 256) : (1@TLane, 1@TCol)]
-    ),
-)
+tmem = T.cuda.decl_tmem(tmem_addr[0], ty_args=[T.Tensor(
+    (128, 256), "float32", scope="tmem",
+    layout=TileLayout(S[(128, 256) : (1@TLane, 1@TCol)]),
+)])
 ```
 
-`allocated_addr` 将 buffer 绑定到 `tcgen05.alloc` 返回的地址，`layout` 则规定逻辑坐标 `(m,n)` 如何映射到 TMEM 的 `TLane` 和 `TCol`。这样，后续代码可以通过 `tmem[m,n]` 表示逻辑元素，具体的 TMEM 坐标由 layout 统一处理。
+声明使用 `tcgen05.alloc` 实际写入的基地址。layout 将分配区域内的逻辑 `(m,n)` 坐标映射到 `TLane` 和 `TCol`。
 
 ### 分配大小的限制
 
@@ -71,8 +66,8 @@ tmem = T.decl_buffer(
 
 ```python
 if warp_id == 0:
-    T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
-    T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=256, cta_group=1)
+    T.ptx.tcgen05.relinquish_alloc_permit.cta_group__1.sync.aligned()
+    T.ptx.tcgen05.dealloc.cta_group__1.sync.aligned.b32(tmem_addr[0], 256)
 ```
 
 `tcgen05.relinquish_alloc_permit` 先表示当前 CTA 放弃后续分配 TMEM 的权利，执行之后不能再调用 `tcgen05.alloc`；`tcgen05.dealloc` 随后释放之前申请的 columns。Kernel 退出前，所有已分配的 TMEM 都必须显式释放。清理阶段开始前，还要确认 MMA、load 和 store 等访问 TMEM 的异步操作已经完成。

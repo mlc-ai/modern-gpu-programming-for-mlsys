@@ -17,7 +17,7 @@ correction 也使用类似的交接方式。调试这类 kernel 时，可以先�
 先排除运行环境的问题：
 
 ```bash
-python -c "import tvm, tvm.tirx; print(tvm.__file__, tvm.__version__)"
+python -c "import tvm_tirx, tvm_tirx.tirx; print(tvm_tirx.__file__, tvm_tirx.__version__)"
 python -c "import torch; print(torch.cuda.get_device_name(), torch.cuda.get_device_capability())"
 ```
 
@@ -64,8 +64,8 @@ Flash Attention 中 QKᵀ MMA、softmax、PV MMA 和 correction 之间的交接�
 
 | 现象 | 可能原因 | 首先检查 |
 |---|---|---|
-| 找不到 TIRx API，或出现 attribute error | 安装的 wheel 与教程代码不匹配 | 输出 `tvm.__file__` 和 `tvm.__version__`，并对照 {ref}`chap_language_reference` 检查 API 名称。 |
-| 不支持指定的 `dispatch=` | 当前 target 或 primitive 不支持这条路径 | 检查 `dispatch` 参数和 target capability；本教程中的 `tcgen05` 路径需要 Blackwell。 |
+| 找不到 TIRx API，或出现 attribute error | 安装的 wheel 与教程代码不匹配 | 输出 `tvm_tirx.__file__` 和 `tvm_tirx.__version__`，并对照 {ref}`chap_language_reference` 检查 API 名称。 |
+| 不支持指定的 `dispatch=` | 当前 target 或 primitive 不支持这条路径 | 检查显式 PTX opcode和 target capability；本教程中的 `tcgen05` 路径需要 Blackwell。 |
 | Buffer scope 不匹配 | Buffer 被交给了不匹配的硬件路径 | 检查表中的 storage：TMEM 必须通过 `tcgen05` 访问，TMA 搬运的 buffer 必须使用兼容的 GMEM/SMEM layout。 |
 | 编译成功，但生成的 CUDA 中没有预期路径 | Dispatch 没有生成预期的硬件指令 | 修改算法前，先在生成的 CUDA 中搜索 `tcgen05` 和 `cp.async.bulk.tensor`。 |
 
@@ -199,10 +199,10 @@ descriptor、operand 设置或未初始化的 accumulation。数值有限但错�
 通常表示 consumer 读到了旧 tile、只写完一部分的 tile，或尚未完成的 TMA store。
 
 - **`tcgen05.commit` 位于 `elect_sync` 外。** 32 个 threads 都会创建 commit group；其中 31 个空 group 会立即通知 mbarrier，使 TMA 在 MMA 读取前覆盖 SMEM。
-- **TMA store 前缺少 `fence.proxy_async("shared::cta")`。** TMA engine 可能看不到 threads 对 SMEM 的写入。
+- **TMA store 前缺少 `T.ptx.fence.proxy.async_.shared__cta()`。** TMA engine 可能看不到 threads 对 SMEM 的写入。
 - **TMA store 后缺少 `cp_async.bulk.commit_group()` 和 `wait_group(0)`。** Store 尚未完成，下一 tile 就复用了 Dsmem。
 - **Persistent kernel 在 `1024×1024` 等较小 shape 上偶发失败。** 更大的 shape 和更长的 K-loop 可能掩盖竞争。重新检查 tiles 之间的 phase reset 和 TMA store commit/wait。
-- **等待 MMA 完成后直接读取 TMEM。** `mma2ld.wait` 只能确认 MMA 已经完成；writeback thread 在随后发出 `tcgen05.ld` 前，还需要执行 `T.ptx.tcgen05.fence.after_thread_sync()`，把这次 TMEM load 排在跨 thread 的完成通知之后。第 7 至第 9 步都将它放在 `mma2ld.wait` 之后。这个 fence 只负责 `tcgen05` 指令之间的顺序；等待 TMA load 和让普通 thread 的 SMEM 写入对 TMA engine 可见，分别使用各自的 mbarrier 和 proxy fence 协议。
+- **等待 MMA 完成后直接读取 TMEM。** `mma2ld.wait` 只能确认 MMA 已经完成；writeback thread 在随后发出 `tcgen05.ld` 前，还需要执行 `T.ptx.tcgen05.fence__after_thread_sync()`，把这次 TMEM load 排在跨 thread 的完成通知之后。第 7 至第 9 步都将它放在 `mma2ld.wait` 之后。这个 fence 只负责 `tcgen05` 指令之间的顺序；等待 TMA load 和让普通 thread 的 SMEM 写入对 TMA engine 可见，分别使用各自的 mbarrier 和 proxy fence 协议。
 
 ## 结果正确但性能较差
 
@@ -210,18 +210,18 @@ descriptor、operand 设置或未初始化的 accumulation。数值有限但错�
 
 | 线索 | 可能原因 | 首先检查 |
 |---|---|---|
-| 生成的 CUDA 中没有 `cp.async.bulk.tensor` | Copy 没有生成 TMA 路径 | 检查 `dispatch="tma_auto"`、target capability 和 operand layout |
-| 生成的 CUDA 中没有 `tcgen05` | MMA 没有生成 Blackwell Tensor Core 指令 | 检查 `dispatch="tcgen05"`、target capability 和 operand layout |
+| 生成的 CUDA 中没有 `cp.async.bulk.tensor` | Copy 没有生成 TMA 路径 | 检查 显式 TMA opcode、target capability 和 operand layout |
+| 生成的 CUDA 中没有 `tcgen05` | MMA 没有生成 Blackwell Tensor Core 指令 | 检查 显式 `tcgen05.mma` opcode、target capability 和 operand layout |
 | TMA 与 MMA 没有重叠 | Pipeline 太浅，或者 phase 使 producer/consumer 串行执行 | 检查生成 CUDA 中 wait、arrive 和 advance 的顺序 |
 | 小 shape 正确，但大 shape 性能差 | Register spill、occupancy 或 staging buffer 压力 | 检查 compiler resource report；减小 tile、分块 writeback，或降低 pipeline depth |
 
 ## 提交高质量的问题报告
 
 如果完成上述检查后问题仍然存在，请先缩小复现范围，再到
-[Apache TVM GitHub 仓库](https://github.com/apache/tvm/issues)提交 issue。
+[TIRx 编译器 GitHub 仓库](https://github.com/apache/tvm-tirx/issues)提交 issue。
 需要包含：
 
-- `tvm.__file__`、`tvm.__version__` 和 GPU capability；
+- `tvm_tirx.__file__`、`tvm_tirx.__version__` 和 GPU capability；
 - 能复现问题的最小 shape；
 - 问题属于编译失败、deadlock、crash、wrong result 还是 correct-but-slow；
 - 最小 kernel 或 notebook cell，以及对应的正确性测试；

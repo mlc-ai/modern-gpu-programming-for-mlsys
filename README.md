@@ -53,32 +53,57 @@ Remote SSH auto-forwards it.)
 The kernels in this book target Blackwell (`sm_100a`), so running them needs a Blackwell GPU
 (such as a B200), the TIRx compiler, and a CUDA build of PyTorch.
 
-**1. Install the TIRx compiler.** It ships as the `tvm.tirx` module of the Apache TVM wheel:
+**1. Install the TIRx compiler.** The Python module is `tvm_tirx`:
 
 ```bash
-pip install apache-tvm==0.26.0 cuda-bindings
+python -m pip install apache-tvm-tirx
+python -c "import tvm_tirx; print(tvm_tirx.__version__)"
+python scripts/check_installation.py
 ```
 
-Verify:
+The minimal wheel includes native LLVM and its ORC JIT for CPU execution and GPU host
+launchers. To generate ARM or WebAssembly objects from an x86 host, install the LLVM
+backend extra and check both targets:
 
 ```bash
-python -c "import tvm, tvm.tirx; print(tvm.__version__)"
+python -m pip install 'apache-tvm-tirx[all-targets]'
+python scripts/check_installation.py --cross
 ```
 
-**2. Install PyTorch** with a CUDA build matching your GPU (used for the example inputs and the
-reference checks) — see <https://pytorch.org>.
+In the tested `0.1.0a3` release, `[all]` adds process-pool dependencies; `[all-targets]`
+installs the additional LLVM targets. Cross checks generate objects without executing
+foreign-architecture code.
 
-**3. (Optional) install the reference kernels.** Use the companion revision tested with
-Apache TVM 0.26.0:
+**2. Install PyTorch** with a CUDA build matching your GPU — see <https://pytorch.org>.
+The examples are checked with PyTorch `2.14.0+cu132` on an NVIDIA B200.
+
+**3. Install the pinned example environment and FA4 reference:**
 
 ```bash
-git clone https://github.com/mlc-ai/tirx-kernels.git
-cd tirx-kernels
-git checkout 5be39749e7dfd2c4bdae9b4d396f8ec35af07126
-pip install -e .
+python -m pip install -r requirements-examples.txt
+python scripts/install_reference_kernels.py
 ```
 
-Run it with, e.g., `python -m tirx_kernels.test --kernel fp16_bf16_gemm`.
+The FA4 reference revision needs a small migration to the TIRx compiler's binding,
+dtype and FFI APIs. The installer checks out an immutable revision, applies the included
+`patches/tirx-kernels-api.patch`, and installs that source. Its working copy is
+kept under local `validation/reference-kernels/` for inspection.
+
+**4. Run the complete examples from both language editions:**
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/run_examples.py --large
+```
+
+Run these commands from the repository root. Each program runs in a fresh Python process. GEMM checks refill inputs and poison the
+output before each comparison with the FP32 PyTorch reference. Single-tile and multi-tile
+K loops are covered; Step 6 uses sizes satisfying its pipeline-phase constraint.
+`--large` adds `4096x4096x4096` GEMMs for steps 3–9. Use `--suite kernels`,
+`--suite reference`, or `--suite benchmarks` to select a group, and `--language en`
+or `--language zh` to select an edition. Generated programs, logs, environment metadata
+and results go to local `validation/examples/`. Profiling tools have additional dependencies
+listed in the benchmarking appendix. Add `--scheduler-stress` to check partial L2 groups
+and repeated persistent scheduling at `5120x5120x256`.
 
 TIRx parses kernel source via Python source inspection, so examples should live in a file
 or notebook cell rather than inside `python -c`.
