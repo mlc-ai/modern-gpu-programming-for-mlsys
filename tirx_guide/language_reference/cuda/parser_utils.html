@@ -197,7 +197,7 @@
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/benchmarking_gpu_kernels.html">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">Compilation and lowering</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
@@ -418,6 +418,7 @@ TIRx loop; use <code class="docutils literal notranslate"><span class="pre">T.un
     <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
 </pre></div>
 </div>
+<p><code class="docutils literal notranslate"><span class="pre">meta_var</span></code> preserves a parser-side handle; it does not make an already computed runtime value recompute itself. Arithmetic over a mutable scalar produces an immutable value binding. For a persistent scheduler, compute tile coordinates inside each task loop, after the current cursor is available.</p>
 </section>
 <section id="t-inline-inline-functions">
 <h2><code class="docutils literal notranslate"><span class="pre">&#64;T.inline</span></code> — inline functions<a class="headerlink" href="#t-inline-inline-functions" title="Link to this heading">#</a></h2>
@@ -437,13 +438,16 @@ scoping with late binding, so a parameter shadows an enclosing variable:</p>
 <p><code class="docutils literal notranslate"><span class="pre">&#64;T.meta_class</span></code> marks a plain Python class whose <strong>instances are parser meta
 values</strong>: their fields can hold buffers and scalars, so you can bundle related
 allocations and state into one object and use it in the kernel body.</p>
+<p>Define <code class="docutils literal notranslate"><span class="pre">State</span></code> outside <code class="docutils literal notranslate"><span class="pre">&#64;T.function</span></code>. Instantiate it and use its fields
+inside the kernel, where <code class="docutils literal notranslate"><span class="pre">smem</span></code> has already been allocated.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">meta_class</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">State</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">smem</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">"float32"</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">buf</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">([</span><span class="mi">64</span><span class="p">],</span> <span class="s2">"float16"</span><span class="p">,</span> <span class="n">smem</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"shared.dyn"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">bind_</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">"float32"</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buf</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">bind_</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">decl_tensor</span><span class="p">(</span><span class="n">smem</span><span class="p">,</span> <span class="n">ty_args</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">((</span><span class="mi">64</span><span class="p">,),</span> <span class="s2">"float16"</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"shared.dyn"</span><span class="p">)]))</span>
 
-<span class="n">s</span> <span class="o">=</span> <span class="n">State</span><span class="p">(</span><span class="n">smem</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">State</span><span class="p">(</span><span class="n">smem</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]))</span>
 <span class="n">s</span><span class="o">.</span><span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>     <span class="c1"># use its fields like ordinary buffers</span>
 <span class="c1"># ... s.buf[i] ...</span>
 </pre></div>

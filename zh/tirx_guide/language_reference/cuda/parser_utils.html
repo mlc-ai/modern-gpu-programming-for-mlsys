@@ -56,7 +56,7 @@
     <link rel="icon" href="../../../_static/mlc-favicon.ico"/>
     <link rel="index" title="索引" href="../../../genindex.html" />
     <link rel="search" title="搜索" href="../../../search.html" />
-    <link rel="next" title="数据类型与表达式" href="data_types.html" />
+    <link rel="next" title="Data types and expressions" href="data_types.html" />
     <link rel="prev" title="TIRx 语言参考" href="../index.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="zh-CN"/>
@@ -191,17 +191,17 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/index.html">概览</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="../index.html">TIRx 语言参考</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">Parser 工具</a></li>
-<li class="toctree-l2"><a class="reference internal" href="data_types.html">数据类型与表达式</a></li>
-<li class="toctree-l2"><a class="reference internal" href="buffers.html">Buffer 与内存</a></li>
+<li class="toctree-l2"><a class="reference internal" href="data_types.html">Data types and expressions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="buffers.html">Buffers and memory</a></li>
 <li class="toctree-l2"><a class="reference internal" href="control_flow.html">控制流</a></li>
-<li class="toctree-l2"><a class="reference internal" href="threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="threads_sync.html">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../arch/ir_representation.html">TIRx IR 的组织方式</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../arch/tile_primitive_layout_lowering.html">Tile Primitive 与 Layout Lowering</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../arch/tile_primitive_layout_lowering.html">Tile 指令与 Layout Lowering</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
@@ -356,6 +356,7 @@ value，应直接内联到 IR，而不是作为 script variable 解析。它既�
     <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
 </pre></div>
 </div>
+<p><code class="docutils literal notranslate"><span class="pre">meta_var</span></code> 保存 parser-side handle，不会让已经计算出的运行时值自动重新求值。对可变标量做算术会产生不可变的 value binding。使用 persistent scheduler 时，应在每轮任务循环内，根据当前 cursor 重新计算 tile 坐标。</p>
 </section>
 <section id="t-inline">
 <h2><code class="docutils literal notranslate"><span class="pre">&#64;T.inline</span></code>：内联函数<a class="headerlink" href="#t-inline" title="Link to this heading">#</a></h2>
@@ -375,13 +376,16 @@ value，应直接内联到 IR，而不是作为 script variable 解析。它既�
 <p><code class="docutils literal notranslate"><span class="pre">&#64;T.meta_class</span></code> 修饰普通的 Python class，使它的 instances 成为 parser meta
 values。对象字段可以保存 buffers 和 scalars，因此可以把相关的 allocation
 和状态放进同一个对象，再在 kernel body 中使用。</p>
+<p><code class="docutils literal notranslate"><span class="pre">State</span></code> 定义在 <code class="docutils literal notranslate"><span class="pre">&#64;T.function</span></code> 外部；创建 <code class="docutils literal notranslate"><span class="pre">s</span></code> 和使用其字段的语句则放在
+kernel 内部，并先分配 <code class="docutils literal notranslate"><span class="pre">smem</span></code>。</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">meta_class</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">State</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">smem</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">"float32"</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">buf</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">([</span><span class="mi">64</span><span class="p">],</span> <span class="s2">"float16"</span><span class="p">,</span> <span class="n">smem</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"shared.dyn"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">bind_</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">"float32"</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buf</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">bind_</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">decl_tensor</span><span class="p">(</span><span class="n">smem</span><span class="p">,</span> <span class="n">ty_args</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">((</span><span class="mi">64</span><span class="p">,),</span> <span class="s2">"float16"</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"shared.dyn"</span><span class="p">)]))</span>
 
-<span class="n">s</span> <span class="o">=</span> <span class="n">State</span><span class="p">(</span><span class="n">smem</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">State</span><span class="p">(</span><span class="n">smem</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]))</span>
 <span class="n">s</span><span class="o">.</span><span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>     <span class="c1"># use its fields like ordinary buffers</span>
 <span class="c1"># ... s.buf[i] ...</span>
 </pre></div>
@@ -421,7 +425,7 @@ values。对象字段可以保存 buffers 和 scalars，因此可以把相关的
        title="下一页">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">下一页</p>
-        <p class="prev-next-title">数据类型与表达式</p>
+        <p class="prev-next-title">Data types and expressions</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

@@ -56,8 +56,8 @@
     <link rel="icon" href="../../../_static/mlc-favicon.ico"/>
     <link rel="index" title="索引" href="../../../genindex.html" />
     <link rel="search" title="搜索" href="../../../search.html" />
-    <link rel="next" title="CUDA C++/PTX Intrinsics" href="threads_sync.html" />
-    <link rel="prev" title="Buffer 与内存" href="buffers.html" />
+    <link rel="next" title="CUDA C++/PTX intrinsics" href="threads_sync.html" />
+    <link rel="prev" title="Buffers and memory" href="buffers.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="zh-CN"/>
   <meta name="docsearch:version" content="" />
@@ -191,17 +191,17 @@
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/index.html">概览</a></li>
 <li class="toctree-l1 current active has-children"><a class="reference internal" href="../index.html">TIRx 语言参考</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
 <li class="toctree-l2"><a class="reference internal" href="parser_utils.html">Parser 工具</a></li>
-<li class="toctree-l2"><a class="reference internal" href="data_types.html">数据类型与表达式</a></li>
-<li class="toctree-l2"><a class="reference internal" href="buffers.html">Buffer 与内存</a></li>
+<li class="toctree-l2"><a class="reference internal" href="data_types.html">Data types and expressions</a></li>
+<li class="toctree-l2"><a class="reference internal" href="buffers.html">Buffers and memory</a></li>
 <li class="toctree-l2 current active"><a class="current reference internal" href="#">控制流</a></li>
-<li class="toctree-l2"><a class="reference internal" href="threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="threads_sync.html">CUDA C++/PTX intrinsics</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../../arch/ir_representation.html">TIRx IR 的组织方式</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../../arch/tile_primitive_layout_lowering.html">Tile Primitive 与 Layout Lowering</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../arch/tile_primitive_layout_lowering.html">Tile 指令与 Layout Lowering</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
@@ -346,14 +346,14 @@
 <section id="if">
 <h2>if<a class="headerlink" href="#if" title="Link to this heading">#</a></h2>
 <p>Python 的 <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code> 会变成 CUDA 的 <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code>。可以根据
-thread 或 lane 条件限制一段工作，也可以通过 <code class="docutils literal notranslate"><span class="pre">T.ptx.elect_sync()</span></code> 从一个
+thread 或 lane 条件限制一段工作，也可以通过 <code class="docutils literal notranslate"><span class="pre">T.cuda.elect_sync()</span></code> 从一个
 warp 中选出一个 thread 发出指令：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">tx</span> <span class="o">&lt;</span> <span class="mi">128</span><span class="p">:</span>
     <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 <span class="k">else</span><span class="p">:</span>
     <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">+</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
 
-<span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
+<span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
     <span class="k">pass</span>                             <span class="c1"># one elected lane (e.g. to issue TMA/MMA)</span>
 </pre></div>
 </div>
@@ -380,11 +380,11 @@ warp 中选出一个 thread 发出指令：</p>
 分支中：如果放进 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">wg_id</span> <span class="pre">==</span> <span class="pre">0:</span></code>，其他 warpgroups 无法到达，kernel
 就会 deadlock。只需要同步一个 warpgroup 时，应使用 warpgroup-scoped
 <code class="docutils literal notranslate"><span class="pre">T.cuda.warpgroup_sync(id)</span></code>，详见第三部分的 warp-specialized GEMM 和
-<a class="reference internal" href="threads_sync.html"><span class="doc">CUDA C++/PTX Intrinsics</span></a>。</p>
+<a class="reference internal" href="threads_sync.html"><span class="doc">CUDA C++/PTX intrinsics</span></a>。</p>
 <p>初始化 barrier 时也要注意参与范围。高层 <code class="docutils literal notranslate"><span class="pre">MBarrier.init()</span></code> wrapper 会生成
 single-thread guard（<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code>）。如果再把它放进另一个
 divergent branch，barrier 可能没有初始化，进而导致 unspecified launch
-failure。原始的 <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.init</span></code> intrinsic 不会自动添加这个 guard；
+failure。原始的 <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.init.shared.b64</span></code> intrinsic 不会自动添加这个 guard；
 调用者必须自行选出负责初始化的 thread。</p>
 </section>
 <section id="loop">
@@ -411,7 +411,7 @@ failure。原始的 <code class="docutils literal notranslate"><span class="pre"
 <section id="while">
 <h2>while<a class="headerlink" href="#while" title="Link to this heading">#</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">while</span></code> 会一直执行，直到条件变为 false。计数器需要使用 mutable scalar，
-详见 <a class="reference internal" href="buffers.html"><span class="doc">Buffer 与内存</span></a>：</p>
+详见 <a class="reference internal" href="buffers.html"><span class="doc">Buffers and memory</span></a>：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">i</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">int32</span> <span class="o">=</span> <span class="mi">0</span>
 <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="mi">64</span><span class="p">:</span>
     <span class="n">A</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">+</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
@@ -449,7 +449,7 @@ failure。原始的 <code class="docutils literal notranslate"><span class="pre"
       <i class="fa-solid fa-angle-left"></i>
       <div class="prev-next-info">
         <p class="prev-next-subtitle">上一页</p>
-        <p class="prev-next-title">Buffer 与内存</p>
+        <p class="prev-next-title">Buffers and memory</p>
       </div>
     </a>
     <a class="right-next"
@@ -457,7 +457,7 @@ failure。原始的 <code class="docutils literal notranslate"><span class="pre"
        title="下一页">
       <div class="prev-next-info">
         <p class="prev-next-subtitle">下一页</p>
-        <p class="prev-next-title">CUDA C++/PTX Intrinsics</p>
+        <p class="prev-next-title">CUDA C++/PTX intrinsics</p>
       </div>
       <i class="fa-solid fa-angle-right"></i>
     </a>

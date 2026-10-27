@@ -1,6 +1,9 @@
 (chap_flash_attention)=
 # Flash Attention 4
 
+下文可运行的参考实现使用 `tirx_kernels.tirx_lite`（`txl`），它是在 `tvm_tirx` 上构建 IR 的 Python builder。本章片段采用固定版本参考实现中的显式 PTX 和 descriptor helper；说明中的 `S_region`、`P_region`、`O_region` 表示逻辑区域，参考实现使用物理 TMEM 列地址访问。请按 README 安装随教程提供的兼容补丁。
+
+
 :::{admonition} 概览
 :class: overview
 
@@ -189,13 +192,13 @@ QKᵀ MMA 只读取 Q 和 K，生成 `S`。Softmax 随后将 `S` 从 TMEM 读到
 
 | 阶段 | Tile 移动或计算 | TIRx primitive | 硬件路径 |
 |---|---|---|---|
-| 加载 Q/K/V | GMEM tiles → SMEM tiles | `Tx.copy_async(..., dispatch="tma_auto")` | TMA load |
-| QKᵀ MMA | SMEM 中的 Q、K → TMEM 中的 score tile `S` | `Tx.warp.gemm_async(..., dispatch="tcgen05")` | `tcgen05.mma` |
-| Softmax 读出 | TMEM 中的 `S` → warpgroup register tile | `Tx.wg.copy_async(reg, tmem)` | `tcgen05.ld` |
-| Softmax 写回 | registers 中尚未归一化的权重 tile `P` → fp16 TMEM view | `Tx.wg.copy_async(tmem_as_f16, reg)` | TMEM store，随后执行 `tcgen05.wait.st()` |
-| PV MMA | TMEM 中的 `P`、SMEM 中的 V → TMEM 中的 output accumulator `O` | `Tx.warp.gemm_async(..., dispatch="tcgen05")` | 使用 TMEM operand 的 `tcgen05.mma` |
+| 加载 Q/K/V | GMEM tiles → SMEM tiles | `txl.ptx[tma_g2s_3d]` / `txl.ptx[tma_g2s_4d]` | TMA load |
+| QKᵀ MMA | SMEM 中的 Q、K → TMEM 中的 score tile `S` | `txl.ptx[mma_f16]` | `tcgen05.mma` |
+| Softmax 读出 | TMEM 中的 `S` → warpgroup register tile | `tmem_load` | `tcgen05.ld` |
+| Softmax 写回 | registers 中尚未归一化的权重 tile `P` → fp16 TMEM view | `tmem_store` | TMEM store，随后执行 `tcgen05.wait.st()` |
+| PV MMA | TMEM 中的 `P`、SMEM 中的 V → TMEM 中的 output accumulator `O` | `txl.ptx[mma_f16]` | 使用 TMEM operand 的 `tcgen05.mma` |
 | 重缩放 | TMEM 中的 `O` → registers → TMEM 中的 `O` | TMEM readback、register multiply、TMEM store | `tcgen05.ld` / TMEM store |
-| Epilogue | TMEM 中的最终 `O` → registers → SMEM → GMEM | TMEM readback、`Tx.copy`、TMA store | `tcgen05.ld` + TMA store |
+| Epilogue | TMEM 中的最终 `O` → registers → SMEM → GMEM | TMEM readback、register and shared-memory PTX stores、TMA store | `tcgen05.ld` + TMA store |
 
 与 GEMM 相比，FA4 在两次 MMA 之间加入了 softmax：`S` 需要从 TMEM 读出，`P` 又要写回 TMEM。指数参考值改变时，`O` 还会额外经过一次 TMEM → registers → TMEM 的重缩放。后文新增的 layouts 和 barriers，主要用来保证这些读写按照正确顺序发生。
 
@@ -224,8 +227,9 @@ WG2 仍负责 correction，但会跳过最后一次 `row_sum` mailbox 往返。
 代码使用两个 thread coordinates 选择当前 thread 的角色：
 
 ```python
-wg_id = T.warpgroup_id([4])
-warp_id = T.warp_id_in_wg([4])
+warp_cta = txl.warp_id()
+wg_id = warp_cta >> 2
+warp_id = warp_cta & 3
 ```
 
 `wg_id` 和 `warp_id` 的取值都为 0–3：前者选择当前 thread 所属的 warpgroup，后者选择该 warpgroup 内的 warp。Kernel 根据这两个值进入对应的 role branch。
@@ -236,16 +240,14 @@ WG3 是异步硬件指令的发起者：warp 1 发起 TMA load，warp 0 发起 Q
 
 Warp specialization 不只分配工作，也让 kernel 可以把 register 容量集中给真正需要它的角色。WG3 大多只负责发出 TMA 和 MMA 指令，不需要长期保存大块中间结果；WG0 和 WG1 则要让每个 thread 同时保存一整行 128 个 fp32 scores，以及 softmax 计算使用的临时值。如果 CTA 中的 512 个 threads 都按 softmax 的最大需求保留 registers，就会超出 register 容量。
 
-代码因此通过 `setmaxnreg` 动态调整每个角色中每个 thread 的 register 上限：
+Role builder 通过 `setmaxnreg` 动态调整各角色中每个 thread 的 register 上限：
 
 ```python
-if wg_id == 3:
-    T.ptx.setmaxnreg(False, 48)        # WG3 释放多余 registers
-elif wg_id < 2:
-    T.ptx.setmaxnreg(True, 200)        # WG0/WG1 为 softmax 增加 registers
-elif wg_id == 2:
-    T.ptx.setmaxnreg(False, 64)        # WG2 执行 correction / non-causal epilogue
-    ...
+# Default B200 register budgets, before entering each role's body:
+sp = txl.specialize(chain_dispatch=True)
+r_softmax = sp.role("softmax", warps=range(8), regs=200)
+r_correction = sp.role("correction", warps=range(8, 12), regs=64)
+wg3 = sp.warpgroup("wg3", warps=range(12, 16), regs=48)
 ```
 
 当前配置中，WG0 和 WG1 每个 thread 最多使用 200 个 32-bit registers，WG2 使用 64 个，WG3 使用 48 个。四个 128-thread warpgroups 的总预算为：
@@ -266,7 +268,7 @@ elif wg_id == 2:
 
 ## 阅读代码前的约定
 
-本章使用的片段经过少量省略，来源是[与 Apache TVM 0.26 兼容的 `flash_attention4.py` revision](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py)，因此会引用在片段之外定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。下面列出后文反复出现、但不容易只看名字判断含义的符号：
+下面的片段使用本书前文介绍的 TIRx tile API 表达算法，省略了完整 kernel 中定义的 shapes、stage indices 和 phase variables。[配套实现](https://github.com/mlc-ai/tirx-kernels/blob/v0.1.2.post1/tirx_kernels/ported/flashattention/flash_attention4.py) 使用 device-only 入口和 host 侧创建的 TensorMap 描述符；本章末尾的可运行示例展示了新版启动接口。除非特别说明 causal 差异，后文的交接过程和 timeline 都描述该示例使用的 non-causal 配置。下表列出反复出现的符号：
 
 | 名称 | 含义 |
 |---|---|
@@ -323,7 +325,7 @@ QKᵀ MMA 先生成当前 block 的 attention scores `S`，softmax 再将 `S` �
 
 下面依次分析这三个步骤。每个 tile operation 都从四个方面说明：哪些 threads 执行它，operands 和结果采用什么 layout，最终 dispatch 到哪条硬件路径，以及哪个 barrier 将结果交给下一角色。
 
-代码使用 `S_region`、`P_region` 和 `O_region` 表示同一块 TMEM allocation 上保存三类 tiles 的 views。`q_stage` 和 `i_q` 都表示当前使用的 Q stage，取值为 0 或 1。`S_region[q_stage, :, :]` 选中 score tile，`P_region[q_stage, 1, :, :]` 选中对应的 fp16 weight tile，而 `O_region[SMEM_PIPE_DEPTH_Q + q_stage, :, :]` 选中 output accumulator。“TMEM 布局与复用”一节会说明额外下标和物理 column 划分。
+本章说明使用 `S_region`、`P_region` 和 `O_region` 表示同一块 TMEM allocation 上保存三类 tiles 的 views。`q_stage` 和 `i_q` 都表示当前使用的 Q stage，取值为 0 或 1。`S_region[q_stage, :, :]` 选中 score tile，`P_region[q_stage, 1, :, :]` 选中对应的 fp16 weight tile，而 `O_region[SMEM_PIPE_DEPTH_Q + q_stage, :, :]` 选中 output accumulator。“TMEM 布局与复用”一节会说明额外下标和物理 column 划分。
 
 ### QKᵀ MMA
 
@@ -334,15 +336,26 @@ $$S = Q_{\text{block}}K_{\text{block}}^{\top}$$
 `Q_block` 和 `K_block` 的 shape 都是 `128×HEAD_DIM`。`K_block` 转置后，每条 Q row 都会与 128 条 K rows 分别做点积，因此得到一个 `128×128` score tile：行对应 queries，列对应当前 K block 中的 keys。结果写入当前 Q stage 的 `S_region[q_stage, :, :]`；代码中的 `MMA_N=128` 就是这 128 个 score columns。
 
 ```python
-Tx.warp.gemm_async(
-    S_region[q_stage, :, :],
-    Q_smem[q_stage, 0:BLK_M, 0:HEAD_DIM],
-    K_smem[kv_stage, 0:BLK_N, 0:HEAD_DIM],
-    dispatch="tcgen05",
-    cta_group=CTA_GROUP,
-)
-if T.ptx.elect_sync():
-    s_ready.arrive(q_stage)
+def gemm_qk(q_stage, kv_stage, qd, kd):
+    """S[q_stage] = Q[q_stage] @ K[kv_stage]^T — orig:L900-920.
+
+    Eight k-phases of one hoisted descriptor plus a
+    trace-time 16B offset. K derives that offset walk from
+    the tile's own layout: for this 128x128 f16 128B-swizzle
+    tile it is (ki%4)*2 + (ki//4)*1024, which is the frozen
+    kernel's hand-written constant to the bit."""
+    for ki in range(HEAD_DIM // MMA_K):
+        with txl.if_(elected()), txl.then_():
+            txl.ptx[mma_f16](
+                txl.Cast("uint32", q_stage * MMA_N),
+                desc_at(qd, q_stage * Q_STAGE16 + qoff(ki)),
+                desc_at(kd, kv_stage * KV_STAGE16 + koff(ki)),
+                txl.uint32(id_qk),
+                *mma_keep_lanes,
+                ki != 0,
+            )
+    with txl.if_(elected()), txl.then_():
+        commit(s_ready, q_stage)
 ```
 
 > **Tile primitive：QKᵀ MMA**
@@ -351,7 +364,7 @@ if T.ptx.elect_sync():
 > - Dispatch：`tcgen05`。
 > - 交接：`s_ready`（→ softmax）。
 
-`s_ready` 是追踪 Tensor Core 完成状态的 `TCGen05Bar`。这里的 `s_ready.arrive(q_stage)` 会发出 `tcgen05.commit`，将此前启动的 QKᵀ MMA 与该 stage 的 barrier 关联起来。只有一个 elected lane 执行这次 commit；Tensor Core 写完 `S` 后，硬件才会向 barrier 报告完成。对应的 softmax warpgroup 等待 `s_ready` 通过后，才能读取 `S_region[q_stage, :, :]`。
+`s_ready` 是追踪 Tensor Core 完成状态的 `MBarrier`。`commit(s_ready, q_stage)` helper 发出 `tcgen05.commit`，将此前启动的 QKᵀ MMA 与该 stage 的 barrier 关联起来。只有一个 elected lane 执行这次 commit；Tensor Core 写完 `S` 后，硬件才会向 barrier 报告完成。对应的 softmax warpgroup 等待 `s_ready` 通过后，才能读取 `S_region[q_stage, :, :]`。
 
 ### 两次 MMA 之间的 Softmax
 
@@ -363,20 +376,17 @@ Softmax 位于两次 MMA 之间，负责将 score tile `S` 转换为尚未归一
 > - Dispatch：通过 `tcgen05.ld` 读取 `S`，在 registers 中执行逐行 softmax，再通过 `tcgen05.st` 写回 `P`。
 > - 交接：先等待 `s_ready`；前 `K_SPLIT` columns 写完后向 `p_o_rescale` 报告完成，其余 columns 写完后再通知 `p_ready_2`。
 
-每个 score tile 有 128 行，一个 softmax warpgroup 也有 128 个 threads，因此 kernel 让 thread `r` 负责逻辑 row `r`。代码中的 `wg_local_layout` 表达的就是这项映射：每个 thread 最终处理自己一行的 128 个 scores。
+每个 score tile 有 128 行，一个 softmax warpgroup 也有 128 个 threads，因此 kernel 让 thread `r` 负责逻辑 row `r`。代码中的 per-thread register row 表达的就是这项映射：每个 thread 最终处理自己一行的 128 个 scores。
 
-每个 thread 会为这一整行保留一个包含 128 个 fp32 values 的 register buffer `s_chunk_buf`；前面为 WG0/WG1 设置的 200-register 上限主要就是为这个 buffer 和 softmax 临时值提供空间。WG0/WG1 等待 `s_ready` 后，并不是用一条指令读出整行，而是通过四次 32-column `tcgen05.ld` 填满这个 buffer：
+每个 thread 会为这一整行保留一个包含 128 个 fp32 values 的 register buffer `s_chunk`；前面为 WG0/WG1 设置的 200-register 上限主要就是为这个 buffer 和 softmax 临时值提供空间。WG0/WG1 等待 `s_ready` 后，并不是用一条指令读出整行，而是通过四次 32-column `tcgen05.ld` 填满这个 buffer：
 
 ```python
-for chunk_idx in T.unroll(BLK_N // SOFTMAX_LD_CHUNK):
-    Tx.wg.copy_async(
-        s_chunk[
-            :, chunk_idx * SOFTMAX_LD_CHUNK : (chunk_idx + 1) * SOFTMAX_LD_CHUNK
-        ],
-        S_region[
-            wg_id, :,
-            chunk_idx * SOFTMAX_LD_CHUNK : (chunk_idx + 1) * SOFTMAX_LD_CHUNK,
-        ],
+for chunk_idx in range(BLK_N // SOFTMAX_LD_CHUNK):
+    tmem_load(
+        s_chunk,
+        chunk_idx * SOFTMAX_LD_CHUNK,
+        tmem(wg_id * MMA_N + chunk_idx * SOFTMAX_LD_CHUNK),
+        SOFTMAX_LD_CHUNK,
     )
 ```
 
@@ -389,85 +399,99 @@ for chunk_idx in T.unroll(BLK_N // SOFTMAX_LD_CHUNK):
 下面的代码省略了 profiler 和可选的 WG0/WG1 顺序 barrier，保留了这三步的主要计算。先求新的参考值，并根据阈值决定是否需要重缩放旧的 `O`：
 
 ```python
+row_max_old = txl.local_scalar("float32")
 if is_first:
-    Tx.max(tile_max, s_chunk_buf)
+    reduce_max_128(tile_max, s_chunk)
 else:
-    row_max_old = row_max[0]
-    tile_max[0] = row_max_old
-    Tx.max(tile_max, s_chunk_buf, accum=True)
-
-row_max_new = tile_max[0]
-row_max_safe = T.if_then_else(tile_max[0] == -float("inf"), 0.0, tile_max[0])
+    # row_max is initialized by the first step; its load
+    # stays inside the non-first specialization.
+    txl.assign(row_max_old, row_max)
+    txl.assign(tile_max[0], row_max_old)
+    reduce_max_128(tile_max, s_chunk, accum=True)
+row_max_new = txl.local_scalar("float32")
+acc_scale = txl.local_scalar("float32")
+acc_scale_ = txl.local_scalar("float32")
+row_max_safe = txl.local_scalar("float32")
+txl.assign(row_max_new, tile_max[0])
+txl.assign(
+    row_max_safe,
+    txl.if_then_else(
+        tile_max[0] == txl.float32(NEG_INF), txl.float32(0.0), tile_max[0]
+    ),
+)
 if is_first:
-    acc_scale = T.float32(1.0)
+    txl.assign(acc_scale, txl.float32(1.0))
 else:
-    acc_scale_ = (row_max_old - row_max_safe) * scale_log2
-    if acc_scale_ >= -rescale_threshold:
-        row_max_new = row_max_old
-        row_max_safe = row_max_old
-        acc_scale = T.float32(1.0)
-    else:
-        acc_scale = T.ptx.exp2(acc_scale_)
-row_max[0] = row_max_new
+    txl.assign(acc_scale_, (row_max_old - row_max_safe) * scale_log2)
+    with txl.if_(acc_scale_ >= -rescale_threshold):
+        with txl.then_():
+            txl.assign(row_max_new, row_max_old)
+            txl.assign(row_max_safe, row_max_old)
+            txl.assign(acc_scale, txl.float32(1.0))
+        with txl.else_():
+            txl.ptx.ex2.approx.ftz.f32(acc_scale, acc_scale_)
+txl.assign(row_max, row_max_new)
 ```
 
 然后将 scores 转成 base-2 exponent 的输入，计算 fp32 权重，并转换为后续 PV MMA 使用的 fp16 `P`。实现会在硬件 `exp2` 和 `ex2_emulation_2` 之间选择：
 
 ```python
-Tx.wg.fma(s_chunk, s_chunk, scale_log2, -row_max_safe * scale_log2)
-for frag_idx in T.unroll(4):
-    s_chunk_local = s_chunk_buf.local(BLK_N)
-    for i in T.unroll(BLK_N // 4 // 2):
-        idx = T.meta_var(frag_idx * BLK_N // 4 + 2 * i)
-        emu_pairs = T.meta_var(EMU_PAIRS_CAUSAL if is_causal else EMU_PAIRS_NC)
-        emu_start = T.meta_var(EMU_START_CAUSAL if is_causal else EMU_START_NC)
-        if (i * 2 % 16 < 16 - 2 * emu_pairs or frag_idx >= 3
-                or frag_idx < emu_start or apply_mask):
-            s_chunk_local[idx] = T.ptx.exp2(s_chunk_local[idx])
-            s_chunk_local[idx + 1] = T.ptx.exp2(s_chunk_local[idx + 1])
+for i in range(BLK_N // 2):
+    fma_f32x2(s_chunk, 2 * i, txl.float32(scale_log2), -row_max_scaled)
+txl.cuda.iket.range_end(softmax_fma_token[0])
+softmax_exp2_token = iket_range("softmax-exp2", leader_only=True)
+emu_pairs = EMU_PAIRS_CAUSAL if is_causal else EMU_PAIRS_NC
+emu_start = (
+    1 if thor_causal_d128 else EMU_START_CAUSAL if is_causal else EMU_START_NC
+)
+for frag_idx in range(4):
+    for i in range(BLK_N // 4 // 2):
+        idx = frag_idx * BLK_N // 4 + 2 * i
+        if (
+            i * 2 % 16 < 16 - 2 * emu_pairs
+            or frag_idx >= 4 - 1
+            or frag_idx < emu_start
+            or apply_mask
+        ):
+            txl.ptx.ex2.approx.ftz.f32(s_chunk[idx], s_chunk[idx])
+            txl.ptx.ex2.approx.ftz.f32(s_chunk[idx + 1], s_chunk[idx + 1])
         else:
-            ex2_emulation_2(
-                s_chunk_local, idx, s_chunk_local[idx], s_chunk_local[idx + 1]
-            )
-    Tx.wg.cast(
-        p_chunk[:, frag_idx * BLK_N // 4 : (frag_idx + 1) * BLK_N // 4],
-        s_chunk[:, frag_idx * BLK_N // 4 : (frag_idx + 1) * BLK_N // 4],
-    )
+            ex2_emulation_2(s_chunk, idx, s_chunk[idx], s_chunk[idx + 1])
+    for i in range(BLK_N // 4 // 2):
+        idx = frag_idx * BLK_N // 4 + 2 * i
+        cast_f32x2_f16x2(p_chunk, s_chunk, idx)
+txl.cuda.iket.range_end(softmax_exp2_token[0])
 ```
 
 Softmax 随后将 `P` 分四个 32-column chunks 写回 TMEM。Causal specialization 先交接两个 chunks，non-causal specialization 先交接三个。Kernel 等待第一组 stores 完成，再报告前 `K_SPLIT` columns 已经准备好：
 
 ```python
-P_SPLIT_Q = T.meta_var(2 if is_causal else 3)
-for i in T.unroll(P_SPLIT_Q):
-    Tx.wg.copy_async(
-        P_region[wg_id, 1, :, i * BLK_N // 4 : (i + 1) * BLK_N // 4],
-        p_chunk[:, i * BLK_N // 4 : (i + 1) * BLK_N // 4],
+for i in range(P_SPLIT_Q):
+    tmem_store(
+        p_chunk,
+        i * BLK_N // 4 // 2,
+        tmem((wg_id * 2 * MMA_N + MMA_N + i * BLK_N // 4) // 2),
     )
-T.ptx.tcgen05.wait.st()
-p_o_rescale.arrive(wg_id)
-
-for i in T.unroll(4 - P_SPLIT_Q):
-    Tx.wg.copy_async(
-        P_region[wg_id, 1, :,
-                 (P_SPLIT_Q + i) * BLK_N // 4 : (P_SPLIT_Q + i + 1) * BLK_N // 4],
-        p_chunk[:,
-                (P_SPLIT_Q + i) * BLK_N // 4 : (P_SPLIT_Q + i + 1) * BLK_N // 4],
+txl.ptx.tcgen05.wait__st.sync.aligned()
+p_o_rescale_remote.arrive(wg_id)
+for i in range(4 - P_SPLIT_Q):
+    tmem_store(
+        p_chunk,
+        (P_SPLIT_Q + i) * BLK_N // 4 // 2,
+        tmem((wg_id * 2 * MMA_N + MMA_N + (P_SPLIT_Q + i) * BLK_N // 4) // 2),
     )
-T.ptx.tcgen05.wait.st()
-p_ready_2.arrive(wg_id)
+txl.ptx.tcgen05.wait__st.sync.aligned()
+p_ready_2_remote.arrive(wg_id)
 ```
 
-`s_chunk_buf` 中仍保留着转换前的 fp32 `P`。WG2 读完 `acc_scale` 并允许对应的 `sScale` slot 再次写入后，softmax warpgroup 再用这些 values 更新 denominator：
+`s_chunk` 中仍保留着转换前的 fp32 `P`。WG2 读完 `acc_scale` 并允许对应的 `sScale` slot 再次写入后，softmax warpgroup 再用这些 values 更新 denominator：
 
 ```python
-softmax_corr.empty.wait(wg_id, phase_q)
-phase_q ^= 1
 if is_first:
-    Tx.sum(row_sum, s_chunk_buf)
+    reduce_sum_128(row_sum, s_chunk)
 else:
-    row_sum[0] = row_sum[0] * acc_scale
-    Tx.sum(row_sum, s_chunk_buf, accum=True)
+    txl.assign(row_sum[0], row_sum[0] * acc_scale)
+    reduce_sum_128(row_sum, s_chunk, accum=True)
 ```
 
 第一段 PV MMA 需要同时读取 `P[:, 0:K_SPLIT]` 和更新 `O`，所以必须等待两件事：softmax 已写完这部分 `P`，WG2 也已确认 `O` 可以初始化或继续累加。`p_o_rescale` 汇合这两个完成信号。其余 columns 使用单独的 `p_ready_2`，这样第一段 MMA 不必等待剩余的 TMEM stores。
@@ -488,29 +512,38 @@ else:
 PV MMA 的两个 operands 来自不同的 memory spaces：`P` 位于 TMEM，V 位于 SMEM，fp32 accumulator `O` 也位于 TMEM。Kernel 在根据运行模式调优的 `K_SPLIT` 处分割 128 个归约位置：causal 为 64，non-causal 为 96。两段代码如下：
 
 ```python
-K_SPLIT = T.meta_var((4 if is_causal else 6) * MMA_K)
+def gemm_pv_part1(i_q, kv_stage, should_accumulate, vd):
+    """orig:L932-946. A is a tmem address (ts form); B is V,
+    MN-major (ID_PV sets trans_b), so the k walk steps whole
+    rows: 16 rows = 128 16B units."""
+    for ki in range(K_SPLIT // MMA_K):
+        with txl.if_(elected()), txl.then_():
+            txl.ptx[mma_f16](
+                txl.Cast("uint32", (SMEM_PIPE_DEPTH_Q + i_q) * MMA_N),
+                txl.Cast("uint32", i_q * MMA_N + MMA_N // 2 + ki * (MMA_K // 2)),
+                desc_at(vd, kv_stage * KV_STAGE16 + mnoff(ki)),
+                txl.uint32(id_pv),
+                *mma_keep_lanes,
+                # any(ki != 0, should_accumulate), folded at
+                # trace time: ki is a Python int here.
+                True if ki != 0 else txl.Cast("bool", should_accumulate),
+            )
 
-# 第一段：P[:, :K_SPLIT] 与 V 中对应的 rows。
-Tx.warp.gemm_async(
-    O_region[SMEM_PIPE_DEPTH_Q + i_q, :, :],
-    P_region[i_q, 1, :, 0:K_SPLIT],
-    V_smem[kv_stage, 0:K_SPLIT, 0:HEAD_DIM],
-    transB=True,
-    accum=should_accumulate,
-    dispatch="tcgen05",
-    cta_group=CTA_GROUP,
-)
-
-p_ready_2.wait(i_q, phase_tmem)
-Tx.warp.gemm_async(
-    O_region[SMEM_PIPE_DEPTH_Q + i_q, :, :],
-    P_region[i_q, 1, :, K_SPLIT:BLK_N],
-    V_smem[kv_stage, K_SPLIT:BLK_N, 0:HEAD_DIM],
-    transB=True,
-    accum=True,
-    dispatch="tcgen05",
-    cta_group=CTA_GROUP,
-)
+def gemm_pv_part2(i_q, kv_stage, vd):
+    """orig:L948-968."""
+    p_ready_2.wait(i_q, tmem_epoch.phase)
+    for ki in range((BLK_N - K_SPLIT) // MMA_K):
+        with txl.if_(elected()), txl.then_():
+            txl.ptx[mma_f16](
+                txl.Cast("uint32", (SMEM_PIPE_DEPTH_Q + i_q) * MMA_N),
+                txl.Cast("uint32", i_q * MMA_N + MMA_N // 2 + K_SPLIT // 2 + ki * (MMA_K // 2)),
+                desc_at(
+                    vd, kv_stage * KV_STAGE16 + mnoff(K_SPLIT // MMA_K + ki)
+                ),
+                txl.uint32(id_pv),
+                *mma_keep_lanes,
+                True,
+            )
 ```
 
 > **Tile primitive：PV MMA**
@@ -538,20 +571,23 @@ FA4 为一个 CTA 申请 128 rows × 512 个物理 TMEM columns，每个 cell �
 2 stages × (128 columns for S + 128 columns for O) = 512 columns
 ```
 
-源码首先为这块 allocation 建立两个 buffer。`move_base_to(0)` 将分配位置移回起点，因此 `tmem_as_f16` 与 `tmem` 从同一个物理 TMEM column 开始：
+参考实现只分配一次 TMEM，并在发出原始 TMEM 指令前检查基地址：
 
 ```python
-tmem_pool = T.TMEMPool(
-    pool, total_cols=N_COLS_TMEM, cta_group=CTA_GROUP, tmem_addr=tmem_addr,
-    alloc_warp=12, dealloc_warp=0,
-)
-tmem = tmem_pool.alloc((128, N_COLS_TMEM), "float32")
-tmem_pool.move_base_to(0)
-tmem_as_f16 = tmem_pool.alloc((128, N_COLS_TMEM * 2), "float16")
-tmem_pool.commit()
+# Warp 12 allocates the 512-column region. Other roles wait on the
+# producer's barriers before accessing it.
+with txl.if_(warp_cta == 12), txl.then_():
+    txl.ptx[tmem_alloc](txl.address_of(tmem_addr[0]), txl.uint32(N_COLS_TMEM))
+    txl.cuda.warp_sync()
+
+# The pinned reference requires base address zero and checks it explicitly.
+with txl.if_(tvm_tirx.tirx.all(wg_id == 3, warp_id == 0)), txl.then_():
+    allocated = txl.local_scalar("uint32")
+    txl.ptx.ld.shared.u32(allocated, tmem_addr.ptr_to([0]))
+    txl.cuda.trap_when_assert_failed(allocated == txl.uint32(0))
 ```
 
-这两个 buffer 每行包含的总 bits 相同：
+为说明 FP16 打包地址，可以把同一行逻辑上看成以下两种 buffer：
 
 ```text
 tmem:         512 × 32 bits = 16384 bits
@@ -569,14 +605,14 @@ tmem_as_f16: 1024 × 16 bits = 16384 bits
 
 因此，`tmem[:, p]` 以 fp32 读取整个格子；`tmem_as_f16[:, 2p]` 和 `tmem_as_f16[:, 2p+1]` 则分别访问其中两个 fp16 values。
 
-建立这两个 buffer 后，源码使用 `Buffer.rearrange()` 创建按 stage 索引的 views：
+参考实现直接计算各 stage 的物理列地址；以下表达式对应说明中的逻辑区域：
 
 ```python
-S_region = T.meta_var(tmem.rearrange("m (s n) -> s m n", n=MMA_N))
-O_region = S_region
-P_region = T.meta_var(
-    tmem_as_f16.rearrange("m (s two n) -> s two m n", two=2, n=MMA_N)
-)
+# Physical TMEM columns (32 bits each):
+score_col = q_stage * MMA_N
+output_col = (SMEM_PIPE_DEPTH_Q + q_stage) * MMA_N
+# P is packed as pairs of FP16 values into the high half of S.
+p_col = q_stage * MMA_N + MMA_N // 2
 ```
 
 这里 `MMA_N=BLK_N=128`，Q pipeline 有两个 stages。重排 fp32 buffer 后会得到四个 128-column blocks。`S_region[0:2, :, :]` 选中两个 score stages；`O_region` 是同一 view 的 alias，并使用 `SMEM_PIPE_DEPTH_Q + i_q`（即 blocks 2、3）作为两个 output accumulators。重排 fp16 alias 时，每个 256-element block 又被拆成各 128 elements 的低、高两半；`P_region[i_q, 1, :, :]` 选中 score stage `i_q` 的高半部分。
@@ -717,18 +753,17 @@ Q tiles、K/V blocks 和 TMEM slots 按不同节奏推进。Kernel 用 `Pipeline
 `row_sum` 保存在 softmax warpgroup 的 registers 中，可以在更新时直接乘 `acc_scale`。`O` 则位于 TMEM，需要由 WG2 完成单独的数据操作。Softmax 将逐行 `acc_scale` 写入对应的 `sScale` slot；statistics named barrier 放行 WG2，后者从 TMEM 读出当前 `O`，完成乘法后再写回：
 
 ```python
-RESCALE_TILE = T.meta_var(16)
-o_row = T.wg_reg_tile(RESCALE_TILE)
-Tx.wg.copy_async(
-    o_row,
-    O_region[SMEM_PIPE_DEPTH_Q + i_q, :, d_start : d_start + RESCALE_TILE],
-)
-Tx.wg.mul(o_row, o_row, acc_scale)
-Tx.wg.copy_async(
-    O_region[SMEM_PIPE_DEPTH_Q + i_q, :, d_start : d_start + RESCALE_TILE],
-    o_row,
-)
-T.ptx.tcgen05.wait.st()
+RESCALE_TILE = 16
+o_row = txl.alloc_local([RESCALE_TILE], "float32")
+for d_tile in range(ceildiv(HEAD_DIM, RESCALE_TILE)):
+    d_start = d_tile * RESCALE_TILE
+    if d_start < HEAD_DIM:
+        addr = tmem((SMEM_PIPE_DEPTH_Q + i_q) * MMA_N + d_start)
+        tmem_load(o_row, 0, addr, RESCALE_TILE)
+        for i in range(RESCALE_TILE // 2):
+            mul_f32x2(o_row, 2 * i, acc_scale)
+        tmem_store(o_row, 0, addr)
+txl.ptx.tcgen05.wait__st.sync.aligned()
 ```
 
 WG2 中的每个 warp 负责 32 行，并分别判断自己的这些行是否需要 correction。每个 lane 根据对应行的 `acc_scale` 生成 `should_rescale`，`any_sync` 再在当前 warp 的 32 个 lanes 中汇总：如果 32 行的 `acc_scale` 都等于 1，这个 warp 会跳过 TMEM → registers → TMEM 的数据操作；只要其中一行需要更新，该 warp 就处理自己负责的 32 行，其中不需要变化的行只会乘以 1。其他 warps 独立作出相同判断。
@@ -737,7 +772,7 @@ WG2 中的每个 warp 负责 32 行，并分别判断自己的这些行是否需
 
 ```python
 should_rescale = T.Select(acc_scale < T.float32(1.0), 1, 0)
-any_needs_rescale = T.ptx.any_sync(0xFFFFFFFF, should_rescale)
+any_needs_rescale = T.cuda.any_sync(0xFFFFFFFF, should_rescale)
 
 if any_needs_rescale != 0:
     # 当前 warp：TMEM -> registers -> multiply -> TMEM
@@ -820,14 +855,15 @@ q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 Q load 使用一个 4D view 表示这种 packing，其 axes 为 `(stage, sequence, query head within the group, dim)`。源数据采用自然的 `Q[batch, seq, qo_head, dim]` layout，目标则是 QKᵀ MMA 随后按 `128×HEAD_DIM` 二维 operand 读取的同一块 SMEM tile。View 只规定这次 TMA copy 如何解释源、目标坐标，不需要再执行一次单独的数据重排：
 
 ```python
-Q_smem_4d = Q_smem.view(SMEM_PIPE_DEPTH_Q, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM)
-Tx.copy_async(
-    Q_smem_4d[i_q, :, :, :],
-    Q[batch_idx,
-      m_start + i_q * SEQ_Q_PER_TILE : m_start + (i_q + 1) * SEQ_Q_PER_TILE,
-      kv_head_idx * GQA_RATIO : (kv_head_idx + 1) * GQA_RATIO,
-      :],
-    **tma_copy_q,
+# GQA branch of load_q: coordinates follow CUDA tensor-map order.
+txl.ptx[tma_g2s_4d](
+    q_smem[i_q].ptr_to(k_part * BLK_M, 0),
+    txl.address_of(tensor_map),
+    txl.int32(0),
+    txl.Cast("int32", kv_head_idx * GQA_RATIO),
+    txl.Cast("int32", q_tile_start(i_q)),
+    txl.Cast("int32", batch_idx * 2 + (k_part if USE_2CTA else 0)),
+    txl.cuda.cvta_generic_to_shared(q_load_full_remote.ptr_to([i_q])),
 )
 ```
 
@@ -859,7 +895,7 @@ while scheduler.valid():
 
 ## 编译与验证
 
-前面使用的都是完整 kernel 中的代码片段。要运行 FA4，请先安装 README 中固定的 companion revision，再导入[对应版本的 `flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py)，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 `get_flash_attention4_kernel` 创建 kernel：
+前面使用的都是完整 kernel 中的代码片段。要运行 FA4，请先安装 README 中固定的 companion revision，再导入[对应版本的 `flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/v0.1.2.post1/tirx_kernels/ported/flashattention/flash_attention4.py)，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 `get_flash_attention4_kernel` 创建 kernel：
 
 当前 `flash_attention4.py` 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：
 
@@ -873,8 +909,11 @@ while scheduler.valid():
 ```python
 import torch
 import torch.nn.functional as F
-import tvm
-from tirx_kernels.attention.flash_attention4 import get_flash_attention4_kernel
+import tvm_tirx
+from tirx_kernels.ported.flashattention.flash_attention4 import (
+    build_tensor_maps,
+    get_flash_attention4_kernel,
+)
 
 B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
 assert Hq % Hkv == 0
@@ -887,10 +926,16 @@ K = torch.randn(B, S, Hkv, D, dtype=torch.float16, device="cuda")
 V = torch.randn(B, S, Hkv, D, dtype=torch.float16, device="cuda")
 O = torch.empty(B, S, Hq, D, dtype=torch.float16, device="cuda")
 kernel = get_flash_attention4_kernel(B, S, S, Hq, Hkv, D, is_causal=False)
-target = tvm.target.Target("cuda")
+target = tvm_tirx.target.Target("cuda")
 with target:
-    ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
-ex.mod(Q, K, V, O)
+    ex = tvm_tirx.tirx.compile(tvm_tirx.IRModule({"main": kernel}), target=target)
+# Tensor maps describe the input/output pointers, strides, tiles, and swizzles.
+# Keep both the tensors and descriptors alive until the GPU work finishes.
+tensor_maps = build_tensor_maps(
+    Q, K, V, O, batch_size=B, seq_len_q=S, seq_len_kv=S,
+    num_qo_heads=Hq, num_kv_heads=Hkv, head_dim=D, is_causal=False,
+)
+ex.mod(*(desc.ptr for desc in tensor_maps))
 torch.cuda.synchronize()
 
 # torch reference；enable_gqa 允许 32 个 query heads 共享 8 个 KV heads

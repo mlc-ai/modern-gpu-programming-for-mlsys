@@ -199,7 +199,7 @@
 </details></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">Compilation and lowering</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
@@ -626,12 +626,12 @@ clock behavior.</p>
 inputs. Whether the accesses actually hit in cache still depends on the total amount of data revisited
 by this computation and the hardware cache capacity.</p>
 <p>This book uses TVM’s
-<a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/bench.py"><code class="docutils literal notranslate"><span class="pre">tvm.tirx.bench.bench</span></code></a>
+<a class="reference external" href="https://github.com/apache/tvm-tirx/blob/a821c08826b4721d47122ee9b1dced7f3b88e738/python/tvm_tirx/testing/bench.py"><code class="docutils literal notranslate"><span class="pre">tvm_tirx.testing.bench.bench</span></code></a>
 to handle warm-up, repeated timing, and statistics. The supplied function only launches a prepared
 implementation; inputs, outputs, and workspace remain outside the timed interval. Unlike the manual
 warm-cache example, <code class="docutils literal notranslate"><span class="pre">bench</span></code> writes a 256 MiB buffer before each measured invocation to reduce reuse
 of data left in L2 by the previous invocation, then records an independent CUDA event interval:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.bench</span><span class="w"> </span><span class="kn">import</span> <span class="n">bench</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm_tirx.testing.bench</span><span class="w"> </span><span class="kn">import</span> <span class="n">bench</span>
 
 
 <span class="c1"># Reuse gemm from above. For a custom TIRx kernel, substitute its no-argument callable.</span>
@@ -795,7 +795,7 @@ measurements. When comparing implementations, alternate their measurement order 
 implementation is consistently measured on a colder or hotter device.</p>
 <p>Use one cache policy throughout the comparison. The manual example repeatedly reuses the same
 matrices and therefore models a warm-cache workload, although the actual hit rate still depends
-on the total amount of data revisited and the cache capacity. The TVM 0.26 CUDA event and Proton timers
+on the total amount of data revisited and the cache capacity. The TIRx CUDA event and Proton timers
 instead write a 256 MiB buffer before each measured invocation to reduce L2 reuse; this write is
 outside the timed interval. Choose the policy that represents the target application.
 <code class="docutils literal notranslate"><span class="pre">torch.cuda.empty_cache()</span></code> only releases unused blocks from PyTorch’s allocator; GPU L2 contents
@@ -850,7 +850,7 @@ FP32 <code class="docutils literal notranslate"><span class="pre">torch.mm</span
 with the output using <code class="docutils literal notranslate"><span class="pre">rtol=2e-2</span></code> and <code class="docutils literal notranslate"><span class="pre">atol=1e-2</span></code>. A mismatch stops the command before the benchmark
 or profiler begins. This preflight check is outside both the baseline timing interval and the
 collection range used below.</p>
-<p>The earlier <span class="math notranslate nohighlight">\(2048\times2048\)</span> FP16 example was a standalone demonstration of the timing APIs. The
+<p>The earlier <span class="math notranslate nohighlight">\(2048\times2048\)</span> FP16 example demonstrated the timing APIs. The
 results below all use this BF16 operation and do not mix the two workloads.</p>
 <section id="establish-an-unprofiled-baseline">
 <h3>Establish an Unprofiled Baseline<a class="headerlink" href="#establish-an-unprofiled-baseline" title="Link to this heading">#</a></h3>
@@ -1924,7 +1924,7 @@ launch, and IKET records when each warp role is active in marked regions such as
 consumer.</p>
 <section id="run-a-complete-example">
 <h3>Run a Complete Example<a class="headerlink" href="#run-a-complete-example" title="Link to this heading">#</a></h3>
-<p>TVM 0.26 uses the <code class="docutils literal notranslate"><span class="pre">cutlass-4.6.0</span></code> IKET profile, which pins the profiling dependencies to specific
+<p>TIRx uses the <code class="docutils literal notranslate"><span class="pre">cutlass-4.6.0</span></code> IKET profile, which pins the profiling dependencies to specific
 versions. For the CUDA 13 environment used in this chapter, install the matching dependencies and
 confirm that <code class="docutils literal notranslate"><span class="pre">run-iket</span></code> is available:</p>
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="se">\</span>
@@ -1944,27 +1944,27 @@ pairs mark the producer, wait, and consumer regions:</p>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
 
-<span class="kn">import</span><span class="w"> </span><span class="nn">tvm</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">tvm.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.cuda</span><span class="w"> </span><span class="kn">import</span> <span class="n">iket</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">tvm_tirx</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tvm_tirx.script</span><span class="w"> </span><span class="kn">import</span> <span class="n">tirx</span> <span class="k">as</span> <span class="n">T</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tvm_tirx.backend.cuda</span><span class="w"> </span><span class="kn">import</span> <span class="n">iket</span>
 
 
 <span class="n">N</span> <span class="o">=</span> <span class="mi">256</span>
 <span class="n">ELEMS_PER_LANE</span> <span class="o">=</span> <span class="mi">8</span>
 
 
-<span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">warp_role_example</span><span class="p">(</span><span class="n">inp</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Buffer</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">),</span> <span class="n">out</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Buffer</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)):</span>
-    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
+<span class="nd">@T</span><span class="o">.</span><span class="n">function</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">warp_role_example</span><span class="p">(</span><span class="n">inp</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">),</span> <span class="n">out</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)):</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">(</span><span class="n">launch</span><span class="o">=</span><span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">LaunchConfig</span><span class="p">(</span><span class="n">grid</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,),</span> <span class="n">block</span><span class="o">=</span><span class="mi">64</span><span class="p">))</span>
     <span class="n">profiler</span> <span class="o">=</span> <span class="n">iket</span><span class="o">.</span><span class="n">IketProfiler</span><span class="p">()</span>
-    <span class="n">warp_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warp_id</span><span class="p">([</span><span class="mi">2</span><span class="p">])</span>
-    <span class="n">lane</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">lane_id</span><span class="p">([</span><span class="mi">32</span><span class="p">])</span>
-    <span class="n">shared</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_buffer</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"shared"</span><span class="p">)</span>
+    <span class="n">warp_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">warp_id</span><span class="p">()</span>
+    <span class="n">lane</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">lane_id</span><span class="p">()</span>
+    <span class="n">shared</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_shared</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
 
     <span class="n">profiler</span><span class="o">.</span><span class="n">mark</span><span class="p">(</span><span class="s2">"kernel_start"</span><span class="p">,</span> <span class="n">warp_id</span><span class="p">)</span>
     <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
         <span class="n">profiler</span><span class="o">.</span><span class="n">range_push</span><span class="p">(</span><span class="s2">"producer_load"</span><span class="p">)</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">ELEMS_PER_LANE</span><span class="p">,</span> <span class="n">unroll</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">ELEMS_PER_LANE</span><span class="p">):</span>
             <span class="n">index</span> <span class="o">=</span> <span class="n">i</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">+</span> <span class="n">lane</span>
             <span class="n">shared</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">=</span> <span class="n">inp</span><span class="p">[</span><span class="n">index</span><span class="p">]</span>
         <span class="n">profiler</span><span class="o">.</span><span class="n">range_pop</span><span class="p">()</span>
@@ -1975,22 +1975,22 @@ pairs mark the producer, wait, and consumer regions:</p>
 
     <span class="k">if</span> <span class="n">warp_id</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
         <span class="n">profiler</span><span class="o">.</span><span class="n">range_push</span><span class="p">(</span><span class="s2">"consumer_compute"</span><span class="p">)</span>
-        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">ELEMS_PER_LANE</span><span class="p">,</span> <span class="n">unroll</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">serial</span><span class="p">(</span><span class="n">ELEMS_PER_LANE</span><span class="p">):</span>
             <span class="n">index</span> <span class="o">=</span> <span class="n">i</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">+</span> <span class="n">lane</span>
             <span class="n">out</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">=</span> <span class="n">shared</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">+</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
         <span class="n">profiler</span><span class="o">.</span><span class="n">range_pop</span><span class="p">()</span>
 
 
 <span class="k">def</span><span class="w"> </span><span class="nf">profile_workload</span><span class="p">():</span>
-    <span class="n">target</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">({</span><span class="s2">"kind"</span><span class="p">:</span> <span class="s2">"cuda"</span><span class="p">,</span> <span class="s2">"arch"</span><span class="p">:</span> <span class="s2">"sm_100a"</span><span class="p">})</span>
-    <span class="n">executable</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">warp_role_example</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">,</span> <span class="n">tir_pipeline</span><span class="o">=</span><span class="s2">"tirx"</span><span class="p">)</span>
+    <span class="n">target</span> <span class="o">=</span> <span class="n">tvm_tirx</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">Target</span><span class="p">({</span><span class="s2">"kind"</span><span class="p">:</span> <span class="s2">"cuda"</span><span class="p">,</span> <span class="s2">"arch"</span><span class="p">:</span> <span class="s2">"sm_100a"</span><span class="p">})</span>
+    <span class="n">executable</span> <span class="o">=</span> <span class="n">tvm_tirx</span><span class="o">.</span><span class="n">tirx</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">warp_role_example</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="n">target</span><span class="p">)</span>
     <span class="n">module</span> <span class="o">=</span> <span class="n">executable</span><span class="o">.</span><span class="n">jit</span><span class="p">()</span>
 
     <span class="n">input_numpy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">N</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
-    <span class="n">inp</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">input_numpy</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">tvm</span><span class="o">.</span><span class="n">cuda</span><span class="p">())</span>
-    <span class="n">out</span> <span class="o">=</span> <span class="n">tvm</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">tvm</span><span class="o">.</span><span class="n">cuda</span><span class="p">())</span>
+    <span class="n">inp</span> <span class="o">=</span> <span class="n">tvm_tirx</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">input_numpy</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">tvm_tirx</span><span class="o">.</span><span class="n">cuda</span><span class="p">())</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">tvm_tirx</span><span class="o">.</span><span class="n">runtime</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">N</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">tvm_tirx</span><span class="o">.</span><span class="n">cuda</span><span class="p">())</span>
     <span class="n">module</span><span class="o">.</span><span class="n">main</span><span class="p">(</span><span class="n">inp</span><span class="p">,</span> <span class="n">out</span><span class="p">)</span>
-    <span class="n">tvm</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span><span class="o">.</span><span class="n">sync</span><span class="p">()</span>
+    <span class="n">tvm_tirx</span><span class="o">.</span><span class="n">cuda</span><span class="p">()</span><span class="o">.</span><span class="n">sync</span><span class="p">()</span>
 
     <span class="n">expected</span> <span class="o">=</span> <span class="n">input_numpy</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">+</span> <span class="mi">1</span>
     <span class="n">np</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_array_equal</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span> <span class="n">expected</span><span class="p">)</span>
@@ -2018,7 +2018,7 @@ pairs mark the producer, wait, and consumer regions:</p>
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">iket.run</span></code> restarts the current script inside the IKET collection process and calls
-<code class="docutils literal notranslate"><span class="pre">profile_workload()</span></code>. Keeping <code class="docutils literal notranslate"><span class="pre">tvm.compile()</span></code> and <code class="docutils literal notranslate"><span class="pre">.jit()</span></code> inside that function ensures that the
+<code class="docutils literal notranslate"><span class="pre">profile_workload()</span></code>. Keeping <code class="docutils literal notranslate"><span class="pre">tvm_tirx.tirx.compile()</span></code> and <code class="docutils literal notranslate"><span class="pre">.jit()</span></code> inside that function ensures that the
 kernel is compiled and loaded while IKET recording is active. The script also verifies that the
 output equals <code class="docutils literal notranslate"><span class="pre">input</span> <span class="pre">*</span> <span class="pre">2</span> <span class="pre">+</span> <span class="pre">1</span></code>.</p>
 <p>With <code class="docutils literal notranslate"><span class="pre">postprocess=&quot;all&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">iket.run</span></code> writes JSON, <code class="docutils literal notranslate"><span class="pre">*.pftrace</span></code>, and HTML artifacts to
@@ -2037,7 +2037,7 @@ Hopper and newer architectures and validates the CUTLASS DSL packages, NVRTC, <c
 binaries against the pinned profile. The recording code inserted by IKET changes the generated
 kernel and adds overhead, so use the IKET trace to study phases and warp roles. For reported latency,
 use the uninstrumented CUDA event benchmark. See
-<a class="reference external" href="https://github.com/apache/tvm/blob/v0.26.0/python/tvm/backend/cuda/iket.py"><code class="docutils literal notranslate"><span class="pre">python/tvm/backend/cuda/iket.py</span></code></a>
+<a class="reference external" href="https://github.com/apache/tvm-tirx/blob/a821c08826b4721d47122ee9b1dced7f3b88e738/python/tvm_tirx/backend/cuda/iket.py"><code class="docutils literal notranslate"><span class="pre">python/tvm_tirx/backend/cuda/iket.py</span></code></a>
 and the
 <a class="reference external" href="https://github.com/NVIDIA/cutlass/blob/v4.6.0/media/docs/pythonDSL/cute_dsl_general/iket_profiling.rst">NVIDIA IKET guide</a>
 for the complete API and trace options.</p>

@@ -37,6 +37,8 @@ TIRx loop; use ``T.unroll(n)`` when the lowering pipeline should unroll it.
     for j in T.unroll(n):          # marked for the UnrollLoop lowering pass
         acc[0] = acc[0] + A[tx, j]
 
+``meta_var`` preserves a parser-side handle; it does not make an already computed runtime value recompute itself. Arithmetic over a mutable scalar produces an immutable value binding. For a persistent scheduler, compute tile coordinates inside each task loop, after the current cursor is available.
+
 ``@T.inline`` — inline functions
 --------------------------------
 
@@ -59,15 +61,19 @@ scoping with late binding, so a parameter shadows an enclosing variable:
 values**: their fields can hold buffers and scalars, so you can bundle related
 allocations and state into one object and use it in the kernel body.
 
+Define ``State`` outside ``@T.function``. Instantiate it and use its fields
+inside the kernel, where ``smem`` has already been allocated.
+
 .. code-block:: python
 
     @T.meta_class
     class State:
         def __init__(self, smem):
-            self.acc = T.alloc_local([1], "float32")
-            self.buf = T.decl_buffer([64], "float16", smem, scope="shared.dyn")
+            self.acc = T.bind_(T.alloc_local([1], "float32"))
+            self.buf = T.bind_(T.decl_tensor(smem, ty_args=[
+                T.Tensor((64,), "float16", scope="shared.dyn")]))
 
-    s = State(smem.data)
+    s = State(smem.ptr_to([0]))
     s.acc[0] = T.float32(0.0)     # use its fields like ordinary buffers
     # ... s.buf[i] ...
 
