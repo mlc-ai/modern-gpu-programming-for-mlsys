@@ -181,7 +181,7 @@ def main():
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     versions = {}
-    for package in ("apache-tvm-tirx", "apache-tvm-ffi", "apache-tvm-ffi-orcjit", "cuda-bindings", "tirx-kernels", "torch"):
+    for package in ("apache-tvm-tirx", "apache-tvm-ffi", "apache-tvm-ffi-orcjit", "cuda-bindings", "torch"):
         try:
             versions[package] = metadata.version(package)
         except metadata.PackageNotFoundError:

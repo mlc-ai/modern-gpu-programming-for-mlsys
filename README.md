@@ -77,17 +77,15 @@ foreign-architecture code.
 **2. Install PyTorch** with a CUDA build matching your GPU — see <https://pytorch.org>.
 The examples are checked with PyTorch `2.14.0+cu132` on an NVIDIA B200.
 
-**3. Install the pinned example environment and FA4 reference:**
+**3. Install the pinned example environment:**
 
 ```bash
 python -m pip install -r requirements-examples.txt
-python scripts/install_reference_kernels.py
 ```
 
-The FA4 reference revision needs a small migration to the TIRx compiler's binding,
-dtype and FFI APIs. The installer checks out an immutable revision, applies the included
-`patches/tirx-kernels-api.patch`, and installs that source. Its working copy is
-kept under local `validation/reference-kernels/` for inspection.
+All kernels use the TIRx TVMScript parser and the compiler's native CUDA tile API.
+The FA4 source is included in `examples/flash_attention.py`, migrated from the
+TVMScript reference originally used by the chapter.
 
 **4. Run the complete examples from both language editions:**
 
