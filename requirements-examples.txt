@@ -1,7 +1,0 @@
-# Install a CUDA-enabled PyTorch build separately, as described in README.md.
-apache-tvm-tirx==0.1.0a3
-apache-tvm-ffi==0.1.15.post1
-apache-tvm-ffi-orcjit==0.1.3
-cuda-bindings>=13,<14
-# Install the FA4 reference with scripts/install_reference_kernels.py.
-pytest>=8,<10

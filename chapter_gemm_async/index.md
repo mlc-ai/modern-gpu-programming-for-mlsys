@@ -16,12 +16,12 @@ This chapter continues from the three kernels built so far. Step 4 replaces the 
 (chap_tma_async)=
 ## Step 4: TMA Async Load
 
-Steps 1 through 3 use scalar tensor loads and stores to move A and B tiles: the CTA threads compute their addresses and execute the corresponding loads and stores. Step 4 switches to TMA. One thread issues the operation, and the TMA engine performs the remaining address generation and tile transfer. From this point onward, the examples use the full `M=N=K=4096` problem size.
+Steps 1 through 3 use `Tx.cta.copy` to move A and B tiles: the CTA threads compute their addresses and execute the corresponding loads and stores. Step 4 switches to TMA. One thread issues the operation, and the TMA engine performs the remaining address generation and tile transfer. From this point onward, the examples use the full `M=N=K=4096` problem size.
 
 > **Step 4 execution structure**
 > - Scope: unchanged, one warpgroup.
 > - Layout: unchanged, same SMEM/TMEM/register tiles.
-> - Dispatch: GMEM → SMEM loads move from synchronous thread-driven copies to the TMA engine.
+> - Dispatch: GMEM → SMEM loads move from synchronous `Tx.cta.copy` to the TMA engine.
 
 ### Issuing a TMA Load
 
@@ -29,24 +29,19 @@ First compare the code in Steps 3 and 4.
 
 **Before (Step 3)**: all 128 threads participate in the copy, then `cta_sync` makes the shared-memory writes visible:
 ```python
-for copy_col in T.serial(BLK_K):
-    Asmem[warp_id * 32 + lane_id, copy_col] = A[m_st + warp_id * 32 + lane_id, i * BLK_K + copy_col]
-    Bsmem[warp_id * 32 + lane_id, copy_col] = B[n_st + warp_id * 32 + lane_id, i * BLK_K + copy_col]
-T.ptx.fence.proxy.async_.shared__cta()
+Tx.cta.copy(Asmem[:, :], A[m_st:m_st+BLK_M, i*BLK_K:(i+1)*BLK_K])   # all 128 threads
+Tx.cta.copy(Bsmem[:, :], B[n_st:n_st+BLK_N, i*BLK_K:(i+1)*BLK_K])
 T.cuda.cta_sync()
 ```
 
 **After (Step 4)**: one thread issues the TMA load, and the mbarrier tracks when the hardware transfer is complete:
 ```python
-if warp_id == 0 and T.cuda.elect_sync():
-    T.cuda.tile.apply(
-        T.ptx["cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes"],
-        Asmem[:, :], A[:, :], box=(BLK_M, BLK_K),
-        coords=(m_st, i * BLK_K), swizzle=3, mbar=tma_bar.ptr_to([0]))
-    T.cuda.tile.apply(
-        T.ptx["cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes"],
-        Bsmem[:, :], B[:, :], box=(BLK_N, BLK_K),
-        coords=(n_st, i * BLK_K), swizzle=3, mbar=tma_bar.ptr_to([0]))
+tid = warp_id * 32 + lane_id                 # 0..127 within the warpgroup
+if tid == 0:  # exactly one thread starts TMA
+    Tx.copy_async(Asmem, A[...], dispatch="tma_auto")
+    Tx.copy_async(Bsmem, B[...], dispatch="tma_auto")
+    T.ptx.mbarrier.arrive.expect_tx(tma_bar, byte_count)  # bytes expected from TMA
+T.ptx.mbarrier.try_wait(tma_bar, phase)                  # wait before MMA reads SMEM
 ```
 
 `tid` combines the warp ID and lane ID into a thread ID within the warpgroup, so `tid == 0` selects exactly one thread. If all four warps called `elect_sync()` directly, each warp would select one active lane and four threads would issue the TMA load. The code could instead guard on `warp_id == 0` before calling `elect_sync()`; using `tid == 0` is more direct here.
@@ -67,7 +62,7 @@ Step 3 is performed by the TMA engine. As A and B arrive in SMEM, the hardware u
 
 The kernel uses the same protocol with larger tiles. A and B each contain `128×64` fp16 elements and occupy 16384 bytes, so `arrive.expect_tx` registers 32768 bytes in total.
 
-TMA stores use a different completion mechanism. After the threads write the result to `Dsmem`, `T.ptx.fence.proxy.async_.shared__cta()` makes each thread's writes visible to the async proxy. The first `warpgroup_sync(10)` then ensures that all 128 warpgroup threads have completed their writes and fences before `tid == 0` issues the TMA store; the TMA engine can then read the complete buffer asynchronously.
+TMA stores use a different completion mechanism. After the threads write the result to `Dsmem`, `fence.proxy_async` makes each thread's writes visible to the async proxy. The first `warpgroup_sync(10)` then ensures that all 128 warpgroup threads have completed their writes and fences before `tid == 0` issues the TMA store; the TMA engine can then read the complete buffer asynchronously.
 
 `warpgroup_sync(10)` lowers to `bar.sync 10, 128`. Here, `10` selects one of the CTA's 16 named-barrier slots, whose IDs range from 0 to 15; `128` is the participating thread count supplied by the intrinsic. ID 10 has no TMA-specific meaning. This single-warpgroup kernel uses it because no other active named barrier occupies that slot. The named barrier is separate from the shared-memory mbarrier used above to track TMA loads, and it resets after each completed synchronization so the same ID can be used again.
 
@@ -78,22 +73,21 @@ The `tid == 0` thread then starts the asynchronous copy from `Dsmem` to GMEM and
 The complete kernel folds the TMA load and store into the Step 3 structure, leaving the rest of that structure untouched. The imports are the same as before:
 
 ```python
-import tvm_tirx
-from tvm_tirx.script import tirx as T
-from tvm_tirx.tirx.layout import TileLayout, S
-from tvm_tirx.backend.cuda.axis import TLane, TCol, tid_in_wg
-from tvm_tirx.backend.cuda.lang import SMEMPool
-from tvm_tirx.backend.cuda.layout import mma_shared_layout, SwizzleMode
+import tvm
+from tvm.script import tirx as T
+from tvm.script.tirx import tile as Tx
+from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
 ```
 
 It is wrapped in `hgemm_v4(M, N, K)`, a pattern we follow throughout: the wrapper keeps the shape-dependent constants and layouts right next to the kernel that uses them.
 
 ```python
 def hgemm_v4(M, N, K):
-    a_type = "float16"
-    b_type = "float16"
-    d_type = "float16"
-    acc_type = "float32"
+    a_type = tvm.DataType("float16")
+    b_type = tvm.DataType("float16")
+    d_type = tvm.DataType("float16")
+    acc_type = tvm.DataType("float32")
 
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     K_TILES = K // BLK_K
@@ -103,42 +97,44 @@ def hgemm_v4(M, N, K):
     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_N))
 
-    @T.function
+    @T.prim_func
     def kernel(
-        A: T.Tensor((M, K), a_type),
-        B: T.Tensor((N, K), b_type),
-        D: T.Tensor((M, N), d_type),
+        A: T.Buffer((M, K), a_type),
+        B: T.Buffer((N, K), b_type),
+        D: T.Buffer((M, N), d_type),
     ):
-        T.device_entry(launch=T.cuda.LaunchConfig(grid=[M // BLK_M, N // BLK_N], block=128))
-        bx, by = (T.cuda.block_idx("x"), T.cuda.block_idx("y"))
-        wg_id = T.cuda.warpgroup_id()
-        warp_id = T.cuda.warp_in_warpgroup()
-        lane_id = T.cuda.lane_id()
+        T.device_entry()
+        bx, by = T.cta_id([M // BLK_M, N // BLK_N])
+        wg_id = T.warpgroup_id([1])
+        warp_id = T.warp_id_in_wg([4])
+        lane_id = T.lane_id([32])
 
         # --- SMEM allocation (now includes Dsmem for TMA store) ---
-        pool = SMEMPool()
+        pool = T.SMEMPool()
         tmem_addr = pool.alloc((1,), "uint32")
         tma_bar = pool.alloc((1,), "uint64", align=8)
         mma_bar = pool.alloc((1,), "uint64", align=8)
         pool.move_base_to(1024)
-        Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout, align=1024)
-        Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout, align=1024)
-        Dsmem = pool.alloc((BLK_M, BLK_N), d_type, layout=D_layout, align=1024)
+        Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout)
+        Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout)
+        Dsmem = pool.alloc((BLK_M, BLK_N), d_type, layout=D_layout)
         pool.commit()
 
         # --- Barrier + TMEM init ---
         if warp_id == 0 and lane_id == 0:
-            T.ptx.mbarrier.init.shared.b64(mma_bar.ptr_to([0]), 1)
-            T.ptx.mbarrier.init.shared.b64(tma_bar.ptr_to([0]), 1)
+            T.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
+            T.ptx.mbarrier.init(tma_bar.ptr_to([0]), 1)
         if warp_id == 0:
-            T.ptx.tcgen05.alloc.cta_group__1.sync.aligned.shared__cta.b32(
-                tmem_addr.ptr_to([0]), 512)
+            T.ptx.tcgen05.alloc(T.address_of(tmem_addr), n_cols=512, cta_group=1)
 
-        T.ptx.fence.proxy.async_.shared__cta()
-        T.ptx.fence.mbarrier_init.release.cluster()
+        T.ptx.fence.proxy_async("shared::cta")
+        T.ptx.fence.mbarrier_init()
         T.cuda.cta_sync()
 
-        tmem = T.cuda.decl_tmem(tmem_addr[0], ty_args=[T.Tensor((128, 512), "float32", scope="tmem", layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))])
+        tmem = T.decl_buffer(
+            (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
+            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)])
+        )
 
         m_st = T.meta_var(bx * BLK_M)
         n_st = T.meta_var(by * BLK_N)
@@ -149,31 +145,27 @@ def hgemm_v4(M, N, K):
         @T.inline
         def tma_load(k_st):
             tma_config = T.meta_var({
+                "dispatch": "tma_auto", "cta_group": 1,
                 "mbar": tma_bar.ptr_to([0])
             })
-            T.cuda.tile.apply(
-                T.ptx["cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes"],
-                Asmem[:, :], A[:, :],
-                box=(BLK_M, BLK_K), coords=(m_st, k_st), swizzle=3, mbar=tma_config["mbar"])
-            T.cuda.tile.apply(
-                T.ptx["cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes"],
-                Bsmem[:, :], B[:, :],
-                box=(BLK_N, BLK_K), coords=(n_st, k_st), swizzle=3, mbar=tma_config["mbar"])
-            T.ptx.mbarrier.arrive.expect_tx.shared.b64(
+            Tx.copy_async(Asmem[:, :],
+                          A[m_st : m_st + BLK_M, k_st : k_st + BLK_K],
+                          **tma_config)
+            Tx.copy_async(Bsmem[:, :],
+                          B[n_st : n_st + BLK_N, k_st : k_st + BLK_K],
+                          **tma_config)
+            T.ptx.mbarrier.arrive.expect_tx(
                 tma_bar.ptr_to([0]),
                 (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE
             )
 
         @T.inline
         def mma(accum):
-            T.cuda.tile.apply(
-                T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
-                tmem.sub[:, :BLK_N].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
-                Asmem.sub[:, :].rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
-                Bsmem.sub[:, :].rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
-                instruction_shape=(128, 128, 16), accum=accum)
-            T.ptx.tcgen05.commit.cta_group__1.mbarrier__arrive__one.shared__cluster.b64(
-                mma_bar.ptr_to([0]))
+            Tx.gemm_async(
+                tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
+                accum=accum, dispatch="tcgen05", cta_group=1
+            )
+            T.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
 
         # --- K-loop with TMA async ---
         tid = T.meta_var(warp_id * 32 + lane_id)
@@ -186,14 +178,14 @@ def hgemm_v4(M, N, K):
 
             # Wait for TMA to finish; the mbarrier release carries SMEM
             # visibility to the subsequent MMA, so no extra fence is needed.
-            T.cuda.mbarrier_wait(tma_bar.ptr_to([0]), phase_tma)
+            T.ptx.mbarrier.try_wait(tma_bar.ptr_to([0]), phase_tma)
 
             # Single thread issues MMA
             if tid == 0:
                 mma(accum=k != 0)
 
             # Wait for MMA to finish
-            T.cuda.mbarrier_wait(mma_bar.ptr_to([0]), phase_mma)
+            T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
             phase_tma ^= 1
             phase_mma ^= 1
 
@@ -204,37 +196,29 @@ def hgemm_v4(M, N, K):
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
 
         # Read TMEM -> registers (async; wait.ld then cta_sync to ensure read completes)
-        T.cuda.tile.apply(
-            T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
-            Dreg_wg.sub[:, :].view(4, 32, 128),
-            tmem.sub[:, :BLK_N].view(4, 32, 128), scope="warpgroup")
-        T.ptx.tcgen05.wait__ld.sync.aligned()
+        Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
+        T.ptx.tcgen05.wait.ld()
         T.cuda.cta_sync()
         # Cast fp32 -> fp16
-        for cast_col in T.unroll(128):
-            Dreg_f16.sub[:][cast_col] = T.float16(Dreg.sub[:][cast_col])
+        Tx.cast(Dreg_f16[:], Dreg[:])
         # Write registers -> Dsmem, flush, then sync
-        for store_col in T.unroll(128):
-            Dsmem.sub[warp_id * 32 + lane_id, 0:BLK_N][store_col] = Dreg_f16.sub[:][store_col]
-        T.ptx.fence.proxy.async_.shared__cta()
+        Tx.copy(Dsmem[warp_id * 32 + lane_id, 0:BLK_N], Dreg_f16[:])
+        T.ptx.fence.proxy_async("shared::cta")
         T.cuda.warpgroup_sync(10)
         # TMA store: Dsmem -> GMEM. One selected thread starts the store and drains the
         # store group before Dsmem is reused.
         if tid == 0:
-            for store_half in T.unroll(2):
-                T.cuda.tile.apply(
-                    T.ptx["cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group"],
-                    D[:, :], Dsmem.sub[:, :][:, store_half * 64:(store_half + 1) * 64],
-                    box=(BLK_M, 64), coords=(m_st, n_st + store_half * 64), swizzle=3)
-            T.ptx.cp.async_.bulk.commit_group()
-            T.ptx.cp.async_.bulk.wait_group.read(0)
+            Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
+                          Dsmem[:, :], dispatch="tma_auto")
+            T.ptx.cp_async.bulk.commit_group()
+            T.ptx.cp_async.bulk.wait_group(0)
         T.cuda.warpgroup_sync(10)
 
         # --- Deallocate TMEM ---
         T.cuda.cta_sync()
         if warp_id == 0:
-            T.ptx.tcgen05.relinquish_alloc_permit.cta_group__1.sync.aligned()
-            T.ptx.tcgen05.dealloc.cta_group__1.sync.aligned.b32(tmem_addr[0], 512)
+            T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
+            T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
 
     return kernel
 ```
@@ -243,7 +227,7 @@ def hgemm_v4(M, N, K):
 
 Most of this kernel comes directly from Step 3. The following five settings define the TMA behavior:
 
-- **TMA operands**: `box` gives static tile extents, `coords` gives runtime global coordinates, `swizzle=3` selects the 128-byte swizzle, and `mbar` receives transfer completion.
+- **TMA config**: `{"dispatch": "tma_auto", "cta_group": 1, "mbar": tma_bar.ptr_to([0])}` tells `Tx.copy_async` to use automatic TMA dispatch and to report load completion through `tma_bar`.
 
 - **Byte count**: `(BLK_M * BLK_K + BLK_N * BLK_K) * 2` is the number of bytes loaded by the two fp16 operand tiles. `arrive.expect_tx(...)` gives this count to the mbarrier.
 
@@ -251,12 +235,9 @@ Most of this kernel comes directly from Step 3. The following five settings defi
 
 - **`@T.inline`**: `tma_load(...)` and `mma(...)` are helper functions. They are expanded into the kernel body at compile time and can use variables from the surrounding kernel.
 
-- **TMA store synchronization**: The epilogue first writes fp16 rows into `Dsmem`. `T.ptx.fence.proxy.async_.shared__cta()` and `warpgroup_sync` make those thread-written SMEM values ready for the TMA store path. The store then uses `commit_group()` and `wait_group(0)` to wait for the SMEM-to-GMEM transfer to finish.
+- **TMA store synchronization**: The epilogue first writes fp16 rows into `Dsmem`. `fence.proxy_async` and `warpgroup_sync` make those thread-written SMEM values ready for the TMA store path. The store then uses `commit_group()` and `wait_group(0)` to wait for the SMEM-to-GMEM transfer to finish.
 
 The data-movement path is now correct, but the schedule remains sequential: each load completes before its MMA begins, so the two engines still take turns. The next step keeps the TMA load and store paths and introduces reusable SMEM stages for prefetching.
-
-The FP16 output tile has 128 columns (256 bytes per row). With a 128-byte swizzle, the epilogue emits two `128x64` TMA store boxes before committing the async group. Both stores finish before the shared output tile is reused.
-
 
 (chap_software_pipeline)=
 ## Step 5: Software Pipeline (PIPE_DEPTH=2)
@@ -267,9 +248,6 @@ Step 4 cannot overlap load and compute because SMEM contains only one operand-ti
 > - Scope: unchanged, one warpgroup.
 > - Layout: the single SMEM tile pair becomes a `PIPE_DEPTH`-stage ring buffer.
 > - Dispatch: unchanged, TMA load and `tcgen05` MMA; this step adds prefetch and stage reuse, while full load/compute overlap arrives in Step 7.
-
-Each stage occupies a multiple of 1024 bytes. The helpers declare a two-dimensional `T.decl_tensor` alias over the selected stage pointer, retaining that actual alignment and its MMA shared layout. This gives explicit tile instructions a fixed shape and alignment even when the ring index changes at runtime.
-
 
 ### Pipeline Walkthrough
 
@@ -319,12 +297,11 @@ if stage == PIPE_DEPTH - 1:
 The complete kernel retains the Step 4 TMA load and store path, then adds the staged buffers and phase logic described above. The imports are unchanged:
 
 ```python
-import tvm_tirx
-from tvm_tirx.script import tirx as T
-from tvm_tirx.tirx.layout import TileLayout, S
-from tvm_tirx.backend.cuda.axis import TLane, TCol, tid_in_wg
-from tvm_tirx.backend.cuda.lang import SMEMPool
-from tvm_tirx.backend.cuda.layout import mma_shared_layout, SwizzleMode
+import tvm
+from tvm.script import tirx as T
+from tvm.script.tirx import tile as Tx
+from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
 ```
 
 It is wrapped in `hgemm_v5(M, N, K)`. The `PIPE_DEPTH=2` constant sets the number of pipeline stages (two of them here, which is exactly double buffering):
@@ -333,10 +310,10 @@ It is wrapped in `hgemm_v5(M, N, K)`. The `PIPE_DEPTH=2` constant sets the numbe
 PIPE_DEPTH = 2
 
 def hgemm_v5(M, N, K):
-    a_type = "float16"
-    b_type = "float16"
-    d_type = "float16"
-    acc_type = "float32"
+    a_type = tvm.DataType("float16")
+    b_type = tvm.DataType("float16")
+    d_type = tvm.DataType("float16")
+    acc_type = tvm.DataType("float32")
     F16_SIZE = 2
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     K_TILES = K // BLK_K
@@ -349,45 +326,47 @@ def hgemm_v5(M, N, K):
     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (BLK_M, BLK_N))
 
-    @T.function
+    @T.prim_func
     def kernel(
-        A: T.Tensor((M, K), a_type),
-        B: T.Tensor((N, K), b_type),
-        D: T.Tensor((M, N), d_type),
+        A: T.Buffer((M, K), a_type),
+        B: T.Buffer((N, K), b_type),
+        D: T.Buffer((M, N), d_type),
     ):
-        T.device_entry(launch=T.cuda.LaunchConfig(grid=[M // BLK_M, N // BLK_N], block=128))
-        bx, by = (T.cuda.block_idx("x"), T.cuda.block_idx("y"))
-        wg_id = T.cuda.warpgroup_id()
-        warp_id = T.cuda.warp_in_warpgroup()
-        lane_id = T.cuda.lane_id()
+        T.device_entry()
+        bx, by = T.cta_id([M // BLK_M, N // BLK_N])
+        wg_id = T.warpgroup_id([1])
+        warp_id = T.warp_id_in_wg([4])
+        lane_id = T.lane_id([32])
 
         # --- SMEM allocation ---
-        pool = SMEMPool()
+        pool = T.SMEMPool()
         tmem_addr = pool.alloc((1,), "uint32")
         # Double-buffered TMA barriers (one per stage), single MMA barrier
         tma_bar = pool.alloc((PIPE_DEPTH,), "uint64", align=8)
         mma_bar = pool.alloc((1,), "uint64", align=8)
         pool.move_base_to(1024)
-        Asmem = pool.alloc((PIPE_DEPTH, BLK_M, BLK_K), a_type, layout=A_layout, align=1024)
-        Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout, align=1024)
-        Dsmem = pool.alloc((BLK_M, BLK_N), d_type, layout=D_layout, align=1024)
+        Asmem = pool.alloc((PIPE_DEPTH, BLK_M, BLK_K), a_type, layout=A_layout)
+        Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout)
+        Dsmem = pool.alloc((BLK_M, BLK_N), d_type, layout=D_layout)
         pool.commit()
 
         # Initialize barriers: PIPE_DEPTH for TMA, 1 for MMA
         if warp_id == 0:
             if lane_id == 0:
-                T.ptx.mbarrier.init.shared.b64(mma_bar.ptr_to([0]), 1)
+                T.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
                 for s in range(PIPE_DEPTH):
-                    T.ptx.mbarrier.init.shared.b64(tma_bar.ptr_to([s]), 1)
+                    T.ptx.mbarrier.init(tma_bar.ptr_to([s]), 1)
         if warp_id == 0:
-            T.ptx.tcgen05.alloc.cta_group__1.sync.aligned.shared__cta.b32(
-                tmem_addr.ptr_to([0]), 512)
+            T.ptx.tcgen05.alloc(T.address_of(tmem_addr), n_cols=512, cta_group=1)
 
-        T.ptx.fence.proxy.async_.shared__cta()
-        T.ptx.fence.mbarrier_init.release.cluster()
+        T.ptx.fence.proxy_async("shared::cta")
+        T.ptx.fence.mbarrier_init()
         T.cuda.cta_sync()
 
-        tmem = T.cuda.decl_tmem(tmem_addr[0], ty_args=[T.Tensor((128, 512), acc_type, scope="tmem", layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))])
+        tmem = T.decl_buffer(
+            (128, 512), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
+            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)])
+        )
 
         m_st = T.meta_var(bx * BLK_M)
         n_st = T.meta_var(by * BLK_N)
@@ -397,42 +376,24 @@ def hgemm_v5(M, N, K):
         @T.inline
         def tma_load(stage, k_offset):
             tma_config = T.meta_var({
+                "dispatch": "tma_auto", "cta_group": 1,
                 "mbar": tma_bar.ptr_to([stage])
             })
-            transfer_tile = T.decl_tensor(Asmem.ptr_to([stage, 0, 0]), ty_args=[T.Tensor(
-                (BLK_M, BLK_K), a_type, scope="shared.dyn", align=1024,
-                layout=mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K)))])
-            T.cuda.tile.apply(
-                T.ptx["cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes"],
-                transfer_tile[:, :], A[:, :],
-                box=(BLK_M, BLK_K), coords=(m_st, k_offset), swizzle=3, mbar=tma_config["mbar"])
-            transfer_tile = T.decl_tensor(Bsmem.ptr_to([stage, 0, 0]), ty_args=[T.Tensor(
-                (BLK_N, BLK_K), b_type, scope="shared.dyn", align=1024,
-                layout=mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K)))])
-            T.cuda.tile.apply(
-                T.ptx["cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes"],
-                transfer_tile[:, :], B[:, :],
-                box=(BLK_N, BLK_K), coords=(n_st, k_offset), swizzle=3, mbar=tma_config["mbar"])
-            T.ptx.mbarrier.arrive.expect_tx.shared.b64(
+            Tx.copy_async(Asmem[stage, :, :],
+                          A[m_st:m_st+BLK_M, k_offset:k_offset+BLK_K],
+                          **tma_config)
+            Tx.copy_async(Bsmem[stage, :, :],
+                          B[n_st:n_st+BLK_N, k_offset:k_offset+BLK_K],
+                          **tma_config)
+            T.ptx.mbarrier.arrive.expect_tx(
                 tma_bar.ptr_to([stage]),
                 (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
 
         @T.inline
         def mma(stage, accum):
-            mma_A = T.decl_tensor(Asmem.ptr_to([stage, 0, 0]), ty_args=[T.Tensor(
-                (BLK_M, BLK_K), a_type, scope="shared.dyn", align=1024,
-                layout=mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K)))])
-            mma_B = T.decl_tensor(Bsmem.ptr_to([stage, 0, 0]), ty_args=[T.Tensor(
-                (BLK_N, BLK_K), b_type, scope="shared.dyn", align=1024,
-                layout=mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K)))])
-            T.cuda.tile.apply(
-                T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
-                tmem.sub[:, :BLK_N].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
-                mma_A.rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
-                mma_B.rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
-                instruction_shape=(128, 128, 16), accum=accum)
-            T.ptx.tcgen05.commit.cta_group__1.mbarrier__arrive__one.shared__cluster.b64(
-                mma_bar.ptr_to([0]))
+            Tx.gemm_async(tmem[:, :BLK_N], Asmem[stage, :, :], Bsmem[stage, :, :],
+                          accum=accum, dispatch="tcgen05", cta_group=1)
+            T.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
 
         tid = T.meta_var(warp_id * 32 + lane_id)
 
@@ -446,13 +407,13 @@ def hgemm_v5(M, N, K):
             stage = k % PIPE_DEPTH
 
             # Wait for TMA to finish loading this stage
-            T.cuda.mbarrier_wait(tma_bar.ptr_to([stage]), phase_tma)
+            T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma)
 
             # MMA on this stage's data
             if tid == 0:
                 mma(stage, accum=(k != 0))
 
-            T.cuda.mbarrier_wait(mma_bar.ptr_to([0]), phase_mma)
+            T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
             phase_mma ^= 1
 
             # Issue next prefetch load (k + PIPE_DEPTH)
@@ -470,36 +431,25 @@ def hgemm_v5(M, N, K):
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
-        T.cuda.tile.apply(
-            T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
-            Dreg_wg.sub[:, :].view(4, 32, 128),
-            tmem.sub[:, :BLK_N].view(4, 32, 128), scope="warpgroup")
-        T.ptx.tcgen05.wait__ld.sync.aligned()
+        Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
+        T.ptx.tcgen05.wait.ld()
         T.cuda.cta_sync()
-        for cast_col in T.unroll(128):
-            Dreg_f16.sub[:][cast_col] = T.float16(Dreg.sub[:][cast_col])
-        for store_col in T.unroll(128):
-            Dsmem.sub[warp_id * 32 + lane_id, 0:BLK_N][store_col] = Dreg_f16.sub[:][store_col]
-        T.ptx.fence.proxy.async_.shared__cta()
+        Tx.cast(Dreg_f16[:], Dreg[:])
+        Tx.copy(Dsmem[warp_id * 32 + lane_id, 0:BLK_N], Dreg_f16[:])
+        T.ptx.fence.proxy_async("shared::cta")
         T.cuda.warpgroup_sync(10)
         if tid == 0:
-            for store_half in T.unroll(2):
-                transfer_tile = T.decl_tensor(Dsmem.ptr_to([0, store_half * 64]), ty_args=[T.Tensor(
-                    (BLK_M, 64), d_type, scope="shared.dyn", align=1024,
-                    layout=mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, 64)))])
-                T.cuda.tile.apply(
-                    T.ptx["cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group"],
-                    D[:, :], transfer_tile[:, :],
-                    box=(BLK_M, 64), coords=(m_st, n_st + store_half * 64), swizzle=3)
-            T.ptx.cp.async_.bulk.commit_group()
-            T.ptx.cp.async_.bulk.wait_group.read(0)
+            Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
+                          Dsmem[:, :], dispatch="tma_auto")
+            T.ptx.cp_async.bulk.commit_group()
+            T.ptx.cp_async.bulk.wait_group(0)
         T.cuda.warpgroup_sync(10)
 
         # Deallocate TMEM
         T.cuda.cta_sync()
         if warp_id == 0:
-            T.ptx.tcgen05.relinquish_alloc_permit.cta_group__1.sync.aligned()
-            T.ptx.tcgen05.dealloc.cta_group__1.sync.aligned.b32(tmem_addr[0], 512)
+            T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
+            T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
 
     return kernel
 ```
@@ -527,9 +477,9 @@ Because one CTA processes several tiles, it allocates TMEM, initializes its barr
 The scheduler also changes the logical tile order. `l2_group_size=8` groups eight consecutive output-tile rows along M. Within each group, tile IDs run down those eight rows for one N tile column before advancing to the next column. This places work that shares a B tile close together in the schedule and revisits the same group of A tiles over a short span. The CTAs still move their data independently, and the hardware may execute them in a different order, but this numbering makes L2 reuse more likely.
 
 ```python
-bx = T.cuda.block_idx("x")  # 1D persistent grid
+bx = T.cta_id([SM_COUNT])  # 1D persistent grid
 
-tile_scheduler = PersistentScheduler2D(
+tile_scheduler = ClusterPersistentScheduler2D(
     "ts",
     num_m_tiles=M // BLK_M,
     num_n_tiles=N // BLK_N,
@@ -557,26 +507,25 @@ If changing `K`, `BLK_K`, or `PIPE_DEPTH` makes any barrier run an odd number of
 Step 6 keeps the staged K-loop from Step 5 and places it inside an outer loop over output tiles. The only new dependency is the scheduler:
 
 ```python
-import tvm_tirx
-from tvm_tirx.script import tirx as T
-from tvm_tirx.tirx.layout import TileLayout, S
-from tvm_tirx.backend.cuda.axis import TLane, TCol, tid_in_wg
-from tvm_tirx.backend.cuda.lang import SMEMPool
-from tvm_tirx.backend.cuda.layout import mma_shared_layout, SwizzleMode
-from examples.scheduling import PersistentScheduler2D
+import tvm
+from tvm.script import tirx as T
+from tvm.script.tirx import tile as Tx
+from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
+from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
+from tvm.backend.cuda.lang.tile_scheduler import ClusterPersistentScheduler2D
 ```
 
-The launch grid now has `SM_COUNT` CTAs rather than one CTA for every `(M, N)` output tile. A `PersistentScheduler2D` assigns tiles to those persistent CTAs:
+The launch grid now has `SM_COUNT` CTAs rather than one CTA for every `(M, N)` output tile. A `ClusterPersistentScheduler2D` assigns tiles to those persistent CTAs:
 
 ```python
 SM_COUNT = 148  # Number of SMs on NVIDIA B200 GPU
 PIPE_DEPTH = 2
 
 def hgemm_v6(M, N, K):
-    a_type = "float16"
-    b_type = "float16"
-    d_type = "float16"
-    acc_type = "float32"
+    a_type = tvm.DataType("float16")
+    b_type = tvm.DataType("float16")
+    d_type = tvm.DataType("float16")
+    acc_type = tvm.DataType("float32")
     F16_SIZE = 2
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     assert K % BLK_K == 0, "K must be divisible by BLK_K"
@@ -592,46 +541,48 @@ def hgemm_v6(M, N, K):
     D_layout = mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM,
                                   (BLK_M, BLK_N))
 
-    @T.function
+    @T.prim_func
     def kernel(
-        A: T.Tensor((M, K), a_type),
-        B: T.Tensor((N, K), b_type),
-        D: T.Tensor((M, N), d_type),
+        A: T.Buffer((M, K), a_type),
+        B: T.Buffer((N, K), b_type),
+        D: T.Buffer((M, N), d_type),
     ):
-        T.device_entry(launch=T.cuda.LaunchConfig(grid=[SM_COUNT], block=128))
+        T.device_entry()
         # 1D grid: one CTA per SM (not a 2D grid anymore!)
-        bx = T.cuda.block_idx("x")
-        wg_id = T.cuda.warpgroup_id()
-        warp_id = T.cuda.warp_in_warpgroup()
-        lane_id = T.cuda.lane_id()
+        bx = T.cta_id([SM_COUNT])
+        wg_id = T.warpgroup_id([1])
+        warp_id = T.warp_id_in_wg([4])
+        lane_id = T.lane_id([32])
 
         # --- SMEM allocation (same as Step 5) ---
-        pool = SMEMPool()
+        pool = T.SMEMPool()
         tmem_addr = pool.alloc((1,), "uint32")
         tma_bar = pool.alloc((PIPE_DEPTH,), "uint64", align=8)
         mma_bar = pool.alloc((1,), "uint64", align=8)
         pool.move_base_to(1024)
-        Asmem = pool.alloc((PIPE_DEPTH, BLK_M, BLK_K), a_type, layout=A_layout, align=1024)
-        Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout, align=1024)
-        Dsmem = pool.alloc((BLK_M, BLK_N), d_type, layout=D_layout, align=1024)
+        Asmem = pool.alloc((PIPE_DEPTH, BLK_M, BLK_K), a_type, layout=A_layout)
+        Bsmem = pool.alloc((PIPE_DEPTH, BLK_N, BLK_K), b_type, layout=B_layout)
+        Dsmem = pool.alloc((BLK_M, BLK_N), d_type, layout=D_layout)
         pool.commit()
 
         # --- Barrier + TMEM init (same as Step 5) ---
         if warp_id == 0 and lane_id == 0:
-            T.ptx.mbarrier.init.shared.b64(mma_bar.ptr_to([0]), 1)
+            T.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
             for s in range(PIPE_DEPTH):
-                T.ptx.mbarrier.init.shared.b64(tma_bar.ptr_to([s]), 1)
+                T.ptx.mbarrier.init(tma_bar.ptr_to([s]), 1)
         if warp_id == 0:
-            T.ptx.tcgen05.alloc.cta_group__1.sync.aligned.shared__cta.b32(
-                tmem_addr.ptr_to([0]), 512)
-        T.ptx.fence.proxy.async_.shared__cta()
-        T.ptx.fence.mbarrier_init.release.cluster()
+            T.ptx.tcgen05.alloc(T.address_of(tmem_addr), n_cols=512, cta_group=1)
+        T.ptx.fence.proxy_async("shared::cta")
+        T.ptx.fence.mbarrier_init()
         T.cuda.cta_sync()
 
-        tmem = T.cuda.decl_tmem(tmem_addr[0], ty_args=[T.Tensor((128, 512), acc_type, scope="tmem", layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))])
+        tmem = T.decl_buffer(
+            (128, 512), acc_type, scope="tmem", allocated_addr=tmem_addr[0],
+            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)])
+        )
 
         # Tile scheduler: assigns tiles to CTAs in L2-friendly order
-        tile_scheduler = PersistentScheduler2D(
+        tile_scheduler = ClusterPersistentScheduler2D(
             "ts",
             num_m_tiles=M // BLK_M,
             num_n_tiles=N // BLK_N,
@@ -645,42 +596,24 @@ def hgemm_v6(M, N, K):
         @T.inline
         def tma_load(stage, k_offset, m_st, n_st):
             tma_config = T.meta_var({
+                "dispatch": "tma_auto", "cta_group": 1,
                 "mbar": tma_bar.ptr_to([stage])
             })
-            transfer_tile = T.decl_tensor(Asmem.ptr_to([stage, 0, 0]), ty_args=[T.Tensor(
-                (BLK_M, BLK_K), a_type, scope="shared.dyn", align=1024,
-                layout=mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K)))])
-            T.cuda.tile.apply(
-                T.ptx["cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes"],
-                transfer_tile[:, :], A[:, :],
-                box=(BLK_M, BLK_K), coords=(m_st, k_offset), swizzle=3, mbar=tma_config["mbar"])
-            transfer_tile = T.decl_tensor(Bsmem.ptr_to([stage, 0, 0]), ty_args=[T.Tensor(
-                (BLK_N, BLK_K), b_type, scope="shared.dyn", align=1024,
-                layout=mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K)))])
-            T.cuda.tile.apply(
-                T.ptx["cp.async.bulk.tensor.2d.shared::cta.global.tile.mbarrier::complete_tx::bytes"],
-                transfer_tile[:, :], B[:, :],
-                box=(BLK_N, BLK_K), coords=(n_st, k_offset), swizzle=3, mbar=tma_config["mbar"])
-            T.ptx.mbarrier.arrive.expect_tx.shared.b64(
+            Tx.copy_async(Asmem[stage, :, :],
+                          A[m_st:m_st+BLK_M, k_offset:k_offset+BLK_K],
+                          **tma_config)
+            Tx.copy_async(Bsmem[stage, :, :],
+                          B[n_st:n_st+BLK_N, k_offset:k_offset+BLK_K],
+                          **tma_config)
+            T.ptx.mbarrier.arrive.expect_tx(
                 tma_bar.ptr_to([stage]),
                 (BLK_M * BLK_K + BLK_N * BLK_K) * F16_SIZE)
 
         @T.inline
         def mma(stage, accum):
-            mma_A = T.decl_tensor(Asmem.ptr_to([stage, 0, 0]), ty_args=[T.Tensor(
-                (BLK_M, BLK_K), a_type, scope="shared.dyn", align=1024,
-                layout=mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K)))])
-            mma_B = T.decl_tensor(Bsmem.ptr_to([stage, 0, 0]), ty_args=[T.Tensor(
-                (BLK_N, BLK_K), b_type, scope="shared.dyn", align=1024,
-                layout=mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K)))])
-            T.cuda.tile.apply(
-                T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
-                tmem.sub[:, :BLK_N].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
-                mma_A.rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
-                mma_B.rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
-                instruction_shape=(128, 128, 16), accum=accum)
-            T.ptx.tcgen05.commit.cta_group__1.mbarrier__arrive__one.shared__cluster.b64(
-                mma_bar.ptr_to([0]))
+            Tx.gemm_async(tmem[:, :BLK_N], Asmem[stage, :, :], Bsmem[stage, :, :],
+                          accum=accum, dispatch="tcgen05", cta_group=1)
+            T.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
 
         # === Outer loop: iterate over tiles ===
         while tile_scheduler.valid():
@@ -700,10 +633,10 @@ def hgemm_v6(M, N, K):
             # Main K-loop
             for k in range(K_TILES):
                 stage = k % PIPE_DEPTH
-                T.cuda.mbarrier_wait(tma_bar.ptr_to([stage]), phase_tma)
+                T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma)
                 if tid == 0:
                     mma(stage, accum=(k != 0))
-                T.cuda.mbarrier_wait(mma_bar.ptr_to([0]), phase_mma)
+                T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
                 phase_mma ^= 1
                 next_k = k + PIPE_DEPTH
                 if next_k < K_TILES:
@@ -717,29 +650,18 @@ def hgemm_v6(M, N, K):
             Dreg_f16 = T.alloc_local((BLK_N,), d_type)
             Dreg_wg = Dreg.view(128, BLK_N,
                                 layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
-            T.cuda.tile.apply(
-                T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
-                Dreg_wg.sub[:, :].view(4, 32, 128),
-                tmem.sub[:, :BLK_N].view(4, 32, 128), scope="warpgroup")
-            T.ptx.tcgen05.wait__ld.sync.aligned()
+            Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
+            T.ptx.tcgen05.wait.ld()
             T.cuda.cta_sync()
-            for cast_col in T.unroll(128):
-                Dreg_f16.sub[:][cast_col] = T.float16(Dreg.sub[:][cast_col])
-            for store_col in T.unroll(128):
-                Dsmem.sub[warp_id * 32 + lane_id, 0:BLK_N][store_col] = Dreg_f16.sub[:][store_col]
-            T.ptx.fence.proxy.async_.shared__cta()
+            Tx.cast(Dreg_f16[:], Dreg[:])
+            Tx.copy(Dsmem[warp_id * 32 + lane_id, 0:BLK_N], Dreg_f16[:])
+            T.ptx.fence.proxy_async("shared::cta")
             T.cuda.warpgroup_sync(10)
             if tid == 0:
-                for store_half in T.unroll(2):
-                    transfer_tile = T.decl_tensor(Dsmem.ptr_to([0, store_half * 64]), ty_args=[T.Tensor(
-                        (BLK_M, 64), d_type, scope="shared.dyn", align=1024,
-                        layout=mma_shared_layout(d_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, 64)))])
-                    T.cuda.tile.apply(
-                        T.ptx["cp.async.bulk.tensor.2d.global.shared::cta.tile.bulk_group"],
-                        D[:, :], transfer_tile[:, :],
-                        box=(BLK_M, 64), coords=(m_st, n_st + store_half * 64), swizzle=3)
-                T.ptx.cp.async_.bulk.commit_group()
-                T.ptx.cp.async_.bulk.wait_group.read(0)
+                Tx.copy_async(D[m_st : m_st + BLK_M, n_st : n_st + BLK_N],
+                              Dsmem[:, :], dispatch="tma_auto")
+                T.ptx.cp_async.bulk.commit_group()
+                T.ptx.cp_async.bulk.wait_group(0)
             T.cuda.warpgroup_sync(10)
 
             T.cuda.cta_sync()
@@ -748,8 +670,8 @@ def hgemm_v6(M, N, K):
         # Deallocate TMEM
         T.cuda.cta_sync()
         if warp_id == 0:
-            T.ptx.tcgen05.relinquish_alloc_permit.cta_group__1.sync.aligned()
-            T.ptx.tcgen05.dealloc.cta_group__1.sync.aligned.b32(tmem_addr[0], 512)
+            T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
+            T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
 
     return kernel
 ```
