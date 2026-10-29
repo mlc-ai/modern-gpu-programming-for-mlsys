@@ -26,7 +26,7 @@ if
 
 A Python ``if`` / ``else`` becomes a CUDA ``if`` / ``else``. Guard work by a
 thread/lane comparison, or elect a single issuing thread with
-``T.cuda.elect_sync()``:
+``T.ptx.elect_sync()``:
 
 .. code-block:: python
 
@@ -35,7 +35,7 @@ thread/lane comparison, or elect a single issuing thread with
     else:
         A[tx] = A[tx] + T.float32(1.0)
 
-    if T.cuda.elect_sync():
+    if T.ptx.elect_sync():
         pass                             # one elected lane (e.g. to issue TMA/MMA)
 
 .. code-block:: c++
@@ -71,7 +71,7 @@ needs to synchronize, use a warpgroup-scoped ``T.cuda.warpgroup_sync(id)`` (see
 The same caution applies to barrier setup. The high-level ``MBarrier.init()``
 wrapper emits a single-thread guard (``if (threadIdx.x < 1)``). Nesting that call
 inside another divergent branch can leave the barrier uninitialized and cause an
-unspecified launch failure. The raw ``T.ptx.mbarrier.init.shared.b64`` intrinsic does not add
+unspecified launch failure. The raw ``T.ptx.mbarrier.init`` intrinsic does not add
 this guard automatically; its caller must select the initializing thread.
 
 loop
