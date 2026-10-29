@@ -12,16 +12,16 @@
 :::{admonition} Running the examples
 :class: note
 
-The examples in this chapter require a Blackwell GPU (`sm_100a`, such as a B200), the TIRx compiler, and a CUDA-enabled build of PyTorch. TIRx is available as the `tvm.tirx` module in the Apache TVM wheel. Compiling CUDA through NVRTC also requires `cuda-bindings`, so install both packages:
+The examples in this chapter require a Blackwell GPU (`sm_100a`, such as a B200), the TIRx compiler, and a CUDA-enabled build of PyTorch. TIRx is available as the `tvm_tirx` module in the `apache-tvm-tirx` wheel. Compiling CUDA through NVRTC also requires `cuda-bindings`, so install both packages:
 
 ```bash
-pip install apache-tvm==0.26.0 cuda-bindings
+pip install apache-tvm-tirx==0.1.0a5 cuda-bindings
 ```
 
 After installation, verify that TVM and TIRx import correctly:
 
 ```bash
-python -c "import tvm, tvm.tirx; print(tvm.__version__)"
+python -c "import tvm_tirx; print(tvm_tirx.__version__)"
 ```
 
 The runnable examples in later chapters use the same environment.
@@ -56,116 +56,128 @@ A/B: GMEM -> SMEM -> tcgen05.mma
 D:   tcgen05.mma -> TMEM -> registers -> GMEM
 ```
 
-The matrix multiplication is expressed as one `Tx.gemm_async` tile operation. This single operation describes the full `128x128x64` tile GEMM. Because each underlying `tcgen05.mma` advances by 16 elements along K, the compiler emits four MMA instructions to cover the full K dimension. It derives their exact sequence from the shape, layout, and dispatch information.
+The matrix multiplication is expressed as one `Tx.apply` tile operation. This single operation describes the full `128x128x64` tile GEMM. Because each underlying `tcgen05.mma` advances by 16 elements along K, the compiler emits four MMA instructions to cover the full K dimension. The operand views provide the repeat axes for the explicitly selected instruction.
 
 When reading the code, keep its four stages in mind:
 
 1. Allocate SMEM and TMEM.
 2. Copy A and B from GMEM to SMEM.
-3. Issue the MMA through `Tx.gemm_async`.
+3. Issue the MMA through `Tx.apply`.
 4. Load the result from TMEM into registers, then write it to GMEM.
 
-The three tile operations to focus on are `Tx.cta.copy`, `Tx.gemm_async`, and `Tx.wg.copy_async`. The remaining low-level calls allocate and release TMEM, initialize the barrier, and establish synchronization. For now, treat them as the supporting steps for those four stages.
+Focus on the thread-driven tensor copies and the two `Tx.apply` calls for MMA and TMEM readback. The remaining low-level calls allocate and release TMEM, initialize the barrier, and establish synchronization. For now, treat them as the supporting steps for those four stages.
 
 First import the modules used by the kernel:
 
 ```python
-import tvm
-from tvm.script import tirx as T
-from tvm.script.tirx import tile as Tx
-from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
-from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
+import tvm_tirx
+from tvm_tirx.script import tirx as T
+from tvm_tirx.backend.cuda.script import tile as Tx
+from tvm_tirx.backend.cuda.layout import mma_shared_layout, SwizzleMode
+from tvm_tirx.tirx.layout import TileLayout, S
+from tvm_tirx.backend.cuda.axis import TLane, TCol, tid_in_wg
+from tvm_tirx.backend.cuda.lang import SMEMPool
 ```
 
-The function `hgemm_v1(M, N, K)` constructs and returns a TIRx `PrimFunc`.
+The function `hgemm_v1(M, N, K)` constructs and returns a TIRx `Function`.
 
-`@T.prim_func` defines the GPU function, and `T.device_entry()` marks the entry to device code. `T.cta_id` returns the CTA coordinates in the grid, `T.warpgroup_id` returns the warpgroup index within the CTA, `T.warp_id_in_wg` returns the warp index within the warpgroup, and `T.lane_id` returns the thread's lane ID within its warp. Together, these APIs expose the thread hierarchy used to define tile coordinates and execution guards.
+`@T.function` defines the GPU function, and `T.device_entry(launch=T.cuda.LaunchConfig(...))` specifies the device launch. `T.cuda.block_idx` returns the CTA coordinates in the grid, `T.cuda.warpgroup_id` returns the warpgroup index within the CTA, `T.cuda.warp_in_warpgroup` returns the warp index within the warpgroup, and `T.cuda.lane_id` returns the thread's lane ID within its warp. Together, these APIs expose the thread hierarchy used to define tile coordinates and execution guards.
 
 ```python
 def hgemm_v1(M, N, K):
-    a_type = tvm.DataType("float16")
-    b_type = tvm.DataType("float16")
-    d_type = tvm.DataType("float16")
-    acc_type = tvm.DataType("float32")
+    a_type = "float16"
+    b_type = "float16"
+    d_type = "float16"
+    acc_type = "float32"
 
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
 
-    @T.prim_func
+    @T.function
     def kernel(
-        A: T.Buffer((M, K), a_type),
-        B: T.Buffer((N, K), b_type),
-        D: T.Buffer((M, N), d_type),
+        A: T.Tensor((M, K), a_type),
+        B: T.Tensor((N, K), b_type),
+        D: T.Tensor((M, N), d_type),
     ):
-        T.device_entry()
+        T.device_entry(launch=T.cuda.LaunchConfig(grid=[M // BLK_M, N // BLK_N], block=128))
         # This chapter calls the builder with M=BLK_M and N=BLK_N,
         # so the grid shape is 1x1 and both m_st and n_st are zero.
-        bx, by = T.cta_id([M // BLK_M, N // BLK_N])
-        wg_id = T.warpgroup_id([1])
-        warp_id = T.warp_id_in_wg([4])
-        lane_id = T.lane_id([32])
+        bx, by = (T.cuda.block_idx("x"), T.cuda.block_idx("y"))
+        wg_id = T.cuda.warpgroup_id()
+        warp_id = T.cuda.warp_in_warpgroup()
+        lane_id = T.cuda.lane_id()
 
         # --- Allocate SMEM ---
-        pool = T.SMEMPool()
+        pool = SMEMPool()
         tmem_addr = pool.alloc((1,), "uint32")
         mma_bar = pool.alloc((1,), "uint64", align=8)
         pool.move_base_to(1024)
-        Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout)
-        Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout)
+        Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout, align=1024)
+        Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout, align=1024)
         pool.commit()
 
         # --- Warp 0 initializes the barrier and TMEM ---
         if warp_id == 0:
             if lane_id == 0:
-                T.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
-            T.ptx.tcgen05.alloc(T.address_of(tmem_addr), n_cols=512, cta_group=1)
+                T.ptx.mbarrier.init.shared.b64(mma_bar.ptr_to([0]), 1)
+            T.ptx.tcgen05.alloc.cta_group__1.sync.aligned.shared__cta.b32(
+                tmem_addr.ptr_to([0]), 512)
 
-        T.ptx.fence.proxy_async("shared::cta")
-        T.ptx.fence.mbarrier_init()
+        T.ptx.fence.proxy.async_.shared__cta()
+        T.ptx.fence.mbarrier_init.release.cluster()
         T.cuda.cta_sync()
 
-        tmem = T.decl_buffer(
-            (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
-            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)])
-        )
+        tmem = T.cuda.decl_tmem(tmem_addr[0], ty_args=[T.Tensor((128, 512), "float32", scope="tmem", layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))])
 
         m_st = T.meta_var(bx * BLK_M)
         n_st = T.meta_var(by * BLK_N)
         phase_mma: T.int32 = 0
 
         # --- Load: all threads synchronously copy A and B from GMEM to SMEM ---
-        Tx.cta.copy(Asmem[:, :], A[m_st:m_st + BLK_M, :])
-        Tx.cta.copy(Bsmem[:, :], B[n_st:n_st + BLK_N, :])
+        for copy_col in T.serial(BLK_K):
+            Asmem.sub[:, :][warp_id * 32 + lane_id, copy_col] = A.sub[m_st:m_st + BLK_M, :][warp_id * 32 + lane_id, copy_col]
+        for copy_col in T.serial(BLK_K):
+            Bsmem.sub[:, :][warp_id * 32 + lane_id, copy_col] = B.sub[n_st:n_st + BLK_N, :][warp_id * 32 + lane_id, copy_col]
+        T.ptx.fence.proxy.async_.shared__cta()
         T.cuda.cta_sync()
 
         # --- Compute: one elected thread issues the MMA ---
         if warp_id == 0:
-            if T.ptx.elect_sync():
-                Tx.gemm_async(
-                    tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
-                    accum=False, dispatch="tcgen05", cta_group=1
-                )
-                T.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
+            if T.cuda.elect_sync():
+                Tx.apply(
+                    T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
+                    tmem.sub[:, :BLK_N].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
+                    Asmem.sub[:, :].rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
+                    Bsmem.sub[:, :].rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
+                    instruction_shape=(128, 128, 16), accum=False)
+                T.ptx.tcgen05.commit.cta_group__1.mbarrier__arrive__one.shared__cluster.b64(
+                    mma_bar.ptr_to([0]))
 
-        T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
+        T.cuda.mbarrier_wait(mma_bar.ptr_to([0]), phase_mma)
 
         # --- Writeback: TMEM -> registers -> GMEM ---
         Dreg = T.alloc_local((BLK_N,), acc_type)
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
-        Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
-        T.ptx.tcgen05.wait.ld()
-        Tx.cast(Dreg_f16[:], Dreg[:])
+        T.ptx.tcgen05.fence__after_thread_sync()
+        Tx.apply(
+            T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
+            Dreg_wg.sub[:, :].view(4, 32, 128),
+            tmem.sub[:, :BLK_N].view(4, 32, 128), scope="warpgroup")
+        T.ptx.tcgen05.wait__ld.sync.aligned()
+        for cast_col in T.unroll(128):
+            Dreg_f16.sub[:][cast_col] = T.float16(Dreg.sub[:][cast_col])
         m_thr = T.meta_var(m_st + warp_id * 32 + lane_id)
-        Tx.copy(D[m_thr, n_st : n_st + BLK_N], Dreg_f16[:])
+        for store_col in T.unroll(128):
+            D.sub[m_thr, n_st : n_st + BLK_N][store_col] = Dreg_f16.sub[:][store_col]
 
         # --- Release TMEM ---
         T.cuda.cta_sync()
         if warp_id == 0:
-            T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
-            T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
+            T.ptx.tcgen05.relinquish_alloc_permit.cta_group__1.sync.aligned()
+            T.ptx.tcgen05.dealloc.cta_group__1.sync.aligned.b32(tmem_addr[0], 512)
 
     return kernel
 ```
@@ -174,20 +186,20 @@ The later GEMM chapters use this version as their starting point, then add a K l
 
 ## Compile and Verify the Result
 
-We can now compile the kernel and compare it with the same matrix multiplication computed by PyTorch. The target can simply be `"cuda"`; TVM detects the current device architecture, such as `sm_100a`. The argument `tir_pipeline="tirx"` selects the TIRx lowering pipeline.
+We can now compile the kernel and compare it with the same matrix multiplication computed by PyTorch. The target can simply be `"cuda"`; TVM detects the current device architecture, such as `sm_100a`. `tvm_tirx.tirx.compile` uses the TIRx lowering pipeline by default.
 
 The compiled `ex.mod(...)` accepts PyTorch tensors directly, so no manual conversion is needed:
 
 ```python
 import torch
 
-target = tvm.target.Target("cuda")
+target = tvm_tirx.target.Target("cuda")
 device = torch.device("cuda")
 
 M, N, K = 128, 128, 64
 kernel = hgemm_v1(M, N, K)
 with target:
-    ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+    ex = tvm_tirx.tirx.compile(tvm_tirx.IRModule({"main": kernel}), target=target)
 
 torch.cuda.empty_cache()
 torch.cuda.synchronize()
@@ -219,11 +231,11 @@ The interactive figure below extracts the key lines from the kernel. Click `Scop
 </div>
 ```
 
-**Scope determines which threads execute an operation.** `Tx.cta.copy(...)` is executed cooperatively by the entire CTA, so all 128 threads in this kernel participate in the GMEM-to-SMEM copy. `Tx.gemm_async(...)` is guarded by both `warp_id == 0` and `elect_sync()`, leaving one elected thread to issue it. The subsequent `mbarrier.try_wait` blocks until the MMA completes; `Tx.wg.copy_async(...)` then cooperatively distributes the TMEM accumulator across the registers of all 128 threads in the warpgroup.
+**Scope determines which threads execute an operation.** All 128 CTA threads participate in the GMEM-to-SMEM copies. The MMA `Tx.apply` is guarded by both `warp_id == 0` and `elect_sync()`, leaving one elected thread to issue it. `T.cuda.mbarrier_wait` blocks until MMA completes; the TMEM-load `Tx.apply` then distributes the accumulator across the registers of all 128 warpgroup threads.
 
 **Layout determines how a tile maps to physical locations.** `A_layout` and `B_layout` place A and B in SMEM using a 128-byte swizzle. The `TileLayout` of `tmem` maps the accumulator onto `TLane` and `TCol`. The `Dreg_wg` view then uses `tid_in_wg` to assign one result row to each thread. For an MMA or copy to work correctly, every operation that produces or consumes the tile must agree on the physical location of each logical element.
 
-**Dispatch determines which hardware implementation executes a tile operation.** `Tx.gemm_async` denotes an asynchronous tile GEMM, while `dispatch="tcgen05"` specifically selects Blackwell's `tcgen05.mma` path. In this version, ordinary threads perform the GMEM-to-SMEM copies; later versions dispatch those copies to TMA instead.
+**Dispatch determines which hardware instruction executes a tile operation.** The first argument of `Tx.apply` explicitly names the PTX instruction: `tcgen05.mma` for GEMM and `tcgen05.ld` for TMEM readback. The operand views supply its layout and repeat axes. In this version, ordinary threads perform the GMEM-to-SMEM copies; later versions use TMA for those copies.
 
 The compiler combines scope, layout, and dispatch to generate concrete thread-level control flow, address calculations, and hardware instructions.
 
@@ -232,15 +244,15 @@ The compiler combines scope, layout, and dispatch to generate concrete thread-le
 We already compiled the kernel with these two lines:
 
 ```python
-target = tvm.target.Target("cuda")
-ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+target = tvm_tirx.target.Target("cuda")
+ex = tvm_tirx.tirx.compile(tvm_tirx.IRModule({"main": kernel}), target=target)
 ```
 
-The `PrimFunc` is first placed in an `IRModule` and then passed to `tvm.compile`. Setting `tir_pipeline="tirx"` starts the TIRx lowering pipeline. Its central pass, `LowerTIRx`, uses the scope, layout, and dispatch of each tile primitive to select a concrete implementation and lower operations such as `Tx.gemm_async` and `Tx.cta.copy` into lower-level TIR.
+The `Function` is first placed in an `IRModule` and passed to `tvm_tirx.tirx.compile`, which uses the TIRx lowering pipeline by default. `TileDispatch` validates and expands the PTX instructions named by `Tx.apply` over their operand views. `LowerTensorLayouts` then turns logical tensor coordinates into physical accesses.
 
-Later passes flatten buffers, split host and device code, and generate device code, producing an `Executable` that can be invoked directly.
+Later passes flatten tensors, split host and device code, and generate device code, producing an `Executable` that can be invoked directly.
 
-To inspect what the compiler produced before and after lowering, print the TIRx `PrimFunc` and the final CUDA C source:
+To inspect what the compiler produced before and after lowering, print the TIRx `Function` and the final CUDA C source:
 
 ```python
 kernel.show()

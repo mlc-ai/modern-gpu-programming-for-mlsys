@@ -10,7 +10,7 @@
 | 编译器内部机制与 lowering 流程 | **{ref}`chap_arch`** |
 | 排查异步 GEMM 或 Flash Attention kernel 的卡死、崩溃、错误结果和性能下降 | **{ref}`chap_warp_spec_debug`** |
 
-完整的 `tvm.tirx` Python API 请参阅
+完整的 `tvm_tirx.tirx` Python API 请参阅
 [TVM 官方文档](https://tvm.apache.org/docs/)。
 
 第二部分介绍了 TIRx 编程模型（{ref}`chap_tirx_primer`）和 tensor layout 模型

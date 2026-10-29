@@ -10,7 +10,7 @@ Do not start by rewriting the kernel. First verify the environment and reproduce
 Rule out the runtime context first:
 
 ```bash
-python -c "import tvm, tvm.tirx; print(tvm.__file__, tvm.__version__)"
+python -c "import tvm_tirx, tvm_tirx.tirx; print(tvm_tirx.__file__, tvm_tirx.__version__)"
 python -c "import torch; print(torch.cuda.get_device_name(), torch.cuda.get_device_capability())"
 ```
 
@@ -19,7 +19,7 @@ These kernels target Blackwell (`sm_100a`). If Python imports a stale TVM checko
 ## Debugging Workflow
 
 1. Reproduce the failure at the smallest shape that still fails. If the failure is an illegal memory access, restart Python before the next run.
-2. If compilation fails, check the installed API, target, `dispatch=`, and buffer scopes before reading the runtime synchronization code.
+2. If compilation fails, check the installed API, target, tile operation, and buffer scopes before reading the runtime synchronization code.
 3. Save `inspect_source("cuda")` output. Search it for role guards, `mbarrier_init`, `tcgen05`, `cp.async.bulk.tensor`, and `__syncthreads()` before reading the Python again.
 4. Write the roles / storage / handoff / lifetime table for the kernel path that failed.
 5. Check the generated CUDA against that table: barrier inits before role branches, expected TMA producer, MMA issuer(s), writeback group(s), and no CTA-wide collective inside a warpgroup-only branch.
@@ -54,8 +54,8 @@ Fix compile-time failures before debugging runtime synchronization:
 
 | Symptom | Likely cause | First check |
 |---|---|---|
-| Unknown TIRx API or attribute error | Installed wheel does not match the tutorial code | Print `tvm.__file__` and `tvm.__version__`; compare the API name with {ref}`chap_language_reference`. |
-| Unsupported `dispatch=` | The selected target or primitive does not support that path | Check the `dispatch` argument and target capability; `tcgen05` paths in this tutorial require Blackwell. |
+| Unknown TIRx API or attribute error | Installed wheel does not match the tutorial code | Print `tvm_tirx.__file__` and `tvm_tirx.__version__`; compare the API name with {ref}`chap_language_reference`. |
+| Unsupported tile operation | The selected target or primitive does not support that path | Check the `Tx.apply` operation and target capability; `tcgen05` paths in this tutorial require Blackwell. |
 | Buffer scope mismatch | A buffer is being used through the wrong hardware path | Check the storage row of the worksheet: TMEM must be accessed through `tcgen05`, and TMA operands must use compatible GMEM/SMEM layouts. |
 | Compile succeeds but generated CUDA lacks the expected path | Dispatch did not lower the way you expected | Inspect the generated CUDA for `tcgen05` and `cp.async.bulk.tensor` before changing the algorithm. |
 
@@ -183,9 +183,9 @@ Classify wrong output by pattern before guessing. Whole row stripes often point 
 
 - **`tcgen05.commit` outside `elect_sync`.** All 32 threads create commit groups; the 31 empty groups signal the mbarrier immediately. TMA can overwrite SMEM before MMA reads it.
 - **Missing `fence.proxy_async("shared::cta")` before TMA store.** The TMA engine may not see SMEM writes from threads.
-- **Missing `cp_async.bulk.commit_group()` plus `wait_group(0)` after TMA store.** The next tile can reuse Dsmem before the store drains.
+- **Missing `T.ptx.cp.async_.bulk.commit_group()` plus `T.ptx.cp.async_.bulk.wait_group.read(0)` after TMA store.** The next tile can reuse Dsmem before the TMA engine finishes reading it.
 - **Persistent kernel fails intermittently at small sizes such as 1024x1024.** Larger sizes can mask the race with longer K-loops. Re-check phase reset between tiles and the TMA-store commit/wait.
-- **Missing `fence.after_thread_sync()` between MMA completion and TMEM load.** The `mma2ld` wait confirms that the MMA has completed, but a writeback thread still needs `T.ptx.tcgen05.fence.after_thread_sync()` before issuing `tcgen05.ld`. This orders the new thread's TMEM load after the cross-thread completion notification. Steps 7–9 place the fence immediately after `mma2ld.wait`. This is a `tcgen05` ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.
+- **Missing `fence.after_thread_sync()` between MMA completion and TMEM load.** The `mma2ld` wait confirms that the MMA has completed, but a writeback thread still needs `T.ptx.tcgen05.fence__after_thread_sync()` before issuing `tcgen05.ld`. This orders the new thread's TMEM load after the cross-thread completion notification. Steps 7–9 place the fence immediately after `mma2ld.wait`. This is a `tcgen05` ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.
 
 ## Correct but Slow
 
@@ -193,8 +193,8 @@ If the output is correct but performance is far below expectation, use the same 
 
 | Clue | Likely cause | First check |
 |---|---|---|
-| Generated CUDA has no `cp.async.bulk.tensor` | Copy did not lower to TMA | Check `dispatch="tma_auto"`, target capability, and operand layout |
-| Generated CUDA has no `tcgen05` path | MMA did not lower to Blackwell Tensor Core instructions | Check `dispatch="tcgen05"`, target capability, and operand layouts |
+| Generated CUDA has no `cp.async.bulk.tensor` | Copy did not lower to TMA | Check the TMA `Tx.apply` operation, target capability, and operand layout |
+| Generated CUDA has no `tcgen05` path | MMA did not lower to Blackwell Tensor Core instructions | Check the `tcgen05` `Tx.apply` operation, target capability, and operand layouts |
 | TMA and MMA do not overlap | Pipeline too shallow or phases serialize producer/consumer | Inspect the order of wait/arrive/advance in the generated CUDA |
 | Good small-shape correctness but poor large-shape speed | Register spill, occupancy, or staging-buffer pressure | Check the compiler resource report; reduce tile size, chunk writeback, or lower pipeline depth |
 
@@ -202,7 +202,7 @@ If the output is correct but performance is far below expectation, use the same 
 
 If the failure survives the checks above, reduce it before filing an issue on the [Apache TVM GitHub repository](https://github.com/apache/tvm/issues). Include:
 
-- the `tvm.__file__` / `tvm.__version__` output and GPU capability;
+- the `tvm_tirx.__file__` / `tvm_tirx.__version__` output and GPU capability;
 - the smallest shape that reproduces the failure;
 - whether the failure is compile-time, deadlock, crash, wrong result, or correct-but-slow;
 - the minimal kernel or notebook cell plus its correctness check;

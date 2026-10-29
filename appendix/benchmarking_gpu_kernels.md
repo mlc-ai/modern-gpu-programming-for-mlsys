@@ -164,14 +164,14 @@ inputs. Whether the accesses actually hit in cache still depends on the total am
 by this computation and the hardware cache capacity.
 
 This book uses TVM's
-[`tvm.tirx.bench.bench`](https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/bench.py)
+[`tvm_tirx.testing.bench.bench`](https://github.com/apache/tvm-tirx/blob/main/python/tvm_tirx/testing/bench.py)
 to handle warm-up, repeated timing, and statistics. The supplied function only launches a prepared
 implementation; inputs, outputs, and workspace remain outside the timed interval. Unlike the manual
 warm-cache example, `bench` writes a 256 MiB buffer before each measured invocation to reduce reuse
 of data left in L2 by the previous invocation, then records an independent CUDA event interval:
 
 ```python
-from tvm.tirx.bench import bench
+from tvm_tirx.testing.bench import bench
 
 
 # Reuse gemm from above. For a custom TIRx kernel, substitute its no-argument callable.
@@ -1368,27 +1368,27 @@ from pathlib import Path
 
 import numpy as np
 
-import tvm
-from tvm.script import tirx as T
-from tvm.tirx.cuda import iket
+import tvm_tirx
+from tvm_tirx.script import tirx as T
+from tvm_tirx.backend.cuda import iket
 
 
 N = 256
 ELEMS_PER_LANE = 8
 
 
-@T.prim_func
-def warp_role_example(inp: T.Buffer((N,), "float32"), out: T.Buffer((N,), "float32")):
-    T.device_entry()
+@T.function
+def warp_role_example(inp: T.Tensor((N,), "float32"), out: T.Tensor((N,), "float32")):
+    T.device_entry(launch=T.cuda.LaunchConfig(grid=(1,), block=64))
     profiler = iket.IketProfiler()
-    warp_id = T.warp_id([2])
-    lane = T.lane_id([32])
-    shared = T.alloc_buffer((N,), "float32", scope="shared")
+    warp_id = T.cuda.warp_id()
+    lane = T.cuda.lane_id()
+    shared = T.alloc_shared((N,), "float32")
 
     profiler.mark("kernel_start", warp_id)
     if warp_id == 0:
         profiler.range_push("producer_load")
-        for i in T.serial(ELEMS_PER_LANE, unroll=False):
+        for i in T.serial(ELEMS_PER_LANE):
             index = i * 32 + lane
             shared[index] = inp[index]
         profiler.range_pop()
@@ -1399,22 +1399,22 @@ def warp_role_example(inp: T.Buffer((N,), "float32"), out: T.Buffer((N,), "float
 
     if warp_id == 1:
         profiler.range_push("consumer_compute")
-        for i in T.serial(ELEMS_PER_LANE, unroll=False):
+        for i in T.serial(ELEMS_PER_LANE):
             index = i * 32 + lane
             out[index] = shared[index] * T.float32(2) + T.float32(1)
         profiler.range_pop()
 
 
 def profile_workload():
-    target = tvm.target.Target({"kind": "cuda", "arch": "sm_100a"})
-    executable = tvm.compile(warp_role_example, target=target, tir_pipeline="tirx")
+    target = tvm_tirx.target.Target({"kind": "cuda", "arch": "sm_100a"})
+    executable = tvm_tirx.tirx.compile(warp_role_example, target=target)
     module = executable.jit()
 
     input_numpy = np.arange(N, dtype=np.float32)
-    inp = tvm.runtime.tensor(input_numpy, device=tvm.cuda())
-    out = tvm.runtime.empty((N,), "float32", device=tvm.cuda())
+    inp = tvm_tirx.runtime.tensor(input_numpy, device=tvm_tirx.cuda())
+    out = tvm_tirx.runtime.empty((N,), "float32", device=tvm_tirx.cuda())
     module.main(inp, out)
-    tvm.cuda().sync()
+    tvm_tirx.cuda().sync()
 
     expected = input_numpy * 2 + 1
     np.testing.assert_array_equal(out.numpy(), expected)
@@ -1444,7 +1444,7 @@ python appendix/iket_example.py
 ```
 
 `iket.run` restarts the current script inside the IKET collection process and calls
-`profile_workload()`. Keeping `tvm.compile()` and `.jit()` inside that function ensures that the
+`profile_workload()`. Keeping `tvm_tirx.tirx.compile()` and `.jit()` inside that function ensures that the
 kernel is compiled and loaded while IKET recording is active. The script also verifies that the
 output equals `input * 2 + 1`.
 
@@ -1455,7 +1455,7 @@ a longer `wait_for_data` region. For an H100, change `sm_100a` in the script to 
 
 ### Add IKET Annotations to Your Own Kernel
 
-Create an `IketProfiler` inside the `PrimFunc`. Use `mark()` for an instantaneous event, and use
+Create an `IketProfiler` inside the `Function`. Use `mark()` for an instantaneous event, and use
 matched `range_push()` / `range_pop()` or `range_start()` / `range_end()` calls around a phase. Keep
 IKET ranges balanced along every control-flow path that a warp may take. Mark waiting explicitly, as
 the example does with `wait_for_data`.

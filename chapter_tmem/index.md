@@ -26,13 +26,15 @@ TMEM is allocated dynamically. `tcgen05.alloc` reserves space along the Column d
 The following pattern appears in later TIRx kernels:
 
 ```python
-pool = T.SMEMPool()
+from tvm_tirx.backend.cuda.lang import SMEMPool
+
+pool = SMEMPool()
 tmem_addr = pool.alloc((1,), "uint32")
 pool.commit()
 
 if warp_id == 0:
-    T.ptx.tcgen05.alloc(
-        T.address_of(tmem_addr), n_cols=256, cta_group=1
+    T.ptx.tcgen05.alloc.cta_group__1.sync.aligned.shared__cta.b32(
+        tmem_addr.ptr_to([0]), 256
     )
 ```
 
@@ -43,18 +45,13 @@ Here `warp_id == 0` selects all of warp 0. `tcgen05.alloc` is warp-collective: a
 Once the base address is available, TIRx can declare a TMEM buffer over the allocated region:
 
 ```python
-tmem = T.decl_buffer(
-    (128, 256),
-    "float32",
-    scope="tmem",
-    allocated_addr=tmem_addr[0],
-    layout=TileLayout(
-        S[(128, 256) : (1@TLane, 1@TCol)]
-    ),
-)
+tmem = T.cuda.decl_tmem(tmem_addr[0], ty_args=[T.Tensor(
+    (128, 256), "float32", scope="tmem",
+    layout=TileLayout(S[(128, 256) : (1@TLane, 1@TCol)]),
+)])
 ```
 
-`allocated_addr` binds the buffer to the address returned by `tcgen05.alloc`. The layout maps logical coordinate `(m,n)` to TMEM `TLane` and `TCol`. Later code can refer to the logical element as `tmem[m,n]`, while the layout handles the hardware coordinates.
+`T.cuda.decl_tmem` binds the tensor view to the address returned by `tcgen05.alloc`. The layout maps logical coordinate `(m,n)` to TMEM `TLane` and `TCol`. Later code can refer to the logical element as `tmem[m,n]`, while the layout handles the hardware coordinates.
 
 ### Allocation-Size Restrictions
 
@@ -71,8 +68,8 @@ When the storage is no longer needed, the kernel performs two operations:
 
 ```python
 if warp_id == 0:
-    T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
-    T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=256, cta_group=1)
+    T.ptx.tcgen05.relinquish_alloc_permit.cta_group__1.sync.aligned()
+    T.ptx.tcgen05.dealloc.cta_group__1.sync.aligned.b32(tmem_addr[0], 256)
 ```
 
 `tcgen05.relinquish_alloc_permit` first declares that the CTA will make no further TMEM allocations; after it executes, the CTA cannot call `tcgen05.alloc` again. `tcgen05.dealloc` then releases the allocated columns. Every TMEM allocation must be explicitly released before the kernel exits. Before cleanup begins, the kernel must ensure that asynchronous MMA, load, store, and other operations touching TMEM have completed.

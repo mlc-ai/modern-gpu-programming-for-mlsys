@@ -53,16 +53,19 @@ Remote SSH auto-forwards it.)
 The kernels in this book target Blackwell (`sm_100a`), so running them needs a Blackwell GPU
 (such as a B200), the TIRx compiler, and a CUDA build of PyTorch.
 
-**1. Install the TIRx compiler.** It ships as the `tvm.tirx` module of the Apache TVM wheel:
+**1. Install the TIRx compiler.** Its Python module is `tvm_tirx`:
 
 ```bash
-pip install apache-tvm==0.26.0 cuda-bindings
+pip install apache-tvm-tirx==0.1.0a5 cuda-bindings
 ```
+
+The default wheel includes native LLVM support. For additional cross-compilation targets,
+install `apache-tvm-tirx[all-targets]==0.1.0a5`.
 
 Verify:
 
 ```bash
-python -c "import tvm, tvm.tirx; print(tvm.__version__)"
+python -c "import tvm_tirx; print(tvm_tirx.__version__)"
 ```
 
 **2. Install PyTorch** with a CUDA build matching your GPU (used for the example inputs and the

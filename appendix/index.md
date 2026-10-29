@@ -10,7 +10,7 @@ The main text runs through Parts I–IV. The appendices collect material you may
 | Compiler internals (the lowering pipeline) | **{ref}`chap_arch`** |
 | Debug asynchronous GEMM/FA hangs, crashes, wrong results, or slowdowns | **{ref}`chap_warp_spec_debug`** |
 
-For the complete `tvm.tirx` Python API, see the
+For the complete `tvm_tirx.tirx` Python API, see the
 [upstream TVM documentation](https://tvm.apache.org/docs/).
 
 Part II covers the TIRx programming model ({ref}`chap_tirx_primer`) and the

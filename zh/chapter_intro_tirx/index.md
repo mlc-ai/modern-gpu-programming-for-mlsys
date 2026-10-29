@@ -12,16 +12,16 @@
 :::{admonition} 运行环境
 :class: note
 
-本章示例需要 Blackwell GPU（`sm_100a`，例如 B200）、TIRx 编译器和支持 CUDA 的 PyTorch。TIRx 位于 Apache TVM wheel 的 `tvm.tirx` 模块中；通过 NVRTC 编译 CUDA 代码时还需要 `cuda-bindings`，可以一起安装：
+本章示例需要 Blackwell GPU（`sm_100a`，例如 B200）、TIRx 编译器和支持 CUDA 的 PyTorch。TIRx 由 `apache-tvm-tirx` wheel 提供，Python 模块名为 `tvm_tirx`；通过 NVRTC 编译 CUDA 代码时还需要 `cuda-bindings`，可以一起安装：
 
 ```bash
-pip install apache-tvm==0.26.0 cuda-bindings
+pip install apache-tvm-tirx==0.1.0a5 cuda-bindings
 ```
 
 安装后可以运行下面的命令，确认 TVM 和 TIRx 能够正常导入：
 
 ```bash
-python -c "import tvm, tvm.tirx; print(tvm.__version__)"
+python -c "import tvm_tirx; print(tvm_tirx.__version__)"
 ```
 
 后续章节中的可运行示例也使用同一套环境。
@@ -56,116 +56,128 @@ A/B: GMEM -> SMEM -> tcgen05.mma
 D:   tcgen05.mma -> TMEM -> registers -> GMEM
 ```
 
-矩阵乘法在 TIRx 中写成一次 `Tx.gemm_async` tile 操作。这项操作描述完整的 `128×128×64` tile GEMM；当前 `tcgen05.mma` 每次处理 16 个 K 元素，因此编译器会沿 K 维生成 4 次 MMA。具体指令序列由编译器根据 shape、layout 和 dispatch 决定。
+矩阵乘法在 TIRx 中写成一次 `Tx.apply` tile 操作。这项操作描述完整的 `128×128×64` tile GEMM；当前 `tcgen05.mma` 每次处理 16 个 K 元素，因此编译器会沿 K 维生成 4 次 MMA。Operand views 提供所选指令的 repeat axes。
 
 阅读下面的代码时，可以先抓住四个阶段：
 
 1. 申请 SMEM 和 TMEM；
 2. 将 A、B 从 GMEM 搬入 SMEM；
-3. 通过 `Tx.gemm_async` 发起 MMA；
+3. 通过 `Tx.apply` 发起 MMA；
 4. 将结果从 TMEM 读回 registers，再写入 GMEM。
 
-其中最关键的三项 tile 操作是 `Tx.cta.copy`、`Tx.gemm_async` 和 `Tx.wg.copy_async`。其余底层调用用于申请和释放 TMEM、初始化 barrier 并建立同步；本章先把它们看作完成这几个阶段所需的实现步骤。
+重点关注由 threads 执行的 tensor 读写，以及分别发起 MMA 和 TMEM readback 的两次 `Tx.apply`。其余底层调用用于申请和释放 TMEM、初始化 barrier 并建立同步；本章先把它们看作完成这几个阶段所需的实现步骤。
 
 先导入这个 kernel 使用的模块：
 
 ```python
-import tvm
-from tvm.script import tirx as T
-from tvm.script.tirx import tile as Tx
-from tvm.backend.cuda.tile_primitive.tma_utils import mma_shared_layout, SwizzleMode
-from tvm.tirx.layout import TileLayout, S, TLane, TCol, tid_in_wg
+import tvm_tirx
+from tvm_tirx.script import tirx as T
+from tvm_tirx.backend.cuda.script import tile as Tx
+from tvm_tirx.backend.cuda.layout import mma_shared_layout, SwizzleMode
+from tvm_tirx.tirx.layout import TileLayout, S
+from tvm_tirx.backend.cuda.axis import TLane, TCol, tid_in_wg
+from tvm_tirx.backend.cuda.lang import SMEMPool
 ```
 
-函数 `hgemm_v1(M, N, K)` 会构造并返回一个 TIRx `PrimFunc`：
+函数 `hgemm_v1(M, N, K)` 会构造并返回一个 TIRx `Function`：
 
-`@T.prim_func` 用来定义这个 GPU 函数，`T.device_entry()` 标记 device 代码的入口。`T.cta_id` 取得 CTA 在 grid 中的坐标，`T.warpgroup_id` 取得 warpgroup 在 CTA 中的编号，`T.warp_id_in_wg` 取得 warp 在 warpgroup 中的编号，`T.lane_id` 则取得 thread 在 warp 中的 lane ID。后面的 scope 和条件判断会使用这些值。
+`@T.function` 用来定义这个 GPU 函数，`T.device_entry(launch=T.cuda.LaunchConfig(...))` 指定 device launch。`T.cuda.block_idx` 取得 CTA 在 grid 中的坐标，`T.cuda.warpgroup_id` 取得 warpgroup 在 CTA 中的编号，`T.cuda.warp_in_warpgroup` 取得 warp 在 warpgroup 中的编号，`T.cuda.lane_id` 则取得 thread 在 warp 中的 lane ID。后面的 scope 和条件判断会使用这些值。
 
 ```python
 def hgemm_v1(M, N, K):
-    a_type = tvm.DataType("float16")
-    b_type = tvm.DataType("float16")
-    d_type = tvm.DataType("float16")
-    acc_type = tvm.DataType("float32")
+    a_type = "float16"
+    b_type = "float16"
+    d_type = "float16"
+    acc_type = "float32"
 
     BLK_M, BLK_N, BLK_K = 128, 128, 64
     A_layout = mma_shared_layout(a_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_M, BLK_K))
     B_layout = mma_shared_layout(b_type, SwizzleMode.SWIZZLE_128B_ATOM, (BLK_N, BLK_K))
 
-    @T.prim_func
+    @T.function
     def kernel(
-        A: T.Buffer((M, K), a_type),
-        B: T.Buffer((N, K), b_type),
-        D: T.Buffer((M, N), d_type),
+        A: T.Tensor((M, K), a_type),
+        B: T.Tensor((N, K), b_type),
+        D: T.Tensor((M, N), d_type),
     ):
-        T.device_entry()
+        T.device_entry(launch=T.cuda.LaunchConfig(grid=[M // BLK_M, N // BLK_N], block=128))
         # 本章调用时 M=BLK_M、N=BLK_N，
         # 所以 grid shape 为 1x1，m_st 和 n_st 都是 0。
-        bx, by = T.cta_id([M // BLK_M, N // BLK_N])
-        wg_id = T.warpgroup_id([1])
-        warp_id = T.warp_id_in_wg([4])
-        lane_id = T.lane_id([32])
+        bx, by = (T.cuda.block_idx("x"), T.cuda.block_idx("y"))
+        wg_id = T.cuda.warpgroup_id()
+        warp_id = T.cuda.warp_in_warpgroup()
+        lane_id = T.cuda.lane_id()
 
         # --- 申请 SMEM ---
-        pool = T.SMEMPool()
+        pool = SMEMPool()
         tmem_addr = pool.alloc((1,), "uint32")
         mma_bar = pool.alloc((1,), "uint64", align=8)
         pool.move_base_to(1024)
-        Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout)
-        Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout)
+        Asmem = pool.alloc((BLK_M, BLK_K), a_type, layout=A_layout, align=1024)
+        Bsmem = pool.alloc((BLK_N, BLK_K), b_type, layout=B_layout, align=1024)
         pool.commit()
 
         # --- 由 warp 0 初始化 barrier 和 TMEM ---
         if warp_id == 0:
             if lane_id == 0:
-                T.ptx.mbarrier.init(mma_bar.ptr_to([0]), 1)
-            T.ptx.tcgen05.alloc(T.address_of(tmem_addr), n_cols=512, cta_group=1)
+                T.ptx.mbarrier.init.shared.b64(mma_bar.ptr_to([0]), 1)
+            T.ptx.tcgen05.alloc.cta_group__1.sync.aligned.shared__cta.b32(
+                tmem_addr.ptr_to([0]), 512)
 
-        T.ptx.fence.proxy_async("shared::cta")
-        T.ptx.fence.mbarrier_init()
+        T.ptx.fence.proxy.async_.shared__cta()
+        T.ptx.fence.mbarrier_init.release.cluster()
         T.cuda.cta_sync()
 
-        tmem = T.decl_buffer(
-            (128, 512), "float32", scope="tmem", allocated_addr=tmem_addr[0],
-            layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)])
-        )
+        tmem = T.cuda.decl_tmem(tmem_addr[0], ty_args=[T.Tensor((128, 512), "float32", scope="tmem", layout=TileLayout(S[(128, 512) : (1@TLane, 1@TCol)]))])
 
         m_st = T.meta_var(bx * BLK_M)
         n_st = T.meta_var(by * BLK_N)
         phase_mma: T.int32 = 0
 
         # --- Load：所有 threads 同步地将 A、B 从 GMEM 搬入 SMEM ---
-        Tx.cta.copy(Asmem[:, :], A[m_st:m_st + BLK_M, :])
-        Tx.cta.copy(Bsmem[:, :], B[n_st:n_st + BLK_N, :])
+        for copy_col in T.serial(BLK_K):
+            Asmem.sub[:, :][warp_id * 32 + lane_id, copy_col] = A.sub[m_st:m_st + BLK_M, :][warp_id * 32 + lane_id, copy_col]
+        for copy_col in T.serial(BLK_K):
+            Bsmem.sub[:, :][warp_id * 32 + lane_id, copy_col] = B.sub[n_st:n_st + BLK_N, :][warp_id * 32 + lane_id, copy_col]
+        T.ptx.fence.proxy.async_.shared__cta()
         T.cuda.cta_sync()
 
         # --- Compute：由一个被选中的 thread 发出 MMA ---
         if warp_id == 0:
-            if T.ptx.elect_sync():
-                Tx.gemm_async(
-                    tmem[:, :BLK_N], Asmem[:, :], Bsmem[:, :],
-                    accum=False, dispatch="tcgen05", cta_group=1
-                )
-                T.ptx.tcgen05.commit(mma_bar.ptr_to([0]), cta_group=1)
+            if T.cuda.elect_sync():
+                Tx.apply(
+                    T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
+                    tmem.sub[:, :BLK_N].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
+                    Asmem.sub[:, :].rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
+                    Bsmem.sub[:, :].rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
+                    instruction_shape=(128, 128, 16), accum=False)
+                T.ptx.tcgen05.commit.cta_group__1.mbarrier__arrive__one.shared__cluster.b64(
+                    mma_bar.ptr_to([0]))
 
-        T.ptx.mbarrier.try_wait(mma_bar.ptr_to([0]), phase_mma)
+        T.cuda.mbarrier_wait(mma_bar.ptr_to([0]), phase_mma)
 
         # --- Writeback：TMEM -> registers -> GMEM ---
         Dreg = T.alloc_local((BLK_N,), acc_type)
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
-        Tx.wg.copy_async(Dreg_wg[:, :], tmem[:, :BLK_N])
-        T.ptx.tcgen05.wait.ld()
-        Tx.cast(Dreg_f16[:], Dreg[:])
+        T.ptx.tcgen05.fence__after_thread_sync()
+        Tx.apply(
+            T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
+            Dreg_wg.sub[:, :].view(4, 32, 128),
+            tmem.sub[:, :BLK_N].view(4, 32, 128), scope="warpgroup")
+        T.ptx.tcgen05.wait__ld.sync.aligned()
+        for cast_col in T.unroll(128):
+            Dreg_f16.sub[:][cast_col] = T.float16(Dreg.sub[:][cast_col])
         m_thr = T.meta_var(m_st + warp_id * 32 + lane_id)
-        Tx.copy(D[m_thr, n_st : n_st + BLK_N], Dreg_f16[:])
+        for store_col in T.unroll(128):
+            D.sub[m_thr, n_st : n_st + BLK_N][store_col] = Dreg_f16.sub[:][store_col]
 
         # --- 释放 TMEM ---
         T.cuda.cta_sync()
         if warp_id == 0:
-            T.ptx.tcgen05.relinquish_alloc_permit(cta_group=1)
-            T.ptx.tcgen05.dealloc(tmem_addr[0], n_cols=512, cta_group=1)
+            T.ptx.tcgen05.relinquish_alloc_permit.cta_group__1.sync.aligned()
+            T.ptx.tcgen05.dealloc.cta_group__1.sync.aligned.b32(tmem_addr[0], 512)
 
     return kernel
 ```
@@ -174,20 +186,20 @@ def hgemm_v1(M, N, K):
 
 ## 编译并验证结果
 
-下面先编译 kernel，再用 PyTorch 计算同样的矩阵乘法作为参考结果。目标写成 `"cuda"` 即可；TVM 会从当前设备检测具体架构，例如 `sm_100a`。参数 `tir_pipeline="tirx"` 用来选择 TIRx lowering pipeline。
+下面先编译 kernel，再用 PyTorch 计算同样的矩阵乘法作为参考结果。目标写成 `"cuda"` 即可；TVM 会从当前设备检测具体架构，例如 `sm_100a`。`tvm_tirx.tirx.compile` 默认使用 TIRx lowering pipeline。
 
 编译后的 `ex.mod(...)` 可以直接接收 PyTorch tensors，不需要手工转换数据：
 
 ```python
 import torch
 
-target = tvm.target.Target("cuda")
+target = tvm_tirx.target.Target("cuda")
 device = torch.device("cuda")
 
 M, N, K = 128, 128, 64
 kernel = hgemm_v1(M, N, K)
 with target:
-    ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+    ex = tvm_tirx.tirx.compile(tvm_tirx.IRModule({"main": kernel}), target=target)
 
 torch.cuda.empty_cache()
 torch.cuda.synchronize()
@@ -219,11 +231,11 @@ print("PASS")
 </div>
 ```
 
-**Scope 决定哪些 threads 执行操作。** `Tx.cta.copy(...)` 由整个 CTA 协作执行，在这个 kernel 中共有 128 个 threads 参与 GMEM 到 SMEM 的 copy。`Tx.gemm_async(...)` 位于 `warp_id == 0` 和 `elect_sync()` 两层条件内，最终只由一个被选中的 thread 发出。MMA 完成后，`mbarrier.try_wait` 等待计算完成；随后，`Tx.wg.copy_async(...)` 由整个 warpgroup 协作，将 TMEM accumulator 分配到 128 个 threads 的 registers 中。
+**Scope 决定哪些 threads 执行操作。** 128 个 CTA threads 共同执行 GMEM-to-SMEM 读写。MMA 的 `Tx.apply` 同时受到 `warp_id == 0` 和 `elect_sync()` 的限制，只由一个选中的 thread 发起。`T.cuda.mbarrier_wait` 等待 MMA 完成；随后 TMEM-load `Tx.apply` 将 accumulator 分布到 128 个 warpgroup threads 的 registers 中。
 
 **Layout 决定 tile 如何映射到物理位置。** `A_layout` 和 `B_layout` 指定 A、B 在 SMEM 中采用 128-byte swizzle；`tmem` 的 `TileLayout` 将 accumulator 映射到 `TLane` 和 `TCol`；`Dreg_wg` 的 view 再通过 `tid_in_wg` 指定每个 thread 读取哪一行结果。MMA 和 copy 的两端必须采用彼此匹配的 layout，硬件才能把同一批元素解释为正确的矩阵 tile。
 
-**Dispatch 决定 tile 操作使用哪种硬件实现。** `Tx.gemm_async` 表示一个异步 tile GEMM，`dispatch="tcgen05"` 进一步要求编译器选择 Blackwell 的 `tcgen05.mma` 路径。这个版本中的 GMEM 到 SMEM copy 由普通 threads 完成；后面的版本会将同一类 tile copy 改为 TMA。
+**Dispatch 决定 tile 操作使用哪条硬件指令。** `Tx.apply` 的第一个参数显式指定 PTX 指令：GEMM 使用 `tcgen05.mma`，TMEM readback 使用 `tcgen05.ld`；operand views 提供 layout 和 repeat axes。本版由普通 threads 完成 GMEM-to-SMEM 读写，后续版本再使用 TMA。
 
 编译器会结合 scope、layout 和 dispatch，生成具体的 thread-level 控制流、地址计算和硬件指令。
 
@@ -232,15 +244,15 @@ print("PASS")
 前面已经用下面两行代码编译了 kernel：
 
 ```python
-target = tvm.target.Target("cuda")
-ex = tvm.compile(tvm.IRModule({"main": kernel}), target=target, tir_pipeline="tirx")
+target = tvm_tirx.target.Target("cuda")
+ex = tvm_tirx.tirx.compile(tvm_tirx.IRModule({"main": kernel}), target=target)
 ```
 
-`PrimFunc` 首先被放入一个 `IRModule`，随后交给 `tvm.compile`。`tir_pipeline="tirx"` 会启动 TIRx lowering pipeline。其中的核心 pass `LowerTIRx` 根据每项 tile primitive 的 scope、layout 和 dispatch 选择具体实现，将 `Tx.gemm_async`、`Tx.cta.copy` 等高层 tile 操作展开成更底层的 TIR。
+`Function` 首先被放入 `IRModule`，随后交给默认使用 TIRx lowering pipeline 的 `tvm_tirx.tirx.compile`。`TileDispatch` 验证 `Tx.apply` 指定的 PTX 指令及 operand views，并按 repeat axes 展开指令；`LowerTensorLayouts` 再将逻辑 tensor 坐标降低为物理访问。
 
-后续 passes 再完成 buffer flatten、host/device 拆分和设备代码生成，最终得到可以直接调用的 `Executable`。
+后续 passes 再完成 tensor flatten、host/device 拆分和设备代码生成，最终得到可以直接调用的 `Executable`。
 
-如果想查看编译器在 lowering 前后生成了什么，可以分别检查 TIRx `PrimFunc` 和最终的 CUDA C 代码：
+如果想查看编译器在 lowering 前后生成了什么，可以分别检查 TIRx `Function` 和最终的 CUDA C 代码：
 
 ```python
 kernel.show()
