@@ -124,6 +124,7 @@ def hgemm_v1(M, N, K):
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
+        T.ptx.tcgen05.fence__after_thread_sync()
         T.cuda.tile.apply(
             T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
             Dreg_wg.sub[:, :].view(4, 32, 128),
@@ -151,7 +152,8 @@ MMA 的 D view 使用 `(M_repeat,N_repeat,M,N)`，A 使用
 
 线程写入 SMEM 后，先通过 `fence.proxy.async` 发布给异步代理，再同步 CTA。
 `tcgen05.commit` 将异步 MMA 的完成关联到 mbarrier，`T.cuda.mbarrier_wait`
-等待完成。TMEM 读取明确指定 `tcgen05.ld`，随后等待 load 完成。
+等待完成。`T.ptx.tcgen05.fence__after_thread_sync()` 将完成通知排在后续 TMEM
+读取之前。TMEM 读取明确指定 `tcgen05.ld`，随后等待 load 完成。
 
 ## 编译与验证
 

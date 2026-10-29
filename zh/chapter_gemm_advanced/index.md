@@ -75,7 +75,7 @@ Load 与 MMA 之间通过两个 barriers 交接 SMEM buffer：
 | **mma2ld** | `TCGen05Bar` | MMA → Writeback | TMEM results 已准备好 |
 | **ld2mma** | `MBarrier` | Writeback → MMA | TMEM 可以供下一个 tile 使用 |
 
-Barrier 类型取决于 producer 如何报告完成。**TMA load** 使用带 byte counting 的 `TMABar`，传输完成后由 TMA hardware 更新 barrier。**TMA store** 的完成状态则由发起指令的 thread 通过 async group 跟踪：先执行 `cp_async.bulk.commit_group()`，再用 `wait_group(0)` 等待写入完成。**MMA operation** 使用 `TCGen05Bar`，`tcgen05.commit()` 会在 MMA 完成后更新该 barrier。
+Barrier 类型取决于 producer 如何报告完成。**TMA load** 使用带 byte counting 的 `TMABar`，传输完成后由 TMA hardware 更新 barrier。**TMA store** 的完成状态则由发起指令的 thread 通过 async group 跟踪：先执行 `T.ptx.cp.async_.bulk.commit_group()`，再用 `T.ptx.cp.async_.bulk.wait_group.read(0)` 等待 TMA engine 读完 SMEM 源数据。**MMA operation** 使用 `TCGen05Bar`，`tcgen05.commit()` 会在 MMA 完成后更新该 barrier。
 
 第 7 步的完成通知只需要更新当前 CTA 的 barrier，因此这些调用使用 `cta_mask=0`。第 8 步组成 two-CTA cluster 后，代码会改用 `cta_mask=3`（二进制 `11`），同时更新两个 CTAs 中对应的 barriers。
 
@@ -122,9 +122,9 @@ PTX 将这种通过数字 ID 选择的 CTA barrier 称为 named barrier。这里
 3. 所有 128 个 writeback threads 执行 `ld2mma.arrive(0)`，通知 MMA 当前 TMEM 已经可以供下一个 tile 使用。没有指定 remote rank 时，`arrive()` 会更新当前 CTA 的 local barrier，每个 writeback thread 都报告一次 arrival。第 8、9 步则使用 `remote_view(0)`，让两个 CTA 都更新 CTA 0 的 barrier。
 4. 在 registers 中将 fp32 转换为 fp16。
 5. 将 registers 写入 `Dsmem`，再执行 `T.ptx.fence.proxy.async_.shared__cta()` 和 `warpgroup_sync(10)`。
-6. 使用 `cp_async.bulk.commit_group()` 和 `wait_group(0)`，通过 TMA 将 `Dsmem` 写回 GMEM。
+6. 使用 `T.ptx.cp.async_.bulk.commit_group()` 和 `T.ptx.cp.async_.bulk.wait_group.read(0)`，通过 TMA 将 `Dsmem` 写回 GMEM。
 
-这里的 mbarrier wait 和 `tcgen05.wait.ld()` 负责等待两项不同的工作：前者确认 MMA 已经完成，`fence.after_thread_sync()` 建立跨 thread 的 `tcgen05` 执行顺序，后者再确认异步 TMEM load 已经写入目标 registers。
+这里的 mbarrier wait 和 `T.ptx.tcgen05.wait__ld.sync.aligned()` 负责等待两项不同的工作：前者确认 MMA 已经完成，`T.ptx.tcgen05.fence__after_thread_sync()` 建立跨 thread 的 `tcgen05` 执行顺序，后者再确认异步 TMEM load 已经写入目标 registers。
 
 ### 完整 Kernel
 

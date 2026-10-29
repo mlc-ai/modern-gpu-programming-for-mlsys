@@ -19,7 +19,7 @@ These kernels target Blackwell (`sm_100a`). If Python imports a stale TVM checko
 ## Debugging Workflow
 
 1. Reproduce the failure at the smallest shape that still fails. If the failure is an illegal memory access, restart Python before the next run.
-2. If compilation fails, check the installed API, target, `dispatch=`, and buffer scopes before reading the runtime synchronization code.
+2. If compilation fails, check the installed API, target, explicit PTX opcode, and buffer scopes before reading the runtime synchronization code.
 3. Save `inspect_source("cuda")` output. Search it for role guards, `mbarrier_init`, `tcgen05`, `cp.async.bulk.tensor`, and `__syncthreads()` before reading the Python again.
 4. Write the roles / storage / handoff / lifetime table for the kernel path that failed.
 5. Check the generated CUDA against that table: barrier inits before role branches, expected TMA producer, MMA issuer(s), writeback group(s), and no CTA-wide collective inside a warpgroup-only branch.
@@ -183,9 +183,9 @@ Classify wrong output by pattern before guessing. Whole row stripes often point 
 
 - **`tcgen05.commit` outside `elect_sync`.** All 32 threads create commit groups; the 31 empty groups signal the mbarrier immediately. TMA can overwrite SMEM before MMA reads it.
 - **Missing `T.ptx.fence.proxy.async_.shared__cta()` before TMA store.** The TMA engine may not see SMEM writes from threads.
-- **Missing `cp_async.bulk.commit_group()` plus `wait_group(0)` after TMA store.** The next tile can reuse Dsmem before the store drains.
+- **Missing `T.ptx.cp.async_.bulk.commit_group()` plus `T.ptx.cp.async_.bulk.wait_group.read(0)` after TMA store.** The next tile can reuse Dsmem before the TMA engine finishes reading it.
 - **Persistent kernel fails intermittently at small sizes such as 1024x1024.** Larger sizes can mask the race with longer K-loops. Re-check phase reset between tiles and the TMA-store commit/wait.
-- **Missing `fence.after_thread_sync()` between MMA completion and TMEM load.** The `mma2ld` wait confirms that the MMA has completed, but a writeback thread still needs `T.ptx.tcgen05.fence__after_thread_sync()` before issuing `tcgen05.ld`. This orders the new thread's TMEM load after the cross-thread completion notification. Steps 7–9 place the fence immediately after `mma2ld.wait`. This is a `tcgen05` ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.
+- **Missing `T.ptx.tcgen05.fence__after_thread_sync()` between MMA completion and TMEM load.** The `mma2ld` wait confirms that the MMA has completed, but a writeback thread still needs `T.ptx.tcgen05.fence__after_thread_sync()` before issuing `tcgen05.ld`. This orders the new thread's TMEM load after the cross-thread completion notification. Steps 7–9 place the fence immediately after `mma2ld.wait`. This is a `tcgen05` ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.
 
 ## Correct but Slow
 

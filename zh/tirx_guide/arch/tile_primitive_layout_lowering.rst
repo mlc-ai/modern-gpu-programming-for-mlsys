@@ -64,11 +64,13 @@ Layout 的来源
 --------------------
 
 作者可以直接指定 ``TileLayout`` 或 ``ComposeLayout``，也可以使用 CUDA backend 的
-``mma_shared_layout``、``tmem_datapath_layout`` 等 helper。省略默认连续存储 layout
-时，Tensor 构造会提供默认映射；显式 ``None`` 可以保留未指定 layout 的状态。
+``mma_shared_layout``、``tmem_datapath_layout`` 等 helper。``T.Tensor`` 省略
+``layout`` 或传入 ``None`` 时保留未指定状态；``layout="default"`` 才显式创建连续
+row-major 映射。连续 GMEM view 可以在需要时推导有效 layout；分布式局部存储与
+TMEM 则需要满足所选指令的显式 layout。
 
 编译器检查这些已经选定的映射。Tile 大小、swizzle mode、协作范围和 PTX opcode
-仍由作者或上层生成器决定。Changing layout 只改变元素位置的描述，不会搬运数据，
+仍由作者或上层生成器决定。改变 layout 只改变元素位置的描述，不会搬运数据，
 也不会让不兼容的 instruction 自动切换到其他实现。
 
 一个可执行的 tile 展开例子
@@ -123,9 +125,9 @@ Layout 的来源
 
 .. code-block:: text
 
-    D: (group-M, group-N, M-atom, N-atom)
-    A: (group-M, repeat-K, M-atom, K-atom)
-    B: (group-N, repeat-K, N-atom, K-atom)
+    D: (repeat-M, repeat-N, M-atom, N-atom)
+    A: (repeat-M, repeat-K, M-atom, K-atom)
+    B: (repeat-N, repeat-K, N-atom, K-atom)
 
 对于 ``128×128×64`` tile，K-atom 为16，因此展开四次 K steps。Accumulator 的首次
 ``accum=False`` 初始化结果，后续 steps 累加。Shared-memory descriptor 由布局与地址
@@ -155,6 +157,6 @@ opcode、scope 与 operands 的形状必须作为同一个硬件约定一起匹�
 ----------------
 
 - `patterns <https://github.com/apache/tvm-tirx/blob/a821c08826b4721d47122ee9b1dced7f3b88e738/python/tvm_tirx/backend/cuda/tile/patterns/__init__.py>`_：tile.apply 与显式指令 pattern dispatch。
-- `TileDispatch <https://github.com/apache/tvm-tirx/blob/a821c08826b4721d47122ee9b1dced7f3b88e738/python/tvm_tirx/tirx/tile/dispatch.py>`_：tile 调用遍历。
+- `TileDispatch <https://github.com/apache/tvm-tirx/blob/a821c08826b4721d47122ee9b1dced7f3b88e738/src/tirx/tile/lower.cc>`_：tile 调用遍历。
 - `LowerTensorLayouts <https://github.com/apache/tvm-tirx/blob/a821c08826b4721d47122ee9b1dced7f3b88e738/src/tirx/transform/lower_tensor_layouts.cc>`_：普通 Tensor layout lowering。
 - `compilation_pipeline.py <https://github.com/apache/tvm-tirx/blob/a821c08826b4721d47122ee9b1dced7f3b88e738/python/tvm_tirx/tirx/compilation_pipeline.py>`_：pass 顺序与 finalization。

@@ -20,16 +20,17 @@ S[(128, 256) : (1@TLane, 1@TCol)]
 In a TIRx program, the same notation constructs a `TileLayout` that can be attached to a buffer:
 
 ```python
+# Inside a device entry, after tcgen05.alloc has filled tmem_addr:
 layout = TileLayout(S[(128, 256) : (1@TLane, 1@TCol)])
-
-pool.alloc(shape, dtype, layout=layout)
-
-T.alloc_tensor(ty_args=[T.Tensor(shape, dtype, scope=scope, layout=layout)])
+tmem = T.cuda.decl_tmem(tmem_addr[0], ty_args=[T.Tensor(
+    (128, 256), "float32", scope="tmem", layout=layout,
+)])
 ```
 
 The buffer now carries its physical layout. Tile operations can use that information directly instead of restating which lanes, registers, or linear storage locations hold its elements.
 
-The layout objects and named axes used in this chapter live in `tvm_tirx.tirx.layout`:
+Import generic layout objects from `tvm_tirx.tirx.layout`, and CUDA axes and helpers
+from `tvm_tirx.backend.cuda`:
 
 ```python
 from tvm_tirx.tirx.layout import Axis, TileLayout, ComposeLayout, S, R
