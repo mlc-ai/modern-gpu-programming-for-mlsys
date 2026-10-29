@@ -21,7 +21,7 @@ FlashAttention 的核心做法是将计算分块，只在片上保留当前 tile
 
 本章围绕三个问题展开：TMEM 如何连接两次 MMA 与 softmax，conditional rescaling 如何减少 `O` 的重缩放次数，以及不同浮点执行路径如何共同承担指数计算。下面先推导这些操作的数学关系，再说明 `S`、`P` 和 `O` 的 TMEM layout、各个 warpgroups 的分工，以及 barriers 如何交接数据和存储资源。
 
-完整的 [FA4 源码](../../examples/flash_attention.py) 与 GEMM 章节使用同一个 TVMScript parser 和原生 CUDA tile API：
+[FA4 配套实现](https://github.com/mlc-ai/TIRx-kernels/blob/9d48e43336d4eca43ad852fee9dc224ca9ac9527/tirx_kernels/ported/flashattention/flash_attention4.py) 按照 README 安装兼容补丁后，与 GEMM 章节使用同一个 TVMScript parser 和原生 CUDA tile API：
 
 ```python
 from tvm_tirx.script import tirx as T
@@ -267,7 +267,7 @@ elif wg_id == 2:
 
 ### 论文与当前 TIRx 实现的差异
 
-本章解释的是当前 `flash_attention.py` 的默认执行路径。它沿用了 FA4 论文的整体 pipeline，但有两处实现选择并不相同。
+本章解释的是当前 `flash_attention4.py` 的默认执行路径。它沿用了 FA4 论文的整体 pipeline，但有两处实现选择并不相同。
 
 第一，论文让 WG0 和 WG1 的 exponential-heavy softmax 区域错开执行，避免两个 softmax warpgroups 同时争用 exponential units。当前代码保留了 `bar_s0_s1_sequence` 及其同步分支，但默认设置 `USE_S0_S1_BARRIER=False`，因此默认路径不会启用这项顺序约束。
 
@@ -275,7 +275,7 @@ elif wg_id == 2:
 
 ## 阅读代码前的约定
 
-本章使用的片段经过少量省略，来源是[与 Apache TVM 0.26 兼容的 `flash_attention.py` revision](../../examples/flash_attention.py)，因此会引用在片段之外定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。下面列出后文反复出现、但不容易只看名字判断含义的符号：
+本章使用的片段经过少量省略，来源是应用 [`tirx-kernels-api.patch`](../../patches/tirx-kernels-api.patch) 后的 FA4 配套实现，因此会引用在片段之外定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。下面列出后文反复出现、但不容易只看名字判断含义的符号：
 
 | 名称 | 含义 |
 |---|---|
@@ -971,9 +971,9 @@ while scheduler.valid():
 
 ## 编译与验证
 
-前面使用的都是完整 kernel 中的代码片段。安装 README 中的 wheel 环境后，从教程仓库根目录运行下面的代码：导入[迁移后的 TVMScript 源码](../../examples/flash_attention.py)，编译后与 PyTorch reference 比较。这里使用 `get_flash_attention4_kernel` 创建 kernel：
+前面使用的都是完整 kernel 中的代码片段。按照 README 安装 wheel 环境和打好兼容补丁的 FA4 配套实现后，运行下面的代码：导入迁移后的 TVMScript 源码，编译后与 PyTorch reference 比较。这里使用 `get_flash_attention4_kernel` 创建 kernel：
 
-当前 `flash_attention.py` 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：
+当前 `flash_attention4.py` 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：
 
 - `NUM_QO_HEADS` 必须能被 `NUM_KV_HEADS` 整除，才能得到整数 `GQA_RATIO`。
 - `GQA_RATIO` 必须能整除 `BLK_M=128`，否则 128 条 packed Q rows 无法均匀还原为 sequence positions。
@@ -986,7 +986,7 @@ while scheduler.valid():
 import torch
 import torch.nn.functional as F
 import tvm_tirx
-from examples.flash_attention import get_flash_attention4_kernel
+from tirx_kernels.ported.flashattention.flash_attention4 import get_flash_attention4_kernel
 
 B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
 assert Hq % Hkv == 0

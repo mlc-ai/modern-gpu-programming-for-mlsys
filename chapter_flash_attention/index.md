@@ -21,7 +21,7 @@ The preceding GEMM chapters introduced these Blackwell hardware paths: TMA moves
 
 This chapter is organized around three questions: how TMEM connects the two MMAs with softmax, how conditional rescaling reduces the number of `O` rescaling operations, and how multiple floating-point execution paths share exponential evaluation. We first derive the mathematical dependencies, then examine the TMEM layouts of `S`, `P`, and `O`, the division of work among warpgroups, and the barriers that hand off data and storage resources.
 
-The complete [FA4 source](../examples/flash_attention.py) uses the same TVMScript parser and native CUDA tile API as the GEMM chapters:
+The [FA4 reference](https://github.com/mlc-ai/TIRx-kernels/blob/9d48e43336d4eca43ad852fee9dc224ca9ac9527/tirx_kernels/ported/flashattention/flash_attention4.py) uses the same TVMScript parser and native CUDA tile API as the GEMM chapters after applying the compatibility patch described in the README:
 
 ```python
 from tvm_tirx.script import tirx as T
@@ -268,7 +268,7 @@ This redistribution gives the softmax threads enough registers to retain a full 
 
 ### Differences Between the Paper and the Current TIRx Kernel
 
-This chapter follows the default path in `flash_attention.py`. It uses the overall FA4 pipeline from the paper, but two implementation choices differ.
+This chapter follows the default path in `flash_attention4.py`. It uses the overall FA4 pipeline from the paper, but two implementation choices differ.
 
 First, the paper staggers the exponential-heavy regions of WG0 and WG1 so that the two softmax warpgroups do not compete for the exponential units at the same time. The current implementation retains `bar_s0_s1_sequence` and the corresponding synchronization branches, but sets `USE_S0_S1_BARRIER=False` by default. The default path described here therefore does not enable that ordering constraint.
 
@@ -276,7 +276,7 @@ Second, the paper uses otherwise idle TMEM to communicate correction statistics.
 
 ## Conventions for Reading the Code
 
-The excerpts in this chapter are lightly abbreviated from [`flash_attention.py`](../examples/flash_attention.py), so they refer to shapes, stage indices, and phase variables defined elsewhere in the kernel. Unless a causal difference is called out, the detailed handoff discussion and timeline trace the non-causal configuration used by the verification example. The table below collects the names that recur later but are not self-explanatory:
+The excerpts in this chapter are lightly abbreviated from the FA4 reference after applying [`tirx-kernels-api.patch`](../patches/tirx-kernels-api.patch), so they refer to shapes, stage indices, and phase variables defined elsewhere in the kernel. Unless a causal difference is called out, the detailed handoff discussion and timeline trace the non-causal configuration used by the verification example. The table below collects the names that recur later but are not self-explanatory:
 
 | Name | Meaning |
 |------|---------|
@@ -970,9 +970,9 @@ The difference lies in `next_tile()`: non-causal mode advances a persistent CTA 
 
 ## Compile and Verify
 
-The preceding sections used excerpts from the complete kernel. To run FA4, install the wheel environment described in the README and run the following code from the book repository root. It imports the migrated TVMScript source, compiles it, and compares its output with a PyTorch reference. Unlike the GEMM examples, this kernel is constructed with `get_flash_attention4_kernel`.
+The preceding sections used excerpts from the complete kernel. To run FA4, install the wheel environment and patched FA4 reference described in the README. The following code imports the migrated TVMScript source, compiles it, and compares its output with a PyTorch reference. Unlike the GEMM examples, this kernel is constructed with `get_flash_attention4_kernel`.
 
-The current `flash_attention.py` is specialized for fixed tile shapes rather than serving as a general attention interface. Its inputs must satisfy these constraints:
+The current `flash_attention4.py` is specialized for fixed tile shapes rather than serving as a general attention interface. Its inputs must satisfy these constraints:
 
 - `NUM_QO_HEADS` must be divisible by `NUM_KV_HEADS`, producing an integral `GQA_RATIO`.
 - `GQA_RATIO` must divide `BLK_M=128`, so the 128 packed Q rows map evenly back to sequence positions.
@@ -985,7 +985,7 @@ The example checks these requirements before compiling:
 import torch
 import torch.nn.functional as F
 import tvm_tirx
-from examples.flash_attention import get_flash_attention4_kernel
+from tirx_kernels.ported.flashattention.flash_attention4 import get_flash_attention4_kernel
 
 B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
 assert Hq % Hkv == 0
