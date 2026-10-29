@@ -191,17 +191,17 @@
 <li class="toctree-l1"><a class="reference internal" href="../appendix/index.html">概览</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/language_reference/index.html">TIRx 语言参考</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/parser_utils.html">Parser 工具</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/data_types.html">Data types and expressions</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/buffers.html">Buffers and memory</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/data_types.html">数据类型与表达式</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/buffers.html">Buffer 与内存</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/control_flow.html">控制流</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX intrinsics</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/language_reference/cuda/threads_sync.html">CUDA C++/PTX Intrinsics</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html">GPU Kernel 性能测量与分析</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">编译器内部机制</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/ir_representation.html">TIRx IR 的组织方式</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx 编译流水线</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/tile_primitive_layout_lowering.html">Tile 指令与 Layout Lowering</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/tile_primitive_layout_lowering.html">Tile Primitive 与 Layout Lowering</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">调试 Warp-Specialized Kernels</a></li>
@@ -370,7 +370,7 @@ tx-count              == 0
 <p>所以，<code class="docutils literal notranslate"><span class="pre">expect_tx</span></code> 不能简单理解为“又一次普通 arrival”。它还为异步 copy 登记了需要等待的传输字节数。barrier 既要等所有 arrival 发生，也要等相关数据全部传输完成。</p>
 <p>Tensor Core 使用另一条 arrival 路径。仅仅发出 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 并不会更新 barrier。kernel 还需要通过 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit...mbarrier::arrive</span></code>，把一次 barrier arrival 关联到此前发出的异步 tcgen05 操作。这些操作完成后，硬件才会在 barrier 上报告 arrival；如果缺少这一步，等待该 arrival 的 consumer 就无法继续。</p>
 <p>普通 thread 也可以直接执行 <code class="docutils literal notranslate"><span class="pre">mbarrier.arrive</span></code>。例如，consumer 读完一个 shared-memory buffer 后，可以通过 arrival 通知 producer：这块 buffer 已经可以覆盖并复用。</p>
-<p><code class="docutils literal notranslate"><span class="pre">wait</span></code> 是同一套协议的 consumer 端。consumer 会等待 barrier 完成当前 iteration 对应的 phase；只有等待结束后，才能读取数据或复用 barrier 所保护的资源。原始 PTX <code class="docutils literal notranslate"><span class="pre">mbarrier.try_wait.parity</span></code> 可能在 phase 完成前返回 <code class="docutils literal notranslate"><span class="pre">false</span></code>，因此需要反复检查；本书使用的 <code class="docutils literal notranslate"><span class="pre">T.cuda.mbarrier_wait</span></code> 已经在内部封装了这个循环，会一直等到指定 phase 完成。<code class="docutils literal notranslate"><span class="pre">arrive</span></code> 和 <code class="docutils literal notranslate"><span class="pre">wait</span></code> 分开后，producer 报告进度便可以继续执行其他工作，consumer 只在真正需要数据时等待。</p>
+<p><code class="docutils literal notranslate"><span class="pre">wait</span></code> 是同一套协议的 consumer 端。consumer 会等待 barrier 完成当前 iteration 对应的 phase；只有等待结束后，才能读取数据或复用 barrier 所保护的资源。原始 PTX <code class="docutils literal notranslate"><span class="pre">mbarrier.try_wait.parity</span></code> 可能在 phase 完成前返回 <code class="docutils literal notranslate"><span class="pre">false</span></code>，因此需要反复检查；本书使用的 <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.try_wait</span></code> 已经在内部封装了这个循环，会一直等到指定 phase 完成。<code class="docutils literal notranslate"><span class="pre">arrive</span></code> 和 <code class="docutils literal notranslate"><span class="pre">wait</span></code> 分开后，producer 报告进度便可以继续执行其他工作，consumer 只在真正需要数据时等待。</p>
 <p>关键在于，异步硬件不仅在后台继续执行，还会通过 barrier 报告完成。TMA 可以通知 shared-memory tile 已经准备好，Tensor Core 可以通知 TMEM 中的结果已经写完，普通 threads 也可以通知某块 buffer 已经不再使用。它们最终都遵循同一种 producer-consumer 协议：producer 报告 arrival，consumer 执行 wait。</p>
 </section>
 <section id="phase">
@@ -383,7 +383,7 @@ tx-count              == 0
 <p>上图展示了一个 barrier 如何在 phase 0 和 phase 1 之间切换，从而被反复使用。在两级 TMA pipeline 中，stage 0 和 stage 1 各有一块 SMEM buffer，也各有一个 TMA barrier。这样，consumer 可以分别等待每个 stage 的数据。</p>
 <p>当两个 stages 按 stage 0、stage 1 的顺序循环访问时，可以用一个 <code class="docutils literal notranslate"><span class="pre">phase_tma</span></code> 记录当前轮次。每访问完两个 stages，就翻转一次 parity：</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>stage = iteration % 2
-T.cuda.mbarrier_wait(tma_bar.ptr_to([stage]), phase_tma)
+T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma)
 
 if stage == 1:
     phase_tma ^= 1

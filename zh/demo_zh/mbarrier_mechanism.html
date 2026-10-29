@@ -181,7 +181,7 @@
           <td class="api-effect">完成后由 system 执行一次 arrive(count=1)</td>
         </tr>
         <tr>
-          <td><span class="api-name">T.cuda.mbarrier_wait</span> <span class="tag">consumer</span></td>
+          <td><span class="api-name">T.ptx.mbarrier.try_wait</span> <span class="tag">consumer</span></td>
           <td class="api-role">等待指定 phase 完成</td>
           <td class="api-effect">不修改 barrier 状态；未完成时在内部重试，完成后返回</td>
         </tr>

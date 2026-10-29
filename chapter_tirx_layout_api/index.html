@@ -197,7 +197,7 @@
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../appendix/benchmarking_gpu_kernels.html">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../tirx_guide/arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">Compilation and lowering</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../tirx_guide/arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../appendix/debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
@@ -398,7 +398,7 @@
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#forward-mapping">Forward Mapping</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#example-blackwell-tensor-memory">Example: Blackwell Tensor Memory</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor-layouts">Scale-Factor Layouts</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#common-layout-patterns">Common Layout Patterns</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#common-layout-constructors">Common Layout Constructors</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#composelayout">ComposeLayout</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#why-swizzle">Why Swizzle</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-swizzle-transform">The Swizzle Transform</a></li>
@@ -435,16 +435,26 @@
 
 <span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">)</span>
 
-<span class="n">T</span><span class="o">.</span><span class="n">alloc_tensor</span><span class="p">(</span><span class="n">ty_args</span><span class="o">=</span><span class="p">[</span><span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="n">scope</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">)])</span>
+<span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="n">scope</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>The buffer now carries its physical layout. Tile operations can use that information directly instead of restating which lanes, registers, or linear storage locations hold its elements.</p>
-<p>The layout objects and named axes used in this chapter live in <code class="docutils literal notranslate"><span class="pre">tvm_tirx.tirx.layout</span></code>:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm_tirx.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">Axis</span><span class="p">,</span> <span class="n">TileLayout</span><span class="p">,</span> <span class="n">ComposeLayout</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">R</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">tvm_tirx.backend.cuda.axis</span><span class="w"> </span><span class="kn">import</span> <span class="n">laneid</span><span class="p">,</span> <span class="n">warpid</span><span class="p">,</span> <span class="n">tid_in_wg</span><span class="p">,</span> <span class="n">TLane</span><span class="p">,</span> <span class="n">TCol</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">tvm_tirx.backend.cuda.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">tmem_datapath_layout</span>
-
-<span class="n">m</span> <span class="o">=</span> <span class="n">Axis</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"m"</span><span class="p">)</span>
+<p>The layout objects and named axes used in this chapter live in <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">TileLayout</span><span class="p">,</span>
+    <span class="n">ComposeLayout</span><span class="p">,</span>
+    <span class="n">S</span><span class="p">,</span>
+    <span class="n">R</span><span class="p">,</span>
+    <span class="n">laneid</span><span class="p">,</span>
+    <span class="n">warpid</span><span class="p">,</span>
+    <span class="n">tid_in_wg</span><span class="p">,</span>
+    <span class="n">TLane</span><span class="p">,</span>
+    <span class="n">TCol</span><span class="p">,</span>
+    <span class="n">m</span><span class="p">,</span>
+    <span class="n">tcgen05_atom_layout</span><span class="p">,</span>
+    <span class="n">tmem_datapath_layout</span><span class="p">,</span>
+    <span class="n">wg_local_layout</span><span class="p">,</span>
+<span class="p">)</span>
 </pre></div>
 </div>
 <p>A layout does not have to produce a single linear address. Its result may instead contain hardware coordinates such as <code class="docutils literal notranslate"><span class="pre">laneid</span></code>, <code class="docutils literal notranslate"><span class="pre">warpid</span></code>, <code class="docutils literal notranslate"><span class="pre">TLane</span></code>, and <code class="docutils literal notranslate"><span class="pre">TCol</span></code>. The TMEM layout above maps the logical row to <code class="docutils literal notranslate"><span class="pre">TLane</span></code> and the logical column to <code class="docutils literal notranslate"><span class="pre">TCol</span></code>. Here is a register fragment that uses both lane and warp axes:</p>
@@ -687,19 +697,23 @@ TCol  = s
 <p>The 32-row group consequently appears in lanes <code class="docutils literal notranslate"><span class="pre">0-31</span></code>, <code class="docutils literal notranslate"><span class="pre">32-63</span></code>, <code class="docutils literal notranslate"><span class="pre">64-95</span></code>, and <code class="docutils literal notranslate"><span class="pre">96-127</span></code>. Each warp’s 32-lane TMEM window can access the same scale factors. The complete layout adds outer iters for the M and K-scale-block dimensions; this atom describes only the local pattern read by one MMA. See <a class="reference internal" href="../chapter_layout_generations/index.html#chap-layout-generations"><span class="std std-ref">The Evolution of Tensor Core Data Layouts</span></a> for the corresponding hardware data path.</p>
 <p>Accumulators and scale factors therefore use the same <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> model. An accumulator layout normally maps each element to one TMEM coordinate, while a scale-factor layout adds replication in the same <code class="docutils literal notranslate"><span class="pre">TLane</span></code>/<code class="docutils literal notranslate"><span class="pre">TCol</span></code> space.</p>
 </section>
-<section id="common-layout-patterns">
-<h2>Common Layout Patterns<a class="headerlink" href="#common-layout-patterns" title="Link to this heading">#</a></h2>
-<p>The CUDA backend supplies <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout(datapath,</span> <span class="pre">rows,</span> <span class="pre">cols)</span></code> for common
-TMEM accumulator mappings. Import it from <code class="docutils literal notranslate"><span class="pre">tvm_tirx.backend.cuda.layout</span></code>.
-For example, datapath <code class="docutils literal notranslate"><span class="pre">&quot;D&quot;</span></code> describes the direct row mapping for <code class="docutils literal notranslate"><span class="pre">M=128</span></code>.</p>
-<p>A register layout can assign one row to each warpgroup thread:</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="n">cols</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@tid_in_wg</span><span class="p">,</span> <span class="mi">1</span><span class="p">)])</span>
+<section id="common-layout-constructors">
+<h2>Common Layout Constructors<a class="headerlink" href="#common-layout-constructors" title="Link to this heading">#</a></h2>
+<p>Kernels rarely need to spell out every hardware layout by hand. TIRx provides constructors for common patterns.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tmem_datapath_layout</span><span class="p">(</span><span class="n">datapath</span><span class="p">,</span> <span class="n">rows</span><span class="p">,</span> <span class="n">cols</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>To transfer between registers and TMEM, reshape both views to the canonical axes
-required by the chosen <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> or <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> instruction and pass that opcode
-to <code class="docutils literal notranslate"><span class="pre">T.cuda.tile.apply</span></code>. The tile API validates the explicit layouts and instruction;
-it does not infer the instruction from a generic copy.</p>
+<p>This returns the TMEM accumulator layout written by <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code>. The <code class="docutils literal notranslate"><span class="pre">datapath</span></code> argument selects the row mapping. For example, <code class="docutils literal notranslate"><span class="pre">&quot;D&quot;</span></code> is the direct row mapping used for <code class="docutils literal notranslate"><span class="pre">M=128</span></code>, while <code class="docutils literal notranslate"><span class="pre">&quot;F&quot;</span></code> is the mapping that scatters <code class="docutils literal notranslate"><span class="pre">M=64</span></code> across several Lane regions.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tcgen05_atom_layout</span><span class="p">(</span><span class="n">instr_shape</span><span class="p">,</span> <span class="n">tensor_shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>This returns the register tile layout associated with a <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> or <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> data-movement shape. <code class="docutils literal notranslate"><span class="pre">instr_shape</span></code> may be <code class="docutils literal notranslate"><span class="pre">&quot;32x32b&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;16x64b&quot;</span></code>, <code class="docutils literal notranslate"><span class="pre">&quot;16x128b&quot;</span></code>, or another supported string. Together, <code class="docutils literal notranslate"><span class="pre">tensor_shape</span></code> and <code class="docutils literal notranslate"><span class="pre">dtype</span></code> determine the repeat factor.</p>
+<p>The returned object describes a tile distributed across the registers of a warpgroup’s threads. When used by <code class="docutils literal notranslate"><span class="pre">Tx.wg.copy_async</span></code> between TMEM and a local fragment, lowering can select the matching warp-collective <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> or <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code>; each warp handles its own 32-lane TMEM partition.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">wg_local_layout</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">rows</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>This returns a warpgroup-local register tile. It maps logical rows to <code class="docutils literal notranslate"><span class="pre">tid_in_wg</span></code> and columns within a row to that thread’s local <code class="docutils literal notranslate"><span class="pre">m</span></code> axis. With the default <code class="docutils literal notranslate"><span class="pre">rows=128</span></code>, each thread owns one row.</p>
+<p>All three constructors return ordinary <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> objects built from the same iters and named axes. They are convenience wrappers for hardware mappings that recur across kernels.</p>
 </section>
 <section id="composelayout">
 <h2>ComposeLayout<a class="headerlink" href="#composelayout" title="Link to this heading">#</a></h2>
@@ -827,7 +841,7 @@ i = 7: bank 28
 </div>
 <p>All eight rows land in bank 0. The swizzle leaves the logical tile unchanged but rearranges its physical addresses so that this access pattern no longer concentrates on one bank.</p>
 <p>This derivation only shows that this float16 column access is spread over eight banks. Whether another access is conflict-free still depends on the data type, access width, and hardware instruction’s access shape. Change the data type and swizzle mode in the demo at the beginning of the chapter to compare their address mappings directly.</p>
-<p>For <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> layouts covered by existing constructors, use helpers such as <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code> and explicit register <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> objects. Other affine layouts still use <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>, <code class="docutils literal notranslate"><span class="pre">R[...]</span></code>, and an offset. When inspecting a <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>, remember that <code class="docutils literal notranslate"><span class="pre">apply()</span></code> computes only the base physical coordinate and does not enumerate replicas. Shared-memory swizzles use <code class="docutils literal notranslate"><span class="pre">ComposeLayout(per_element,</span> <span class="pre">swizzle_len,</span> <span class="pre">atom_len,</span> <span class="pre">tile_layout)</span></code> over a tile layout that produces a linear <code class="docutils literal notranslate"><span class="pre">m</span></code> address.</p>
+<p>For <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> layouts covered by existing constructors, use helpers such as <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code> and <code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code>. Other affine layouts still use <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>, <code class="docutils literal notranslate"><span class="pre">R[...]</span></code>, and an offset. When inspecting a <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>, remember that <code class="docutils literal notranslate"><span class="pre">apply()</span></code> computes only the base physical coordinate and does not enumerate replicas. Shared-memory swizzles use <code class="docutils literal notranslate"><span class="pre">ComposeLayout(per_element,</span> <span class="pre">swizzle_len,</span> <span class="pre">atom_len,</span> <span class="pre">tile_layout)</span></code> over a tile layout that produces a linear <code class="docutils literal notranslate"><span class="pre">m</span></code> address.</p>
 </section>
 </section>
 
@@ -890,7 +904,7 @@ i = 7: bank 28
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#forward-mapping">Forward Mapping</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#example-blackwell-tensor-memory">Example: Blackwell Tensor Memory</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#scale-factor-layouts">Scale-Factor Layouts</a></li>
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#common-layout-patterns">Common Layout Patterns</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#common-layout-constructors">Common Layout Constructors</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#composelayout">ComposeLayout</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#why-swizzle">Why Swizzle</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#the-swizzle-transform">The Swizzle Transform</a></li>

@@ -197,7 +197,7 @@
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/benchmarking_gpu_kernels.html">Measuring and Analyzing GPU Kernel Performance</a></li>
 <li class="toctree-l1 has-children"><a class="reference internal" href="../../arch/index.html">Compiler Internals</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
-<li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">Compilation and lowering</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../arch/lowering_pipeline.html">TIRx Lowering Pipeline</a></li>
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../../../appendix/debugging_warp_specialized.html">Debugging Warp-Specialized Kernels</a></li>
@@ -409,13 +409,13 @@ corresponding CUDA control flow.</p>
 <h2>if<a class="headerlink" href="#if" title="Link to this heading">#</a></h2>
 <p>A Python <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code> becomes a CUDA <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code>. Guard work by a
 thread/lane comparison, or elect a single issuing thread with
-<code class="docutils literal notranslate"><span class="pre">T.cuda.elect_sync()</span></code>:</p>
+<code class="docutils literal notranslate"><span class="pre">T.ptx.elect_sync()</span></code>:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">tx</span> <span class="o">&lt;</span> <span class="mi">128</span><span class="p">:</span>
     <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 <span class="k">else</span><span class="p">:</span>
     <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">+</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
 
-<span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
+<span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
     <span class="k">pass</span>                             <span class="c1"># one elected lane (e.g. to issue TMA/MMA)</span>
 </pre></div>
 </div>
@@ -447,7 +447,7 @@ needs to synchronize, use a warpgroup-scoped <code class="docutils literal notra
 <p>The same caution applies to barrier setup. The high-level <code class="docutils literal notranslate"><span class="pre">MBarrier.init()</span></code>
 wrapper emits a single-thread guard (<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code>). Nesting that call
 inside another divergent branch can leave the barrier uninitialized and cause an
-unspecified launch failure. The raw <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.init.shared.b64</span></code> intrinsic does not add
+unspecified launch failure. The raw <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.init</span></code> intrinsic does not add
 this guard automatically; its caller must select the initializing thread.</p>
 </section>
 <section id="loop">
