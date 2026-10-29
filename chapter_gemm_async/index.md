@@ -71,7 +71,7 @@ TMA stores use a different completion mechanism. After the threads write the res
 
 `warpgroup_sync(10)` lowers to `bar.sync 10, 128`. Here, `10` selects one of the CTA's 16 named-barrier slots, whose IDs range from 0 to 15; `128` is the participating thread count supplied by the intrinsic. ID 10 has no TMA-specific meaning. This single-warpgroup kernel uses it because no other active named barrier occupies that slot. The named barrier is separate from the shared-memory mbarrier used above to track TMA loads, and it resets after each completed synchronization so the same ID can be used again.
 
-The `tid == 0` thread then starts the asynchronous copy from `Dsmem` to GMEM and calls `cp_async.bulk.commit_group()`, which collects its previously issued but uncommitted TMA stores into one bulk async group. The `0` in `cp_async.bulk.wait_group(0)` means that no previously committed group may remain pending, so the call returns only after all of those stores have completed. The second `warpgroup_sync(10)` reuses ID 10 and holds the other threads until the `tid == 0` thread finishes waiting for the store. Until then, `Dsmem` cannot be overwritten or reused.
+The `tid == 0` thread then starts the asynchronous copy from `Dsmem` to GMEM and calls `T.ptx.cp.async_.bulk.commit_group()`, which collects its previously issued but uncommitted TMA stores into one bulk async group. The `0` in `T.ptx.cp.async_.bulk.wait_group.read(0)` means that no previously committed group may still be reading its source. The `.read` modifier waits for the TMA engine to finish reading `Dsmem`, which makes the source buffer safe to reuse; it does not wait for every GMEM write to become visible. The second `warpgroup_sync(10)` reuses ID 10 and holds the other threads until the `tid == 0` thread finishes waiting for the store. Until then, `Dsmem` cannot be overwritten or reused.
 
 ### Complete Kernel
 
@@ -204,6 +204,7 @@ def hgemm_v4(M, N, K):
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
 
         # Read TMEM -> registers (async; wait.ld then cta_sync to ensure read completes)
+        T.ptx.tcgen05.fence__after_thread_sync()
         T.cuda.tile.apply(
             T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
             Dreg_wg.sub[:, :].view(4, 32, 128),
@@ -251,7 +252,7 @@ Most of this kernel comes directly from Step 3. The following five settings defi
 
 - **`@T.inline`**: `tma_load(...)` and `mma(...)` are helper functions. They are expanded into the kernel body at compile time and can use variables from the surrounding kernel.
 
-- **TMA store synchronization**: The epilogue first writes fp16 rows into `Dsmem`. `T.ptx.fence.proxy.async_.shared__cta()` and `warpgroup_sync` make those thread-written SMEM values ready for the TMA store path. The store then uses `commit_group()` and `wait_group(0)` to wait for the SMEM-to-GMEM transfer to finish.
+- **TMA store synchronization**: The epilogue first writes fp16 rows into `Dsmem`. `T.ptx.fence.proxy.async_.shared__cta()` and `warpgroup_sync` make those thread-written SMEM values ready for the TMA store path. The store then uses `commit_group()` and `T.ptx.cp.async_.bulk.wait_group.read(0)` to wait until the TMA engine has finished reading the SMEM source.
 
 The data-movement path is now correct, but the schedule remains sequential: each load completes before its MMA begins, so the two engines still take turns. The next step keeps the TMA load and store paths and introduces reusable SMEM stages for prefetching.
 
@@ -470,6 +471,7 @@ def hgemm_v5(M, N, K):
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
+        T.ptx.tcgen05.fence__after_thread_sync()
         T.cuda.tile.apply(
             T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
             Dreg_wg.sub[:, :].view(4, 32, 128),
@@ -717,6 +719,7 @@ def hgemm_v6(M, N, K):
             Dreg_f16 = T.alloc_local((BLK_N,), d_type)
             Dreg_wg = Dreg.view(128, BLK_N,
                                 layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
+            T.ptx.tcgen05.fence__after_thread_sync()
             T.cuda.tile.apply(
                 T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
                 Dreg_wg.sub[:, :].view(4, 32, 128),

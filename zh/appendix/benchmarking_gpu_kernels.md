@@ -1009,6 +1009,6 @@ python appendix/iket_example.py
 
 ### 把标记迁移到自己的 kernel
 
-在自己的 `PrimFunc` 中创建 `IketProfiler`，用 `mark()` 记录瞬时事件，用成对的 `range_push()` / `range_pop()` 或 `range_start()` / `range_end()` 包住阶段。每个 warp 实际经过的控制流都要保持 range 成对；等待时间也需要像示例中的 `wait_for_data` 一样显式包住。
+在自己的 TIRx 函数 中创建 `IketProfiler`，用 `mark()` 记录瞬时事件，用成对的 `range_push()` / `range_pop()` 或 `range_start()` / `range_end()` 包住阶段。每个 warp 实际经过的控制流都要保持 range 成对；等待时间也需要像示例中的 `wait_for_data` 一样显式包住。
 
 编译和第一次 JIT load 继续放在 `iket.run` 调用的函数内。IKET 支持 Hopper 或更新架构，并会检查 CUTLASS DSL packages、NVRTC、`nvdisasm` 和相关 binary 是否与锁定 profile 一致。IKET 插入的记录代码会改变生成的 kernel 并带来额外开销，因此 trace 用于解释阶段和 warp roles；正式 latency 仍由未插桩版本的 CUDA Event benchmark 给出。完整 API 和 trace 选项见 [`python/tvm_tirx/backend/cuda/iket.py`](https://github.com/apache/tvm-tirx/blob/a821c08826b4721d47122ee9b1dced7f3b88e738/python/tvm_tirx/backend/cuda/iket.py) 和 [NVIDIA IKET 文档](https://github.com/NVIDIA/cutlass/blob/v4.6.0/media/docs/pythonDSL/cute_dsl_general/iket_profiling.rst)。

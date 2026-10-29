@@ -201,7 +201,7 @@ The table below maps these paths to the concrete TIRx primitives and hardware in
 | Load Q/K/V | GMEM tiles -> SMEM tiles | `Tx.apply(T.ptx["cp.async.bulk.tensor.4d.shared::cta.global.tile.mbarrier::complete_tx::bytes"], ...)` | TMA load |
 | QKᵀ MMA | Q in SMEM and K in SMEM -> score tile `S` in TMEM | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | `tcgen05.mma` |
 | Softmax read | `S` in TMEM -> warpgroup register tile | `Tx.apply(T.ptx["tcgen05.ld.sync.aligned.32x32b.x32.b32"], ...)` | `tcgen05.ld` |
-| Softmax write | unnormalized weight tile `P` in registers -> fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store, followed by `tcgen05.wait.st()` |
+| Softmax write | unnormalized weight tile `P` in registers -> fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store, followed by `T.ptx.tcgen05.wait__st.sync.aligned()` |
 | PV MMA | `P` in TMEM and V in SMEM -> output accumulator `O` in TMEM | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | `tcgen05.mma` with a TMEM operand |
 | Correction | `O` in TMEM -> registers -> `O` in TMEM | TMEM readback, register multiply, TMEM store | `tcgen05.ld` / TMEM store |
 | Epilogue | final `O` in TMEM -> registers -> SMEM -> GMEM | TMEM readback, TVMScript tensor stores, TMA store | `tcgen05.ld` + TMA store |

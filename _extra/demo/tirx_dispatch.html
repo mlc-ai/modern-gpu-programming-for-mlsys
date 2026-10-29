@@ -100,6 +100,7 @@
     ["                mma_bar.ptr_to([0]))", null],
     ["    T.cuda.mbarrier_wait(mma_bar.ptr_to([0]), phase_mma)", null],
     ["", null],
+    ["    T.ptx.tcgen05.fence__after_thread_sync()", null],
     ["    T.cuda.tile.apply(", null],
     ["        T.ptx[\"tcgen05.ld.sync.aligned.32x32b.x128.b32\"],", "dispatch"],
     ["        Dreg_wg.view(4, 32, 128), tmem.sub[:, :BLK_N].view(4, 32, 128),", "layout"],

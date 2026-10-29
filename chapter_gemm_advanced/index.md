@@ -72,7 +72,7 @@ The three concurrent roles communicate through four barriers. The forward path, 
 | **mma2ld** | `TCGen05Bar` | MMA -> Writeback | "TMEM results are ready" |
 | **ld2mma** | `MBarrier` | Writeback -> MMA | "TMEM is free for next tile" |
 
-The barrier type depends on how its producer reports completion. **TMA loads** use `TMABar`, an mbarrier with byte counting that the TMA hardware updates after the transfer completes. **TMA stores** are tracked by the issuing thread through an async group: `cp_async.bulk.commit_group()` submits the group, and `wait_group(0)` waits for the write to finish. **MMA operations** use `TCGen05Bar`; `tcgen05.commit()` updates the barrier when the MMA completes.
+The barrier type depends on how its producer reports completion. **TMA loads** use `TMABar`, an mbarrier with byte counting that the TMA hardware updates after the transfer completes. **TMA stores** are tracked by the issuing thread through an async group: `T.ptx.cp.async_.bulk.commit_group()` submits the group, and `T.ptx.cp.async_.bulk.wait_group.read(0)` waits until the TMA engine has finished reading the SMEM source. **MMA operations** use `TCGen05Bar`; `tcgen05.commit()` updates the barrier when the MMA completes.
 
 In Step 7, each completion signal only needs to update a barrier in the current CTA, so these calls use `cta_mask=0`. Step 8 forms a two-CTA cluster and uses `cta_mask=3` (binary `11`) to update the corresponding barriers in both CTAs.
 
@@ -119,9 +119,9 @@ In Step 7, `BLK_N=128`, so the writeback warpgroup can read the entire TMEM tile
 3. Have all 128 writeback threads execute `ld2mma.arrive(0)`, indicating that the TMEM region can be used by the next tile. With no remote rank, `arrive()` targets the current CTA's local barrier, and every writeback thread reports one arrival. Steps 8 and 9 instead use a `remote_view(0)` so both CTAs update CTA 0's barrier.
 4. Convert fp32 to fp16 in registers.
 5. Write the registers to `Dsmem`, then execute `T.ptx.fence.proxy.async_.shared__cta()` and `warpgroup_sync(10)`.
-6. Use TMA to store `Dsmem` to GMEM, with `cp_async.bulk.commit_group()` and `wait_group(0)` tracking completion.
+6. Use TMA to store `Dsmem` to GMEM, with `T.ptx.cp.async_.bulk.commit_group()` and `T.ptx.cp.async_.bulk.wait_group.read(0)` tracking completion of source reads.
 
-The mbarrier wait and `tcgen05.wait.ld()` wait for different operations. The former confirms that MMA has completed, `fence.after_thread_sync()` establishes cross-thread `tcgen05` ordering, and the latter confirms that the asynchronous TMEM load has populated its destination registers.
+The mbarrier wait and `T.ptx.tcgen05.wait__ld.sync.aligned()` wait for different operations. The former confirms that MMA has completed, `T.ptx.tcgen05.fence__after_thread_sync()` establishes cross-thread `tcgen05` ordering, and the latter confirms that the asynchronous TMEM load has populated its destination registers.
 
 ### Complete Kernel
 

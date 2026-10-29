@@ -201,7 +201,7 @@ QKᵀ MMA 只读取 Q 和 K，生成 `S`。Softmax 随后将 `S` 从 TMEM 读到
 | 加载 Q/K/V | GMEM tiles → SMEM tiles | `Tx.apply(T.ptx["cp.async.bulk.tensor.4d.shared::cta.global.tile.mbarrier::complete_tx::bytes"], ...)` | TMA load |
 | QKᵀ MMA | SMEM 中的 Q、K → TMEM 中的 score tile `S` | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | `tcgen05.mma` |
 | Softmax 读出 | TMEM 中的 `S` → warpgroup register tile | `Tx.apply(T.ptx["tcgen05.ld.sync.aligned.32x32b.x32.b32"], ...)` | `tcgen05.ld` |
-| Softmax 写回 | registers 中尚未归一化的权重 tile `P` → fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store，随后执行 `tcgen05.wait.st()` |
+| Softmax 写回 | registers 中尚未归一化的权重 tile `P` → fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store，随后执行 `T.ptx.tcgen05.wait__st.sync.aligned()` |
 | PV MMA | TMEM 中的 `P`、SMEM 中的 V → TMEM 中的 output accumulator `O` | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | 使用 TMEM operand 的 `tcgen05.mma` |
 | 重缩放 | TMEM 中的 `O` → registers → TMEM 中的 `O` | TMEM readback、register multiply、TMEM store | `tcgen05.ld` / TMEM store |
 | Epilogue | TMEM 中的最终 `O` → registers → SMEM → GMEM | TMEM readback、TVMScript tensor store、TMA store | `tcgen05.ld` + TMA store |

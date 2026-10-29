@@ -127,6 +127,7 @@ def hgemm_v1(M, N, K):
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
+        T.ptx.tcgen05.fence__after_thread_sync()
         T.cuda.tile.apply(
             T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
             Dreg_wg.sub[:, :].view(4, 32, 128),
@@ -154,7 +155,8 @@ these views over the existing storage; it does not move data.
 
 The synchronous SMEM writes are published with `fence.proxy.async` before the CTA
 barrier. `tcgen05.commit` associates the asynchronous MMA with an mbarrier;
-`T.cuda.mbarrier_wait` waits for completion. TMEM loads use the explicitly named
+`T.cuda.mbarrier_wait` waits for completion. `T.ptx.tcgen05.fence__after_thread_sync()`
+orders that notification before TMEM readback. TMEM loads use the explicitly named
 `tcgen05.ld` instruction, followed by its load wait.
 
 ## Compile and Verify the Result

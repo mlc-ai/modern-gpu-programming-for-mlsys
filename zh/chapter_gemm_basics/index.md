@@ -145,6 +145,7 @@ T.cuda.mbarrier_wait(mma_bar.ptr_to([0]), phase_mma)
 Dreg = T.alloc_local((BLK_N,), acc_type)        # per-thread fp32 register row
 Dreg_f16 = T.alloc_local((BLK_N,), d_type)      # same row, cast to fp16
 Dreg_wg = Dreg.view(128, BLK_N, layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
+T.ptx.tcgen05.fence__after_thread_sync()
 T.cuda.tile.apply(
     T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
     Dreg_wg.sub[:, :].view(4, 32, 128),
@@ -274,6 +275,7 @@ def hgemm_v1(M, N, K):
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
+        T.ptx.tcgen05.fence__after_thread_sync()
         T.cuda.tile.apply(
             T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
             Dreg_wg.sub[:, :].view(4, 32, 128),
@@ -493,6 +495,7 @@ def hgemm_v2(M, N, K):
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
 
+        T.ptx.tcgen05.fence__after_thread_sync()
         T.cuda.tile.apply(
             T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
             Dreg_wg.sub[:, :].view(4, 32, 128),
@@ -659,6 +662,7 @@ def hgemm_v3(M, N, K):
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
 
+        T.ptx.tcgen05.fence__after_thread_sync()
         T.cuda.tile.apply(
             T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
             Dreg_wg.sub[:, :].view(4, 32, 128),

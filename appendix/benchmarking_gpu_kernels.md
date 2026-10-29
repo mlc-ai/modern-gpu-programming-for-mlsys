@@ -1455,7 +1455,7 @@ a longer `wait_for_data` region. For an H100, change `sm_100a` in the script to 
 
 ### Add IKET Annotations to Your Own Kernel
 
-Create an `IketProfiler` inside the `PrimFunc`. Use `mark()` for an instantaneous event, and use
+Create an `IketProfiler` inside the TIRx function. Use `mark()` for an instantaneous event, and use
 matched `range_push()` / `range_pop()` or `range_start()` / `range_end()` calls around a phase. Keep
 IKET ranges balanced along every control-flow path that a warp may take. Mark waiting explicitly, as
 the example does with `wait_for_data`.

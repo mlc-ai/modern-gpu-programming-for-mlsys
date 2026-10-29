@@ -71,7 +71,7 @@ TMA store 使用另一套完成机制。Threads 将结果写入 `Dsmem` 后，`T
 
 `warpgroup_sync(10)` 会 lower 为 `bar.sync 10, 128`。其中，`10` 选择 CTA 的 16 个 named-barrier slots 之一，ID 范围为 0 到 15；`128` 是 intrinsic 给出的参与同步的 thread 数。ID 10 没有特殊的 TMA 含义；这个单 warpgroup kernel 使用它，是因为当前没有其他 active named barrier 占用这个 slot。这里的 named barrier 与前面跟踪 TMA load 的 shared-memory mbarrier 属于两套机制；一次同步完成后 slot 会重置，因此可以继续复用同一个 ID。
 
-随后，`tid == 0` 的 thread 发起从 `Dsmem` 到 GMEM 的异步 copy，并执行 `cp_async.bulk.commit_group()`，把此前发出但尚未提交的 TMA stores 归入一个 bulk async group。`cp_async.bulk.wait_group(0)` 中的 `0` 表示不允许任何先前提交的 group 仍处于 pending 状态，因此它会等到这些 stores 全部完成后才返回。第二次执行 `warpgroup_sync(10)` 时会复用 ID 10，并让其他 threads 等到 `tid == 0` 对应的 thread 完成这次 store wait。在此之前，`Dsmem` 不能被覆盖或复用。
+随后，`tid == 0` 的 thread 发起从 `Dsmem` 到 GMEM 的异步 copy，并执行 `T.ptx.cp.async_.bulk.commit_group()`，把此前发出但尚未提交的 TMA stores 归入一个 bulk async group。`T.ptx.cp.async_.bulk.wait_group.read(0)` 中的 `0` 表示不允许任何先前提交的 group 仍在读取源数据；`.read` 等待 TMA engine 读完 `Dsmem`，使 shared-memory 源 buffer 可以安全复用，并不等待所有 GMEM 写入都变得可见。第二次执行 `warpgroup_sync(10)` 时会复用 ID 10，并让其他 threads 等到 `tid == 0` 对应的 thread 完成这次 store wait。在此之前，`Dsmem` 不能被覆盖或复用。
 
 ### 完整 Kernel
 
@@ -204,6 +204,7 @@ def hgemm_v4(M, N, K):
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
 
         # 异步读取 TMEM -> registers；先执行 wait.ld，再用 cta_sync 同步 threads
+        T.ptx.tcgen05.fence__after_thread_sync()
         T.cuda.tile.apply(
             T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
             Dreg_wg.sub[:, :].view(4, 32, 128),
@@ -251,7 +252,7 @@ def hgemm_v4(M, N, K):
 
 - **`@T.inline`**：`tma_load(...)` 和 `mma(...)` 是 helper functions，在编译时展开到 kernel body 中，并可使用外围 kernel 的变量。
 
-- **TMA store synchronization**：epilogue 先将 fp16 rows 写入 `Dsmem`。`T.ptx.fence.proxy.async_.shared__cta()` 和 `warpgroup_sync` 使这些由 threads 写入的 SMEM values 对 TMA store path 可见；随后通过 `commit_group()` 和 `wait_group(0)` 等待 SMEM → GMEM 传输完成。
+- **TMA store synchronization**：epilogue 先将 fp16 rows 写入 `Dsmem`。`T.ptx.fence.proxy.async_.shared__cta()` 和 `warpgroup_sync` 使这些由 threads 写入的 SMEM values 对 TMA store path 可见；随后通过 `commit_group()` 和 `T.ptx.cp.async_.bulk.wait_group.read(0)` 等待 TMA engine 读完 SMEM 源数据。
 
 至此，数据搬运路径已经正确，但执行顺序仍然是串行的：每次 load 完成后才会启动对应的 MMA，因此两个 engines 仍在轮流工作。下一步保持 TMA load/store path 不变，先为预取建立可以循环复用的 SMEM stages。
 
@@ -470,6 +471,7 @@ def hgemm_v5(M, N, K):
         Dreg_f16 = T.alloc_local((BLK_N,), d_type)
         Dreg_wg = Dreg.view(128, BLK_N,
                             layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
+        T.ptx.tcgen05.fence__after_thread_sync()
         T.cuda.tile.apply(
             T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
             Dreg_wg.sub[:, :].view(4, 32, 128),
@@ -717,6 +719,7 @@ def hgemm_v6(M, N, K):
             Dreg_f16 = T.alloc_local((BLK_N,), d_type)
             Dreg_wg = Dreg.view(128, BLK_N,
                                 layout=TileLayout(S[(128, BLK_N) : (1@tid_in_wg, 1)]))
+            T.ptx.tcgen05.fence__after_thread_sync()
             T.cuda.tile.apply(
                 T.ptx["tcgen05.ld.sync.aligned.32x32b.x128.b32"],
                 Dreg_wg.sub[:, :].view(4, 32, 128),
