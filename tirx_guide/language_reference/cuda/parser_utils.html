@@ -386,7 +386,7 @@
             </div>
             <nav aria-label="Page">
                 <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-meta-var-inline-a-python-value"><code class="docutils literal notranslate"><span class="pre">T.meta_var</span></code> — inline a Python value</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-meta-var-preserve-python-metadata"><code class="docutils literal notranslate"><span class="pre">T.meta_var</span></code> — preserve Python metadata</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-inline-inline-functions"><code class="docutils literal notranslate"><span class="pre">@T.inline</span></code> — inline functions</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-meta-class-parser-side-state-objects"><code class="docutils literal notranslate"><span class="pre">@T.meta_class</span></code> — parser-side state objects</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-constexpr"><code class="docutils literal notranslate"><span class="pre">T.constexpr</span></code></a></li>
@@ -406,18 +406,22 @@
 <p>A few helpers act at <strong>parse time</strong> (when TVMScript is turned into TIRx), letting
 you inline Python-computed values, factor out reusable fragments, and bundle
 parser-side state.</p>
-<section id="t-meta-var-inline-a-python-value">
-<h2><code class="docutils literal notranslate"><span class="pre">T.meta_var</span></code> — inline a Python value<a class="headerlink" href="#t-meta-var-inline-a-python-value" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">T.meta_var(x)</span></code> tells the parser to treat <code class="docutils literal notranslate"><span class="pre">x</span></code> — a value computed in <strong>Python</strong> —
-as a compile-time <em>meta</em> value and inline it directly into the IR, rather than
-parse it as a script variable. It avoids a throwaway local and lets Python
-values parameterize the generated IR. A plain <code class="docutils literal notranslate"><span class="pre">range(n)</span></code> is still a serial
-TIRx loop; use <code class="docutils literal notranslate"><span class="pre">T.unroll(n)</span></code> when the lowering pipeline should unroll it.</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">n</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>              <span class="c1"># the constant 4 is inlined as the extent</span>
-<span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>          <span class="c1"># marked for the UnrollLoop lowering pass</span>
+<section id="t-meta-var-preserve-python-metadata">
+<h2><code class="docutils literal notranslate"><span class="pre">T.meta_var</span></code> — preserve Python metadata<a class="headerlink" href="#t-meta-var-preserve-python-metadata" title="Link to this heading">#</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">T.meta_var(x)</span></code> returns <code class="docutils literal notranslate"><span class="pre">x</span></code> unchanged. It is useful for retaining a
+parser-side handle or a tuple of Python metadata. It does not bypass the
+ordinary assignment rules: scalar expressions assigned inside TVMScript create
+native value bindings. Compute shape parameters, instruction widths, and TMA
+box sizes in the Python factory before <code class="docutils literal notranslate"><span class="pre">&#64;T.function</span></code>.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">widths</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">((</span><span class="mi">32</span><span class="p">,</span> <span class="mi">64</span><span class="p">))</span>  <span class="c1"># the tuple remains Python metadata</span>
+<span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="n">widths</span><span class="p">[</span><span class="mi">0</span><span class="p">]):</span>
     <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span>
 </pre></div>
 </div>
+<p>A plain <code class="docutils literal notranslate"><span class="pre">range(n)</span></code> creates a serial TIRx loop; <code class="docutils literal notranslate"><span class="pre">T.unroll(n)</span></code> marks it for
+unrolling during lowering. <code class="docutils literal notranslate"><span class="pre">meta_var</span></code> does not make a runtime value recompute
+when its inputs change. For a persistent scheduler, compute tile coordinates
+inside each task loop, after the current cursor is updated.</p>
 </section>
 <section id="t-inline-inline-functions">
 <h2><code class="docutils literal notranslate"><span class="pre">&#64;T.inline</span></code> — inline functions<a class="headerlink" href="#t-inline-inline-functions" title="Link to this heading">#</a></h2>
@@ -437,13 +441,16 @@ scoping with late binding, so a parameter shadows an enclosing variable:</p>
 <p><code class="docutils literal notranslate"><span class="pre">&#64;T.meta_class</span></code> marks a plain Python class whose <strong>instances are parser meta
 values</strong>: their fields can hold buffers and scalars, so you can bundle related
 allocations and state into one object and use it in the kernel body.</p>
+<p>Define <code class="docutils literal notranslate"><span class="pre">State</span></code> outside <code class="docutils literal notranslate"><span class="pre">&#64;T.function</span></code>. Instantiate it and use its fields
+inside the kernel, where <code class="docutils literal notranslate"><span class="pre">smem</span></code> has already been allocated.</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">meta_class</span>
 <span class="k">class</span><span class="w"> </span><span class="nc">State</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">smem</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">"float32"</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">buf</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">([</span><span class="mi">64</span><span class="p">],</span> <span class="s2">"float16"</span><span class="p">,</span> <span class="n">smem</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"shared.dyn"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">acc</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">bind_</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">([</span><span class="mi">1</span><span class="p">],</span> <span class="s2">"float32"</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buf</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">bind_</span><span class="p">(</span><span class="n">T</span><span class="o">.</span><span class="n">decl_tensor</span><span class="p">(</span><span class="n">smem</span><span class="p">,</span> <span class="n">ty_args</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">((</span><span class="mi">64</span><span class="p">,),</span> <span class="s2">"float16"</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"shared.dyn"</span><span class="p">)]))</span>
 
-<span class="n">s</span> <span class="o">=</span> <span class="n">State</span><span class="p">(</span><span class="n">smem</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">State</span><span class="p">(</span><span class="n">smem</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]))</span>
 <span class="n">s</span><span class="o">.</span><span class="n">acc</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">0.0</span><span class="p">)</span>     <span class="c1"># use its fields like ordinary buffers</span>
 <span class="c1"># ... s.buf[i] ...</span>
 </pre></div>
@@ -453,8 +460,11 @@ scratch views) instead of threading many separate locals through the body.</p>
 </section>
 <section id="t-constexpr">
 <h2><code class="docutils literal notranslate"><span class="pre">T.constexpr</span></code><a class="headerlink" href="#t-constexpr" title="Link to this heading">#</a></h2>
-<p><code class="docutils literal notranslate"><span class="pre">T.constexpr</span></code> marks a compile-time kernel parameter, baked in by <code class="docutils literal notranslate"><span class="pre">&#64;T.jit</span></code>’s
-<code class="docutils literal notranslate"><span class="pre">.specialize(...)</span></code>. See <a class="reference internal" href="../../../chapter_intro_tirx/index.html#chap-tirx-primer"><span class="std std-ref">Introduction to TIRx</span></a> for the details.</p>
+<p>A parameter annotated with <code class="docutils literal notranslate"><span class="pre">T.constexpr</span></code> is fixed by <code class="docutils literal notranslate"><span class="pre">&#64;T.jit</span></code>’s
+<code class="docutils literal notranslate"><span class="pre">.specialize(...)</span></code>. Inside a function body, <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">T.constexpr(condition)</span></code>
+selects a Python branch during parsing. Use it for known specialization flags,
+such as <code class="docutils literal notranslate"><span class="pre">is_causal</span></code> in FA4. An ordinary <code class="docutils literal notranslate"><span class="pre">if</span></code> constructs IR control flow and
+parses both branches.</p>
 </section>
 </section>
 
@@ -505,7 +515,7 @@ scratch views) instead of threading many separate locals through the body.</p>
   </div>
   <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="pst-show_toc_level nav section-nav flex-column">
-<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-meta-var-inline-a-python-value"><code class="docutils literal notranslate"><span class="pre">T.meta_var</span></code> — inline a Python value</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-meta-var-preserve-python-metadata"><code class="docutils literal notranslate"><span class="pre">T.meta_var</span></code> — preserve Python metadata</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-inline-inline-functions"><code class="docutils literal notranslate"><span class="pre">@T.inline</span></code> — inline functions</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-meta-class-parser-side-state-objects"><code class="docutils literal notranslate"><span class="pre">@T.meta_class</span></code> — parser-side state objects</a></li>
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#t-constexpr"><code class="docutils literal notranslate"><span class="pre">T.constexpr</span></code></a></li>

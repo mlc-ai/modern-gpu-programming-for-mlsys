@@ -18,29 +18,25 @@
 Buffer 与内存
 =============
 
-Parameter buffer 通过 ``T.match_buffer`` 绑定，kernel body 中的临时 buffer
+Parameter 使用 ``T.Tensor`` 类型标注，kernel body 中的临时 buffer
 则由下面介绍的两种 declaration API 创建。使用 ``A[i, j]`` 访问元素，
-``A[m0:m0+BM, 0:BK]`` 取得 ``BufferRegion``，``A.ptr_to([i, j])`` 取得
+``A[m0:m0+BM, 0:BK]`` 取得 ``TensorRegion``，``A.ptr_to([i, j])`` 取得
 元素 pointer，``A.data`` 取得原始 data pointer。
 
 声明 Buffer
 -----------
 
-创建 buffer 的两个基本 API 是：
+创建 tensor 的两个基本 API 是：
 
-- ``T.alloc_buffer(shape, dtype, scope=..., ...)``：**分配新的 storage**，
-  生成一个 ``AllocBuffer`` node，并返回 buffer value，也就是 type 为
-  ``BufferType`` 的 ``Var``。
-  ``T.alloc_shared`` 和 ``T.alloc_local`` 分别是
-  ``scope="shared"`` 和 ``scope="local"`` 的简写。
-- ``T.decl_buffer(shape, dtype, data=..., ...)``：在已有 pointer ``data``
-  上**声明一个 view**，不会分配 storage。它可以为 pool 的一段区域或
-  tensor-memory address 创建 alias，也可以重新解释已有 storage。
-  普通 scope 中 ``data=None`` 时，它和 ``alloc_buffer`` 一样会分配 storage；
-  tensor memory 是例外，使用后文介绍的 ``allocated_addr``。
+- ``T.alloc_tensor(ty_args=[T.Tensor(shape, dtype, scope=..., layout=...)])``：
+  **分配新的 storage**，返回 type 为 ``TensorType`` 的 tensor value。
+  ``T.alloc_shared`` 和 ``T.alloc_local`` 是相应 scope 的分配简写。
+- ``T.decl_tensor(data, ty_args=[T.Tensor(...)])``：在已有的 typed pointer
+  上**声明 view**，不会分配 storage。TMEM 则使用下文的 ``T.cuda.decl_tmem``
+  和 column address。
 
 Buffer 的 ``data`` property 是 immutable、带类型的 pointer ``Expr``，不一定
-是 ``Var``。``decl_buffer`` 可以直接接收类型兼容的 pointer 表达式，详见
+是 ``Var``。``T.decl_tensor`` 可以直接接收类型兼容的 pointer 表达式，详见
 :doc:`data_types`。
 
 两种 API 使用同一个 buffer descriptor，主要参数如下：
@@ -58,9 +54,9 @@ Buffer 的 ``data`` property 是 immutable、带类型的 pointer ``Expr``，不
    * - ``layout``
      - 物理映射，详见 :ref:`TileLayout <chap_tirx_layout_api>`；
        ``"default"`` 表示 dense row-major
-   * - ``elem_offset`` / ``allocated_addr``
-     - ``elem_offset``（或 ``byte_offset``）将 view 放在 ``data`` 内的某个
-       offset；``allocated_addr`` 保存预先分配的地址，用于 tensor memory
+   * - pointer / TMEM column
+     - 用 ``T.ptr_byte_offset`` 对 pointer 偏移后声明 view；
+       ``T.cuda.decl_tmem`` 接收 TMEM column address
    * - ``align``
      - Data pointer 的 byte alignment
 
@@ -91,10 +87,10 @@ Buffer 的 ``data`` property 是 immutable、带类型的 pointer ``Expr``，不
 
 .. code-block:: python
 
-    A = T.match_buffer(A_ptr, (M, K), "float16", align=16)   # parameter buffer
+    A = T.decl_tensor(A_ptr, ty_args=[T.Tensor((M, K), "float16", scope="global", align=16)])   # parameter buffer
     As = T.alloc_shared((BM, BK), "float16")                 # new shared tile
     acc = T.alloc_local((4,), "float32")                     # register accumulator
-    view = T.decl_buffer((BM, BK), "float16", data=As.data)  # a view over As
+    view = T.decl_tensor(As.data, ty_args=[T.Tensor((BM, BK), "float16", scope="shared", layout="default")])  # a view over As
 
 对于非 TMEM buffer，基于 pointer 的 buffer 只是 pointer 加上一组 metadata。
 访问元素时，编译器根据 layout 计算地址：
@@ -110,12 +106,13 @@ offset。因此，同一个逻辑访问会因为 buffer metadata 不同而生成
 
 .. code-block:: python
 
-    from tvm.tirx.layout import TileLayout, S, laneid
+    from tvm_tirx.tirx.layout import TileLayout, S
+    from tvm_tirx.backend.cuda.axis import laneid
 
-    B = T.match_buffer(p, (4, 8), "float32")                                       # row-major
-    B = T.match_buffer(p, (4, 8), "float32", layout=TileLayout(S[(4, 8):(1, 4)]))  # column-major
-    B = T.match_buffer(p, (4, 8), "float32", elem_offset=64)                       # shifted view
-    B = T.match_buffer(p, (4, 8), "float32", layout=TileLayout(S[(4, 8):(16, 1)])) # row stride 16
+    B = T.decl_tensor(p, ty_args=[T.Tensor((4, 8), "float32", scope="global")])                                       # row-major
+    B = T.decl_tensor(p, ty_args=[T.Tensor((4, 8), "float32", scope="global", layout=TileLayout(S[(4, 8):(1, 4)]))])  # column-major
+    B = T.decl_tensor(T.ptr_byte_offset(p, (64) * 4, ty=T.Ptr("float32", "global")), ty_args=[T.Tensor((4, 8), "float32", scope="global")])                       # shifted view
+    B = T.decl_tensor(p, ty_args=[T.Tensor((4, 8), "float32", scope="global", layout=TileLayout(S[(4, 8):(16, 1)]))]) # row stride 16
 
 生成的 CUDA 会为 ``B[i, j]`` 使用不同的 index。``A[i, j]`` 的 load 始终
 保持 ``i*8 + j``，变化的只有 ``B`` 的 metadata：
@@ -143,13 +140,11 @@ buffer，其大小在编译期确定。下面先将数据写入 shared memory，
 
 .. code-block:: python
 
-    @T.prim_func
-    def smem_demo(A_ptr: T.handle, B_ptr: T.handle):
-        A = T.match_buffer(A_ptr, (128,), "float32")
-        B = T.match_buffer(B_ptr, (128,), "float32")
-        T.device_entry()
-        bx = T.cta_id([1])
-        tx = T.thread_id([128])
+    @T.function
+    def smem_demo(A: T.Tensor((128,), "float32"), B: T.Tensor((128,), "float32")):
+        T.device_entry(launch=T.cuda.LaunchConfig(grid=[1], block=[128]))
+        bx = T.cuda.block_idx("x")
+        tx = T.cuda.thread_idx("x")
         sm = T.alloc_shared((128,), "float32")   # static shared memory
         sm[tx] = A[tx]
         T.cuda.cta_sync()
@@ -174,13 +169,13 @@ Dynamic Shared Memory
 **Dynamic shared memory**（``scope="shared.dyn"``）的大小由 launch parameter
 ``sharedMemBytes`` 指定，而不是在编译期写死。一个 kernel 只能有**一个**
 dynamic-shared allocation，也就是 arena。因此需要先分配一次 arena，再用
-``T.decl_buffer`` 在 arena pointer 的不同 ``elem_offset`` 上声明 views：
+``T.decl_tensor`` 在 arena pointer 的不同 ``T.ptr_byte_offset`` 上声明 views：
 
 .. code-block:: python
 
-    arena = T.alloc_buffer((128,), "float32", scope="shared.dyn")   # the one arena
-    As = T.decl_buffer((64,), "float32", data=arena.data, scope="shared.dyn")                 # offset 0
-    Bs = T.decl_buffer((64,), "float32", data=arena.data, elem_offset=64, scope="shared.dyn") # offset 64
+    arena = T.alloc_tensor(ty_args=[T.Tensor((128,), "float32", scope="shared.dyn")])   # the one arena
+    As = T.decl_tensor(arena.data, ty_args=[T.Tensor((64,), "float32", scope="shared.dyn")])                 # offset 0
+    Bs = T.decl_tensor(T.ptr_byte_offset(arena.data, (64) * 4, ty=T.Ptr("float32", "shared.dyn")), ty_args=[T.Tensor((64,), "float32", scope="shared.dyn")]) # offset 64
     As[tx] = A[tx]
     Bs[tx] = B[tx]
     T.cuda.cta_sync()
@@ -197,7 +192,7 @@ dynamic-shared allocation，也就是 arena。因此需要先分配一次 arena�
     __syncthreads();
     C_ptr[tx] = smem[tx] + smem[tx + 64];
 
-分别调用两次 ``alloc_buffer(scope="shared.dyn")`` 会报错，因为只允许一个
+分别调用两次 ``alloc_tensor``（``shared.dyn`` scope） 会报错，因为只允许一个
 dynamic shared memory allocation。Static shared memory 的大小在编译期
 确定，例如 ``__shared__ T x[N];``；dynamic shared memory 则是 launch 时
 指定大小的单个 arena，各个 buffer 是 arena 内不同 offset 上的 views。
@@ -225,14 +220,16 @@ dynamic shared memory allocation。Static shared memory 的大小在编译期
 SMEMPool
 ~~~~~~~~
 
-``T.SMEMPool`` 自动管理 arena。它使用 bump allocation 计算 offset，因此
+``SMEMPool`` 自动管理 arena。它使用 bump allocation 计算 offset，因此
 不需要手工 ``decl`` 每个 view。除了 ``alloc`` 和 ``commit``，它还支持
 per-buffer ``align=``、创建 MMA-compatible swizzle layout 的 ``alloc_tcgen05_mma_AB``
 helper，以及将 cursor 回退以复用空间的 ``move_base_to``：
 
 .. code-block:: python
 
-    pool = T.SMEMPool()                          # shared.dyn 上的 bump allocator
+    from tvm_tirx.backend.cuda.lang import SMEMPool
+
+    pool = SMEMPool()                          # shared.dyn 上的 bump allocator
     As = pool.alloc((BM, BK), "float16", align=128)   # 分配一个 tile
     Bs = pool.alloc((BK, BN), "float16", align=128)
     Cs = pool.alloc_tcgen05_mma_AB((BM, BN), "float16")  # 自动推导 MMA-compatible swizzle
@@ -306,16 +303,14 @@ Scalar 本质上是只有**一个元素**的 register array。可以直接分配
 两种写法在 parse 后会得到结构完全相同的 TIRx。Parser 会将
 ``phase: T.int32`` 解析为单元素 ``local`` buffer，将 ``phase`` 和
 ``phase += 1`` 解析为 ``phase[0]`` 和 ``phase[0] += 1``。对两个 kernels
-调用 ``tvm.ir.assert_structural_equal`` 会通过；printer 甚至会把显式的
-``alloc_local`` 加 ``[0]`` 重新输出为 scalar 语法。因此，parse 完成后两者
-没有区别，都会生成 ``alignas(64) int phase_ptr[1];``。Scalar
-只是省去了 ``[0]``。``T.local_scalar``、``T.shared_scalar`` 和
+调用 ``tvm_tirx.ir.assert_structural_equal`` 会通过。Scalar 访问同一个单元素
+local tensor，只是省去了 ``[0]``。``T.local_scalar``、``T.shared_scalar`` 和
 ``T.alloc_scalar`` 可以显式选择 scope。
 
 .. note::
 
    **为什么不使用 scalar-typed** ``Var`` **？** Typed TIRx 中两种形式都
-   具有 ``Var`` identity。Buffer value 是带 ``BufferType`` 的 ``Var``；store
+   具有 ``Var`` identity。Buffer value 是带 ``TensorType`` 的 ``Var``；store
    修改的是 buffer contents，并不会重新绑定该 ``Var``。下方 ``T.let``
    创建的则是只有一次 immutable binding 的 scalar-typed ``Var``。因此
    mutable scalar 必须由可反复 store contents 的单元素 buffer 支撑。
@@ -359,54 +354,48 @@ Tensor Memory
 Blackwell **tensor memory** 不能像普通 scratch scope 那样直接分配。Kernel
 必须通过 warp-uniform ``T.ptx.tcgen05.alloc`` 和 ``tcgen05.dealloc``
 intrinsics 显式申请和释放，再用
-``T.decl_buffer(..., scope="tmem", allocated_addr=<column>, layout=<tmem layout>)``
+``T.cuda.decl_tmem(column, ty_args=[T.Tensor(..., scope="tmem", layout=...)])``
 在其中声明 tensor view。
 
-``allocated_addr`` 表示 column offset，是必需参数；Tensor Core dispatch
-会检查它。因此，未设置 ``allocated_addr`` 的
-``T.alloc_buffer(scope="tmem")`` 无法使用。Tensor memory 也不能直接寻址，
-只能通过 ``tcgen05`` 的 ``mma``、``ld``、``st`` 和 ``cp`` 访问。
+Column address 是必需参数；``T.alloc_tensor`` 不会预留 TMEM。Tensor memory 只能通过 ``tcgen05`` 的 ``mma``、``ld``、``st`` 和 ``cp`` 访问。
 
 手工管理时，一个 warp 将 allocation 地址写入 shared slot，再在不同 column
 offset 上 ``decl`` tensor views，结束时由一个 warp 释放：
 
 .. code-block:: python
 
-    addr = T.alloc_shared((1,), "uint32")             # 保存 allocation base 的 slot
-    if warp_id == alloc_warp:                         # tcgen05.alloc 是 warp-uniform
-        T.ptx.tcgen05.alloc(T.address_of(addr), n_cols=512, cta_group=cta_group)
-    acc = T.decl_buffer((CTA_M, 512), "float32", scope="tmem",
-                        allocated_addr=0, layout=tmem_layout)   # column 0 处的 view
-    # ... 将 acc 用作 gemm_async / copy_async operand ...
+    addr = T.alloc_shared((1,), "uint32")
     if warp_id == alloc_warp:
-        T.ptx.tcgen05.relinquish_alloc_permit(cta_group=cta_group)
-        T.ptx.tcgen05.dealloc(addr[0], n_cols=512, cta_group=cta_group)
+        T.ptx[f"tcgen05.alloc.cta_group::{cta_group}.sync.aligned.shared::cta.b32"](
+            addr.ptr_to([0]), 512)
+    T.cuda.cta_sync()
+    acc = T.cuda.decl_tmem(addr[0], ty_args=[T.Tensor(
+        (CTA_M, 512), "float32", scope="tmem", layout=tmem_layout)])
+    # ... issue and wait for all MMA / TMEM transfers ...
+    T.cuda.cta_sync()
+    if warp_id == alloc_warp:
+        T.ptx[f"tcgen05.relinquish_alloc_permit.cta_group::{cta_group}.sync.aligned"]()
+        T.ptx[f"tcgen05.dealloc.cta_group::{cta_group}.sync.aligned.b32"](addr[0], 512)
 
 此时 column offsets 和 ``tmem_layout`` （datapath D/F layout）都需要手工
 管理。下面的 pool 会自动生成同样的步骤。
 
-TMEMPool
-~~~~~~~~
+Views
+~~~~~
 
-``T.TMEMPool`` 封装 warp-uniform alloc/dealloc、column bump allocation 和
-datapath layout：
+使用 view 对同一块 TMEM allocation 分区，不再分配新的 storage：
 
 .. code-block:: python
 
-    tmem_addr = pool.alloc((1,), "uint32")          # pool 是 kernel 的 SMEM pool
-    tmem_pool = T.TMEMPool(pool, total_cols=512, cta_group=cta_group,
-                           tmem_addr=tmem_addr)
-    acc = tmem_pool.alloc((CTA_M, 512), "float32")  # 自动设置 allocated_addr
-    tmem_pool.commit()                               # 由一个 warp 发出 tcgen05.alloc
-    # ... 使用 acc ...
-    tmem_pool.dealloc()                              # 由一个 warp 发出 tcgen05.dealloc
+    acc0 = acc.sub[:, :128]
+    acc1 = acc.sub[:, 128:256]
 
-完整示例见第三部分的 GEMM kernels。
+完整示例见 Part III 的 GEMM kernels。
 
 Buffer API
 ----------
 
-``Buffer`` 是 pointer 上的一组 metadata，详见上方 `声明 Buffer`_。因此，
+Tensor value 包含 pointer 和 ``TensorType`` 访问契约，详见上方 `声明 Buffer`_。因此，
 多数 methods 都是在编译期改变 shape、layout 或 index arithmetic，或者返回
 pointer，本身不会生成运行时操作。常用 methods 如下：
 
@@ -420,34 +409,34 @@ pointer，本身不会生成运行时操作。常用 methods 如下：
      - 带类型的 base-pointer 表达式，输出为 ``B_ptr``
    * - ``B.ptr_to([i, j])``
      - 指向某个元素的 typed pointer（``address_of``），输出为 ``&B_ptr[…]``
-   * - ``B.vload([i], dtype="float32x4")`` / ``B.vstore([i], v)``
+   * - vector-typed ``T.decl_tensor`` view
      - Vectorized load/store，输出为 ``*(float4*)(B_ptr + …)``
    * - ``B.view(*shape, layout=…)``
      - 用新的 shape/layout 重新解释同一 storage，不复制数据
-   * - ``B.local(*shape, layout=…)``
+   * - ``T.decl_tensor(B.data, ty_args=[T.Tensor(...)])``
      - ``local`` buffer 中属于当前 thread 的 private register slice
    * - ``B.permute(*dims)``
      - 交换 axes 后的 view，也就是 transposed layout
-   * - ``B.access_ptr(mask, …)``
-     - Masked access pointer，即 ``tvm_access_ptr`` builtin，用于将一个 region 传给 intrinsic
 
 **Pointer：``ptr_to`` / ``data``。** ``ptr_to`` 将某个元素的地址传给
 intrinsic 或 inline function；``data`` 则是 base pointer：
 
 .. code-block:: python
 
-    B[tx] = T.cuda.func_call("ld", A.ptr_to([tx]), source_code=SRC, return_type="float32")
+    B[tx] = T.cuda.func_call("ld", A.ptr_to([tx]), SRC, ty="float32")
 
 .. code-block:: c++
 
     B_ptr[tx] = ld(&A_ptr[tx]);          // ptr_to([tx]) -> &A_ptr[tx];  A.data -> A_ptr
 
-**Vectorized access：``vload`` / ``vstore``。** 一次 wide transfer 搬运多个
+**Vectorized access：typed vector view。** 一次 wide transfer 搬运多个
 元素，另见 :doc:`data_types`：
 
 .. code-block:: python
 
-    B.vstore([tx * 4], A.vload([tx * 4], dtype="float32x4"))
+    A4 = T.decl_tensor(A.data, ty_args=[T.Tensor((N // 4,), "float32x4")])
+    B4 = T.decl_tensor(B.data, ty_args=[T.Tensor((N // 4,), "float32x4")])
+    B4[tx] = A4[tx]
 
 .. code-block:: c++
 
@@ -467,18 +456,15 @@ data pointer 保持不变，变化的是 index arithmetic。``A.view(64, 4)`` �
     A2_ptr[tx * 4]  /* +3 */                 // view: row-major 64x4 index
     At_ptr[(j * 4) + i]                       // permute: swapped strides
 
-**Register：``local``。** 对带 thread axis 的 ``local`` layout 做分解，返回
-属于当前 thread 的 register bundle。未显式传入 ``layout=`` 时，
-``R.local()`` 会为 raw physical storage span（包括 layout gaps 和 offsets）
-推断 flat view；``R.local(d0, d1, ...)`` 则以 row-major 方式 reshape 同一 span，
-各维乘积必须与 span 相同。只有需要不同 storage-coordinate mapping 时才传入
-``layout=``：
+**Register：显式 local view。** Thread-axis layout 把逻辑元素分布到各个
+thread。为当前 thread 的 8 个 physical registers 声明 dense view 后，
+可以继续 reshape 这个 view：
 
 .. code-block:: python
 
-    R  = T.alloc_buffer((32, 8), "float32", scope="local", layout=TileLayout(S[(32, 8) : (1 @ laneid, 1)]))
-    R_flat = R.local()       # this lane's 8 registers, physical order
-    R_2d = R.local(2, 4)     # the same registers, row-major 2x4 reshape
+    R  = T.alloc_tensor(ty_args=[T.Tensor((32, 8), "float32", scope="local", layout=TileLayout(S[(32, 8) : (1 @ laneid, 1)]))])
+    R_flat = T.decl_tensor(R.data, ty_args=[T.Tensor((8,), "float32", scope="local", layout="default")])
+    R_2d = R_flat.view(2, 4)
 
 .. code-block:: c++
 

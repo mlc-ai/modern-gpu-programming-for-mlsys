@@ -369,30 +369,20 @@
 </pre></div>
 </div>
 <p>在 TIRx 程序中，可以直接用这个记号构造 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>，再将它绑定到 buffer：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">layout</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)])</span>
-
-<span class="n">pool</span><span class="o">.</span><span class="n">alloc</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">)</span>
-
-<span class="n">T</span><span class="o">.</span><span class="n">decl_buffer</span><span class="p">(</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="n">scope</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">)</span>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="c1"># Inside a device entry, after tcgen05.alloc has filled tmem_addr:</span>
+<span class="n">layout</span> <span class="o">=</span> <span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@TLane</span><span class="p">,</span> <span class="mi">1</span><span class="nd">@TCol</span><span class="p">)])</span>
+<span class="n">tmem</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">decl_tmem</span><span class="p">(</span><span class="n">tmem_addr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">ty_args</span><span class="o">=</span><span class="p">[</span><span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">(</span>
+    <span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="mi">256</span><span class="p">),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">"tmem"</span><span class="p">,</span> <span class="n">layout</span><span class="o">=</span><span class="n">layout</span><span class="p">,</span>
+<span class="p">)])</span>
 </pre></div>
 </div>
 <p>Buffer 由此记录自己的物理布局。后续 tile 操作可以直接读取这项信息，不必在每次访问时重新说明元素位于哪些 lanes、registers 或线性存储位置。</p>
-<p>本章使用的 layout 对象和命名轴都位于 <code class="docutils literal notranslate"><span class="pre">tvm.tirx.layout</span></code>：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-    <span class="n">TileLayout</span><span class="p">,</span>
-    <span class="n">ComposeLayout</span><span class="p">,</span>
-    <span class="n">S</span><span class="p">,</span>
-    <span class="n">R</span><span class="p">,</span>
-    <span class="n">laneid</span><span class="p">,</span>
-    <span class="n">warpid</span><span class="p">,</span>
-    <span class="n">tid_in_wg</span><span class="p">,</span>
-    <span class="n">TLane</span><span class="p">,</span>
-    <span class="n">TCol</span><span class="p">,</span>
-    <span class="n">m</span><span class="p">,</span>
-    <span class="n">tcgen05_atom_layout</span><span class="p">,</span>
-    <span class="n">tmem_datapath_layout</span><span class="p">,</span>
-    <span class="n">wg_local_layout</span><span class="p">,</span>
-<span class="p">)</span>
+<p>Layout 对象位于 <code class="docutils literal notranslate"><span class="pre">tvm_tirx.tirx.layout</span></code>，CUDA 命名轴位于 <code class="docutils literal notranslate"><span class="pre">tvm_tirx.backend.cuda.axis</span></code>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">tvm_tirx.tirx.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">Axis</span><span class="p">,</span> <span class="n">TileLayout</span><span class="p">,</span> <span class="n">ComposeLayout</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">R</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tvm_tirx.backend.cuda.axis</span><span class="w"> </span><span class="kn">import</span> <span class="n">laneid</span><span class="p">,</span> <span class="n">warpid</span><span class="p">,</span> <span class="n">tid_in_wg</span><span class="p">,</span> <span class="n">TLane</span><span class="p">,</span> <span class="n">TCol</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tvm_tirx.backend.cuda.layout</span><span class="w"> </span><span class="kn">import</span> <span class="n">tmem_datapath_layout</span>
+
+<span class="n">m</span> <span class="o">=</span> <span class="n">Axis</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"m"</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>Layout 的结果不一定是一个线性地址，也可以是 <code class="docutils literal notranslate"><span class="pre">laneid</span></code>、<code class="docutils literal notranslate"><span class="pre">warpid</span></code>、<code class="docutils literal notranslate"><span class="pre">TLane</span></code> 和 <code class="docutils literal notranslate"><span class="pre">TCol</span></code> 等硬件坐标。前面的 TMEM layout 将逻辑 row 映射到 <code class="docutils literal notranslate"><span class="pre">TLane</span></code>，将逻辑 column 映射到 <code class="docutils literal notranslate"><span class="pre">TCol</span></code>。再看一个同时使用 lane 和 warp 轴的 register fragment：</p>
@@ -642,16 +632,11 @@ TCol  = s
 </pre></div>
 </div>
 <p>返回 <code class="docutils literal notranslate"><span class="pre">tcgen05.mma</span></code> 写入的 TMEM accumulator layout。<code class="docutils literal notranslate"><span class="pre">datapath</span></code> 选择行映射方式。例如，<code class="docutils literal notranslate"><span class="pre">&quot;D&quot;</span></code> 对应 <code class="docutils literal notranslate"><span class="pre">M=128</span></code> 时按 row 直接映射的布局，<code class="docutils literal notranslate"><span class="pre">&quot;F&quot;</span></code> 对应 <code class="docutils literal notranslate"><span class="pre">M=64</span></code> 时分散到多个 Lane 区域的布局。</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">tcgen05_atom_layout</span><span class="p">(</span><span class="n">instr_shape</span><span class="p">,</span> <span class="n">tensor_shape</span><span class="p">,</span> <span class="n">dtype</span><span class="p">)</span>
+<p>每个 thread 持有一行的 warpgroup register layout 可以直接写成：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">TileLayout</span><span class="p">(</span><span class="n">S</span><span class="p">[(</span><span class="mi">128</span><span class="p">,</span> <span class="n">cols</span><span class="p">)</span> <span class="p">:</span> <span class="p">(</span><span class="mi">1</span><span class="nd">@tid_in_wg</span><span class="p">,</span> <span class="mi">1</span><span class="p">)])</span>
 </pre></div>
 </div>
-<p>返回与 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 或 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> data-movement shape 对应的 register tile layout。<code class="docutils literal notranslate"><span class="pre">instr_shape</span></code> 可以是 <code class="docutils literal notranslate"><span class="pre">&quot;32x32b&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;16x64b&quot;</span></code>、<code class="docutils literal notranslate"><span class="pre">&quot;16x128b&quot;</span></code> 等字符串；<code class="docutils literal notranslate"><span class="pre">tensor_shape</span></code> 和 <code class="docutils literal notranslate"><span class="pre">dtype</span></code> 共同决定相应的 repeat factor。</p>
-<p>这个对象描述一个分布到 warpgroup 各 thread registers 中的 tile。当它用于 TMEM 与 local fragment 之间的 <code class="docutils literal notranslate"><span class="pre">Tx.wg.copy_async</span></code> 时，lowering 可以据此选择匹配的 warp-collective <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> 或 <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code>；每个 warp 处理自己的 32-lane TMEM partition。</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">wg_local_layout</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">rows</span><span class="o">=</span><span class="mi">128</span><span class="p">)</span>
-</pre></div>
-</div>
-<p>返回 warpgroup-local register tile。它把逻辑 row 映射到 <code class="docutils literal notranslate"><span class="pre">tid_in_wg</span></code>，把同一 row 中的 columns 映射到该 thread 的局部 <code class="docutils literal notranslate"><span class="pre">m</span></code> 轴；使用默认的 <code class="docutils literal notranslate"><span class="pre">rows=128</span></code> 时，每个 thread 持有一行。</p>
-<p>这些构造函数返回的仍是 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code>，使用的也是相同的 iter 和命名轴模型；构造函数只是替 kernel 生成了常见的硬件映射。</p>
+<p>将显式 register view 与 <code class="docutils literal notranslate"><span class="pre">Tx.apply</span></code> 和所选 <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code> / <code class="docutils literal notranslate"><span class="pre">tcgen05.st</span></code> 指令配合使用。每个 warp 处理自己的 32-lane TMEM partition，operand views 必须匹配所选指令的 shape。</p>
 </section>
 <section id="composelayout">
 <h2>ComposeLayout<a class="headerlink" href="#composelayout" title="Link to this heading">#</a></h2>
@@ -779,7 +764,7 @@ i = 7: bank 28
 </div>
 <p>8 行都会落到 bank 0。Swizzle 没有改变逻辑 tile，只改变了元素的物理地址，使这个访问模式不再集中到同一个 bank。</p>
 <p>上面的推导只说明这种 float16 按列访问会被分散到 8 个 banks。其他访问是否无冲突，还取决于 data type、每次访问的宽度以及硬件指令采用的 access shape。在本章开头的交互图中切换 data type 和 swizzle mode，可以直接比较不同组合的地址映射。</p>
-<p>对于构造函数已经覆盖的 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 布局，可以直接使用 <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05_atom_layout</span></code> 等 helper。其他仿射布局仍然使用 <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>、<code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 和 offset 表示。查询 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 时，<code class="docutils literal notranslate"><span class="pre">apply()</span></code> 只计算逻辑元素的基础物理坐标，不会枚举 replica。Shared-memory swizzle 使用 <code class="docutils literal notranslate"><span class="pre">ComposeLayout(per_element,</span> <span class="pre">swizzle_len,</span> <span class="pre">atom_len,</span> <span class="pre">tile_layout)</span></code>，其中 tile layout 只产生线性 <code class="docutils literal notranslate"><span class="pre">m</span></code> 地址。</p>
+<p>对于构造函数已经覆盖的 <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> 布局，可以直接使用 <code class="docutils literal notranslate"><span class="pre">tmem_datapath_layout</span></code>。其他仿射布局仍然使用 <code class="docutils literal notranslate"><span class="pre">S[...]</span></code>、<code class="docutils literal notranslate"><span class="pre">R[...]</span></code> 和 offset 表示。查询 <code class="docutils literal notranslate"><span class="pre">TileLayout</span></code> 时，<code class="docutils literal notranslate"><span class="pre">apply()</span></code> 只计算逻辑元素的基础物理坐标，不会枚举 replica。Shared-memory swizzle 使用 <code class="docutils literal notranslate"><span class="pre">ComposeLayout(per_element,</span> <span class="pre">swizzle_len,</span> <span class="pre">atom_len,</span> <span class="pre">tile_layout)</span></code>，其中 tile layout 只产生线性 <code class="docutils literal notranslate"><span class="pre">m</span></code> 地址。</p>
 </section>
 </section>
 

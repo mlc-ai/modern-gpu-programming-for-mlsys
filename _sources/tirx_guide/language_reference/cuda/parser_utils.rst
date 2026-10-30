@@ -22,20 +22,25 @@ A few helpers act at **parse time** (when TVMScript is turned into TIRx), lettin
 you inline Python-computed values, factor out reusable fragments, and bundle
 parser-side state.
 
-``T.meta_var`` — inline a Python value
---------------------------------------
+``T.meta_var`` — preserve Python metadata
+-----------------------------------------
 
-``T.meta_var(x)`` tells the parser to treat ``x`` — a value computed in **Python** —
-as a compile-time *meta* value and inline it directly into the IR, rather than
-parse it as a script variable. It avoids a throwaway local and lets Python
-values parameterize the generated IR. A plain ``range(n)`` is still a serial
-TIRx loop; use ``T.unroll(n)`` when the lowering pipeline should unroll it.
+``T.meta_var(x)`` returns ``x`` unchanged. It is useful for retaining a
+parser-side handle or a tuple of Python metadata. It does not bypass the
+ordinary assignment rules: scalar expressions assigned inside TVMScript create
+native value bindings. Compute shape parameters, instruction widths, and TMA
+box sizes in the Python factory before ``@T.function``.
 
 .. code-block:: python
 
-    n = T.meta_var(4)              # the constant 4 is inlined as the extent
-    for j in T.unroll(n):          # marked for the UnrollLoop lowering pass
+    widths = T.meta_var((32, 64))  # the tuple remains Python metadata
+    for j in T.unroll(widths[0]):
         acc[0] = acc[0] + A[tx, j]
+
+A plain ``range(n)`` creates a serial TIRx loop; ``T.unroll(n)`` marks it for
+unrolling during lowering. ``meta_var`` does not make a runtime value recompute
+when its inputs change. For a persistent scheduler, compute tile coordinates
+inside each task loop, after the current cursor is updated.
 
 ``@T.inline`` — inline functions
 --------------------------------
@@ -59,15 +64,19 @@ scoping with late binding, so a parameter shadows an enclosing variable:
 values**: their fields can hold buffers and scalars, so you can bundle related
 allocations and state into one object and use it in the kernel body.
 
+Define ``State`` outside ``@T.function``. Instantiate it and use its fields
+inside the kernel, where ``smem`` has already been allocated.
+
 .. code-block:: python
 
     @T.meta_class
     class State:
         def __init__(self, smem):
-            self.acc = T.alloc_local([1], "float32")
-            self.buf = T.decl_buffer([64], "float16", smem, scope="shared.dyn")
+            self.acc = T.bind_(T.alloc_local([1], "float32"))
+            self.buf = T.bind_(T.decl_tensor(smem, ty_args=[
+                T.Tensor((64,), "float16", scope="shared.dyn")]))
 
-    s = State(smem.data)
+    s = State(smem.ptr_to([0]))
     s.acc[0] = T.float32(0.0)     # use its fields like ordinary buffers
     # ... s.buf[i] ...
 
@@ -77,5 +86,8 @@ scratch views) instead of threading many separate locals through the body.
 ``T.constexpr``
 ---------------
 
-``T.constexpr`` marks a compile-time kernel parameter, baked in by ``@T.jit``'s
-``.specialize(...)``. See :ref:`chap_tirx_primer` for the details.
+A parameter annotated with ``T.constexpr`` is fixed by ``@T.jit``'s
+``.specialize(...)``. Inside a function body, ``if T.constexpr(condition)``
+selects a Python branch during parsing. Use it for known specialization flags,
+such as ``is_causal`` in FA4. An ordinary ``if`` constructs IR control flow and
+parses both branches.

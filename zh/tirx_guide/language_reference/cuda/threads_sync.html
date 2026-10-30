@@ -341,7 +341,7 @@
   <section id="cuda-c-ptx-intrinsics">
 <h1>CUDA C++/PTX Intrinsics<a class="headerlink" href="#cuda-c-ptx-intrinsics" title="Link to this heading">#</a></h1>
 <p>如果现有 tile primitive 无法表达需要的操作，可以用两种方式直接访问硬件：
-调用 backend intrinsic，也就是 <code class="docutils literal notranslate"><span class="pre">tvm.backend.cuda</span></code> 提供的 <code class="docutils literal notranslate"><span class="pre">T.cuda.*</span></code> /
+调用 backend intrinsic，也就是 <code class="docutils literal notranslate"><span class="pre">tvm_tirx.backend.cuda</span></code> 提供的 <code class="docutils literal notranslate"><span class="pre">T.cuda.*</span></code> /
 <code class="docutils literal notranslate"><span class="pre">T.ptx.*</span></code> namespaces；或者直接内联 CUDA 源码。</p>
 <section id="backend-intrinsic">
 <h2>调用 Backend Intrinsic<a class="headerlink" href="#backend-intrinsic" title="Link to this heading">#</a></h2>
@@ -350,24 +350,22 @@
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sync</span><span class="p">()</span>                    <span class="c1"># block barrier (__syncthreads)</span>
 <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">warp_sync</span><span class="p">()</span>                   <span class="c1"># __syncwarp</span>
 <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">warpgroup_sync</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>             <span class="c1"># warpgroup barrier</span>
-<span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">cta_sum</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">num_warps</span><span class="p">,</span> <span class="n">scratch</span><span class="o">.</span><span class="n">ptr_to</span><span class="p">([</span><span class="mi">0</span><span class="p">]))</span>   <span class="c1"># block-level reduction</span>
 
 <span class="n">bar</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_shared</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"uint64"</span><span class="p">)</span>
-<span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>     <span class="c1"># mbarrier for async completion</span>
-<span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">try_wait</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">phase</span><span class="p">)</span>
+<span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">mbarrier</span><span class="o">.</span><span class="n">init</span><span class="o">.</span><span class="n">shared__cta</span><span class="o">.</span><span class="n">b64</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>     <span class="c1"># mbarrier for async completion</span>
+<span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">mbarrier_wait</span><span class="p">(</span><span class="n">bar</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">phase</span><span class="p">)</span>
 </pre></div>
 </div>
-<p>下面是一个完整示例，通过 <code class="docutils literal notranslate"><span class="pre">T.tvm_warp_shuffle_xor</span></code> 完成 warp all-reduce：</p>
-<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">warp_reduce</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
-    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">32</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">16</span><span class="p">)</span>
-    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">()</span>
-    <span class="n">cta_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">1</span><span class="p">]);</span> <span class="n">warp_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">warp_id</span><span class="p">([</span><span class="mi">1</span><span class="p">]);</span> <span class="n">lane_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">lane_id</span><span class="p">([</span><span class="mi">32</span><span class="p">])</span>
+<p>下面是一个完整示例，通过 <code class="docutils literal notranslate"><span class="pre">T.gpu_warp_shuffle_xor</span></code> 完成 warp all-reduce：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="nd">@T</span><span class="o">.</span><span class="n">function</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">warp_reduce</span><span class="p">(</span><span class="n">A</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">((</span><span class="mi">32</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">,</span> <span class="n">align</span><span class="o">=</span><span class="mi">16</span><span class="p">)):</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">(</span><span class="n">launch</span><span class="o">=</span><span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">LaunchConfig</span><span class="p">(</span><span class="n">grid</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">block</span><span class="o">=</span><span class="mi">32</span><span class="p">))</span>
+    <span class="n">cta_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">block_idx</span><span class="p">(</span><span class="s2">"x"</span><span class="p">);</span> <span class="n">warp_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">warp_id</span><span class="p">();</span> <span class="n">lane_id</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">lane_id</span><span class="p">()</span>
     <span class="n">v</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">);</span> <span class="n">i</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">alloc_local</span><span class="p">((</span><span class="mi">1</span><span class="p">,),</span> <span class="s2">"int32"</span><span class="p">)</span>
     <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mi">31</span> <span class="o">-</span> <span class="n">lane_id</span><span class="p">)</span>
     <span class="n">i</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">16</span>
     <span class="k">while</span> <span class="n">i</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">:</span>
-        <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+=</span> <span class="n">T</span><span class="o">.</span><span class="n">tvm_warp_shuffle_xor</span><span class="p">(</span><span class="mh">0xFFFFFFFF</span><span class="p">,</span> <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">i</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">)</span>
+        <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+=</span> <span class="n">T</span><span class="o">.</span><span class="n">gpu_warp_shuffle_xor</span><span class="p">(</span><span class="mh">0xFFFFFFFF</span><span class="p">,</span> <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">i</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">32</span><span class="p">)</span>
         <span class="n">i</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">i</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">//</span> <span class="mi">2</span>
     <span class="n">A</span><span class="p">[</span><span class="n">lane_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
 </pre></div>
@@ -376,10 +374,10 @@
 <div class="highlight-c++ notranslate"><div class="highlight"><pre><span></span><span class="n">v_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">__shfl_xor_sync</span><span class="p">(</span><span class="mh">0xFFFFFFFF</span><span class="p">,</span><span class="w"> </span><span class="n">v_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="n">i_ptr</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="w"> </span><span class="mi">32</span><span class="p">);</span>
 </pre></div>
 </div>
-<p><code class="docutils literal notranslate"><span class="pre">T.ptx.*</span></code> / <code class="docutils literal notranslate"><span class="pre">T.cuda.*</span></code> 还包含 <code class="docutils literal notranslate"><span class="pre">cp_async``（LDGSTS）、</span>
-<span class="pre">``cp_async.bulk.tensor``（TMA）、``ldmatrix</span></code> / <code class="docutils literal notranslate"><span class="pre">stmatrix</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05.*</span></code>
+<p><code class="docutils literal notranslate"><span class="pre">T.ptx.*</span></code> / <code class="docutils literal notranslate"><span class="pre">T.cuda.*</span></code> 还包含 <code class="docutils literal notranslate"><span class="pre">cp.async``（LDGSTS）、</span>
+<span class="pre">``cp.async.bulk.tensor``（TMA）、``ldmatrix</span></code> / <code class="docutils literal notranslate"><span class="pre">stmatrix</span></code>、<code class="docutils literal notranslate"><span class="pre">tcgen05.*</span></code>
 （Blackwell MMA）、<code class="docutils literal notranslate"><span class="pre">atomic_add</span></code> 和 <code class="docutils literal notranslate"><span class="pre">fence</span></code> 等指令类别。完整列表请参阅
-<code class="docutils literal notranslate"><span class="pre">tvm.backend.cuda</span></code> backend API reference。</p>
+<code class="docutils literal notranslate"><span class="pre">tvm_tirx.backend.cuda</span></code> backend API reference。</p>
 </section>
 <section id="id1">
 <h2>同步语义<a class="headerlink" href="#id1" title="Link to this heading">#</a></h2>
@@ -387,16 +385,16 @@
 engine 和并行 thread groups；使用错误通常会让结果在没有报错的情况下损坏，
 或者造成 deadlock。</p>
 <p><strong>Mbarrier phase。</strong> Mbarrier 使用一个内部 phase bit 追踪不同轮次的
-arrival。<code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.try_wait(bar,</span> <span class="pre">phase)</span></code> 会一直等待，直到 barrier
+arrival。<code class="docutils literal notranslate"><span class="pre">T.cuda.mbarrier_wait(bar,</span> <span class="pre">phase)</span></code> 会一直等待，直到 barrier
 内部 phase 与调用者提供的 <code class="docutils literal notranslate"><span class="pre">phase</span></code> 不同。循环复用 barrier 时，每次 wait
 之后都必须翻转本地 phase tracker（<code class="docutils literal notranslate"><span class="pre">phase</span> <span class="pre">^=</span> <span class="pre">1</span></code>）。否则，后续 wait 可能
 误把上一轮的完成状态当作当前轮，导致 consumer 在本轮 producer 或异步操作
 真正完成前访问数据。第三部分的 GEMM 章节会给出完整的 phase tracking 表。</p>
-<p><strong>Election。</strong> <code class="docutils literal notranslate"><span class="pre">T.ptx.elect_sync()</span></code> 从一个 warp 的 active lanes 中选择
+<p><strong>Election。</strong> <code class="docutils literal notranslate"><span class="pre">T.cuda.elect_sync()</span></code> 从一个 warp 的 active lanes 中选择
 <strong>一个 lane</strong>；它不一定选择 lane 0，也不是每个 CTA 选择一个 thread。如果
 只允许一个 thread 发出指令，还需要配合 warp-level guard。第三部分的 GEMM
-kernel 使用 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0:</span></code> 加 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">T.ptx.elect_sync():</span></code> 发出
-<code class="docutils literal notranslate"><span class="pre">Tx.gemm_async</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>。</p>
+kernel 使用 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">warp_id</span> <span class="pre">==</span> <span class="pre">0:</span></code> 加 <code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">T.cuda.elect_sync():</span></code> 发出
+<code class="docutils literal notranslate"><span class="pre">Tx.apply</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code>。</p>
 <p><strong>Named warpgroup barrier。</strong> <code class="docutils literal notranslate"><span class="pre">T.cuda.cta_sync()</span></code> 对应
 <code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code>，要求 CTA 的所有 threads 到达。Warpgroups 进入不同
 角色分支后，不能把 <code class="docutils literal notranslate"><span class="pre">cta_sync()</span></code> 放进其中一个 warpgroup 的分支，否则其他
@@ -418,13 +416,13 @@ threads。可能同时处于 active 状态的独立同步必须使用不同 ID�
 </tr>
 </thead>
 <tbody>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.fence.proxy_async(&quot;shared::cta&quot;)</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.fence.proxy.async_.shared__cta()</span></code></p></td>
 <td><p>Thread 写入 shared memory 后，async proxy（TMA store / MMA）才能读取</p></td>
 </tr>
-<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.fence.mbarrier_init()</span></code></p></td>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.fence.mbarrier_init.release.cluster()</span></code></p></td>
 <td><p>初始化 mbarrier 后，后续 arrival 或 wait 才能使用它</p></td>
 </tr>
-<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code></p></td>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence__after_thread_sync()</span></code></p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> writeback edge 上的保守 ordering fence；Step 7–9 使用它，TMA-to-MMA 路径不需要</p></td>
 </tr>
 </tbody>
@@ -434,18 +432,16 @@ threads。可能同时处于 active 状态的独立同步必须使用不同 ID�
 <section id="cuda">
 <h2>内联 CUDA 源码<a class="headerlink" href="#cuda" title="Link to this heading">#</a></h2>
 <p>如果某项操作没有对应 intrinsic，可以通过
-<code class="docutils literal notranslate"><span class="pre">T.cuda.func_call(name,</span> <span class="pre">*args,</span> <span class="pre">source_code=...,</span> <span class="pre">return_type=...)</span></code> 将源码
+<code class="docutils literal notranslate"><span class="pre">T.cuda.func_call(name,</span> <span class="pre">*args,</span> <span class="pre">SOURCE,</span> <span class="pre">ty=...)</span></code> 将源码
 字符串中的 <code class="docutils literal notranslate"><span class="pre">__device__</span></code> function 注入生成代码：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">SRC</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">"""</span>
 <span class="s2">__device__ __forceinline__ float my_relu(float x) { return x &gt; 0.f ? x : 0.f; }</span>
 <span class="s2">"""</span>
 
-<span class="nd">@T</span><span class="o">.</span><span class="n">prim_func</span>
-<span class="k">def</span><span class="w"> </span><span class="nf">k</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">,</span> <span class="n">B_ptr</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">handle</span><span class="p">):</span>
-    <span class="n">A</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">A_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
-    <span class="n">B</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">match_buffer</span><span class="p">(</span><span class="n">B_ptr</span><span class="p">,</span> <span class="p">(</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)</span>
-    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">();</span> <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cta_id</span><span class="p">([</span><span class="mi">1</span><span class="p">]);</span> <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">thread_id</span><span class="p">([</span><span class="mi">256</span><span class="p">])</span>
-    <span class="n">B</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">func_call</span><span class="p">(</span><span class="s2">"my_relu"</span><span class="p">,</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">],</span> <span class="n">source_code</span><span class="o">=</span><span class="n">SRC</span><span class="p">,</span> <span class="n">return_type</span><span class="o">=</span><span class="s2">"float32"</span><span class="p">)</span>
+<span class="nd">@T</span><span class="o">.</span><span class="n">function</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">k</span><span class="p">(</span><span class="n">A</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">((</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">),</span> <span class="n">B</span><span class="p">:</span> <span class="n">T</span><span class="o">.</span><span class="n">Tensor</span><span class="p">((</span><span class="mi">256</span><span class="p">,),</span> <span class="s2">"float32"</span><span class="p">)):</span>
+    <span class="n">T</span><span class="o">.</span><span class="n">device_entry</span><span class="p">(</span><span class="n">launch</span><span class="o">=</span><span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">LaunchConfig</span><span class="p">(</span><span class="n">grid</span><span class="o">=</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">block</span><span class="o">=</span><span class="p">[</span><span class="mi">256</span><span class="p">]));</span> <span class="n">bx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">block_idx</span><span class="p">(</span><span class="s2">"x"</span><span class="p">);</span> <span class="n">tx</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">thread_idx</span><span class="p">(</span><span class="s2">"x"</span><span class="p">)</span>
+    <span class="n">B</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">func_call</span><span class="p">(</span><span class="s2">"my_relu"</span><span class="p">,</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">],</span> <span class="n">SRC</span><span class="p">,</span> <span class="n">ty</span><span class="o">=</span><span class="s2">"float32"</span><span class="p">)</span>
 </pre></div>
 </div>
 <p>源码会原样输出，并接入对应的调用位置：</p>

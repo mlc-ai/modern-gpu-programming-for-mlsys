@@ -25,7 +25,7 @@ if
 --
 
 Python 的 ``if`` / ``else`` 会变成 CUDA 的 ``if`` / ``else``。可以根据
-thread 或 lane 条件限制一段工作，也可以通过 ``T.ptx.elect_sync()`` 从一个
+thread 或 lane 条件限制一段工作，也可以通过 ``T.cuda.elect_sync()`` 从一个
 warp 中选出一个 thread 发出指令：
 
 .. code-block:: python
@@ -35,7 +35,7 @@ warp 中选出一个 thread 发出指令：
     else:
         A[tx] = A[tx] + T.float32(1.0)
 
-    if T.ptx.elect_sync():
+    if T.cuda.elect_sync():
         pass                             # one elected lane (e.g. to issue TMA/MMA)
 
 .. code-block:: c++
@@ -70,7 +70,7 @@ Uniform 与 Divergent 控制流
 初始化 barrier 时也要注意参与范围。高层 ``MBarrier.init()`` wrapper 会生成
 single-thread guard（``if (threadIdx.x < 1)``）。如果再把它放进另一个
 divergent branch，barrier 可能没有初始化，进而导致 unspecified launch
-failure。原始的 ``T.ptx.mbarrier.init`` intrinsic 不会自动添加这个 guard；
+failure。原始的 ``T.ptx.mbarrier.init.shared__cta.b64`` intrinsic 不会自动添加这个 guard；
 调用者必须自行选出负责初始化的 thread。
 
 loop

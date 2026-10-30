@@ -416,7 +416,7 @@
 <section id="before-debugging-the-kernel">
 <h2>Before Debugging the Kernel<a class="headerlink" href="#before-debugging-the-kernel" title="Link to this heading">#</a></h2>
 <p>Rule out the runtime context first:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import tvm, tvm.tirx; print(tvm.__file__, tvm.__version__)"</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import tvm_tirx, tvm_tirx.tirx; print(tvm_tirx.__file__, tvm_tirx.__version__)"</span>
 python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import torch; print(torch.cuda.get_device_name(), torch.cuda.get_device_capability())"</span>
 </pre></div>
 </div>
@@ -426,7 +426,7 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import
 <h2>Debugging Workflow<a class="headerlink" href="#debugging-workflow" title="Link to this heading">#</a></h2>
 <ol class="arabic simple">
 <li><p>Reproduce the failure at the smallest shape that still fails. If the failure is an illegal memory access, restart Python before the next run.</p></li>
-<li><p>If compilation fails, check the installed API, target, <code class="docutils literal notranslate"><span class="pre">dispatch=</span></code>, and buffer scopes before reading the runtime synchronization code.</p></li>
+<li><p>If compilation fails, check the installed API, target, tile operation, and buffer scopes before reading the runtime synchronization code.</p></li>
 <li><p>Save <code class="docutils literal notranslate"><span class="pre">inspect_source(&quot;cuda&quot;)</span></code> output. Search it for role guards, <code class="docutils literal notranslate"><span class="pre">mbarrier_init</span></code>, <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code>, <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code>, and <code class="docutils literal notranslate"><span class="pre">__syncthreads()</span></code> before reading the Python again.</p></li>
 <li><p>Write the roles / storage / handoff / lifetime table for the kernel path that failed.</p></li>
 <li><p>Check the generated CUDA against that table: barrier inits before role branches, expected TMA producer, MMA issuer(s), writeback group(s), and no CTA-wide collective inside a warpgroup-only branch.</p></li>
@@ -483,11 +483,11 @@ python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import
 <tbody>
 <tr class="row-even"><td><p>Unknown TIRx API or attribute error</p></td>
 <td><p>Installed wheel does not match the tutorial code</p></td>
-<td><p>Print <code class="docutils literal notranslate"><span class="pre">tvm.__file__</span></code> and <code class="docutils literal notranslate"><span class="pre">tvm.__version__</span></code>; compare the API name with <a class="reference internal" href="../tirx_guide/language_reference/index.html#chap-language-reference"><span class="std std-ref">TIRx Language Reference</span></a>.</p></td>
+<td><p>Print <code class="docutils literal notranslate"><span class="pre">tvm_tirx.__file__</span></code> and <code class="docutils literal notranslate"><span class="pre">tvm_tirx.__version__</span></code>; compare the API name with <a class="reference internal" href="../tirx_guide/language_reference/index.html#chap-language-reference"><span class="std std-ref">TIRx Language Reference</span></a>.</p></td>
 </tr>
-<tr class="row-odd"><td><p>Unsupported <code class="docutils literal notranslate"><span class="pre">dispatch=</span></code></p></td>
+<tr class="row-odd"><td><p>Unsupported tile operation</p></td>
 <td><p>The selected target or primitive does not support that path</p></td>
-<td><p>Check the <code class="docutils literal notranslate"><span class="pre">dispatch</span></code> argument and target capability; <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> paths in this tutorial require Blackwell.</p></td>
+<td><p>Check the <code class="docutils literal notranslate"><span class="pre">Tx.apply</span></code> operation and target capability; <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> paths in this tutorial require Blackwell.</p></td>
 </tr>
 <tr class="row-even"><td><p>Buffer scope mismatch</p></td>
 <td><p>A buffer is being used through the wrong hardware path</p></td>
@@ -704,9 +704,9 @@ if (warp_id == 0) { tcgen05_relinquish_alloc_permit(); tcgen05_dealloc(..., 512)
 <ul class="simple">
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">tcgen05.commit</span></code> outside <code class="docutils literal notranslate"><span class="pre">elect_sync</span></code>.</strong> All 32 threads create commit groups; the 31 empty groups signal the mbarrier immediately. TMA can overwrite SMEM before MMA reads it.</p></li>
 <li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">fence.proxy_async(&quot;shared::cta&quot;)</span></code> before TMA store.</strong> The TMA engine may not see SMEM writes from threads.</p></li>
-<li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">cp_async.bulk.commit_group()</span></code> plus <code class="docutils literal notranslate"><span class="pre">wait_group(0)</span></code> after TMA store.</strong> The next tile can reuse Dsmem before the store drains.</p></li>
+<li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">T.ptx.cp.async_.bulk.commit_group()</span></code> plus <code class="docutils literal notranslate"><span class="pre">T.ptx.cp.async_.bulk.wait_group.read(0)</span></code> after TMA store.</strong> The next tile can reuse Dsmem before the TMA engine finishes reading it.</p></li>
 <li><p><strong>Persistent kernel fails intermittently at small sizes such as 1024x1024.</strong> Larger sizes can mask the race with longer K-loops. Re-check phase reset between tiles and the TMA-store commit/wait.</p></li>
-<li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> between MMA completion and TMEM load.</strong> The <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> wait confirms that the MMA has completed, but a writeback thread still needs <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence.after_thread_sync()</span></code> before issuing <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. This orders the new thread’s TMEM load after the cross-thread completion notification. Steps 7–9 place the fence immediately after <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code>. This is a <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.</p></li>
+<li><p><strong>Missing <code class="docutils literal notranslate"><span class="pre">fence.after_thread_sync()</span></code> between MMA completion and TMEM load.</strong> The <code class="docutils literal notranslate"><span class="pre">mma2ld</span></code> wait confirms that the MMA has completed, but a writeback thread still needs <code class="docutils literal notranslate"><span class="pre">T.ptx.tcgen05.fence__after_thread_sync()</span></code> before issuing <code class="docutils literal notranslate"><span class="pre">tcgen05.ld</span></code>. This orders the new thread’s TMEM load after the cross-thread completion notification. Steps 7–9 place the fence immediately after <code class="docutils literal notranslate"><span class="pre">mma2ld.wait</span></code>. This is a <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> ordering rule; it does not wait for a TMA load or make ordinary thread writes visible to the TMA engine. Those handoffs use their own mbarrier and proxy-fence protocols.</p></li>
 </ul>
 </section>
 <section id="correct-but-slow">
@@ -722,11 +722,11 @@ if (warp_id == 0) { tcgen05_relinquish_alloc_permit(); tcgen05_dealloc(..., 512)
 <tbody>
 <tr class="row-even"><td><p>Generated CUDA has no <code class="docutils literal notranslate"><span class="pre">cp.async.bulk.tensor</span></code></p></td>
 <td><p>Copy did not lower to TMA</p></td>
-<td><p>Check <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tma_auto&quot;</span></code>, target capability, and operand layout</p></td>
+<td><p>Check the TMA <code class="docutils literal notranslate"><span class="pre">Tx.apply</span></code> operation, target capability, and operand layout</p></td>
 </tr>
 <tr class="row-odd"><td><p>Generated CUDA has no <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> path</p></td>
 <td><p>MMA did not lower to Blackwell Tensor Core instructions</p></td>
-<td><p>Check <code class="docutils literal notranslate"><span class="pre">dispatch=&quot;tcgen05&quot;</span></code>, target capability, and operand layouts</p></td>
+<td><p>Check the <code class="docutils literal notranslate"><span class="pre">tcgen05</span></code> <code class="docutils literal notranslate"><span class="pre">Tx.apply</span></code> operation, target capability, and operand layouts</p></td>
 </tr>
 <tr class="row-even"><td><p>TMA and MMA do not overlap</p></td>
 <td><p>Pipeline too shallow or phases serialize producer/consumer</p></td>
@@ -744,7 +744,7 @@ if (warp_id == 0) { tcgen05_relinquish_alloc_permit(); tcgen05_dealloc(..., 512)
 <h2>Filing a Good Issue<a class="headerlink" href="#filing-a-good-issue" title="Link to this heading">#</a></h2>
 <p>If the failure survives the checks above, reduce it before filing an issue on the <a class="reference external" href="https://github.com/apache/tvm/issues">Apache TVM GitHub repository</a>. Include:</p>
 <ul class="simple">
-<li><p>the <code class="docutils literal notranslate"><span class="pre">tvm.__file__</span></code> / <code class="docutils literal notranslate"><span class="pre">tvm.__version__</span></code> output and GPU capability;</p></li>
+<li><p>the <code class="docutils literal notranslate"><span class="pre">tvm_tirx.__file__</span></code> / <code class="docutils literal notranslate"><span class="pre">tvm_tirx.__version__</span></code> output and GPU capability;</p></li>
 <li><p>the smallest shape that reproduces the failure;</p></li>
 <li><p>whether the failure is compile-time, deadlock, crash, wrong result, or correct-but-slow;</p></li>
 <li><p>the minimal kernel or notebook cell plus its correctness check;</p></li>

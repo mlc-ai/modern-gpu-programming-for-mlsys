@@ -346,14 +346,14 @@
 <section id="if">
 <h2>if<a class="headerlink" href="#if" title="Link to this heading">#</a></h2>
 <p>Python 的 <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code> 会变成 CUDA 的 <code class="docutils literal notranslate"><span class="pre">if</span></code> / <code class="docutils literal notranslate"><span class="pre">else</span></code>。可以根据
-thread 或 lane 条件限制一段工作，也可以通过 <code class="docutils literal notranslate"><span class="pre">T.ptx.elect_sync()</span></code> 从一个
+thread 或 lane 条件限制一段工作，也可以通过 <code class="docutils literal notranslate"><span class="pre">T.cuda.elect_sync()</span></code> 从一个
 warp 中选出一个 thread 发出指令：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">tx</span> <span class="o">&lt;</span> <span class="mi">128</span><span class="p">:</span>
     <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">*</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">2.0</span><span class="p">)</span>
 <span class="k">else</span><span class="p">:</span>
     <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">=</span> <span class="n">A</span><span class="p">[</span><span class="n">tx</span><span class="p">]</span> <span class="o">+</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
 
-<span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
+<span class="k">if</span> <span class="n">T</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">elect_sync</span><span class="p">():</span>
     <span class="k">pass</span>                             <span class="c1"># one elected lane (e.g. to issue TMA/MMA)</span>
 </pre></div>
 </div>
@@ -384,7 +384,7 @@ warp 中选出一个 thread 发出指令：</p>
 <p>初始化 barrier 时也要注意参与范围。高层 <code class="docutils literal notranslate"><span class="pre">MBarrier.init()</span></code> wrapper 会生成
 single-thread guard（<code class="docutils literal notranslate"><span class="pre">if</span> <span class="pre">(threadIdx.x</span> <span class="pre">&lt;</span> <span class="pre">1)</span></code>）。如果再把它放进另一个
 divergent branch，barrier 可能没有初始化，进而导致 unspecified launch
-failure。原始的 <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.init</span></code> intrinsic 不会自动添加这个 guard；
+failure。原始的 <code class="docutils literal notranslate"><span class="pre">T.ptx.mbarrier.init.shared__cta.b64</span></code> intrinsic 不会自动添加这个 guard；
 调用者必须自行选出负责初始化的 thread。</p>
 </section>
 <section id="loop">
