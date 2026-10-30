@@ -56,11 +56,11 @@ The kernels in this book target Blackwell (`sm_100a`), so running them needs a B
 **1. Install the TIRx compiler.** Its Python module is `tvm_tirx`:
 
 ```bash
-pip install apache-tvm-tirx==0.1.0a5 cuda-bindings
+pip install apache-tvm-tirx cuda-bindings
 ```
 
 The default wheel includes native LLVM support. For additional cross-compilation targets,
-install `apache-tvm-tirx[all-targets]==0.1.0a5`.
+install `apache-tvm-tirx[all-targets]`.
 
 Verify:
 
@@ -71,13 +71,12 @@ python -c "import tvm_tirx; print(tvm_tirx.__version__)"
 **2. Install PyTorch** with a CUDA build matching your GPU (used for the example inputs and the
 reference checks) — see <https://pytorch.org>.
 
-**3. (Optional) install the reference kernels.** Use the companion revision tested with
-Apache TVM 0.26.0:
+**3. Install the reference kernels to run the complete Flash Attention example.**
+Use the latest `main` branch of the companion repository:
 
 ```bash
-git clone https://github.com/mlc-ai/tirx-kernels.git
-cd tirx-kernels
-git checkout 5be39749e7dfd2c4bdae9b4d396f8ec35af07126
+git clone https://github.com/mlc-ai/TIRx-kernels.git
+cd TIRx-kernels
 pip install -e .
 ```
 

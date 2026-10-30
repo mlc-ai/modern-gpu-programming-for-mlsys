@@ -266,7 +266,7 @@ elif wg_id == 2:
 
 ## 阅读代码前的约定
 
-本章使用的片段经过少量省略，来源是[与 Apache TVM 0.26 兼容的 `flash_attention4.py` revision](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py)，因此会引用在片段之外定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。指令 views 使用的 shape 常量在 `@T.function` 外的 Python factory 中计算。下面列出后文反复出现、但不容易只看名字判断含义的符号：
+本章使用原生 TVMScript 和 CUDA tile 指令展示 FA4 pipeline。完整参考实现见 [`flash_attention4.py`](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4.py)。片段会引用在外围 kernel 中定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。指令 views 使用的 shape 常量在 `@T.function` 外的 Python factory 中计算。下面列出后文反复出现、但不容易只看名字判断含义的符号：
 
 | 名称 | 含义 |
 |---|---|
@@ -890,7 +890,7 @@ while scheduler.valid():
 
 ## 编译与验证
 
-前面使用的都是完整 kernel 中的代码片段。要运行 FA4，请先安装 README 中固定的 companion revision，再导入[对应版本的 `flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py)，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 `get_flash_attention4_kernel` 创建 kernel：
+要运行完整 FA4，请先按 README 安装最新 companion repository，再导入[`flash_attention4.py`](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4.py)，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 `get_flash_attention4_kernel` 创建 kernel，并用 `build_tensor_maps` 编码其入口接收的 tensor-map descriptors：
 
 当前 `flash_attention4.py` 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：
 
@@ -905,7 +905,10 @@ while scheduler.valid():
 import torch
 import torch.nn.functional as F
 import tvm_tirx
-from tirx_kernels.attention.flash_attention4 import get_flash_attention4_kernel
+from tirx_kernels.ported.flashattention.flash_attention4 import (
+    build_tensor_maps,
+    get_flash_attention4_kernel,
+)
 
 B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
 assert Hq % Hkv == 0
@@ -921,7 +924,13 @@ kernel = get_flash_attention4_kernel(B, S, S, Hq, Hkv, D, is_causal=False)
 target = tvm_tirx.target.Target("cuda")
 with target:
     ex = tvm_tirx.tirx.compile(tvm_tirx.IRModule({"main": kernel}), target=target)
-ex.mod(Q, K, V, O)
+tensor_maps = build_tensor_maps(
+    Q, K, V, O,
+    batch_size=B, seq_len_q=S, seq_len_kv=S,
+    num_qo_heads=Hq, num_kv_heads=Hkv, head_dim=D,
+    is_causal=False,
+)
+ex.mod(*(desc.ptr for desc in tensor_maps))
 torch.cuda.synchronize()
 
 # torch reference；enable_gqa 允许 32 个 query heads 共享 8 个 KV heads

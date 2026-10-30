@@ -267,7 +267,7 @@ Second, the paper uses otherwise idle TMEM to communicate correction statistics.
 
 ## Conventions for Reading the Code
 
-The excerpts in this chapter are lightly abbreviated from [`flash_attention4.py`](https://github.com/mlc-ai/tirx-kernels/blob/5be39749e7dfd2c4bdae9b4d396f8ec35af07126/tirx_kernels/attention/flash_attention4.py), so they refer to shapes, stage indices, and phase variables defined elsewhere in the kernel. Unless a causal difference is called out, the detailed handoff discussion and timeline trace the non-causal configuration used by the verification example. Shape constants used by instruction views are computed in the Python factory before `@T.function`. The table below collects the names that recur later but are not self-explanatory:
+This chapter uses native TVMScript and CUDA tile instructions to illustrate the FA4 pipeline. See the [complete reference implementation](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4.py). The excerpts refer to shapes, stage indices, and phase variables defined in the surrounding kernel. Unless a causal difference is called out, the detailed handoff discussion and timeline trace the non-causal configuration used by the verification example. Shape constants used by instruction views are computed in the Python factory before `@T.function`. The table below collects the names that recur later but are not self-explanatory:
 
 | Name | Meaning |
 |------|---------|
@@ -889,7 +889,7 @@ The difference lies in `next_tile()`: non-causal mode advances a persistent CTA 
 
 ## Compile and Verify
 
-The preceding sections used excerpts from the complete kernel. To run FA4, install the companion repository as described in the README, import `flash_attention4.py`, compile it, and compare its output with a PyTorch reference. Unlike the GEMM examples, this kernel is constructed with `get_flash_attention4_kernel`.
+To run complete FA4, install the latest companion repository as described in the README, import `flash_attention4.py`, compile it, and compare its output with a PyTorch reference. Use `get_flash_attention4_kernel` to construct the kernel and `build_tensor_maps` to encode the tensor-map descriptors accepted by its entry point.
 
 The current `flash_attention4.py` is specialized for fixed tile shapes rather than serving as a general attention interface. Its inputs must satisfy these constraints:
 
@@ -904,7 +904,10 @@ The example checks these requirements before compiling:
 import torch
 import torch.nn.functional as F
 import tvm_tirx
-from tirx_kernels.attention.flash_attention4 import get_flash_attention4_kernel
+from tirx_kernels.ported.flashattention.flash_attention4 import (
+    build_tensor_maps,
+    get_flash_attention4_kernel,
+)
 
 B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
 assert Hq % Hkv == 0
@@ -920,7 +923,13 @@ kernel = get_flash_attention4_kernel(B, S, S, Hq, Hkv, D, is_causal=False)
 target = tvm_tirx.target.Target("cuda")
 with target:
     ex = tvm_tirx.tirx.compile(tvm_tirx.IRModule({"main": kernel}), target=target)
-ex.mod(Q, K, V, O)
+tensor_maps = build_tensor_maps(
+    Q, K, V, O,
+    batch_size=B, seq_len_q=S, seq_len_kv=S,
+    num_qo_heads=Hq, num_kv_heads=Hkv, head_dim=D,
+    is_causal=False,
+)
+ex.mod(*(desc.ptr for desc in tensor_maps))
 torch.cuda.synchronize()
 
 # torch reference; enable_gqa lets the 32 query heads share the 8 KV heads
