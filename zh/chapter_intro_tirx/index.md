@@ -15,7 +15,7 @@
 本章示例需要 Blackwell GPU（`sm_100a`，例如 B200）、TIRx 编译器和支持 CUDA 的 PyTorch。TIRx 由 `apache-tvm-tirx` wheel 提供，Python 模块名为 `tvm_tirx`；通过 NVRTC 编译 CUDA 代码时还需要 `cuda-bindings`，可以一起安装：
 
 ```bash
-pip install apache-tvm-tirx==0.1.0a5 cuda-bindings
+pip install apache-tvm-tirx==0.1.0a6 cuda-bindings
 ```
 
 安装后可以运行下面的命令，确认 TVM 和 TIRx 能够正常导入：
