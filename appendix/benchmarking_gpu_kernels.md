@@ -163,6 +163,8 @@ This code always reuses the same matrices, so it represents a warm-cache workloa
 inputs. Whether the accesses actually hit in cache still depends on the total amount of data revisited
 by this computation and the hardware cache capacity.
 
+The following helper requires `pytest`; install it with `pip install pytest` before running the example.
+
 This book uses TVM's
 [`tvm_tirx.testing.bench.bench`](https://github.com/apache/tvm-tirx/blob/main/python/tvm_tirx/testing/bench.py)
 to handle warm-up, repeated timing, and statistics. The supplied function only launches a prepared

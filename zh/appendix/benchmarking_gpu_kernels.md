@@ -119,6 +119,8 @@ print(f"median CUDA Event time: {median(samples_ms):.4f} ms")
 
 这段代码始终复用同一组矩阵，因此结果偏向有数据复用的 warm-cache 场景；是否真的命中 cache，还取决于本次计算反复访问的数据总量与硬件 cache 容量。
 
+下面的 helper 需要 `pytest`；运行示例前请先执行 `pip install pytest`。
+
 本书使用 TVM 的 [`tvm_tirx.testing.bench.bench`](https://github.com/apache/tvm-tirx/blob/main/python/tvm_tirx/testing/bench.py) 统一处理 warm-up、重复计时和统计。传入的函数只启动已经准备好的实现，输入、输出和 workspace 均在计时前分配。与上面的 warm-cache 示例相比，`bench` 会在每次正式调用前写入一个 256 MiB buffer，尽量减少前一次调用留下的 L2 复用，再用独立的 CUDA Events 计时：
 
 ```python
