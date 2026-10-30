@@ -46,7 +46,7 @@ Tensor Core work follows a different arrival path. Issuing `tcgen05.mma` alone d
 
 An ordinary thread can also execute `mbarrier.arrive` directly. For example, after a consumer finishes reading a shared-memory buffer, it can arrive to tell the producer that the buffer may now be overwritten and reused.
 
-`wait` is the consumer side of the same protocol. A consumer waits for the phase associated with the current iteration and may read the data or reuse the protected resource only after that wait completes. Raw PTX `mbarrier.try_wait.parity` may return `false` before the phase completes and therefore has to be retried. The `T.ptx.mbarrier.try_wait` operation used in this book wraps that retry loop and blocks until the requested phase completes. Because `arrive` and `wait` are separate, a producer can report progress and continue with other work, while the consumer waits only when it actually needs the result.
+`wait` is the consumer side of the same protocol. A consumer waits for the phase associated with the current iteration and may read the data or reuse the protected resource only after that wait completes. Raw PTX `mbarrier.try_wait.parity` may return `false` before the phase completes and therefore has to be retried. The `T.cuda.mbarrier_wait` operation used in this book wraps that retry loop and blocks until the requested phase completes. Because `arrive` and `wait` are separate, a producer can report progress and continue with other work, while the consumer waits only when it actually needs the result.
 
 The common pattern is simple: asynchronous hardware runs independently and reports completion through the barrier. TMA can announce that an SMEM tile is ready, Tensor Core work can announce that a TMEM result is complete, and ordinary threads can announce that a buffer is no longer in use. In every case, the producer arrives and the consumer waits.
 
@@ -68,7 +68,7 @@ When the pipeline visits stage 0 and stage 1 in a fixed cycle, one `phase_tma` v
 
 ```text
 stage = iteration % 2
-T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma)
+T.cuda.mbarrier_wait(tma_bar.ptr_to([stage]), phase_tma)
 
 if stage == 1:
     phase_tma ^= 1

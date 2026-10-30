@@ -119,10 +119,12 @@ print(f"median CUDA Event time: {median(samples_ms):.4f} ms")
 
 这段代码始终复用同一组矩阵，因此结果偏向有数据复用的 warm-cache 场景；是否真的命中 cache，还取决于本次计算反复访问的数据总量与硬件 cache 容量。
 
-本书使用 TVM 的 [`tvm.tirx.bench.bench`](https://github.com/apache/tvm/blob/v0.26.0/python/tvm/tirx/bench.py) 统一处理 warm-up、重复计时和统计。传入的函数只启动已经准备好的实现，输入、输出和 workspace 均在计时前分配。与上面的 warm-cache 示例相比，`bench` 会在每次正式调用前写入一个 256 MiB buffer，尽量减少前一次调用留下的 L2 复用，再用独立的 CUDA Events 计时：
+下面的 helper 需要 `pytest`；运行示例前请先执行 `pip install pytest`。
+
+本书使用 TVM 的 [`tvm_tirx.testing.bench.bench`](https://github.com/apache/tvm-tirx/blob/main/python/tvm_tirx/testing/bench.py) 统一处理 warm-up、重复计时和统计。传入的函数只启动已经准备好的实现，输入、输出和 workspace 均在计时前分配。与上面的 warm-cache 示例相比，`bench` 会在每次正式调用前写入一个 256 MiB buffer，尽量减少前一次调用留下的 L2 复用，再用独立的 CUDA Events 计时：
 
 ```python
-from tvm.tirx.bench import bench
+from tvm_tirx.testing.bench import bench
 
 
 # 这里复用上文的 gemm；分析自己的 TIRx kernel 时，换成对应的无参数 callable。
@@ -928,27 +930,27 @@ from pathlib import Path
 
 import numpy as np
 
-import tvm
-from tvm.script import tirx as T
-from tvm.tirx.cuda import iket
+import tvm_tirx
+from tvm_tirx.script import tirx as T
+from tvm_tirx.backend.cuda import iket
 
 
 N = 256
 ELEMS_PER_LANE = 8
 
 
-@T.prim_func
-def warp_role_example(inp: T.Buffer((N,), "float32"), out: T.Buffer((N,), "float32")):
-    T.device_entry()
+@T.function
+def warp_role_example(inp: T.Tensor((N,), "float32"), out: T.Tensor((N,), "float32")):
+    T.device_entry(launch=T.cuda.LaunchConfig(grid=(1,), block=64))
     profiler = iket.IketProfiler()
-    warp_id = T.warp_id([2])
-    lane = T.lane_id([32])
-    shared = T.alloc_buffer((N,), "float32", scope="shared")
+    warp_id = T.cuda.warp_id()
+    lane = T.cuda.lane_id()
+    shared = T.alloc_shared((N,), "float32")
 
     profiler.mark("kernel_start", warp_id)
     if warp_id == 0:
         profiler.range_push("producer_load")
-        for i in T.serial(ELEMS_PER_LANE, unroll=False):
+        for i in T.serial(ELEMS_PER_LANE):
             index = i * 32 + lane
             shared[index] = inp[index]
         profiler.range_pop()
@@ -959,22 +961,22 @@ def warp_role_example(inp: T.Buffer((N,), "float32"), out: T.Buffer((N,), "float
 
     if warp_id == 1:
         profiler.range_push("consumer_compute")
-        for i in T.serial(ELEMS_PER_LANE, unroll=False):
+        for i in T.serial(ELEMS_PER_LANE):
             index = i * 32 + lane
             out[index] = shared[index] * T.float32(2) + T.float32(1)
         profiler.range_pop()
 
 
 def profile_workload():
-    target = tvm.target.Target({"kind": "cuda", "arch": "sm_100a"})
-    executable = tvm.compile(warp_role_example, target=target, tir_pipeline="tirx")
+    target = tvm_tirx.target.Target({"kind": "cuda", "arch": "sm_100a"})
+    executable = tvm_tirx.tirx.compile(warp_role_example, target=target)
     module = executable.jit()
 
     input_numpy = np.arange(N, dtype=np.float32)
-    inp = tvm.runtime.tensor(input_numpy, device=tvm.cuda())
-    out = tvm.runtime.empty((N,), "float32", device=tvm.cuda())
+    inp = tvm_tirx.runtime.tensor(input_numpy, device=tvm_tirx.cuda())
+    out = tvm_tirx.runtime.empty((N,), "float32", device=tvm_tirx.cuda())
     module.main(inp, out)
-    tvm.cuda().sync()
+    tvm_tirx.cuda().sync()
 
     expected = input_numpy * 2 + 1
     np.testing.assert_array_equal(out.numpy(), expected)
@@ -1003,12 +1005,12 @@ if __name__ == "__main__":
 python appendix/iket_example.py
 ```
 
-`iket.run` 会在 IKET 采集进程中重新启动当前脚本，并调用 `profile_workload()`。把 `tvm.compile()` 和 `.jit()` 写在这个函数里，可以保证 kernel 在 IKET 已启用时重新编译和加载。脚本还会检查输出是否等于 `input * 2 + 1`。
+`iket.run` 会在 IKET 采集进程中重新启动当前脚本，并调用 `profile_workload()`。把 `tvm_tirx.tirx.compile()` 和 `.jit()` 写在这个函数里，可以保证 kernel 在 IKET 已启用时重新编译和加载。脚本还会检查输出是否等于 `input * 2 + 1`。
 
 `postprocess="all"` 在 `reports/iket-warp-roles` 下生成 JSON、`*.pftrace` 和 HTML。把 `*.pftrace` 加载到 Perfetto 后，可以分别查看 `producer_load`、`wait_for_data` 和 `consumer_compute`；warp 1 会比 warp 0 更早到达 barrier，因此它的 `wait_for_data` 区间通常更长。目标为 H100 时，把脚本中的 `sm_100a` 改成 `sm_90a`。
 
 ### 把标记迁移到自己的 kernel
 
-在自己的 `PrimFunc` 中创建 `IketProfiler`，用 `mark()` 记录瞬时事件，用成对的 `range_push()` / `range_pop()` 或 `range_start()` / `range_end()` 包住阶段。每个 warp 实际经过的控制流都要保持 range 成对；等待时间也需要像示例中的 `wait_for_data` 一样显式包住。
+在自己的 `Function` 中创建 `IketProfiler`，用 `mark()` 记录瞬时事件，用成对的 `range_push()` / `range_pop()` 或 `range_start()` / `range_end()` 包住阶段。每个 warp 实际经过的控制流都要保持 range 成对；等待时间也需要像示例中的 `wait_for_data` 一样显式包住。
 
 编译和第一次 JIT load 继续放在 `iket.run` 调用的函数内。IKET 支持 Hopper 或更新架构，并会检查 CUTLASS DSL packages、NVRTC、`nvdisasm` 和相关 binary 是否与锁定 profile 一致。IKET 插入的记录代码会改变生成的 kernel 并带来额外开销，因此 trace 用于解释阶段和 warp roles；正式 latency 仍由未插桩版本的 CUDA Event benchmark 给出。完整 API 和 trace 选项见 [`python/tvm/backend/cuda/iket.py`](https://github.com/apache/tvm/blob/v0.26.0/python/tvm/backend/cuda/iket.py) 和 [NVIDIA IKET 文档](https://github.com/NVIDIA/cutlass/blob/v4.6.0/media/docs/pythonDSL/cute_dsl_general/iket_profiling.rst)。

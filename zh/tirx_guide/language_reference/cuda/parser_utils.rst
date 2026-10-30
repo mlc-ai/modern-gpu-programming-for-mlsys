@@ -22,20 +22,24 @@ Parser 工具
 Python 计算得到的值直接写入 IR、提取可复用的代码片段，以及组织 parser
 阶段使用的状态。
 
-``T.meta_var``：内联 Python 值
---------------------------------
+``T.meta_var``：保留 Python metadata
+------------------------------------
 
-``T.meta_var(x)`` 告诉 parser，``x`` 是由 **Python** 计算得到的编译期 meta
-value，应直接内联到 IR，而不是作为 script variable 解析。它既可以省去没有
-实际用途的临时变量，也让 Python values 能够参数化生成的 IR。普通
-``range(n)`` 仍会生成 serial TIRx loop；需要 lowering pipeline 展开时应使用
-``T.unroll(n)``。
+``T.meta_var(x)`` 原样返回 ``x``，可以保留 parser 侧的对象句柄或 Python
+metadata tuple。它不会绕过普通赋值规则：在 TVMScript 内赋值标量表达式仍会
+创建原生的值绑定。Shape 参数、指令宽度和 TMA box 大小应在
+``@T.function`` 之前的 Python factory 中计算。
 
 .. code-block:: python
 
-    n = T.meta_var(4)              # constant 4 is inlined as the extent
-    for j in T.unroll(n):          # marked for the UnrollLoop lowering pass
+    widths = T.meta_var((32, 64))  # tuple remains Python metadata
+    for j in T.unroll(widths[0]):
         acc[0] = acc[0] + A[tx, j]
+
+普通 ``range(n)`` 创建 serial TIRx loop；``T.unroll(n)`` 标记该 loop 在
+lowering 时展开。``meta_var`` 不会让运行时值在输入变化后自动重新求值。
+使用 persistent scheduler 时，应在每轮任务循环内，根据更新后的 cursor
+重新计算 tile 坐标。
 
 ``@T.inline``：内联函数
 -----------------------
@@ -59,15 +63,19 @@ value，应直接内联到 IR，而不是作为 script variable 解析。它既�
 values。对象字段可以保存 buffers 和 scalars，因此可以把相关的 allocation
 和状态放进同一个对象，再在 kernel body 中使用。
 
+``State`` 定义在 ``@T.function`` 外部；创建 ``s`` 和使用其字段的语句则放在
+kernel 内部，并先分配 ``smem``。
+
 .. code-block:: python
 
     @T.meta_class
     class State:
         def __init__(self, smem):
-            self.acc = T.alloc_local([1], "float32")
-            self.buf = T.decl_buffer([64], "float16", smem, scope="shared.dyn")
+            self.acc = T.bind_(T.alloc_local([1], "float32"))
+            self.buf = T.bind_(T.decl_tensor(smem, ty_args=[
+                T.Tensor((64,), "float16", scope="shared.dyn")]))
 
-    s = State(smem.data)
+    s = State(smem.ptr_to([0]))
     s.acc[0] = T.float32(0.0)     # use its fields like ordinary buffers
     # ... s.buf[i] ...
 
@@ -77,5 +85,7 @@ values。对象字段可以保存 buffers 和 scalars，因此可以把相关的
 ``T.constexpr``
 ---------------
 
-``T.constexpr`` 声明编译期 kernel parameter，其值由 ``@T.jit`` 的
-``.specialize(...)`` 固定。具体用法见 :ref:`chap_tirx_primer`。
+以 ``T.constexpr`` 标注的参数由 ``@T.jit`` 的 ``.specialize(...)``
+固定。在函数体内，``if T.constexpr(condition)`` 会在解析时选择 Python
+分支，适用于 FA4 中的 ``is_causal`` 等已知 specialization flag。
+普通 ``if`` 会构造 IR 控制流，并解析两个分支。

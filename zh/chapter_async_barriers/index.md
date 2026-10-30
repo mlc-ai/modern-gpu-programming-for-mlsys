@@ -46,7 +46,7 @@ Tensor Core 使用另一条 arrival 路径。仅仅发出 `tcgen05.mma` 并不�
 
 普通 thread 也可以直接执行 `mbarrier.arrive`。例如，consumer 读完一个 shared-memory buffer 后，可以通过 arrival 通知 producer：这块 buffer 已经可以覆盖并复用。
 
-`wait` 是同一套协议的 consumer 端。consumer 会等待 barrier 完成当前 iteration 对应的 phase；只有等待结束后，才能读取数据或复用 barrier 所保护的资源。原始 PTX `mbarrier.try_wait.parity` 可能在 phase 完成前返回 `false`，因此需要反复检查；本书使用的 `T.ptx.mbarrier.try_wait` 已经在内部封装了这个循环，会一直等到指定 phase 完成。`arrive` 和 `wait` 分开后，producer 报告进度便可以继续执行其他工作，consumer 只在真正需要数据时等待。
+`wait` 是同一套协议的 consumer 端。consumer 会等待 barrier 完成当前 iteration 对应的 phase；只有等待结束后，才能读取数据或复用 barrier 所保护的资源。原始 PTX `mbarrier.try_wait.parity` 可能在 phase 完成前返回 `false`，因此需要反复检查；本书使用的 `T.cuda.mbarrier_wait` 已经在内部封装了这个循环，会一直等到指定 phase 完成。`arrive` 和 `wait` 分开后，producer 报告进度便可以继续执行其他工作，consumer 只在真正需要数据时等待。
 
 关键在于，异步硬件不仅在后台继续执行，还会通过 barrier 报告完成。TMA 可以通知 shared-memory tile 已经准备好，Tensor Core 可以通知 TMEM 中的结果已经写完，普通 threads 也可以通知某块 buffer 已经不再使用。它们最终都遵循同一种 producer-consumer 协议：producer 报告 arrival，consumer 执行 wait。
 
@@ -68,7 +68,7 @@ Tensor Core 使用另一条 arrival 路径。仅仅发出 `tcgen05.mma` 并不�
 
 ```text
 stage = iteration % 2
-T.ptx.mbarrier.try_wait(tma_bar.ptr_to([stage]), phase_tma)
+T.cuda.mbarrier_wait(tma_bar.ptr_to([stage]), phase_tma)
 
 if stage == 1:
     phase_tma ^= 1

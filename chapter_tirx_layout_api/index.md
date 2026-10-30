@@ -20,33 +20,23 @@ S[(128, 256) : (1@TLane, 1@TCol)]
 In a TIRx program, the same notation constructs a `TileLayout` that can be attached to a buffer:
 
 ```python
+# Inside a device entry, after tcgen05.alloc has filled tmem_addr:
 layout = TileLayout(S[(128, 256) : (1@TLane, 1@TCol)])
-
-pool.alloc(shape, dtype, layout=layout)
-
-T.decl_buffer(shape, dtype, scope=scope, layout=layout)
+tmem = T.cuda.decl_tmem(tmem_addr[0], ty_args=[T.Tensor(
+    (128, 256), "float32", scope="tmem", layout=layout,
+)])
 ```
 
 The buffer now carries its physical layout. Tile operations can use that information directly instead of restating which lanes, registers, or linear storage locations hold its elements.
 
-The layout objects and named axes used in this chapter live in `tvm.tirx.layout`:
+Layout objects live in `tvm_tirx.tirx.layout`; CUDA named axes live in `tvm_tirx.backend.cuda.axis`:
 
 ```python
-from tvm.tirx.layout import (
-    TileLayout,
-    ComposeLayout,
-    S,
-    R,
-    laneid,
-    warpid,
-    tid_in_wg,
-    TLane,
-    TCol,
-    m,
-    tcgen05_atom_layout,
-    tmem_datapath_layout,
-    wg_local_layout,
-)
+from tvm_tirx.tirx.layout import Axis, TileLayout, ComposeLayout, S, R
+from tvm_tirx.backend.cuda.axis import laneid, warpid, tid_in_wg, TLane, TCol
+from tvm_tirx.backend.cuda.layout import tmem_datapath_layout
+
+m = Axis.get("m")
 ```
 
 A layout does not have to produce a single linear address. Its result may instead contain hardware coordinates such as `laneid`, `warpid`, `TLane`, and `TCol`. The TMEM layout above maps the logical row to `TLane` and the logical column to `TCol`. Here is a register fragment that uses both lane and warp axes:
@@ -355,21 +345,13 @@ tmem_datapath_layout(datapath, rows, cols)
 
 This returns the TMEM accumulator layout written by `tcgen05.mma`. The `datapath` argument selects the row mapping. For example, `"D"` is the direct row mapping used for `M=128`, while `"F"` is the mapping that scatters `M=64` across several Lane regions.
 
-```python
-tcgen05_atom_layout(instr_shape, tensor_shape, dtype)
-```
-
-This returns the register tile layout associated with a `tcgen05.ld` or `tcgen05.st` data-movement shape. `instr_shape` may be `"32x32b"`, `"16x64b"`, `"16x128b"`, or another supported string. Together, `tensor_shape` and `dtype` determine the repeat factor.
-
-The returned object describes a tile distributed across the registers of a warpgroup's threads. When used by `Tx.wg.copy_async` between TMEM and a local fragment, lowering can select the matching warp-collective `tcgen05.ld` or `tcgen05.st`; each warp handles its own 32-lane TMEM partition.
+The register layout for a warpgroup with one row per thread can be written explicitly:
 
 ```python
-wg_local_layout(cols, rows=128)
+TileLayout(S[(128, cols) : (1@tid_in_wg, 1)])
 ```
 
-This returns a warpgroup-local register tile. It maps logical rows to `tid_in_wg` and columns within a row to that thread's local `m` axis. With the default `rows=128`, each thread owns one row.
-
-All three constructors return ordinary `TileLayout` objects built from the same iters and named axes. They are convenience wrappers for hardware mappings that recur across kernels.
+Use explicit register views with `Tx.apply` and a selected `tcgen05.ld` or `tcgen05.st` opcode. Each warp handles its own 32-lane TMEM partition; the operand views must match the selected instruction shape.
 
 ## ComposeLayout
 
@@ -539,4 +521,4 @@ All eight rows land in bank 0. The swizzle leaves the logical tile unchanged but
 
 This derivation only shows that this float16 column access is spread over eight banks. Whether another access is conflict-free still depends on the data type, access width, and hardware instruction's access shape. Change the data type and swizzle mode in the demo at the beginning of the chapter to compare their address mappings directly.
 
-For `tcgen05` layouts covered by existing constructors, use helpers such as `tmem_datapath_layout` and `tcgen05_atom_layout`. Other affine layouts still use `S[...]`, `R[...]`, and an offset. When inspecting a `TileLayout`, remember that `apply()` computes only the base physical coordinate and does not enumerate replicas. Shared-memory swizzles use `ComposeLayout(per_element, swizzle_len, atom_len, tile_layout)` over a tile layout that produces a linear `m` address.
+For `tcgen05` layouts covered by existing constructors, use `tmem_datapath_layout`. Other affine layouts still use `S[...]`, `R[...]`, and an offset. When inspecting a `TileLayout`, remember that `apply()` computes only the base physical coordinate and does not enumerate replicas. Shared-memory swizzles use `ComposeLayout(per_element, swizzle_len, atom_len, tile_layout)` over a tile layout that produces a linear `m` address.
