@@ -158,7 +158,7 @@ If a row has not encountered any valid score up to and including the current blo
 
 Rewriting the natural exponential in base-2 form is only an algebraic transformation; by itself, it does not remove the throughput bottleneck in the exponential path. If every element still uses the hardware `exp2` path, those units can continue to limit softmax throughput.
 
-FA4 therefore divides exponential evaluation between two execution paths. In the [paper](https://arxiv.org/abs/2603.05451), some elements use hardware `exp2`, while others use a cubic polynomial evaluated with FP32 FMA instructions. In the current TIRx implementation, `ex2_emulation_2` provides the latter path. Hardware exponential units and FMA units can then work concurrently, reducing dependence on a single execution path. This changes how the exponential is evaluated, not the online-softmax recurrence above.
+FA4 therefore divides exponential evaluation between two execution paths. In the [paper](https://arxiv.org/abs/2603.05451), some elements use hardware `exp2`, while others use a cubic polynomial evaluated with FP32 FMA instructions. In the current TIRx implementation, `ex2_emulation_tile` provides the latter path. Hardware exponential units and FMA units can then work concurrently, reducing dependence on a single execution path. This changes how the exponential is evaluated, not the online-softmax recurrence above.
 
 When this algorithm is mapped to the kernel, each K/V block produces or updates three kinds of tiles. Their storage locations determine the layouts and barriers that follow:
 
@@ -259,7 +259,7 @@ This redistribution gives the softmax threads enough registers to retain a full 
 
 ### Differences Between the Paper and the Current TIRx Kernel
 
-This chapter follows the default path in `flash_attention4.py`. It uses the overall FA4 pipeline from the paper, but two implementation choices differ.
+This chapter follows the default path in `flash_attention4_tileop.py`. It uses the overall FA4 pipeline from the paper, but two implementation choices differ.
 
 First, the paper staggers the exponential-heavy regions of WG0 and WG1 so that the two softmax warpgroups do not compete for the exponential units at the same time. The current implementation retains `bar_s0_s1_sequence` and the corresponding synchronization branches, but sets `USE_S0_S1_BARRIER=False` by default. The default path described here therefore does not enable that ordering constraint.
 
@@ -267,7 +267,7 @@ Second, the paper uses otherwise idle TMEM to communicate correction statistics.
 
 ## Conventions for Reading the Code
 
-This chapter uses native TVMScript and CUDA tile instructions to illustrate the FA4 pipeline. See the [complete reference implementation](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4.py). The excerpts refer to shapes, stage indices, and phase variables defined in the surrounding kernel. Unless a causal difference is called out, the detailed handoff discussion and timeline trace the non-causal configuration used by the verification example. Shape constants used by instruction views are computed in the Python factory before `@T.function`. The table below collects the names that recur later but are not self-explanatory:
+This chapter uses native TVMScript and CUDA tile instructions to illustrate the FA4 pipeline. See the [complete reference implementation](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4_tileop.py). The excerpts refer to shapes, stage indices, and phase variables defined in the surrounding kernel. Unless a causal difference is called out, the detailed handoff discussion and timeline trace the non-causal configuration used by the verification example. Shape constants used by instruction views are computed in the Python factory before `@T.function`. The table below collects the names that recur later but are not self-explanatory:
 
 | Name | Meaning |
 |------|---------|
@@ -280,6 +280,8 @@ This chapter uses native TVMScript and CUDA tile instructions to illustrate the 
 | `rescale_threshold` | Threshold for delaying an exponent-reference update, currently 8.0 |
 | `scale_log2` | Softmax scale for base-2 exponentiation, `log2(e)/sqrt(d)` |
 | `acc_scale` | Per-row scale computed by softmax and used in two places: softmax applies it locally to update the old `row_sum`, while WG2 receives it to rescale the old `O` in TMEM |
+
+The MMA excerpts use `pred=` to select the elected lane; `scope="thread"` identifies the thread that submits the asynchronous hardware instruction. The complete kernel selects this form or an enclosing `if elect_sync()` at compile time through `MMA_PREDICATED` for its existing schedule variants. Both forms use the same matrix tiles, warp roles, and barrier handoffs; completion arrivals remain separate operations.
 
 ### Barrier Roles and Completion Conditions
 
@@ -342,19 +344,20 @@ K_tile = T.decl_tensor(K_smem.ptr_to([kv_stage, 0, 0]), ty_args=[T.Tensor(
     (BLK_N, HEAD_DIM), "float16", scope="shared.dyn", align=1024,
     layout=mma_shared_layout("float16", 3, (BLK_N, HEAD_DIM)))])
 T.ptx.tcgen05.fence__after_thread_sync()
+Tx.apply(
+    T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
+    S_region.sub[q_stage, :, :].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
+    Q_tile.rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
+    K_tile.rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
+    instruction_shape=(128, 128, 16), accum=False,
+    pred=T.cuda.elect_sync() != T.uint32(0), scope="thread",
+)
 if T.cuda.elect_sync():
-    Tx.apply(
-        T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
-        S_region.sub[q_stage, :, :].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
-        Q_tile.rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
-        K_tile.rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
-        instruction_shape=(128, 128, 16), accum=False,
-    )
     s_ready.arrive(q_stage)
 ```
 
 > **Tile primitive: QKᵀ MMA**
-> - Scope: WG3 warp 0 executes the warp-scoped tile operation; one elected lane commits its completion notification.
+> - Scope: WG3 warp 0; an elected lane submits the MMA and its completion notification.
 > - Layout: Q, K in SMEM → `S` in TMEM (`S_region[q_stage, :, :]`).
 > - Dispatch: `tcgen05`.
 > - Handoff: `s_ready` (→ softmax).
@@ -373,42 +376,37 @@ Softmax sits between the two MMAs and turns the score tile `S` into the unnormal
 
 Each score tile has 128 rows, and each softmax warpgroup has 128 threads, so the kernel assigns logical row `r` to thread `r`. The register view's `TileLayout` encodes this mapping: each thread ultimately processes one row of 128 scores.
 
-Each thread keeps the complete row in a 128-value fp32 register buffer named `s_chunk_buf`. The 200-register limit assigned to WG0 and WG1 above primarily makes room for this buffer and the remaining softmax temporaries. After WG0 or WG1 waits on `s_ready`, it fills that buffer with four 32-column `tcgen05.ld` operations rather than one full-row load:
+Each thread keeps the complete row in a 128-value fp32 register buffer named `s_chunk_buf`. The 200-register limit assigned to WG0 and WG1 above primarily makes room for this buffer and the remaining softmax temporaries. After WG0 or WG1 waits on `s_ready`, it fills that buffer through one tile call with four 32-column `tcgen05.ld` repeats:
 
 ```python
 s_chunk = T.decl_tensor(s_chunk_buf.data, ty_args=[T.Tensor(
     (128, BLK_N), "float32", scope="local",
     layout=TileLayout(S[(128, BLK_N):(1@tid_in_wg, 1)]))])
 T.ptx.tcgen05.fence__after_thread_sync()
-for chunk_idx in T.unroll(BLK_N // SOFTMAX_LD_CHUNK):
-    start = chunk_idx * SOFTMAX_LD_CHUNK
-    Tx.apply(
-        T.ptx["tcgen05.ld.sync.aligned.32x32b.x32.b32"],
-        s_chunk.sub[:, start:start + SOFTMAX_LD_CHUNK].view(4, 32, SOFTMAX_LD_CHUNK),
-        S_region.sub[wg_id, :, start:start + SOFTMAX_LD_CHUNK].view(4, 32, SOFTMAX_LD_CHUNK),
-        scope="warpgroup",
-    )
+Tx.apply(
+    T.ptx["tcgen05.ld.sync.aligned.32x32b.x32.b32"],
+    s_chunk.rearrange("(wg row) (repeat col) -> wg repeat row col", row=32, col=32),
+    S_region.sub[wg_id, :, :].rearrange("(wg row) (repeat col) -> wg repeat row col", row=32, col=32),
+    scope="warpgroup",
+)
 T.ptx.tcgen05.wait__ld.sync.aligned()
 ```
 
-Here `SOFTMAX_LD_CHUNK=32`. The TMEM load is chunked, not the softmax computation. The current implementation loads the row in four 32-value fragments, keeping the register tuple for each tile operation small. After all four loads, all 128 scores are live in each thread's registers. This is the load granularity chosen by the current kernel; softmax itself still processes the complete row. Each thread then:
+Here `SOFTMAX_LD_CHUNK=32`. The TMEM load is chunked, not the softmax computation. The current implementation loads the row in four 32-value fragments, keeping each hardware instruction's register tuple at 32 values. After all four loads, all 128 scores are live in each thread's registers. This is the load granularity chosen by the current kernel; softmax itself still processes the complete row. Each thread then:
 
 1. finds the maximum of the 128 current scores and combines it with the saved `row_max` to choose the exponent reference and `acc_scale`,
 2. computes the row's $p_{ij}$ values and converts the fp32 results to fp16 to form `P`,
 3. sums those $p_{ij}$ values to update `row_sum`.
 
-The following excerpt omits profiling and the optional WG0/WG1 ordering barrier while retaining the main computation. It first selects the new reference and uses the threshold to decide whether the old `O` needs rescaling:
+The excerpts use helpers such as `reduce_max_128`, `reduce_sum_128`, and `fma_f32_tile` from the complete implementation. These native TVMScript helpers operate on register tensor views through `Tx.apply` and `Tx.ewise`. Reductions retain the reference tree and accumulator order; packed FMA, multiplication, and conversion retain its rounding and FTZ qualifiers. Profiling and the optional WG0/WG1 ordering barrier are omitted. The first excerpt selects the new reference and uses the threshold to decide whether the old `O` needs rescaling:
 
 ```python
 if T.constexpr(is_first):
-    tile_max[0] = T.float32(-float("inf"))
-    for j in T.unroll(BLK_N):
-        tile_max[0] = T.max(tile_max[0], s_chunk_buf[j])
+    reduce_max_128(tile_max, s_chunk_buf)
 else:
     row_max_old = row_max[0]
     tile_max[0] = row_max_old
-    for j in T.unroll(BLK_N):
-        tile_max[0] = T.max(tile_max[0], s_chunk_buf[j])
+    reduce_max_128(tile_max, s_chunk_buf, accum=True)
 
 row_max_new = tile_max[0]
 row_max_safe = T.if_then_else(tile_max[0] == -float("inf"), 0.0, tile_max[0])
@@ -425,53 +423,55 @@ else:
 row_max[0] = row_max_new
 ```
 
-It then converts the scores into arguments for base-2 exponentiation, computes the fp32 weights, and casts them to the fp16 `P` consumed by the PV MMA. The implementation selects between hardware `exp2` and `ex2_emulation_2`:
+It then converts the scores into arguments for base-2 exponentiation, computes the fp32 weights, and casts them to the fp16 `P` consumed by the PV MMA. The implementation selects between hardware `exp2` and `ex2_emulation_tile`:
 
 ```python
-for j in T.unroll(BLK_N):
-    T.ptx.fma.rn.f32(s_chunk_buf[j], s_chunk_buf[j], T.float32(scale_log2), -row_max_safe * scale_log2)
-for frag_idx in T.unroll(4):
-    s_chunk_local = s_chunk_buf
-    for i in T.unroll(BLK_N // 4 // 2):
-        idx = T.meta_var(frag_idx * BLK_N // 4 + 2 * i)
-        emu_pairs = T.meta_var(EMU_PAIRS_CAUSAL if is_causal else EMU_PAIRS_NC)
-        emu_start = T.meta_var(EMU_START_CAUSAL if is_causal else EMU_START_NC)
-        if (i * 2 % 16 < 16 - 2 * emu_pairs or frag_idx >= 3
-                or frag_idx < emu_start or apply_mask):
-            s_chunk_local[idx] = T.exp2(s_chunk_local[idx])
-            s_chunk_local[idx + 1] = T.exp2(s_chunk_local[idx + 1])
-        else:
-            ex2_emulation_2(
-                s_chunk_local, idx, s_chunk_local[idx], s_chunk_local[idx + 1]
-            )
-    for j in T.unroll(BLK_N // 4):
-        col = frag_idx * BLK_N // 4 + j
-        p_chunk_buf[col] = T.float16(s_chunk_buf[col])
+# In the surrounding Python factory, before @T.function:
+EMU_PAIRS = EMU_PAIRS_CAUSAL if is_causal else EMU_PAIRS_NC
+EMU_START = EMU_START_CAUSAL if is_causal else EMU_START_NC
+HW_EXP2_WIDTH = 16 - 2 * EMU_PAIRS
 ```
 
-Softmax then writes `P` back to TMEM as four 32-column chunks. The causal specialization hands off two chunks first; the non-causal specialization hands off three. It waits for that first group of stores and reports that the first `K_SPLIT` columns are ready:
+```python
+p_chunk_words = T.alloc_local([BLK_N // 2], "uint32")
+fma_f32_tile(s_chunk_buf, BLK_N, T.float32(scale_log2), -row_max_safe * scale_log2)
+for frag_idx in range(4):
+    start = T.meta_var(frag_idx * BLK_N // 4)
+    if frag_idx >= 3 or frag_idx < EMU_START or apply_mask:
+        ex2_tile(s_chunk_buf, start, BLK_N // 4)
+    else:
+        for group in range(BLK_N // 4 // 16):
+            offset = T.meta_var(start + group * 16)
+            ex2_tile(s_chunk_buf, offset, HW_EXP2_WIDTH)
+            ex2_emulation_tile(s_chunk_buf, offset + HW_EXP2_WIDTH, 2 * EMU_PAIRS)
+    cast_f32_f16_tile(p_chunk_words, s_chunk_buf, start, BLK_N // 4)
+```
+
+Each uint32 in `p_chunk_words` contains two fp16 values. `fma_f32_tile` maps float32 pairs to packed instructions with `.view("uint64")`; `cast_f32_f16_tile` preserves the halfword ordering. Broadcast factors use destination-passing `pack_f32x2(dst, value)` and `Tx.apply(T.ptx["mov.b64"], ...)` to populate a separate uint64 destination, retaining the original register bindings and packing dependency. Softmax then writes `P` back to TMEM as four 32-column chunks, expressing each handoff segment with one tile operation's repeat axis. The causal specialization hands off two chunks first; the non-causal specialization hands off three. It waits for that first group of stores and reports that the first `K_SPLIT` columns are ready:
 
 ```python
-p_chunk = T.decl_tensor(p_chunk_buf.data, ty_args=[T.Tensor(
-    (128, BLK_N), "float16", scope="local",
-    layout=TileLayout(S[(128, BLK_N):(1@tid_in_wg, 1)]))])
-for i in T.unroll(P_SPLIT_Q):
-    Tx.apply(
-        T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"],
-        P_region.sub[wg_id, 1, :, i * (BLK_N // 4):(i + 1) * (BLK_N // 4)].view("uint32").view(4, 32, 16),
-        p_chunk.sub[:, i * (BLK_N // 4):(i + 1) * (BLK_N // 4)].view("uint32").view(4, 32, 16),
-        scope="warpgroup",
-    )
+p_chunk = T.decl_tensor(p_chunk_words.data, ty_args=[T.Tensor(
+    (128, BLK_N // 2), "uint32", scope="local",
+    layout=TileLayout(S[(128, BLK_N // 2):(1@tid_in_wg, 1)]))])
+Tx.apply(
+    T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"],
+    P_region.sub[wg_id, 1, :, :K_SPLIT].view("uint32").rearrange(
+        "(wg row) (repeat col) -> wg repeat row col", row=32, col=16),
+    p_chunk.sub[:, :K_SPLIT // 2].rearrange(
+        "(wg row) (repeat col) -> wg repeat row col", row=32, col=16),
+    scope="warpgroup",
+)
 T.ptx.tcgen05.wait__st.sync.aligned()
 p_o_rescale.arrive(wg_id)
 
-for i in T.unroll(4 - P_SPLIT_Q):
-    Tx.apply(
-        T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"],
-        P_region.sub[wg_id, 1, :, (P_SPLIT_Q + i) * (BLK_N // 4):(P_SPLIT_Q + i + 1) * (BLK_N // 4)].view("uint32").view(4, 32, 16),
-        p_chunk.sub[:, (P_SPLIT_Q + i) * (BLK_N // 4):(P_SPLIT_Q + i + 1) * (BLK_N // 4)].view("uint32").view(4, 32, 16),
-        scope="warpgroup",
-    )
+Tx.apply(
+    T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"],
+    P_region.sub[wg_id, 1, :, K_SPLIT:BLK_N].view("uint32").rearrange(
+        "(wg row) (repeat col) -> wg repeat row col", row=32, col=16),
+    p_chunk.sub[:, K_SPLIT // 2:].rearrange(
+        "(wg row) (repeat col) -> wg repeat row col", row=32, col=16),
+    scope="warpgroup",
+)
 T.ptx.tcgen05.wait__st.sync.aligned()
 p_ready_2.arrive(wg_id)
 ```
@@ -482,13 +482,10 @@ The fp32 `P` values remain in `s_chunk_buf`. After WG2 consumes `acc_scale` and 
 softmax_corr.empty.wait(wg_id, phase_q)
 phase_q ^= 1
 if T.constexpr(is_first):
-    row_sum[0] = T.float32(0.0)
-    for j in T.unroll(BLK_N):
-        row_sum[0] += s_chunk_buf[j]
+    reduce_sum_128(row_sum, s_chunk_buf)
 else:
     row_sum[0] = row_sum[0] * acc_scale
-    for j in T.unroll(BLK_N):
-        row_sum[0] += s_chunk_buf[j]
+    reduce_sum_128(row_sum, s_chunk_buf, accum=True)
 ```
 
 The first PV MMA reads `P[:, 0:K_SPLIT]` and updates `O`, so it must wait for two independent conditions: softmax has stored that portion of `P`, and WG2 has made `O` ready for initialization or accumulation. `p_o_rescale` joins those two completion signals. The remaining columns use a separate `p_ready_2` handoff, so the first MMA does not need to wait for the final TMEM stores.
@@ -515,29 +512,29 @@ V_tile = T.decl_tensor(V_smem.ptr_to([kv_stage, 0, 0]), ty_args=[T.Tensor(
 
 # Preserve the full V stage's layout when selecting either K segment.
 T.ptx.tcgen05.fence__after_thread_sync()
-if T.cuda.elect_sync():
-    Tx.apply(
-        T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
-        O_region.sub[SMEM_PIPE_DEPTH_Q + i_q, :, :].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
-        P_region.sub[i_q, 1, :, :K_SPLIT].rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
-        V_tile.sub[:K_SPLIT, :].permute(1, 0).rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
-        instruction_shape=(128, 128, 16), accum=should_accumulate, b_major="mn",
-    )
+Tx.apply(
+    T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
+    O_region.sub[SMEM_PIPE_DEPTH_Q + i_q, :, :].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
+    P_region.sub[i_q, 1, :, :K_SPLIT].rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
+    V_tile.sub[:K_SPLIT, :].permute(1, 0).rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
+    instruction_shape=(128, 128, 16), accum=should_accumulate, b_major="mn",
+    pred=T.cuda.elect_sync() != T.uint32(0), scope="thread",
+)
 
 p_ready_2.wait(i_q, phase_tmem)
 T.ptx.tcgen05.fence__after_thread_sync()
-if T.cuda.elect_sync():
-    Tx.apply(
-        T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
-        O_region.sub[SMEM_PIPE_DEPTH_Q + i_q, :, :].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
-        P_region.sub[i_q, 1, :, K_SPLIT:BLK_N].rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
-        V_tile.sub[K_SPLIT:BLK_N, :].permute(1, 0).rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
-        instruction_shape=(128, 128, 16), accum=True, b_major="mn",
-    )
+Tx.apply(
+    T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
+    O_region.sub[SMEM_PIPE_DEPTH_Q + i_q, :, :].rearrange("(mr m) (nr n) -> mr nr m n", m=128, n=128),
+    P_region.sub[i_q, 1, :, K_SPLIT:BLK_N].rearrange("(mr m) (kr k) -> mr kr m k", m=128, k=16),
+    V_tile.sub[K_SPLIT:BLK_N, :].permute(1, 0).rearrange("(nr n) (kr k) -> nr kr n k", n=128, k=16),
+    instruction_shape=(128, 128, 16), accum=True, b_major="mn",
+    pred=T.cuda.elect_sync() != T.uint32(0), scope="thread",
+)
 ```
 
 > **Tile primitive: PV MMA**
-> - Scope: WG3 warp 0 executes the warp-scoped tile operation.
+> - Scope: WG3 warp 0; an elected lane submits each MMA segment.
 > - Layout: `P` in TMEM + V in SMEM → `O` in TMEM (`O_region[SMEM_PIPE_DEPTH_Q + i_q, :, :]`).
 > - Dispatch: `tcgen05` with a TMEM operand.
 > - Handoff: the first segment waits on `kv_load.full` and `p_o_rescale`; the second also waits on `p_ready_2`. After the final K/V block, `o_ready` hands the result to the epilogue.
@@ -748,8 +745,7 @@ Tx.apply(T.ptx["tcgen05.ld.sync.aligned.32x32b.x16.b32"],
          o_row_wg.view(4, 32, RESCALE_TILE), o_tile.view(4, 32, RESCALE_TILE),
          scope="warpgroup")
 T.ptx.tcgen05.wait__ld.sync.aligned()
-for j in T.unroll(RESCALE_TILE):
-    o_row[j] *= acc_scale
+mul_f32_tile(o_row, RESCALE_TILE, acc_scale)
 Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"],
          o_tile.view(4, 32, RESCALE_TILE), o_row_wg.view(4, 32, RESCALE_TILE),
          scope="warpgroup")
@@ -795,6 +791,8 @@ Tracing the synchronization from end to end:
 5. WG3's PV MMA can now consume `P` and accumulate into the rescaled `O` tile.
 
 Once the non-causal K/V loop ends, WG2 switches from correction to epilogue. It waits for the final `row_sum`, `o_ready`, and a reusable `O_smem` stage. It then reads the final `O` from TMEM, multiplies by `1 / row_sum`, casts to fp16, and writes `O_smem`. `corr_epi.full` hands that tile to WG3, whose TMA store warp writes it to GMEM. The causal specialization performs the same normalization and staging in WG0/WG1 instead.
+
+The epilogue's `store_output_tile` preserves the complete SMEM row's swizzle layout before reshaping and selecting the output fragment. A register view maps rows to warpgroup threads, and one `Tx.apply(..., scope="warpgroup")` expresses `st.shared.v4.u32` through repeat axes. The non-causal and causal epilogues handle 16 and 32 fp16 values respectively, retaining the 128-bit store width, each thread's row ownership, and the original swizzle.
 
 Extending this kernel to a training-time forward pass would normally require writing the log-sum-exp (LSE) for reuse by the backward pass; otherwise, backward must recompute it. The current implementation writes only the output `O`.
 
@@ -889,14 +887,14 @@ The difference lies in `next_tile()`: non-causal mode advances a persistent CTA 
 
 ## Compile and Verify
 
-To run complete FA4, install the latest companion repository as described in the README, import `flash_attention4.py`, compile it, and compare its output with a PyTorch reference. Use `get_flash_attention4_kernel` to construct the kernel and `build_tensor_maps` to encode the tensor-map descriptors accepted by its entry point.
+To run complete FA4, install the latest companion repository as described in the README, import `flash_attention4_tileop.py`, compile it, and compare its output with a PyTorch reference. Use `get_flash_attention4_kernel` to construct the kernel and `build_tensor_maps` to encode the tensor-map descriptors accepted by its entry point.
 
-The current `flash_attention4.py` is specialized for fixed tile shapes rather than serving as a general attention interface. Its inputs must satisfy these constraints:
+The current `flash_attention4_tileop.py` uses native TVMScript and CUDA tile APIs for fixed tile shapes on B200 (`sm_100a`). Its inputs must satisfy these constraints:
 
 - `NUM_QO_HEADS` must be divisible by `NUM_KV_HEADS`, producing an integral `GQA_RATIO`.
-- `GQA_RATIO` must divide `BLK_M=128`, so the 128 packed Q rows map evenly back to sequence positions.
+- `GQA_RATIO` currently supports 1, 2, 4, and 8, mapping the 128 packed Q rows back to sequence positions.
 - `HEAD_DIM` must currently be 128; the TMEM regions, PV MMA, and epilogue are organized around that width.
-- On the non-causal path, `SEQ_LEN_KV` must be divisible by `BLK_N=128`. The code rounds the K/V block count up but does not apply a tail mask to a final partial non-causal block. The built-in causal and non-causal test configurations both use multiples of 128.
+- Both causal and non-causal paths require `SEQ_LEN_KV` to be divisible by `BLK_N=128`; the entry point checks this constraint.
 
 The example checks these requirements before compiling:
 
@@ -904,14 +902,14 @@ The example checks these requirements before compiling:
 import torch
 import torch.nn.functional as F
 import tvm_tirx
-from tirx_kernels.ported.flashattention.flash_attention4 import (
+from tirx_kernels.ported.flashattention.flash_attention4_tileop import (
     build_tensor_maps,
     get_flash_attention4_kernel,
 )
 
 B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
 assert Hq % Hkv == 0
-assert 128 % (Hq // Hkv) == 0
+assert Hq // Hkv in (1, 2, 4, 8)
 assert D == 128
 assert S % 128 == 0
 
