@@ -189,7 +189,7 @@ QKᵀ MMA 只读取 Q 和 K，生成 `S`。Softmax 随后将 `S` 从 TMEM 读到
 
 | 阶段 | Tile 移动或计算 | TIRx primitive | 硬件路径 |
 |---|---|---|---|
-| 加载 Q/K/V | GMEM tiles → SMEM tiles | `Tx.apply(T.ptx["cp.async.bulk.tensor.4d.shared::cluster.global.mbarrier::complete_tx::bytes.cta_group::1"], ...)`（K/V 和非 GQA 的 Q 使用 3D） | TMA load |
+| 加载 Q/K/V | GMEM tiles → SMEM tiles | 多 batch GQA Q 使用 `Tx.apply(T.ptx["cp.async.bulk.tensor.5d.shared::cluster.global.mbarrier::complete_tx::bytes.cta_group::1"], ...)`；多 batch K/V 或非 GQA Q 使用 4D；`B=1` 时各少一维 | TMA load |
 | QKᵀ MMA | SMEM 中的 Q、K → TMEM 中的 score tile `S` | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | `tcgen05.mma` |
 | Softmax 读出 | TMEM 中的 `S` → warpgroup register tile | `Tx.apply(T.ptx["tcgen05.ld.sync.aligned.32x32b.x32.b32"], ...)` | `tcgen05.ld` |
 | Softmax 写回 | registers 中尚未归一化的权重 tile `P` → fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store，随后执行 `tcgen05.wait.st()` |
@@ -843,21 +843,22 @@ q_head_offset = row % GQA_RATIO
 q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 ```
 
-Q load 使用一个 4D tensor map，最内层维度为 `HEAD_DIM // 2 = 64`，匹配 128-byte swizzle atom。Host descriptor 将两个 dimension halves 折入最外层 axis，用 `batch_idx * 2` 索引。一次 load 将两个 halves 传入 axes 为 `(dimension half, sequence, query head within the group, inner dim)` 的 SMEM view。它仍是 QKᵀ MMA 随后按 `128×HEAD_DIM` 二维 operand 读取的同一块 SMEM tile，不需要额外的数据重排：
+当 `BATCH_SIZE > 1` 时，Q load 使用一个 5D tensor map，最内层维度为 `HEAD_DIM // 2 = 64`，匹配 128-byte swizzle atom。Host descriptor 将 dimension half 和 batch 分成独立的 axes，byte strides 分别为 128 和 `SEQ_LEN_Q * NUM_QO_HEADS * HEAD_DIM * 2`。一次 load 将同一个 batch 的两个 halves 传入 axes 为 `(batch slice, dimension half, sequence, query head within the group, inner dim)` 的 SMEM view。它仍是 QKᵀ MMA 随后按 `128×HEAD_DIM` 二维 operand 读取的同一块 SMEM tile，不需要额外的数据重排：
 
 ```python
-# Q_tensor_map is encoded by build_tensor_maps; m_start is the task's first Q position.
+# BATCH_SIZE > 1; Q_tensor_map is encoded by build_tensor_maps.
+# m_start is the task's first Q position.
 q_tile = T.decl_tensor(Q_smem.ptr_to([i_q, 0, 0]), ty_args=[T.Tensor(
-    (2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2), "float16",
+    (1, 2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2), "float16",
     scope="shared.dyn", align=1024,
     layout=ComposeLayout(3, 3, 3,
-        TileLayout(S[(2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2)])))])
+        TileLayout(S[(1, 2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2)])))])
 if T.cuda.elect_sync():
     Tx.apply(
-        T.ptx["cp.async.bulk.tensor.4d.shared::cluster.global.mbarrier::complete_tx::bytes.cta_group::1"],
+        T.ptx["cp.async.bulk.tensor.5d.shared::cluster.global.mbarrier::complete_tx::bytes.cta_group::1"],
         q_tile, T.address_of(Q_tensor_map),
-        box=(2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2),
-        coords=(batch_idx * 2, m_start + i_q * SEQ_Q_PER_TILE,
+        box=(1, 2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2),
+        coords=(batch_idx, 0, m_start + i_q * SEQ_Q_PER_TILE,
                 kv_head_idx * GQA_RATIO, 0),
         swizzle=3, l2_promotion=2,
         mbar=T.cuda.cvta_generic_to_shared(q_load.full.ptr_to([i_q])), scope="thread",
@@ -865,9 +866,9 @@ if T.cuda.elect_sync():
     q_load.full.arrive(i_q, tx_count=BLK_M * HEAD_DIM * 2)
 ```
 
-K 和 V 不会为每个 query head 各保存一份。同一个 `kv_head_idx` 对应的 K/V tile，会由打包在 Q rows 中的 `GQA_RATIO` 个 query heads 共同使用。Output path 使用匹配的 4D view，在 epilogue 后将这些 rows 写回 `O[batch, seq, qo_head, dim]`。
+K 和 V 不会为每个 query head 各保存一份。同一个 `kv_head_idx` 对应的 K/V tile，会由打包在 Q rows 中的 `GQA_RATIO` 个 query heads 共同使用。它们的多 batch tensor maps 使用四个 axes；output path 则与 Q 匹配，使用 5D view 在 epilogue 后将这些 rows 写回 `O[batch, seq, qo_head, dim]`。将 batch 和 sequence 保持为独立 axes，也保留了每条序列尾部的 TMA 越界处理。`BATCH_SIZE=1` 时，factory 省略 batch axis，保留原来的 4D GQA Q/O 和 3D K/V maps。
 
-因此，GQA 不会改变 QKᵀ MMA、softmax 和 PV MMA 的 tile shapes：内部仍然把 Q 看成普通的 `128×HEAD_DIM` operand。Q-load 和 O-store 使用匹配的 4D tensor maps 完成 packed rows 与 `(sequence, query head)` 坐标之间的转换；scheduler 的 query-tile 步长和 causal mask 的 row position 也要使用 `SEQ_Q_PER_TILE` 与 `GQA_RATIO` 解释这些 packed rows。
+因此，GQA 不会改变 QKᵀ MMA、softmax 和 PV MMA 的 tile shapes：内部仍然把 Q 看成普通的 `128×HEAD_DIM` operand。Q-load 和 O-store 使用匹配的 tensor maps 完成 packed rows 与 `(batch, sequence, query head)` 坐标之间的转换；scheduler 的 query-tile 步长和 causal mask 的 row position 也要使用 `SEQ_Q_PER_TILE` 与 `GQA_RATIO` 解释这些 packed rows。
 
 ## Tile 调度
 
@@ -897,7 +898,7 @@ while scheduler.valid():
 
 当前 `flash_attention4_tileop.py` 使用原生 TVMScript 和 CUDA tile API，支持 B200（`sm_100a`）上的固定 tile shapes。调用前需要满足以下条件：
 
-- 使用 `BATCH_SIZE=1`。继承自原版的 host tensor-map 编码在更大 batch 下存在 batch stride 错误；已验证的 32 组配置均使用 batch size 1。
+- `BATCH_SIZE` 必须为正数。多 batch tensor maps 使用独立的 batch axis 和完整的 batch byte stride。
 - `NUM_QO_HEADS` 必须能被 `NUM_KV_HEADS` 整除，才能得到整数 `GQA_RATIO`。
 - `GQA_RATIO` 当前支持 1、2、4、8，128 条 packed Q rows 据此还原为 sequence positions。
 - `HEAD_DIM` 当前必须为 128；TMEM regions、PV MMA 和 epilogue 都按照这个宽度组织。
@@ -914,8 +915,8 @@ from tirx_kernels.ported.flashattention.flash_attention4_tileop import (
     get_flash_attention4_kernel,
 )
 
-B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
-assert B == 1
+B, S, Hq, Hkv, D = 2, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
+assert B > 0
 assert Hq % Hkv == 0
 assert Hq // Hkv in (1, 2, 4, 8)
 assert D == 128
@@ -938,7 +939,7 @@ tensor_maps = build_tensor_maps(
 ex.mod(*(desc.ptr for desc in tensor_maps))
 torch.cuda.synchronize()
 
-# torch reference；enable_gqa 允许 32 个 query heads 共享 8 个 KV heads
+# torch reference; enable_gqa lets the 32 query heads share the 8 KV heads
 qt, kt, vt = (x.transpose(1, 2).float() for x in (Q, K, V))
 ref = F.scaled_dot_product_attention(qt, kt, vt, enable_gqa=True).transpose(1, 2).half()
 torch.testing.assert_close(O, ref, rtol=1e-2, atol=1e-2)

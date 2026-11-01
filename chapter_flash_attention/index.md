@@ -189,7 +189,7 @@ The table below maps these paths to the concrete TIRx primitives and hardware in
 
 | Stage | Tile movement or compute | TIRx primitive | Hardware path |
 |-------|--------------------------|----------------|---------------|
-| Load Q/K/V | GMEM tiles -> SMEM tiles | `Tx.apply(T.ptx["cp.async.bulk.tensor.4d.shared::cluster.global.mbarrier::complete_tx::bytes.cta_group::1"], ...)` (3D for K/V and non-GQA Q) | TMA load |
+| Load Q/K/V | GMEM tiles -> SMEM tiles | `Tx.apply(T.ptx["cp.async.bulk.tensor.5d.shared::cluster.global.mbarrier::complete_tx::bytes.cta_group::1"], ...)` for batched GQA Q; 4D for batched K/V or non-GQA Q; one fewer axis for `B=1` | TMA load |
 | QKᵀ MMA | Q in SMEM and K in SMEM -> score tile `S` in TMEM | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | `tcgen05.mma` |
 | Softmax read | `S` in TMEM -> warpgroup register tile | `Tx.apply(T.ptx["tcgen05.ld.sync.aligned.32x32b.x32.b32"], ...)` | `tcgen05.ld` |
 | Softmax write | unnormalized weight tile `P` in registers -> fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store, followed by `tcgen05.wait.st()` |
@@ -842,21 +842,22 @@ q_head_offset = row % GQA_RATIO
 q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 ```
 
-The Q load uses a 4D tensor map with innermost dimension `HEAD_DIM // 2 = 64` to match the 128-byte swizzle atom. The host descriptor folds the two dimension halves into its outermost axis, indexed by `batch_idx * 2`. A single load transfers both halves into an SMEM view with axes `(dimension half, sequence, query head within the group, inner dim)`. This is the same SMEM tile that QKᵀ MMA reads as a flat `128 x HEAD_DIM` operand; no separate rearrangement pass is needed:
+For `BATCH_SIZE > 1`, the Q load uses a 5D tensor map with innermost dimension `HEAD_DIM // 2 = 64` to match the 128-byte swizzle atom. The host descriptor has separate dimension-half and batch axes: their byte strides are 128 and `SEQ_LEN_Q * NUM_QO_HEADS * HEAD_DIM * 2`, respectively. A single load transfers both halves of one batch into an SMEM view with axes `(batch slice, dimension half, sequence, query head within the group, inner dim)`. This is the same SMEM tile that QKᵀ MMA reads as a flat `128 x HEAD_DIM` operand; no separate rearrangement pass is needed:
 
 ```python
-# Q_tensor_map is encoded by build_tensor_maps; m_start is the task's first Q position.
+# BATCH_SIZE > 1; Q_tensor_map is encoded by build_tensor_maps.
+# m_start is the task's first Q position.
 q_tile = T.decl_tensor(Q_smem.ptr_to([i_q, 0, 0]), ty_args=[T.Tensor(
-    (2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2), "float16",
+    (1, 2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2), "float16",
     scope="shared.dyn", align=1024,
     layout=ComposeLayout(3, 3, 3,
-        TileLayout(S[(2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2)])))])
+        TileLayout(S[(1, 2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2)])))])
 if T.cuda.elect_sync():
     Tx.apply(
-        T.ptx["cp.async.bulk.tensor.4d.shared::cluster.global.mbarrier::complete_tx::bytes.cta_group::1"],
+        T.ptx["cp.async.bulk.tensor.5d.shared::cluster.global.mbarrier::complete_tx::bytes.cta_group::1"],
         q_tile, T.address_of(Q_tensor_map),
-        box=(2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2),
-        coords=(batch_idx * 2, m_start + i_q * SEQ_Q_PER_TILE,
+        box=(1, 2, SEQ_Q_PER_TILE, GQA_RATIO, HEAD_DIM // 2),
+        coords=(batch_idx, 0, m_start + i_q * SEQ_Q_PER_TILE,
                 kv_head_idx * GQA_RATIO, 0),
         swizzle=3, l2_promotion=2,
         mbar=T.cuda.cvta_generic_to_shared(q_load.full.ptr_to([i_q])), scope="thread",
@@ -864,9 +865,9 @@ if T.cuda.elect_sync():
     q_load.full.arrive(i_q, tx_count=BLK_M * HEAD_DIM * 2)
 ```
 
-K and V are not replicated for each query head. Instead, all `GQA_RATIO` query heads packed into the Q rows reuse the single K/V tile for `kv_head_idx`. The output side mirrors the input, with a matching 4D view storing the packed rows back to `O[batch, seq, qo_head, dim]` after the epilogue.
+K and V are not replicated for each query head. Instead, all `GQA_RATIO` query heads packed into the Q rows reuse the single K/V tile for `kv_head_idx`. Their batched tensor maps use four axes; the output side mirrors Q with a matching 5D view storing the packed rows back to `O[batch, seq, qo_head, dim]` after the epilogue. Keeping batch and sequence axes separate also preserves TMA's out-of-bounds handling at each sequence's end. For `BATCH_SIZE=1`, the factory omits the batch axis, retaining the original 4D GQA Q/O and 3D K/V maps.
 
-GQA does not change the QKᵀ MMA, softmax, or PV MMA tile shapes: the compute path still sees a plain `128 x HEAD_DIM` Q operand. The Q load and O store use matching 4D tensor maps to translate between packed rows and `(sequence, query head)` coordinates. The scheduler's query-tile stride and the causal mask's row position also use `SEQ_Q_PER_TILE` and `GQA_RATIO` to interpret those packed rows.
+GQA does not change the QKᵀ MMA, softmax, or PV MMA tile shapes: the compute path still sees a plain `128 x HEAD_DIM` Q operand. The Q load and O store use matching tensor maps to translate between packed rows and `(batch, sequence, query head)` coordinates. The scheduler's query-tile stride and the causal mask's row position also use `SEQ_Q_PER_TILE` and `GQA_RATIO` to interpret those packed rows.
 
 ## Tile Scheduling
 
@@ -896,7 +897,7 @@ To run complete FA4, install the latest companion repository as described in the
 
 The current `flash_attention4_tileop.py` uses native TVMScript and CUDA tile APIs for fixed tile shapes on B200 (`sm_100a`). Its inputs must satisfy these constraints:
 
-- Use `BATCH_SIZE=1`. The inherited host tensor-map encoding has incorrect batch strides for larger batches; the 32 validated configurations all use batch size 1.
+- `BATCH_SIZE` must be positive. Multi-batch tensor maps use a separate batch axis and its full byte stride.
 - `NUM_QO_HEADS` must be divisible by `NUM_KV_HEADS`, producing an integral `GQA_RATIO`.
 - `GQA_RATIO` currently supports 1, 2, 4, and 8, mapping the 128 packed Q rows back to sequence positions.
 - `HEAD_DIM` must currently be 128; the TMEM regions, PV MMA, and epilogue are organized around that width.
@@ -913,8 +914,8 @@ from tirx_kernels.ported.flashattention.flash_attention4_tileop import (
     get_flash_attention4_kernel,
 )
 
-B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
-assert B == 1
+B, S, Hq, Hkv, D = 2, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
+assert B > 0
 assert Hq % Hkv == 0
 assert Hq // Hkv in (1, 2, 4, 8)
 assert D == 128
