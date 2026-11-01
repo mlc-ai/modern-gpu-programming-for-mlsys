@@ -282,6 +282,22 @@ elif wg_id == 2:
 
 这里的 MMA 使用 `pred=` 指定 elected lane；`scope="thread"` 表示由选中的 thread 提交异步硬件指令。完整实现的 `MMA_PREDICATED` 在编译时选择这种写法或外围 `if elect_sync()`，以适配已有调度变体。两种写法使用相同的矩阵 tile、warp 分工和 barrier 交接；completion arrival 仍需单独执行。
 
+在 warp 角色分发之前，每个完整 warp 显式广播 Q/K/V 的 SMEM 根指针。后面的 MMA stage views 保留这些根，使编译器可以复用 matrix descriptor 的基址计算。广播的是指针值，Q/K/V 数据仍由 TMA 加载；tile operation 自身不增加跨 lane collective。
+
+```python
+def uniform_smem_root(tensor):
+    pointer = T.gpu_warp_shuffle(
+        T.uint32(0xFFFFFFFF), T.reinterpret(tensor.data, ty="uint64"), 0, 32, 32
+    )
+    return T.bind_(T.decl_tensor(
+        T.reinterpret(pointer, ty=tensor.data.ty), ty_args=[tensor.ty]))
+
+# Execute with all threads, before warp-role dispatch.
+Q_mma = uniform_smem_root(Q_smem)
+K_mma = uniform_smem_root(K_smem)
+V_mma = uniform_smem_root(V_smem)
+```
+
 ### Barrier 的分工与完成条件
 
 FA4 的 pipeline 同时维护多种彼此独立的交接状态。Q、K/V 的 SMEM stages 需要在 TMA 和 MMA 之间交接；S、P、O 的 TMEM slots 需要在 Tensor Core、softmax 和 correction 之间交接；softmax 与 WG2 还要复用 `sScale`，epilogue 与 TMA store 则要复用 `O_smem`。这些事件由不同角色在不同时间完成，也保护不同的存储位置，因此需要分别追踪。
@@ -336,12 +352,8 @@ $$S = Q_{\text{block}}K_{\text{block}}^{\top}$$
 `Q_block` 和 `K_block` 的 shape 都是 `128×HEAD_DIM`。`K_block` 转置后，每条 Q row 都会与 128 条 K rows 分别做点积，因此得到一个 `128×128` score tile：行对应 queries，列对应当前 K block 中的 keys。结果写入当前 Q stage 的 `S_region[q_stage, :, :]`；代码中的 `MMA_N=128` 就是这 128 个 score columns。
 
 ```python
-Q_tile = T.decl_tensor(Q_smem.ptr_to([q_stage, 0, 0]), ty_args=[T.Tensor(
-    (BLK_M, HEAD_DIM), "float16", scope="shared.dyn", align=1024,
-    layout=mma_shared_layout("float16", 3, (BLK_M, HEAD_DIM)))])
-K_tile = T.decl_tensor(K_smem.ptr_to([kv_stage, 0, 0]), ty_args=[T.Tensor(
-    (BLK_N, HEAD_DIM), "float16", scope="shared.dyn", align=1024,
-    layout=mma_shared_layout("float16", 3, (BLK_N, HEAD_DIM)))])
+Q_tile = Q_mma.sub[q_stage, :, :]
+K_tile = K_mma.sub[kv_stage, :, :]
 T.ptx.tcgen05.fence__after_thread_sync()
 Tx.apply(
     T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
@@ -506,9 +518,7 @@ else:
 PV MMA 的两个 operands 来自不同的 memory spaces：`P` 位于 TMEM，V 位于 SMEM，fp32 accumulator `O` 也位于 TMEM。Kernel 在根据运行模式调优的 `K_SPLIT` 处分割 128 个归约位置：causal 为 64，non-causal 为 96。两段代码如下：
 
 ```python
-V_tile = T.decl_tensor(V_smem.ptr_to([kv_stage, 0, 0]), ty_args=[T.Tensor(
-    (BLK_N, HEAD_DIM), "float16", scope="shared.dyn", align=1024,
-    layout=mma_shared_layout("float16", 3, (BLK_N, HEAD_DIM)))])
+V_tile = V_mma.sub[kv_stage, :, :]
 
 # Preserve the full V stage's layout when selecting either K segment.
 T.ptx.tcgen05.fence__after_thread_sync()
@@ -893,6 +903,8 @@ while scheduler.valid():
 区别只在 `next_tile()` 的行为。Non-causal mode 会让 persistent CTA 前进到另一个 task；causal mode 的 CTA 只负责当前 task，因此 `next_tile()` 会结束 loop。进入 loop 后，两种模式都会执行相同的 TMA load、QKᵀ MMA、softmax、PV MMA、重缩放和 TMA store。
 
 ## 编译与验证
+
+这个保留根指针的版本需要包含[统一根指针 matrix-descriptor 支持](https://github.com/tlopex/tvm-tirx/tree/fix/hoist-uniform-tile-mma-descriptors)的编译器构建；`apache-tvm-tirx==0.1.0a6` 尚未包含该支持。
 
 要运行完整 FA4，请先按 README 安装最新 companion repository，再导入[`flash_attention4_tileop.py`](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4_tileop.py)，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 `get_flash_attention4_kernel` 创建 kernel，并用 `build_tensor_maps` 编码其入口接收的 tensor-map descriptors：
 

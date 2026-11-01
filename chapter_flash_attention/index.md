@@ -283,6 +283,22 @@ This chapter uses native TVMScript and CUDA tile instructions to illustrate the 
 
 The MMA excerpts use `pred=` to select the elected lane; `scope="thread"` identifies the thread that submits the asynchronous hardware instruction. The complete kernel selects this form or an enclosing `if elect_sync()` at compile time through `MMA_PREDICATED` for its existing schedule variants. Both forms use the same matrix tiles, warp roles, and barrier handoffs; completion arrivals remain separate operations.
 
+Before warp-role dispatch, every full warp explicitly broadcasts the Q/K/V SMEM root pointers. The MMA stage views below preserve these roots so the compiler can reuse matrix-descriptor base arithmetic. This broadcasts pointer values; the Q/K/V data is still loaded by TMA. The tile operation adds no cross-lane collective.
+
+```python
+def uniform_smem_root(tensor):
+    pointer = T.gpu_warp_shuffle(
+        T.uint32(0xFFFFFFFF), T.reinterpret(tensor.data, ty="uint64"), 0, 32, 32
+    )
+    return T.bind_(T.decl_tensor(
+        T.reinterpret(pointer, ty=tensor.data.ty), ty_args=[tensor.ty]))
+
+# Execute with all threads, before warp-role dispatch.
+Q_mma = uniform_smem_root(Q_smem)
+K_mma = uniform_smem_root(K_smem)
+V_mma = uniform_smem_root(V_smem)
+```
+
 ### Barrier Roles and Completion Conditions
 
 The FA4 pipeline maintains several independent handoff states. The Q and K/V SMEM stages are handed off between TMA and MMA. The S, P, and O TMEM slots are handed off among the Tensor Core, softmax, and correction. Softmax and WG2 also reuse a mailbox, while the epilogue and TMA store reuse `O_smem`. Different roles complete these events at different times, and each event protects a different storage location, so the kernel tracks them separately.
@@ -337,12 +353,8 @@ $$S = Q_{\text{block}}K_{\text{block}}^{\top}$$
 Both `Q_block` and `K_block` have shape `128 x HEAD_DIM`. Transposing `K_block` makes each Q row take a dot product with all 128 K rows, producing a `128 x 128` score tile: rows correspond to queries, and columns correspond to keys in the current K block. The result is written to `S_region[q_stage, :, :]`; `MMA_N=128` is the width of this score tile.
 
 ```python
-Q_tile = T.decl_tensor(Q_smem.ptr_to([q_stage, 0, 0]), ty_args=[T.Tensor(
-    (BLK_M, HEAD_DIM), "float16", scope="shared.dyn", align=1024,
-    layout=mma_shared_layout("float16", 3, (BLK_M, HEAD_DIM)))])
-K_tile = T.decl_tensor(K_smem.ptr_to([kv_stage, 0, 0]), ty_args=[T.Tensor(
-    (BLK_N, HEAD_DIM), "float16", scope="shared.dyn", align=1024,
-    layout=mma_shared_layout("float16", 3, (BLK_N, HEAD_DIM)))])
+Q_tile = Q_mma.sub[q_stage, :, :]
+K_tile = K_mma.sub[kv_stage, :, :]
 T.ptx.tcgen05.fence__after_thread_sync()
 Tx.apply(
     T.ptx["tcgen05.mma.cta_group::1.kind::f16"],
@@ -507,9 +519,7 @@ later K/V blocks: O = O + P_block @ V_block
 The operands come from different memory spaces: `P` is in TMEM, V is in SMEM, and the fp32 accumulator `O` is also in TMEM. The kernel further divides the 128 reduction positions at a regime-tuned `K_SPLIT`: 64 for causal and 96 for non-causal. The two MMA segments are:
 
 ```python
-V_tile = T.decl_tensor(V_smem.ptr_to([kv_stage, 0, 0]), ty_args=[T.Tensor(
-    (BLK_N, HEAD_DIM), "float16", scope="shared.dyn", align=1024,
-    layout=mma_shared_layout("float16", 3, (BLK_N, HEAD_DIM)))])
+V_tile = V_mma.sub[kv_stage, :, :]
 
 # Preserve the full V stage's layout when selecting either K segment.
 T.ptx.tcgen05.fence__after_thread_sync()
@@ -892,6 +902,8 @@ while scheduler.valid():
 The difference lies in `next_tile()`: non-causal mode advances a persistent CTA to another task, while a causal CTA owns only its current task and therefore exits the loop. Both modes run the same local primitives inside the loop: TMA load, QKᵀ MMA, softmax, PV MMA, correction, and TMA store.
 
 ## Compile and Verify
+
+This rooted-view version requires a compiler build containing [uniform-root matrix-descriptor support](https://github.com/tlopex/tvm-tirx/tree/fix/hoist-uniform-tile-mma-descriptors); `apache-tvm-tirx==0.1.0a6` does not include it.
 
 To run complete FA4, install the latest companion repository as described in the README, import `flash_attention4_tileop.py`, compile it, and compare its output with a PyTorch reference. Use `get_flash_attention4_kernel` to construct the kernel and `build_tensor_maps` to encode the tensor-map descriptors accepted by its entry point.
 
