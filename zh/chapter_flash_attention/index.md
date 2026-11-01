@@ -119,12 +119,13 @@ for each (K_block, V_block):
         S[masked positions] = -inf
 
     candidate_max = max(row_max, rowmax(S))
+    candidate_safe = 0 if candidate_max == -inf else candidate_max
 
     if first_block:
         new_ref = candidate_max
         acc_scale = 1
     else:
-        delta = (row_max - candidate_max) * scale_log2  # delta <= 0
+        delta = (row_max - candidate_safe) * scale_log2  # delta <= 0
         if delta >= -rescale_threshold:                 # 差距未超过阈值
             new_ref = row_max
             acc_scale = 1
@@ -154,7 +155,7 @@ store O
 
 `new_ref` 是本轮最终采用的指数参考值。保留旧参考值时，`acc_scale=1`，原有状态不需要改变，`block_O` 可以直接累加；采用候选参考值时，kernel 先用 `acc_scale` 转换旧的 `row_sum` 和 `O`，再加入 `block_O`。这里用 `all(acc_scale == 1)` 简化表示可以跳过 `O` 重缩放的情况；实际 kernel 会对 WG2 中每个 warp 负责的 32 行分别判断。所有 K/V blocks 处理完成后，kernel 才计算最终的 `O / row_sum`。“重缩放与结果写回”一节会展开这项判断。
 
-如果某一行截至当前 block 仍没有出现任何有效 score，该行的旧参考值和当前 block maximum 都是 `-inf`，因此 `new_ref` 也为 `-inf`。直接计算 `S - new_ref` 会出现 `-inf - (-inf)`；`row_max_safe` 在这种情况下改用 0，使被 mask 的 scores 的指数为 0，`P`、`row_sum` 和 `O` 也保持为 0。如果该行在更早的 blocks 中已经出现过有效 score，那么后续一个全被 mask 的 block 只会产生全 0 的新贡献，不会清空之前累积的 `row_sum` 和 `O`。
+如果某一行截至当前 block 仍没有出现任何有效 score，该行的旧参考值和当前 block maximum 都是 `-inf`，因此 `new_ref` 也为 `-inf`。计算 `delta` 和指数输入时都要使用安全参考值：`candidate_safe=0` 使后续全 masked block 得到 `delta=-inf`、`acc_scale=0`，空的累积状态仍保持为 0；如果减去 `candidate_max=-inf`，则会产生 NaN。`row_max_safe=0` 同样使被 mask 的 scores 的指数为 0。逻辑上的 `row_max` 在出现有效 score 前仍保持 `-inf`。如果该行在更早的 blocks 中已经出现过有效 score，那么后续一个全被 mask 的 block 只会产生全 0 的新贡献，不会清空之前累积的 `row_sum` 和 `O`。
 
 将自然指数改写成 base-2 exponential 只是数学形式的转换，本身并不能消除 exponential path 的吞吐瓶颈。如果所有元素仍然通过硬件 `exp2` 计算，执行这条路径的单元依然可能限制 softmax 的速度。
 
@@ -192,7 +193,7 @@ QKᵀ MMA 只读取 Q 和 K，生成 `S`。Softmax 随后将 `S` 从 TMEM 读到
 | 加载 Q/K/V | GMEM tiles → SMEM tiles | 多 batch GQA Q 使用 `Tx.apply(T.ptx["cp.async.bulk.tensor.5d.shared::cluster.global.mbarrier::complete_tx::bytes.cta_group::1"], ...)`；多 batch K/V 或非 GQA Q 使用 4D；`B=1` 时各少一维 | TMA load |
 | QKᵀ MMA | SMEM 中的 Q、K → TMEM 中的 score tile `S` | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | `tcgen05.mma` |
 | Softmax 读出 | TMEM 中的 `S` → warpgroup register tile | `Tx.apply(T.ptx["tcgen05.ld.sync.aligned.32x32b.x32.b32"], ...)` | `tcgen05.ld` |
-| Softmax 写回 | registers 中尚未归一化的权重 tile `P` → fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store，随后执行 `tcgen05.wait.st()` |
+| Softmax 写回 | registers 中尚未归一化的权重 tile `P` → fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store，随后执行 `tcgen05.wait::st` |
 | PV MMA | TMEM 中的 `P`、SMEM 中的 V → TMEM 中的 output accumulator `O` | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | 使用 TMEM operand 的 `tcgen05.mma` |
 | 重缩放 | TMEM 中的 `O` → registers → TMEM 中的 `O` | TMEM readback、register multiply、TMEM store | `tcgen05.ld` / TMEM store |
 | Epilogue | TMEM 中的最终 `O` → registers → SMEM → GMEM | TMEM readback、`Tx.apply`、TMA store | `tcgen05.ld` + TMA store |
@@ -320,7 +321,7 @@ Barrier 的初始化 count 也不总是 thread 数。普通 `MBarrier` 统计显
 | `p_o_rescale` | 128 个 softmax threads + 128 个 WG2 threads | 两组共报告 256 次 arrivals | 第一段 PV MMA 可以读取 `P[:, 0:K_SPLIT]`，并初始化或继续累加 O |
 | `p_ready_2` | Softmax warpgroup 的 128 个 threads | 共报告 128 次 arrivals | 第二段 PV MMA 可以读取 `P[:, K_SPLIT:128]` |
 | `o_ready` | 1 个 elected MMA thread | Tensor Core 完成最后一段 PV MMA 后报告 1 次通知 | Epilogue 可以读取最终 O accumulator |
-| Statistics named barrier | 一个 softmax warpgroup 与 WG2 配对；`GQA_RATIO=1` 时按对应 warps 配对 | Softmax 执行 `ptx_bar_arrive`，WG2 通过 `ptx_bar_sync` 加入 | WG2 可以读取 `sScale` 中的 `acc_scale` 或 non-causal 路径的最终 `row_sum` |
+| Statistics named barrier | 一个 softmax warpgroup 与 WG2 配对；`GQA_RATIO=1` 时按对应 warps 配对 | Softmax 执行 `T.ptx.bar.arrive`，WG2 通过 `T.ptx.bar.sync` 加入 | WG2 可以读取 `sScale` 中的 `acc_scale` 或 non-causal 路径的最终 `row_sum` |
 | `softmax_corr.empty` | WG2 的 128 个 threads | 共报告 128 次 arrivals | Softmax 可以继续推进并重新写入对应的 `sScale` slot |
 | `corr_epi.full` | Epilogue 的 128 个 threads（non-causal 为 WG2，causal 为 WG0/WG1） | 共报告 128 次 arrivals | TMA-store warp 可以读取已经写好的 `O_smem` |
 | `corr_epi.empty` | TMA-store warp 的 32 个 threads | 等待 TMA store 完成后，共报告 32 次 arrivals | Epilogue 可以复用该 `O_smem` stage |
@@ -411,11 +412,13 @@ T.ptx.tcgen05.wait__ld.sync.aligned()
 
 下面使用完整实现中的 `reduce_max_128`、`reduce_sum_128`、`fma_f32_tile` 等辅助函数。它们在原生 TVMScript 中定义，内部通过 `Tx.apply` 和 `Tx.ewise` 操作寄存器 tensor views。归约保留原版树形计算和累加顺序；packed FMA、乘法与转换保留原版舍入和 FTZ 修饰。代码省略了 profiler。先求新的参考值，并根据阈值决定是否需要重缩放旧的 `O`：
 
+与完整 kernel 一样，`row_max` 使用 `T.local_scalar("float32")`，而 `tile_max` 和 `row_sum` 是单元素 local tensors；其余 scalar 临时值在外围 kernel 中分配。
+
 ```python
 if T.constexpr(is_first):
     reduce_max_128(tile_max, s_chunk_buf)
 else:
-    row_max_old = row_max[0]
+    row_max_old = row_max
     tile_max[0] = row_max_old
     reduce_max_128(tile_max, s_chunk_buf, accum=True)
 
@@ -431,7 +434,7 @@ else:
         acc_scale = T.float32(1.0)
     else:
         _scalar_instruction("ex2.approx.ftz.f32", acc_scale, acc_scale_)
-row_max[0] = row_max_new
+row_max = row_max_new
 ```
 
 然后将 scores 转成 base-2 exponent 的输入，计算 fp32 权重，并转换为后续 PV MMA 使用的 fp16 `P`。实现会在硬件 `exp2` 和 `ex2_emulation_tile` 之间选择：
@@ -680,8 +683,8 @@ Softmax warpgroup 会把逐行 `acc_scale` 交给 WG2，告诉它应该把 TMEM 
 
 1. Softmax 先等待 `softmax_corr.empty`，确认对应的 `sScale` slot 可以重新写入。
 2. Softmax 将 `acc_scale` 或最终 `row_sum` 写入该 slot。
-3. Softmax 对该 stage 的 named barrier 执行 `ptx_bar_arrive`。
-4. WG2 通过 `ptx_bar_sync` 加入同一个 barrier，再读取该 slot。
+3. Softmax 对该 stage 的 named barrier 执行 `T.ptx.bar.arrive`。
+4. WG2 通过 `T.ptx.bar.sync` 加入同一个 barrier，再读取该 slot。
 5. WG2 发出对应的 empty arrival。
 6. Softmax warpgroup 在下一 phase 中重新写入这个 `sScale` slot。
 
@@ -690,6 +693,8 @@ Softmax warpgroup 会把逐行 `acc_scale` 交给 WG2，告诉它应该把 TMEM 
 第一个 K/V block 没有旧的 `O`，因此不需要传递 `acc_scale`。不过，softmax 和 WG2 仍完成一次同步并归还 slot，使后续 iterations 保持对齐。后续 iterations 使用同一 `sScale` slot 传递 `acc_scale`；non-causal 路径的最后一次交接再传递 `row_sum`。
 
 实际 kernel 将两个 Q stages 的 correction 交错执行。WG2 处理 stage `i_q` 后，会用 `softmax_corr.empty.arrive(1 - i_q)` 放行另一个 softmax stage，使 WG0 和 WG1 交替前进；non-causal epilogue 读取最终 `row_sum` 后，WG2 才允许重新写入同一个 `i_q` 对应的 slot。因此，上图只说明一个 `sScale` slot 如何完成交接，代码中的 stage index 还受到两级 pipeline 的交错顺序影响。
+
+Warm-up 依次执行 `stats_sync(0)`、`softmax_corr.empty.arrive(0)`、`stats_sync(1)`；correction loop 结束后，再用一次 `softmax_corr.empty.arrive(1)` 放行最后一个 softmax stage。这些首尾交接让只有一个 K/V block 时也能保持交替协议对齐。
 
 还要区分 `softmax_corr.empty` 与 `p_o_rescale`。前者控制 `sScale` slot 的复用和两级执行顺序；后者才向 PV MMA 证明 `P` 与 `O` 已经满足第一段计算的条件。
 
@@ -702,8 +707,11 @@ FA4 比 GEMM 多出的 barriers 大多围绕 softmax：QKᵀ MMA 与 PV MMA 之�
 FA4 没有一个统一的 pipeline depth，因为不同 tile streams 的推进速度并不相同。Kernel 分别为它们维护循环使用的 stages：
 
 - Q pipeline depth 为 2：一个 CTA 同时推进两个 query tiles，WG0 和 WG1 分别处理 stage 0 和 stage 1 的 softmax。
-- KV pipeline depth 为 3：K、V blocks 按倒序流过三块循环使用的 SMEM stages，为两块 query tiles 提供 operands。
-- TMEM pipeline depth 为 2：两个 query tiles 分别使用一组 S/P/O slots；完成相应的数据交接后，这些 slots 才能进入下一轮。
+- KV pipeline depth 为 3：K、V blocks 按倒序共用一个含三块 SMEM stages 的 ring，为两块 query tiles 提供 operands。
+- TMEM 中的 S/P/O：每个 Q stage 固定对应一组 slots，共两组；完成相应的数据交接后，这些 slots 才能进入下一轮。
+- Output SMEM staging：`TMEM_DEPTH` 决定 `O_smem` 和 `corr_epi` 的分配容量，默认是 2，short causal specialization 是 3。当前双 Q-stage 调度在两种情况下都只访问 output slots 0、1；512-column TMEM allocation 不变。
+
+`K_smem` 与 `V_smem` 是同一个 ring 上的 alias views，并非各自独立的一组 K、V 存储。Load warp 每完成一块 K 或 V 的加载就推进一次 `kv_pipe`。使用三个 slots 时，顺序从 slot 0 中的 `K[n-1]`、slot 1 中的 `V[n-1]`、slot 2 中的 `K[n-2]` 开始；slot 0 原有数据被消费后，再用它加载 `V[n-2]`。每次复用都由 `kv_load.empty` 保护。
 
 下图以 non-causal 路径为例，表示这几组 pipeline 同时运行后，各个角色可以在大致相同的时间执行哪些工作。图中将首轮初始化、稳态 K/V loop 和最后的收尾分开画出：
 
@@ -736,7 +744,7 @@ value P0*V[n-2]
 
 两类 MMA 的交错使图中的 score、softmax、correction 和 value 可以互相重叠，避免各阶段依次串行执行。
 
-时间线左侧的 `预先放行 O0/O1` 发生在主循环之前。此时 TMEM 中还没有旧的 `O`，WG2 直接向两个 `p_o_rescale` slots 报告 arrivals，允许首轮 PV MMA 以 `accum=false` 初始化 `O0` 和 `O1`。稳态循环中，WG2 在对应 softmax 产生 `acc_scale` 后按需重缩放旧的 `O`，再放行下一次 PV MMA。省略号表示同样的交错继续到 `V[0]`；只有最后两次 PV MMA 完成后，WG2 才会归一化 `O0` 和 `O1`，随后由 WG3 warp 2 依次发起两次 TMA store。
+时间线左侧的 `预先放行 O0/O1` 发生在主循环之前。此时 TMEM 中还没有旧的 `O`，WG2 直接向两个 `p_o_rescale` slots 报告 arrivals，允许首轮 PV MMA 以 `accum=false` 初始化 `O0` 和 `O1`。稳态循环中，WG2 在对应 softmax 产生 `acc_scale` 后按需重缩放旧的 `O`，再放行下一次 PV MMA。省略号表示同样的交错继续到 `V[0]`。每块 output tile 都在各自的 `o_ready`、`row_sum` 和 staging-buffer 等待完成后进入 epilogue，因此 `O0` 的归一化和写回可以与 `O1` 的最后一次 PV MMA 重叠。WG3 warp 2 按 O0/O1 顺序写回，分别等待对应 tile 的 `corr_epi.full`。图中最后的归一化方框汇总了这些逐 stage 的工作。
 
 Q tiles、K/V blocks 和 TMEM slots 按不同节奏推进。Kernel 用各自独立的 `PipelineState` 对象记录它们的 stage indices 和 phases。这样，各条数据路径可以分别等待自己的 barrier，并在 consumer 用完后独立复用资源。
 
@@ -766,7 +774,7 @@ T.ptx.tcgen05.wait__st.sync.aligned()
 
 完整 kernel 在对应的就绪交接后执行一次 `fence::after_thread_sync`，覆盖后续各个 fragment 的读取；每个 load tile 仍在使用其寄存器值前执行 `wait::ld`。Kernel 在循环中处理各个 16-column correction fragments，随后用一次 `wait::st` 等待这些 TMEM stores 全部完成，再报告 barrier arrivals。上面的单个 fragment 片段将这一完成条件直接展示在 store 之后。
 
-WG2 中的每个 warp 负责 32 行，并分别判断自己的这些行是否需要 correction。每个 lane 根据对应行的 `acc_scale` 生成 `should_rescale`，`any_sync` 再在当前 warp 的 32 个 lanes 中汇总：如果 32 行的 `acc_scale` 都等于 1，这个 warp 会跳过 TMEM → registers → TMEM 的数据操作；只要其中一行需要更新，该 warp 就处理自己负责的 32 行，其中不需要变化的行只会乘以 1。其他 warps 独立作出相同判断。
+WG2 中的每个 warp 负责 32 行，并分别判断自己的这些行是否需要 correction。每个 lane 根据对应行的 `acc_scale` 生成 `should_rescale`，`vote.sync.any` 再在当前 warp 的 32 个 lanes 中汇总：如果 32 行的 `acc_scale` 都等于 1，这个 warp 会跳过 TMEM → registers → TMEM 的数据操作；只要其中一行需要更新，该 warp 就处理自己负责的 32 行，其中不需要变化的行只会乘以 1。其他 warps 独立作出相同判断。
 
 对应的控制流可以简化为：
 
@@ -786,7 +794,7 @@ softmax_corr.empty.arrive(1 - i_q)
 
 跳过数据操作后，同步协议仍然要继续。每个 warp 无论是否实际修改 `O`，都必须完成 `p_o_rescale` 和 `softmax_corr.empty` 所需的 arrival，分别允许 PV MMA 继续执行，并允许 softmax 再次写入对应的 `sScale` slot。
 
-Conditional rescaling 最终形成两级筛选：阈值判断先让许多 rows 得到 `acc_scale = 1`，`any_sync` 再判断当前 warp 的 32 行是否都能跳过 correction 数据路径。即使跳过 TMEM load、multiply 和 store，这个 warp 仍会完成推进 pipeline 所需的 barrier arrivals。
+Conditional rescaling 最终形成两级筛选：阈值判断先让许多 rows 得到 `acc_scale = 1`，`vote.sync.any` 再判断当前 warp 的 32 行是否都能跳过 correction 数据路径。即使跳过 TMEM load、multiply 和 store，这个 warp 仍会完成推进 pipeline 所需的 barrier arrivals。
 
 需要 correction 时，每个 warp 对自己负责的 `O` row stripe 执行 TMEM → registers → TMEM tile operation：
 
@@ -805,6 +813,8 @@ Conditional rescaling 最终形成两级筛选：阈值判断先让许多 rows �
 5. WG3 的 PV MMA 读取 `P`，并将结果累加到已经完成 rescale 的 `O`。
 
 Non-causal K/V loop 结束后，WG2 开始执行 epilogue。它等待最终的 `row_sum`、`o_ready` 和可复用的 `O_smem` stage，从 TMEM 读出最终 `O`，乘以 `1 / row_sum` 完成前面推迟的 normalization，再转换为 fp16 并写入 `O_smem`。`corr_epi.full` 随后将这块数据交给 WG3，最后由 TMA store warp 写回 GMEM。Causal specialization 则在 WG0/WG1 执行同样的 normalization 和 staging。
+
+报告 `corr_epi.full.arrive(i_q)` 前，每个 epilogue thread 都执行 `T.ptx.fence.proxy.async_.shared__cta()`，使自己的 shared-memory stores 对 TMA 的 async proxy 可见。Store warp 为每个 tile 执行一次 `T.ptx.cp.async_.bulk.commit_group()`；随后先用 `T.ptx.cp.async_.bulk.wait_group(1)` 等待再归还 `corr_epi.empty` 的 slot 0，再用 `wait_group(0)` 等待后归还 slot 1，保护每块 output buffer，直到对应的 TMA 读取完成。
 
 Epilogue 的 `store_output_tile` 使用完整 SMEM row 的 swizzle layout，再 reshape 并选择当前输出片段。寄存器 view 将 rows 映射到 warpgroup threads，一个 `Tx.apply(..., scope="warpgroup")` 用 repeat axes 表达 `st.shared.v4.u32`。Non-causal 和 causal epilogue 分别处理 16 和 32 个 fp16 values，保留每次 128-bit 写入的宽度、thread 的 row 分工及原有 swizzle。
 
@@ -912,6 +922,7 @@ while scheduler.valid():
 
 当前 `flash_attention4_tileop.py` 使用原生 TVMScript 和 CUDA tile API，支持 B200（`sm_100a`）上的固定 tile shapes。调用前需要满足以下条件：
 
+- `Q`、`K`、`V`、`O` 必须是连续存储的 CUDA FP16 tensors，并与传入的 batch、sequence 和 head dimensions 一致。
 - `BATCH_SIZE` 必须为正数。多 batch tensor maps 使用独立的 batch axis 和完整的 batch byte stride。
 - `NUM_QO_HEADS` 必须能被 `NUM_KV_HEADS` 整除，才能得到整数 `GQA_RATIO`。
 - `GQA_RATIO` 当前支持 1、2、4、8，128 条 packed Q rows 据此还原为 sequence positions。
@@ -971,7 +982,7 @@ FA4 复用了 GEMM kernel 中的 TMA、`tcgen05`、TMEM 和 barrier 机制，但
 1. 考虑一个 query row，设 `scale_log2=1`、`rescale_threshold=8`、`row_max=2`、`row_sum=3`、`O=[4,6]`。下一个 block 的 `S=[5,4]`，`V=[[1,0],[0,1]]`。计算 `candidate_max`、`delta`、`new_ref`、`acc_scale`、`P`，以及更新后的 `row_sum` 和 `O`。再将 `S` 改为 `[11,10]` 重算，并解释为什么只有第二种情况需要重缩放旧状态。
 2. 分别追踪以下四段数据路径：Q/K SMEM → S TMEM、S TMEM → P TMEM、P TMEM + V SMEM → O TMEM，以及 O TMEM → O GMEM。对每一段列出执行角色、源和目标存储位置、tile primitive 与硬件路径，并指出其中哪些步骤在前面的 GEMM kernel 中不存在。
 3. 根据 fp16 view 中的 column $c$ 对应物理 32-bit column $\lfloor c/2\rfloor$，推导 `S0`、`S1`、`P0`、`P1`、`O0` 和 `O1` 的物理 column ranges。哪些 regions 会发生重叠？哪些 waits 或 barriers 能防止重叠区域被过早读取或覆盖？
-4. 追踪一个 K/V block 依次经过 `s_ready`、`p_o_rescale`、`p_ready_2` 和 `o_ready` 的过程。对每个 barrier，说明谁执行 wait、谁贡献 arrivals，以及随后哪块 tile 可以安全使用。为什么 `p_o_rescale` 需要等待 256 次 arrivals？Causal attention 按 64+64 columns、non-causal attention 按 96+32 columns 将 `P` 分两段交给 PV MMA，又获得了什么重叠机会？
+4. 追踪最后一个 K/V block 依次经过 `s_ready`、`p_o_rescale`、`p_ready_2` 和 `o_ready` 的过程。对每个 barrier，说明谁执行 wait、谁贡献 arrivals，以及随后哪块 tile 可以安全使用。为什么 `p_o_rescale` 需要等待 256 次 arrivals？Causal attention 按 64+64 columns、non-causal attention 按 96+32 columns 将 `P` 分两段交给 PV MMA，又获得了什么重叠机会？
 5. 负责发起 TMA 和 MMA 指令的 WG3 将每个 thread 的 register 上限降到 48，两个 softmax warpgroups WG0/WG1 将上限提高到 200，WG2 则使用 64。计算四个 128-thread warpgroups 的 register 总预算，再与 CTA 中所有 threads 都使用 200 个 registers 的情况比较。Softmax 角色为什么需要最大的配额？降低 WG3 的上限又如何使这项分配成为可能？
 6. Kernel 已经将自然指数改写为 base-2 `exp2`，为什么 hardware exponential path 仍可能成为 softmax 的瓶颈？说明将元素分配给硬件 `exp2` 和基于 FMA 的三次多项式近似后，执行单元的利用方式发生了什么变化，以及哪些 online-softmax 公式保持不变。
 7. 设 `SEQ_LEN_Q=6`、`SEQ_LEN_KV=8`，并采用右对齐 causal mask。Query positions 0 和 5 分别可以访问到哪个最大 key index？若 `BLK_N=4`，它们各自需要处理哪些完整、部分有效或完全跳过的 K/V blocks？这会怎样影响 causal tasks 的工作量和调度顺序？
