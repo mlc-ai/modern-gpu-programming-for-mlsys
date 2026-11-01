@@ -764,6 +764,8 @@ Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"],
 T.ptx.tcgen05.wait__st.sync.aligned()
 ```
 
+完整 kernel 在对应的就绪交接后执行一次 `fence::after_thread_sync`，覆盖后续各个 fragment 的读取；每个 load tile 仍在使用其寄存器值前执行 `wait::ld`。Kernel 在循环中处理各个 16-column correction fragments，随后用一次 `wait::st` 等待这些 TMEM stores 全部完成，再报告 barrier arrivals。上面的单个 fragment 片段将这一完成条件直接展示在 store 之后。
+
 WG2 中的每个 warp 负责 32 行，并分别判断自己的这些行是否需要 correction。每个 lane 根据对应行的 `acc_scale` 生成 `should_rescale`，`any_sync` 再在当前 warp 的 32 个 lanes 中汇总：如果 32 行的 `acc_scale` 都等于 1，这个 warp 会跳过 TMEM → registers → TMEM 的数据操作；只要其中一行需要更新，该 warp 就处理自己负责的 32 行，其中不需要变化的行只会乘以 1。其他 warps 独立作出相同判断。
 
 对应的控制流可以简化为：

@@ -763,6 +763,8 @@ Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"],
 T.ptx.tcgen05.wait__st.sync.aligned()
 ```
 
+In the complete kernel, one `fence::after_thread_sync` after the relevant readiness handoff covers the fragment loads; each load tile still finishes with `wait::ld` before its register values are used. The kernel issues its 16-column correction fragments in a loop, then uses one `wait::st` to drain all their TMEM stores before reporting barrier arrivals. The single-fragment excerpt shows that completion condition immediately after its store.
+
 Each warp in WG2 handles 32 rows and decides independently whether its rows need correction. Every lane forms a per-row `should_rescale` flag from `acc_scale`, and `any_sync` combines those 32 flags within the current warp. If all 32 scales are 1, that warp skips the TMEM → registers → TMEM data path. If any row needs correction, the warp processes its 32-row stripe; rows whose scale is 1 are simply multiplied by 1. The other WG2 warps make the same decision for their own rows.
 
 The control flow reduces to:
