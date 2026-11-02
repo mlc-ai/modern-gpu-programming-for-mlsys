@@ -158,7 +158,7 @@ store O
 
 将自然指数改写成 base-2 exponential 只是数学形式的转换，本身并不能消除 exponential path 的吞吐瓶颈。如果所有元素仍然通过硬件 `exp2` 计算，执行这条路径的单元依然可能限制 softmax 的速度。
 
-FA4 因此把指数计算分配到两条执行路径：[论文](https://arxiv.org/abs/2603.05451)中，一部分元素使用硬件 `exp2`，另一部分使用 FP32 FMA 指令计算三次多项式近似。当前 TIRx 实现中的 `ex2_emulation_2` 负责后一条路径。这样，hardware exponential units 和 FMA units 可以并行工作，减少 softmax 对单一执行路径的依赖。这项调整只改变指数的实现方式，不改变上面的 online-softmax 更新公式。
+FA4 因此把指数计算分配到两条执行路径：[论文](https://arxiv.org/abs/2603.05451)中，一部分元素使用硬件 `exp2`，另一部分使用 FP32 FMA 指令计算三次多项式近似。当前 TIRx 实现中的 `ex2_emulation_tile` 负责后一条路径。这样，hardware exponential units 和 FMA units 可以并行工作，减少 softmax 对单一执行路径的依赖。这项调整只改变指数的实现方式，不改变上面的 online-softmax 更新公式。
 
 将这套算法映射到 kernel 后，每个 K/V block 会产生或更新三类 tiles；它们的存储位置决定了后面的 layout 和 barrier：
 
@@ -192,7 +192,7 @@ QKᵀ MMA 只读取 Q 和 K，生成 `S`。Softmax 随后将 `S` 从 TMEM 读到
 | 加载 Q/K/V | GMEM tiles → SMEM tiles | `Tx.apply(T.ptx["cp.async.bulk.tensor.4d.shared::cta.global.tile.mbarrier::complete_tx::bytes"], ...)` | TMA load |
 | QKᵀ MMA | SMEM 中的 Q、K → TMEM 中的 score tile `S` | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | `tcgen05.mma` |
 | Softmax 读出 | TMEM 中的 `S` → warpgroup register tile | `Tx.apply(T.ptx["tcgen05.ld.sync.aligned.32x32b.x32.b32"], ...)` | `tcgen05.ld` |
-| Softmax 写回 | registers 中尚未归一化的权重 tile `P` → fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store，随后执行 `tcgen05.wait.st()` |
+| Softmax 写回 | registers 中尚未归一化的权重 tile `P` → fp16 TMEM view | `Tx.apply(T.ptx["tcgen05.st.sync.aligned.32x32b.x16.b32"], ...)` | TMEM store，随后执行 `tcgen05.wait::st` |
 | PV MMA | TMEM 中的 `P`、SMEM 中的 V → TMEM 中的 output accumulator `O` | `Tx.apply(T.ptx["tcgen05.mma.cta_group::1.kind::f16"], ...)` | 使用 TMEM operand 的 `tcgen05.mma` |
 | 重缩放 | TMEM 中的 `O` → registers → TMEM 中的 `O` | TMEM readback、register multiply、TMEM store | `tcgen05.ld` / TMEM store |
 | Epilogue | TMEM 中的最终 `O` → registers → SMEM → GMEM | TMEM readback、`Tx.apply`、TMA store | `tcgen05.ld` + TMA store |
@@ -258,7 +258,7 @@ elif wg_id == 2:
 
 ### 论文与当前 TIRx 实现的差异
 
-本章解释的是当前 `flash_attention4.py` 的默认执行路径。它沿用了 FA4 论文的整体 pipeline，但有两处实现选择并不相同。
+本章解释的是当前 `flash_attention4_tileop.py` 的默认执行路径。它沿用了 FA4 论文的整体 pipeline，但有两处实现选择并不相同。
 
 第一，论文让 WG0 和 WG1 的 exponential-heavy softmax 区域错开执行，避免两个 softmax warpgroups 同时争用 exponential units。当前代码保留了 `bar_s0_s1_sequence` 及其同步分支，但默认设置 `USE_S0_S1_BARRIER=False`，因此默认路径不会启用这项顺序约束。
 
@@ -266,7 +266,7 @@ elif wg_id == 2:
 
 ## 阅读代码前的约定
 
-本章使用原生 TVMScript 和 CUDA tile 指令展示 FA4 pipeline。完整参考实现见 [`flash_attention4.py`](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4.py)。片段会引用在外围 kernel 中定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。指令 views 使用的 shape 常量在 `@T.function` 外的 Python factory 中计算。下面列出后文反复出现、但不容易只看名字判断含义的符号：
+本章使用原生 TVMScript 和 CUDA tile 指令展示 FA4 pipeline。完整参考实现见 [`flash_attention4_tileop.py`](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4_tileop.py)。片段会引用在外围 kernel 中定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。指令 views 使用的 shape 常量在 `@T.function` 外的 Python factory 中计算。下面列出后文反复出现、但不容易只看名字判断含义的符号：
 
 | 名称 | 含义 |
 |---|---|
@@ -302,7 +302,7 @@ Barrier 的初始化 count 也不总是 thread 数。普通 `MBarrier` 统计显
 | `p_o_rescale` | 128 个 softmax threads + 128 个 WG2 threads | 两组共报告 256 次 arrivals | 第一段 PV MMA 可以读取 `P[:, 0:K_SPLIT]`，并初始化或继续累加 O |
 | `p_ready_2` | Softmax warpgroup 的 128 个 threads | 共报告 128 次 arrivals | 第二段 PV MMA 可以读取 `P[:, K_SPLIT:128]` |
 | `o_ready` | 1 个 elected MMA thread | Tensor Core 完成最后一段 PV MMA 后报告 1 次通知 | Epilogue 可以读取最终 O accumulator |
-| Statistics named barrier | 一个 softmax warpgroup 与 WG2 配对；`GQA_RATIO=1` 时按对应 warps 配对 | Softmax 执行 `ptx_bar_arrive`，WG2 通过 `ptx_bar_sync` 加入 | WG2 可以读取 `sScale` 中的 `acc_scale` 或 non-causal 路径的最终 `row_sum` |
+| Statistics named barrier | 一个 softmax warpgroup 与 WG2 配对；`GQA_RATIO=1` 时按对应 warps 配对 | Softmax 执行 `T.ptx.bar.arrive`，WG2 通过 `T.ptx.bar.sync` 加入 | WG2 可以读取 `sScale` 中的 `acc_scale` 或 non-causal 路径的最终 `row_sum` |
 | `softmax_corr.empty` | WG2 的 128 个 threads | 共报告 128 次 arrivals | Softmax 可以继续推进并重新写入对应的 `sScale` slot |
 | `corr_epi.full` | WG2 的 128 个 threads | 共报告 128 次 arrivals | TMA-store warp 可以读取已经写好的 `O_smem` |
 | `corr_epi.empty` | TMA-store warp 的 32 个 threads | 等待 TMA store 完成后，共报告 32 次 arrivals | Epilogue 可以复用该 `O_smem` stage |
@@ -424,7 +424,7 @@ else:
 row_max[0] = row_max_new
 ```
 
-然后将 scores 转成 base-2 exponent 的输入，计算 fp32 权重，并转换为后续 PV MMA 使用的 fp16 `P`。实现会在硬件 `exp2` 和 `ex2_emulation_2` 之间选择：
+然后将 scores 转成 base-2 exponent 的输入，计算 fp32 权重，并转换为后续 PV MMA 使用的 fp16 `P`。实现会在硬件 `exp2` 和 `ex2_emulation_tile` 之间选择：
 
 ```python
 for j in T.unroll(BLK_N):
@@ -440,9 +440,7 @@ for frag_idx in T.unroll(4):
             s_chunk_local[idx] = T.exp2(s_chunk_local[idx])
             s_chunk_local[idx + 1] = T.exp2(s_chunk_local[idx + 1])
         else:
-            ex2_emulation_2(
-                s_chunk_local, idx, s_chunk_local[idx], s_chunk_local[idx + 1]
-            )
+            ex2_emulation_tile(s_chunk_local, idx, 2)
     for j in T.unroll(BLK_N // 4):
         col = frag_idx * BLK_N // 4 + j
         p_chunk_buf[col] = T.float16(s_chunk_buf[col])
@@ -591,7 +589,7 @@ tmem_as_f16: 1024 × 16 bits = 16384 bits
 
 因此，`tmem[:, p]` 以 fp32 读取整个格子；`tmem_as_f16[:, 2p]` 和 `tmem_as_f16[:, 2p+1]` 则分别访问其中两个 fp16 values。
 
-建立这两个 buffer 后，源码使用 `Buffer.rearrange()` 创建按 stage 索引的 views：
+建立这两个 buffer 后，源码使用 `rearrange()` 创建按 stage 索引的 views：
 
 ```python
 S_region = T.meta_var(tmem.rearrange("m (s n) -> s m n", n=MMA_N))
@@ -672,8 +670,8 @@ Softmax warpgroup 会把逐行 `acc_scale` 交给 WG2，告诉它应该把 TMEM 
 
 1. Softmax 先等待 `softmax_corr.empty`，确认对应的 `sScale` slot 可以重新写入。
 2. Softmax 将 `acc_scale` 或最终 `row_sum` 写入该 slot。
-3. Softmax 对该 stage 的 named barrier 执行 `ptx_bar_arrive`。
-4. WG2 通过 `ptx_bar_sync` 加入同一个 barrier，再读取该 slot。
+3. Softmax 对该 stage 的 named barrier 执行 `T.ptx.bar.arrive`。
+4. WG2 通过 `T.ptx.bar.sync` 加入同一个 barrier，再读取该 slot。
 5. WG2 发出对应的 empty arrival。
 6. Softmax warpgroup 在下一 phase 中重新写入这个 `sScale` slot。
 
@@ -819,7 +817,7 @@ $$\mathrm{LSE}_i = \log(\mathrm{row\_sum}_i) + r_i / \sqrt{d}$$
 
 Causal attention 要求每个 query 只能访问当前位置及之前的 keys。在 Q、K 序列等长时，score matrix 的有效区域位于主对角线及其下方。当两个序列不等长时，当前实现使用右对齐（bottom-right-aligned）的 causal mask：query position `i` 最多可以访问 key position `i + SEQ_LEN_KV - SEQ_LEN_Q`，上界再截断到 `SEQ_LEN_KV - 1`。实现从 block 和 element 两个层次处理这一约束：跳过完全无效的 blocks，并在跨越边界的 blocks 内屏蔽无效 columns。
 
-对于完全位于 causal 边界之外的 K/V blocks，所有元素都无效。`get_n_block_max(...)` 返回当前 Q task 需要访问的 K/V block 排他上界，因此 loop 只遍历 `0` 到 `n_block_max - 1`，不会加载更高编号的 blocks。
+对于完全位于 causal 边界之外的 K/V blocks，所有元素都无效。`n_block_max_of(...)` 返回当前 Q task 需要访问的 K/V block 排他上界，因此 loop 只遍历 `0` 到 `n_block_max - 1`，不会加载更高编号的 blocks。
 
 跨越 causal 边界的 blocks 同时包含有效和无效 columns，仍然需要执行 QKᵀ MMA。Softmax 会在指数运算前屏蔽无效 columns：它根据当前 query row 的位置和 block offset 计算 column limit，保留不超过该位置的 columns，并在 registers 中将其余 columns 设为 `-inf`。这些位置不会参与 row maximum，对应的 $p_{ij}$ 也会变成 0。
 
@@ -890,14 +888,16 @@ while scheduler.valid():
 
 ## 编译与验证
 
-要运行完整 FA4，请先按 README 安装最新 companion repository，再导入[`flash_attention4.py`](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4.py)，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 `get_flash_attention4_kernel` 创建 kernel，并用 `build_tensor_maps` 编码其入口接收的 tensor-map descriptors：
+完整原生 kernel 需要包含[统一根指针 matrix-descriptor 支持](https://github.com/tlopex/tvm-tirx/tree/fix/hoist-uniform-tile-mma-descriptors)的编译器构建；`apache-tvm-tirx==0.1.0a6` 尚未包含该支持。
 
-当前 `flash_attention4.py` 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：
+要运行完整 FA4，请先按 README 安装最新 companion repository，再导入[`flash_attention4_tileop.py`](https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4_tileop.py)，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 `get_flash_attention4_kernel` 创建 kernel，并用 `build_tensor_maps` 编码其入口接收的 tensor-map descriptors：
+
+当前 `flash_attention4_tileop.py` 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：
 
 - `NUM_QO_HEADS` 必须能被 `NUM_KV_HEADS` 整除，才能得到整数 `GQA_RATIO`。
-- `GQA_RATIO` 必须能整除 `BLK_M=128`，否则 128 条 packed Q rows 无法均匀还原为 sequence positions。
+- `GQA_RATIO` 当前支持 1、2、4、8，使 128 条 packed Q rows 均匀映射到 sequence positions。
 - `HEAD_DIM` 当前必须为 128；TMEM regions、PV MMA 和 epilogue 都按照这个宽度组织。
-- Non-causal 路径要求 `SEQ_LEN_KV` 是 `BLK_N=128` 的整数倍。代码会向上取整 K/V block 数，但没有为 non-causal 最后一个不足 128 的 block 应用 tail mask。内置测试配置在 causal 和 non-causal 两种模式下也都使用 128 的整数倍。
+- 入口接口要求 causal 和 non-causal 两种模式的 `SEQ_LEN_KV` 都是 `BLK_N=128` 的整数倍。
 
 下面的示例在编译前显式检查这些约束：
 
@@ -905,14 +905,14 @@ while scheduler.valid():
 import torch
 import torch.nn.functional as F
 import tvm_tirx
-from tirx_kernels.ported.flashattention.flash_attention4 import (
+from tirx_kernels.ported.flashattention.flash_attention4_tileop import (
     build_tensor_maps,
     get_flash_attention4_kernel,
 )
 
 B, S, Hq, Hkv, D = 1, 1024, 32, 8, 128   # GQA: 32 query heads share 8 KV heads
 assert Hq % Hkv == 0
-assert 128 % (Hq // Hkv) == 0
+assert Hq // Hkv in (1, 2, 4, 8)
 assert D == 128
 assert S % 128 == 0
 
