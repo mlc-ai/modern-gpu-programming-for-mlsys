@@ -571,7 +571,7 @@ FA4 为一个 CTA 申请 128 rows × 512 个物理 TMEM columns，每个 cell �
 2 stages × (128 columns for S + 128 columns for O) = 512 columns
 ```
 
-为便于展示，下面把这块 allocation 表达为两个原生 tensor views。Dtype view `tmem_as_f16` 与 `tmem` 从同一个物理 TMEM column 开始：
+Kernel 把这块 allocation 表达为两个原生 tensor views。Dtype view `tmem_as_f16` 与 `tmem` 从同一个物理 TMEM column 开始：
 
 ```python
 # The reference reserves all 512 columns, so its TMEM base is zero.
@@ -651,7 +651,7 @@ P_region[1, 1, :, n]
 
 这些条件不是只靠普通的源代码顺序保证。QKᵀ MMA 的 `tcgen05.commit` 完成通知通过 `s_ready` 放行 softmax；softmax 等 TMEM-to-register loads 完成后才使用这些 scores。写回 `P` 时，`tcgen05.wait::st` 先确认异步 TMEM stores 完成，softmax 再向 `p_o_rescale` 或 `p_ready_2` 报告 arrival；PV MMA 等待对应 barrier 后才读取。最后，PV MMA 和下一轮 QKᵀ MMA 由 WG3 warp 0 中的同一个 issuing thread 按固定的 `tcgen05` 序列发出，lowering 需保留它们之间必要的 `tcgen05` 依赖。这些完成与顺序机制一起防止同一块 TMEM 被过早读取或覆盖。
 
-这些 views 让教程片段能用结构化下标选中 `S`、`P` 和 `O`。完整 kernel 的 `mma_tmem` 和 `tmem_view` helpers 则直接在表中列出的物理 columns 上声明等价的原生 views。
+完整 kernel 的 MMA、softmax 传输、O correction 和 epilogue 都使用这些相同的 region views。`tmem_load` 和 `tmem_store` helpers 接收选中的 tile view，并从该 view 推导传输宽度，因此各调用点不再重复计算物理 column 地址。
 
 ## 关键 Barrier 协议
 

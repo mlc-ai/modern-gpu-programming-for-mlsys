@@ -572,7 +572,7 @@ FA4 allocates 128 rows by 512 physical TMEM columns for each CTA, with one 32-bi
 2 stages × (128 columns for S + 128 columns for O) = 512 columns
 ```
 
-For the excerpts, we expose the allocation as two native tensor views. The dtype view `tmem_as_f16` starts at the same physical TMEM column as `tmem`:
+The kernel exposes the allocation as two native tensor views. The dtype view `tmem_as_f16` starts at the same physical TMEM column as `tmem`:
 
 ```python
 # The reference reserves all 512 columns, so its TMEM base is zero.
@@ -652,7 +652,7 @@ This reuse requires three operations to occur in order. Softmax must read the co
 
 Ordinary source-level program order alone does not establish these conditions. The `tcgen05.commit` for the QKᵀ MMA reports completion through `s_ready`, which releases softmax; softmax uses the scores only after its TMEM-to-register loads have completed. When writing `P`, `tcgen05.wait::st` first waits for the asynchronous TMEM stores, after which the softmax threads arrive on `p_o_rescale` or `p_ready_2`; the PV MMA waits on the matching barrier before reading. Finally, WG3 warp 0 issues the PV MMA and the following QKᵀ MMA as a fixed `tcgen05` sequence from the same issuing thread, and lowering must preserve the required `tcgen05` dependencies between them. Together, these completion and ordering mechanisms prevent the aliased TMEM region from being read or overwritten too early.
 
-These views let the excerpts select `S`, `P`, and `O` with structured indices. The complete kernel's `mma_tmem` and `tmem_view` helpers declare equivalent native views directly at the physical columns shown in the table.
+The complete kernel uses these same region views for MMA, softmax transfers, O correction, and the epilogue. Its `tmem_load` and `tmem_store` helpers receive a selected tile view and derive the transfer width from that view, so the call sites do not repeat physical column arithmetic.
 
 ## Key Barrier Protocols
 
