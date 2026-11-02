@@ -498,7 +498,7 @@ store O
 <p><code class="docutils literal notranslate"><span class="pre">new_ref</span></code> 是本轮最终采用的指数参考值。保留旧参考值时，<code class="docutils literal notranslate"><span class="pre">acc_scale=1</span></code>，原有状态不需要改变，<code class="docutils literal notranslate"><span class="pre">block_O</span></code> 可以直接累加；采用候选参考值时，kernel 先用 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 转换旧的 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 和 <code class="docutils literal notranslate"><span class="pre">O</span></code>，再加入 <code class="docutils literal notranslate"><span class="pre">block_O</span></code>。这里用 <code class="docutils literal notranslate"><span class="pre">all(acc_scale</span> <span class="pre">==</span> <span class="pre">1)</span></code> 简化表示可以跳过 <code class="docutils literal notranslate"><span class="pre">O</span></code> 重缩放的情况；实际 kernel 会对 WG2 中每个 warp 负责的 32 行分别判断。所有 K/V blocks 处理完成后，kernel 才计算最终的 <code class="docutils literal notranslate"><span class="pre">O</span> <span class="pre">/</span> <span class="pre">row_sum</span></code>。“重缩放与结果写回”一节会展开这项判断。</p>
 <p>如果某一行截至当前 block 仍没有出现任何有效 score，该行的旧参考值和当前 block maximum 都是 <code class="docutils literal notranslate"><span class="pre">-inf</span></code>，因此 <code class="docutils literal notranslate"><span class="pre">new_ref</span></code> 也为 <code class="docutils literal notranslate"><span class="pre">-inf</span></code>。直接计算 <code class="docutils literal notranslate"><span class="pre">S</span> <span class="pre">-</span> <span class="pre">new_ref</span></code> 会出现 <code class="docutils literal notranslate"><span class="pre">-inf</span> <span class="pre">-</span> <span class="pre">(-inf)</span></code>；<code class="docutils literal notranslate"><span class="pre">row_max_safe</span></code> 在这种情况下改用 0，使被 mask 的 scores 的指数为 0，<code class="docutils literal notranslate"><span class="pre">P</span></code>、<code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 和 <code class="docutils literal notranslate"><span class="pre">O</span></code> 也保持为 0。如果该行在更早的 blocks 中已经出现过有效 score，那么后续一个全被 mask 的 block 只会产生全 0 的新贡献，不会清空之前累积的 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 和 <code class="docutils literal notranslate"><span class="pre">O</span></code>。</p>
 <p>将自然指数改写成 base-2 exponential 只是数学形式的转换，本身并不能消除 exponential path 的吞吐瓶颈。如果所有元素仍然通过硬件 <code class="docutils literal notranslate"><span class="pre">exp2</span></code> 计算，执行这条路径的单元依然可能限制 softmax 的速度。</p>
-<p>FA4 因此把指数计算分配到两条执行路径：<a class="reference external" href="https://arxiv.org/abs/2603.05451">论文</a>中，一部分元素使用硬件 <code class="docutils literal notranslate"><span class="pre">exp2</span></code>，另一部分使用 FP32 FMA 指令计算三次多项式近似。当前 TIRx 实现中的 <code class="docutils literal notranslate"><span class="pre">ex2_emulation_2</span></code> 负责后一条路径。这样，hardware exponential units 和 FMA units 可以并行工作，减少 softmax 对单一执行路径的依赖。这项调整只改变指数的实现方式，不改变上面的 online-softmax 更新公式。</p>
+<p>FA4 因此把指数计算分配到两条执行路径：<a class="reference external" href="https://arxiv.org/abs/2603.05451">论文</a>中，一部分元素使用硬件 <code class="docutils literal notranslate"><span class="pre">exp2</span></code>，另一部分使用 FP32 FMA 指令计算三次多项式近似。当前 TIRx 实现中的 <code class="docutils literal notranslate"><span class="pre">ex2_emulation_tile</span></code> 负责后一条路径。这样，hardware exponential units 和 FMA units 可以并行工作，减少 softmax 对单一执行路径的依赖。这项调整只改变指数的实现方式，不改变上面的 online-softmax 更新公式。</p>
 <p>将这套算法映射到 kernel 后，每个 K/V block 会产生或更新三类 tiles；它们的存储位置决定了后面的 layout 和 barrier：</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">S</span></code> 是 score tile，由 QKᵀ MMA 写入 TMEM。</p></li>
@@ -549,7 +549,7 @@ P, V:  P in TMEM + V in SMEM --PV MMA--&gt; O in TMEM
 <tr class="row-odd"><td><p>Softmax 写回</p></td>
 <td><p>registers 中尚未归一化的权重 tile <code class="docutils literal notranslate"><span class="pre">P</span></code> → fp16 TMEM view</p></td>
 <td><p><code class="docutils literal notranslate"><span class="pre">Tx.apply(T.ptx[&quot;tcgen05.st.sync.aligned.32x32b.x16.b32&quot;],</span> <span class="pre">...)</span></code></p></td>
-<td><p>TMEM store，随后执行 <code class="docutils literal notranslate"><span class="pre">tcgen05.wait.st()</span></code></p></td>
+<td><p>TMEM store，随后执行 <code class="docutils literal notranslate"><span class="pre">tcgen05.wait::st</span></code></p></td>
 </tr>
 <tr class="row-even"><td><p>PV MMA</p></td>
 <td><p>TMEM 中的 <code class="docutils literal notranslate"><span class="pre">P</span></code>、SMEM 中的 V → TMEM 中的 output accumulator <code class="docutils literal notranslate"><span class="pre">O</span></code></p></td>
@@ -642,14 +642,14 @@ WG2 仍负责 correction，但会跳过最后一次 <code class="docutils litera
 </section>
 <section id="tirx">
 <h3>论文与当前 TIRx 实现的差异<a class="headerlink" href="#tirx" title="Link to this heading">#</a></h3>
-<p>本章解释的是当前 <code class="docutils literal notranslate"><span class="pre">flash_attention4.py</span></code> 的默认执行路径。它沿用了 FA4 论文的整体 pipeline，但有两处实现选择并不相同。</p>
+<p>本章解释的是当前 <code class="docutils literal notranslate"><span class="pre">flash_attention4_tileop.py</span></code> 的默认执行路径。它沿用了 FA4 论文的整体 pipeline，但有两处实现选择并不相同。</p>
 <p>第一，论文让 WG0 和 WG1 的 exponential-heavy softmax 区域错开执行，避免两个 softmax warpgroups 同时争用 exponential units。当前代码保留了 <code class="docutils literal notranslate"><span class="pre">bar_s0_s1_sequence</span></code> 及其同步分支，但默认设置 <code class="docutils literal notranslate"><span class="pre">USE_S0_S1_BARRIER=False</span></code>，因此默认路径不会启用这项顺序约束。</p>
 <p>第二，论文利用空余 TMEM 传递 correction statistics；当前 TIRx 实现则把逐行的 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 写入 SMEM buffer <code class="docutils literal notranslate"><span class="pre">sScale</span></code>。Hardware named barrier 通知 WG2 数据已经就绪，<code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code> 再把可复用 slot 还给 softmax warpgroup。Non-causal 路径还用同一机制传递最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code>；causal 路径则在 WG0/WG1 执行 epilogue。后文直接沿用代码中的名称，将这块缓冲区称为 <code class="docutils literal notranslate"><span class="pre">sScale</span></code>。</p>
 </section>
 </section>
 <section id="id2">
 <h2>阅读代码前的约定<a class="headerlink" href="#id2" title="Link to this heading">#</a></h2>
-<p>本章使用原生 TVMScript 和 CUDA tile 指令展示 FA4 pipeline。完整参考实现见 <a class="reference external" href="https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4.py"><code class="docutils literal notranslate"><span class="pre">flash_attention4.py</span></code></a>。片段会引用在外围 kernel 中定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。指令 views 使用的 shape 常量在 <code class="docutils literal notranslate"><span class="pre">&#64;T.function</span></code> 外的 Python factory 中计算。下面列出后文反复出现、但不容易只看名字判断含义的符号：</p>
+<p>本章使用原生 TVMScript 和 CUDA tile 指令展示 FA4 pipeline。完整参考实现见 <a class="reference external" href="https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4_tileop.py"><code class="docutils literal notranslate"><span class="pre">flash_attention4_tileop.py</span></code></a>。片段会引用在外围 kernel 中定义的 shapes、stage indices 和 phase variables。除非特别说明 causal 差异，后文的详细交接过程和 timeline 都描述验证示例使用的 non-causal 配置。指令 views 使用的 shape 常量在 <code class="docutils literal notranslate"><span class="pre">&#64;T.function</span></code> 外的 Python factory 中计算。下面列出后文反复出现、但不容易只看名字判断含义的符号：</p>
 <div class="pst-scrollable-table-container"><table class="table">
 <thead>
 <tr class="row-odd"><th class="head"><p>名称</p></th>
@@ -745,7 +745,7 @@ WG2 仍负责 correction，但会跳过最后一次 <code class="docutils litera
 </tr>
 <tr class="row-even"><td><p>Statistics named barrier</p></td>
 <td><p>一个 softmax warpgroup 与 WG2 配对；<code class="docutils literal notranslate"><span class="pre">GQA_RATIO=1</span></code> 时按对应 warps 配对</p></td>
-<td><p>Softmax 执行 <code class="docutils literal notranslate"><span class="pre">ptx_bar_arrive</span></code>，WG2 通过 <code class="docutils literal notranslate"><span class="pre">ptx_bar_sync</span></code> 加入</p></td>
+<td><p>Softmax 执行 <code class="docutils literal notranslate"><span class="pre">T.ptx.bar.arrive</span></code>，WG2 通过 <code class="docutils literal notranslate"><span class="pre">T.ptx.bar.sync</span></code> 加入</p></td>
 <td><p>WG2 可以读取 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> 中的 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 或 non-causal 路径的最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code></p></td>
 </tr>
 <tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code></p></td>
@@ -876,7 +876,7 @@ P, V -&gt; PV MMA -&gt; O
 <span class="n">row_max</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">row_max_new</span>
 </pre></div>
 </div>
-<p>然后将 scores 转成 base-2 exponent 的输入，计算 fp32 权重，并转换为后续 PV MMA 使用的 fp16 <code class="docutils literal notranslate"><span class="pre">P</span></code>。实现会在硬件 <code class="docutils literal notranslate"><span class="pre">exp2</span></code> 和 <code class="docutils literal notranslate"><span class="pre">ex2_emulation_2</span></code> 之间选择：</p>
+<p>然后将 scores 转成 base-2 exponent 的输入，计算 fp32 权重，并转换为后续 PV MMA 使用的 fp16 <code class="docutils literal notranslate"><span class="pre">P</span></code>。实现会在硬件 <code class="docutils literal notranslate"><span class="pre">exp2</span></code> 和 <code class="docutils literal notranslate"><span class="pre">ex2_emulation_tile</span></code> 之间选择：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="n">BLK_N</span><span class="p">):</span>
     <span class="n">T</span><span class="o">.</span><span class="n">ptx</span><span class="o">.</span><span class="n">fma</span><span class="o">.</span><span class="n">rn</span><span class="o">.</span><span class="n">f32</span><span class="p">(</span><span class="n">s_chunk_buf</span><span class="p">[</span><span class="n">j</span><span class="p">],</span> <span class="n">s_chunk_buf</span><span class="p">[</span><span class="n">j</span><span class="p">],</span> <span class="n">T</span><span class="o">.</span><span class="n">float32</span><span class="p">(</span><span class="n">scale_log2</span><span class="p">),</span> <span class="o">-</span><span class="n">row_max_safe</span> <span class="o">*</span> <span class="n">scale_log2</span><span class="p">)</span>
 <span class="k">for</span> <span class="n">frag_idx</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="mi">4</span><span class="p">):</span>
@@ -890,9 +890,7 @@ P, V -&gt; PV MMA -&gt; O
             <span class="n">s_chunk_local</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">exp2</span><span class="p">(</span><span class="n">s_chunk_local</span><span class="p">[</span><span class="n">idx</span><span class="p">])</span>
             <span class="n">s_chunk_local</span><span class="p">[</span><span class="n">idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">exp2</span><span class="p">(</span><span class="n">s_chunk_local</span><span class="p">[</span><span class="n">idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">])</span>
         <span class="k">else</span><span class="p">:</span>
-            <span class="n">ex2_emulation_2</span><span class="p">(</span>
-                <span class="n">s_chunk_local</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="n">s_chunk_local</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span> <span class="n">s_chunk_local</span><span class="p">[</span><span class="n">idx</span> <span class="o">+</span> <span class="mi">1</span><span class="p">]</span>
-            <span class="p">)</span>
+            <span class="n">ex2_emulation_tile</span><span class="p">(</span><span class="n">s_chunk_local</span><span class="p">,</span> <span class="n">idx</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="n">T</span><span class="o">.</span><span class="n">unroll</span><span class="p">(</span><span class="n">BLK_N</span> <span class="o">//</span> <span class="mi">4</span><span class="p">):</span>
         <span class="n">col</span> <span class="o">=</span> <span class="n">frag_idx</span> <span class="o">*</span> <span class="n">BLK_N</span> <span class="o">//</span> <span class="mi">4</span> <span class="o">+</span> <span class="n">j</span>
         <span class="n">p_chunk_buf</span><span class="p">[</span><span class="n">col</span><span class="p">]</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">float16</span><span class="p">(</span><span class="n">s_chunk_buf</span><span class="p">[</span><span class="n">col</span><span class="p">])</span>
@@ -1025,7 +1023,7 @@ tmem_as_f16: 1024 × 16 bits = 16384 bits
 </pre></div>
 </div>
 <p>因此，<code class="docutils literal notranslate"><span class="pre">tmem[:,</span> <span class="pre">p]</span></code> 以 fp32 读取整个格子；<code class="docutils literal notranslate"><span class="pre">tmem_as_f16[:,</span> <span class="pre">2p]</span></code> 和 <code class="docutils literal notranslate"><span class="pre">tmem_as_f16[:,</span> <span class="pre">2p+1]</span></code> 则分别访问其中两个 fp16 values。</p>
-<p>建立这两个 buffer 后，源码使用 <code class="docutils literal notranslate"><span class="pre">Buffer.rearrange()</span></code> 创建按 stage 索引的 views：</p>
+<p>建立这两个 buffer 后，源码使用 <code class="docutils literal notranslate"><span class="pre">rearrange()</span></code> 创建按 stage 索引的 views：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="n">S_region</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span><span class="n">tmem</span><span class="o">.</span><span class="n">rearrange</span><span class="p">(</span><span class="s2">"m (s n) -&gt; s m n"</span><span class="p">,</span> <span class="n">n</span><span class="o">=</span><span class="n">MMA_N</span><span class="p">))</span>
 <span class="n">O_region</span> <span class="o">=</span> <span class="n">S_region</span>
 <span class="n">P_region</span> <span class="o">=</span> <span class="n">T</span><span class="o">.</span><span class="n">meta_var</span><span class="p">(</span>
@@ -1110,8 +1108,8 @@ tmem_as_f16: 1024 × 16 bits = 16384 bits
 <ol class="arabic simple">
 <li><p>Softmax 先等待 <code class="docutils literal notranslate"><span class="pre">softmax_corr.empty</span></code>，确认对应的 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot 可以重新写入。</p></li>
 <li><p>Softmax 将 <code class="docutils literal notranslate"><span class="pre">acc_scale</span></code> 或最终 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code> 写入该 slot。</p></li>
-<li><p>Softmax 对该 stage 的 named barrier 执行 <code class="docutils literal notranslate"><span class="pre">ptx_bar_arrive</span></code>。</p></li>
-<li><p>WG2 通过 <code class="docutils literal notranslate"><span class="pre">ptx_bar_sync</span></code> 加入同一个 barrier，再读取该 slot。</p></li>
+<li><p>Softmax 对该 stage 的 named barrier 执行 <code class="docutils literal notranslate"><span class="pre">T.ptx.bar.arrive</span></code>。</p></li>
+<li><p>WG2 通过 <code class="docutils literal notranslate"><span class="pre">T.ptx.bar.sync</span></code> 加入同一个 barrier，再读取该 slot。</p></li>
 <li><p>WG2 发出对应的 empty arrival。</p></li>
 <li><p>Softmax warpgroup 在下一 phase 中重新写入这个 <code class="docutils literal notranslate"><span class="pre">sScale</span></code> slot。</p></li>
 </ol>
@@ -1234,7 +1232,7 @@ value P0*V[n-2]
 <section id="causal-mask">
 <h2>Causal Mask<a class="headerlink" href="#causal-mask" title="Link to this heading">#</a></h2>
 <p>Causal attention 要求每个 query 只能访问当前位置及之前的 keys。在 Q、K 序列等长时，score matrix 的有效区域位于主对角线及其下方。当两个序列不等长时，当前实现使用右对齐（bottom-right-aligned）的 causal mask：query position <code class="docutils literal notranslate"><span class="pre">i</span></code> 最多可以访问 key position <code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">+</span> <span class="pre">SEQ_LEN_KV</span> <span class="pre">-</span> <span class="pre">SEQ_LEN_Q</span></code>，上界再截断到 <code class="docutils literal notranslate"><span class="pre">SEQ_LEN_KV</span> <span class="pre">-</span> <span class="pre">1</span></code>。实现从 block 和 element 两个层次处理这一约束：跳过完全无效的 blocks，并在跨越边界的 blocks 内屏蔽无效 columns。</p>
-<p>对于完全位于 causal 边界之外的 K/V blocks，所有元素都无效。<code class="docutils literal notranslate"><span class="pre">get_n_block_max(...)</span></code> 返回当前 Q task 需要访问的 K/V block 排他上界，因此 loop 只遍历 <code class="docutils literal notranslate"><span class="pre">0</span></code> 到 <code class="docutils literal notranslate"><span class="pre">n_block_max</span> <span class="pre">-</span> <span class="pre">1</span></code>，不会加载更高编号的 blocks。</p>
+<p>对于完全位于 causal 边界之外的 K/V blocks，所有元素都无效。<code class="docutils literal notranslate"><span class="pre">n_block_max_of(...)</span></code> 返回当前 Q task 需要访问的 K/V block 排他上界，因此 loop 只遍历 <code class="docutils literal notranslate"><span class="pre">0</span></code> 到 <code class="docutils literal notranslate"><span class="pre">n_block_max</span> <span class="pre">-</span> <span class="pre">1</span></code>，不会加载更高编号的 blocks。</p>
 <p>跨越 causal 边界的 blocks 同时包含有效和无效 columns，仍然需要执行 QKᵀ MMA。Softmax 会在指数运算前屏蔽无效 columns：它根据当前 query row 的位置和 block offset 计算 column limit，保留不超过该位置的 columns，并在 registers 中将其余 columns 设为 <code class="docutils literal notranslate"><span class="pre">-inf</span></code>。这些位置不会参与 row maximum，对应的 <span class="math notranslate nohighlight">\(p_{ij}\)</span> 也会变成 0。</p>
 <p><code class="docutils literal notranslate"><span class="pre">mask_r2p(...)</span></code> 不为每个元素单独比较坐标，而是把 column limit 转换成若干 bit masks。实现每次处理最多 32 个元素，随后用 bit test 生成 predicates；这些操作会 lower 到高效的 register-to-predicate 路径。完全位于 causal 边界内的 blocks 中，所有 columns 都有效，不需要 mask。</p>
 <p>Causal mode 保留总体的 QKᵀ MMA → softmax → PV MMA 链路，但会改变几处 scheduling 和交接细节：缩短 K/V loop，在 register-resident softmax 内部应用 mask，将 PV split 改为 64+64，并把最终 epilogue 移到 WG0/WG1，省去最后一次向 WG2 传递 <code class="docutils literal notranslate"><span class="pre">row_sum</span></code>。</p>
@@ -1292,26 +1290,27 @@ q_head        = kv_head_idx * GQA_RATIO + q_head_offset
 </section>
 <section id="id5">
 <h2>编译与验证<a class="headerlink" href="#id5" title="Link to this heading">#</a></h2>
-<p>要运行完整 FA4，请先按 README 安装最新 companion repository，再导入<a class="reference external" href="https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4.py"><code class="docutils literal notranslate"><span class="pre">flash_attention4.py</span></code></a>，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 <code class="docutils literal notranslate"><span class="pre">get_flash_attention4_kernel</span></code> 创建 kernel，并用 <code class="docutils literal notranslate"><span class="pre">build_tensor_maps</span></code> 编码其入口接收的 tensor-map descriptors：</p>
-<p>当前 <code class="docutils literal notranslate"><span class="pre">flash_attention4.py</span></code> 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：</p>
+<p>完整原生 kernel 需要包含<a class="reference external" href="https://github.com/tlopex/tvm-tirx/tree/fix/hoist-uniform-tile-mma-descriptors">统一根指针 matrix-descriptor 支持</a>的编译器构建；<code class="docutils literal notranslate"><span class="pre">apache-tvm-tirx==0.1.0a6</span></code> 尚未包含该支持。</p>
+<p>要运行完整 FA4，请先按 README 安装最新 companion repository，再导入<a class="reference external" href="https://github.com/mlc-ai/TIRx-kernels/blob/main/tirx_kernels/ported/flashattention/flash_attention4_tileop.py"><code class="docutils literal notranslate"><span class="pre">flash_attention4_tileop.py</span></code></a>，编译后与 PyTorch reference 比较。与 GEMM 的验证代码相比，这里使用 <code class="docutils literal notranslate"><span class="pre">get_flash_attention4_kernel</span></code> 创建 kernel，并用 <code class="docutils literal notranslate"><span class="pre">build_tensor_maps</span></code> 编码其入口接收的 tensor-map descriptors：</p>
+<p>当前 <code class="docutils literal notranslate"><span class="pre">flash_attention4_tileop.py</span></code> 是针对固定 tile shapes 编写的专用 kernel，并不是接受任意 attention shape 的通用接口。调用前需要满足以下条件：</p>
 <ul class="simple">
 <li><p><code class="docutils literal notranslate"><span class="pre">NUM_QO_HEADS</span></code> 必须能被 <code class="docutils literal notranslate"><span class="pre">NUM_KV_HEADS</span></code> 整除，才能得到整数 <code class="docutils literal notranslate"><span class="pre">GQA_RATIO</span></code>。</p></li>
-<li><p><code class="docutils literal notranslate"><span class="pre">GQA_RATIO</span></code> 必须能整除 <code class="docutils literal notranslate"><span class="pre">BLK_M=128</span></code>，否则 128 条 packed Q rows 无法均匀还原为 sequence positions。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">GQA_RATIO</span></code> 当前支持 1、2、4、8，使 128 条 packed Q rows 均匀映射到 sequence positions。</p></li>
 <li><p><code class="docutils literal notranslate"><span class="pre">HEAD_DIM</span></code> 当前必须为 128；TMEM regions、PV MMA 和 epilogue 都按照这个宽度组织。</p></li>
-<li><p>Non-causal 路径要求 <code class="docutils literal notranslate"><span class="pre">SEQ_LEN_KV</span></code> 是 <code class="docutils literal notranslate"><span class="pre">BLK_N=128</span></code> 的整数倍。代码会向上取整 K/V block 数，但没有为 non-causal 最后一个不足 128 的 block 应用 tail mask。内置测试配置在 causal 和 non-causal 两种模式下也都使用 128 的整数倍。</p></li>
+<li><p>入口接口要求 causal 和 non-causal 两种模式的 <code class="docutils literal notranslate"><span class="pre">SEQ_LEN_KV</span></code> 都是 <code class="docutils literal notranslate"><span class="pre">BLK_N=128</span></code> 的整数倍。</p></li>
 </ul>
 <p>下面的示例在编译前显式检查这些约束：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">torch.nn.functional</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">F</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">tvm_tirx</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">tirx_kernels.ported.flashattention.flash_attention4</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">tirx_kernels.ported.flashattention.flash_attention4_tileop</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
     <span class="n">build_tensor_maps</span><span class="p">,</span>
     <span class="n">get_flash_attention4_kernel</span><span class="p">,</span>
 <span class="p">)</span>
 
 <span class="n">B</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">Hq</span><span class="p">,</span> <span class="n">Hkv</span><span class="p">,</span> <span class="n">D</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1024</span><span class="p">,</span> <span class="mi">32</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">128</span>   <span class="c1"># GQA: 32 query heads share 8 KV heads</span>
 <span class="k">assert</span> <span class="n">Hq</span> <span class="o">%</span> <span class="n">Hkv</span> <span class="o">==</span> <span class="mi">0</span>
-<span class="k">assert</span> <span class="mi">128</span> <span class="o">%</span> <span class="p">(</span><span class="n">Hq</span> <span class="o">//</span> <span class="n">Hkv</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span>
+<span class="k">assert</span> <span class="n">Hq</span> <span class="o">//</span> <span class="n">Hkv</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span>
 <span class="k">assert</span> <span class="n">D</span> <span class="o">==</span> <span class="mi">128</span>
 <span class="k">assert</span> <span class="n">S</span> <span class="o">%</span> <span class="mi">128</span> <span class="o">==</span> <span class="mi">0</span>
 
